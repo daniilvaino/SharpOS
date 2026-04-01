@@ -52,3 +52,12 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# dotnet-home
+**/.dotnet-home/
+
+# qemu
+**/.qemu/
+
+# vs
+**/.vs/
