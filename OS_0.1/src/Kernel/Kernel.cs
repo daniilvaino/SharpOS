@@ -1,4 +1,5 @@
 using OS.Boot;
+using OS.Kernel.Elf;
 using OS.Hal;
 using OS.Kernel.Memory;
 using OS.Kernel.Paging;
@@ -31,6 +32,7 @@ namespace OS.Kernel
                 RunHeapSmokeTest();
                 InitializePager();
                 RunPagerValidation();
+                RunElfValidation();
             }
 
             DemoApp.Run();
@@ -127,6 +129,11 @@ namespace OS.Kernel
         {
             PagingValidation.Run();
             PagingDiagnostics.DumpSummary();
+        }
+
+        private static void RunElfValidation()
+        {
+            ElfValidation.Run();
         }
 
         private static void PrintHeapAddress(string label, void* pointer)

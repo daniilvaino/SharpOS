@@ -12,14 +12,9 @@ namespace OS.Kernel.Paging
             if (s_initialized)
                 return true;
 
-            if (requirements.PageSize == 0)
-                requirements.PageSize = X64PageTable.PageSize;
-
-            if (requirements.PageSize != X64PageTable.PageSize)
+            requirements.Normalize();
+            if (!requirements.IsValid())
                 return false;
-
-            if (requirements.InitialPageTablePages == 0)
-                requirements.InitialPageTablePages = 1;
 
             if (!X64PageTable.Init(requirements))
                 return false;
@@ -37,7 +32,10 @@ namespace OS.Kernel.Paging
             if (!IsAligned(virtualAddress) || !IsAligned(physicalAddress))
                 return false;
 
-            return X64PageTable.Map(virtualAddress, physicalAddress, flags);
+            if (!PageFlagOps.IsSupported(flags))
+                return false;
+
+            return X64PageTable.Map(virtualAddress, physicalAddress, PageFlagOps.NormalizeForMap(flags));
         }
 
         public static bool MapRange(ulong virtualAddressStart, ulong physicalAddressStart, uint pageCount, PageFlags flags)
