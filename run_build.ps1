@@ -88,6 +88,23 @@ if (-not (Test-Path -LiteralPath $projectFile)) {
     throw "Project file not found: $projectFile"
 }
 
+[xml]$projectXml = Get-Content -LiteralPath $projectFile
+$targetFramework = $null
+if ($projectXml -and $projectXml.Project -and $projectXml.Project.PropertyGroup) {
+    foreach ($propertyGroup in $projectXml.Project.PropertyGroup) {
+        if ($propertyGroup.TargetFramework) {
+            $targetFramework = $propertyGroup.TargetFramework.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($targetFramework)) {
+                break
+            }
+        }
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($targetFramework)) {
+    throw "Could not resolve TargetFramework from $projectFile"
+}
+
 if (-not $QemuExe) {
     $cmd = Get-Command "qemu-system-x86_64.exe" -ErrorAction SilentlyContinue
     if ($cmd) {
@@ -148,7 +165,7 @@ finally {
     Pop-Location
 }
 
-$publishDir = Join-Path $efiProjectDir "bin\$Configuration\net7.0\win-x64\publish"
+$publishDir = Join-Path $efiProjectDir "bin\$Configuration\$targetFramework\win-x64\publish"
 $builtEfi = Join-Path $publishDir "OS_0.1.exe"
 if (-not (Test-Path -LiteralPath $builtEfi)) {
     $builtEfi = Get-ChildItem -LiteralPath $publishDir -Filter *.exe -File -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName

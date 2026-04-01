@@ -1,6 +1,7 @@
 using OS.Boot;
 using OS.Hal;
 using OS.Kernel.Memory;
+using OS.Kernel.Paging;
 using OS.TestApp;
 
 namespace OS.Kernel
@@ -28,6 +29,8 @@ namespace OS.Kernel
 
                 InitializeHeap();
                 RunHeapSmokeTest();
+                InitializePager();
+                RunPagerValidation();
             }
 
             DemoApp.Run();
@@ -95,6 +98,35 @@ namespace OS.Kernel
 
             HeapDiagnostics.DumpSummary();
             HeapDiagnostics.DumpBlocks();
+        }
+
+        private static void InitializePager()
+        {
+            PagingRequirements requirements = default;
+            requirements.PageSize = X64PageTable.PageSize;
+            requirements.DirectMapBase = 0xFFFF800000000000UL;
+            requirements.InitialPageTablePages = 4;
+
+            if (!Pager.Init(requirements))
+                Panic.Fail("pager init failed");
+
+            Log.Write(LogLevel.Info, "pager init ok");
+            PagingDiagnostics.DumpSummary();
+
+            Pager.GetSummary(out PagingSummary summary);
+            if (summary.PageSize != requirements.PageSize)
+                Panic.Fail("pager requirements mismatch: page size");
+
+            if (summary.TablePages != requirements.InitialPageTablePages)
+                Panic.Fail("pager requirements mismatch: initial table pages");
+
+            Log.Write(LogLevel.Info, "pager requirements applied");
+        }
+
+        private static void RunPagerValidation()
+        {
+            PagingValidation.Run();
+            PagingDiagnostics.DumpSummary();
         }
 
         private static void PrintHeapAddress(string label, void* pointer)
