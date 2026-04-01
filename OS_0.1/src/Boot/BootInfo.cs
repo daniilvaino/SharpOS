@@ -12,6 +12,8 @@ namespace OS.Boot
         public ulong MemoryMapAvailable;
         public ulong GraphicsAvailable;
         public MemoryMapInfo MemoryMap;
+        public void* ExternalElfImage;
+        public uint ExternalElfImageSize;
 
         public delegate* managed<char, void> WriteChar;
         public delegate* managed<void> Shutdown;

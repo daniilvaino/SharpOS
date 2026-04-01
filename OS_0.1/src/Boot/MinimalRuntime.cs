@@ -141,6 +141,18 @@ namespace OS.Boot
 
     internal static unsafe class NativeMemoryStubs
     {
+        [RuntimeExport("memset")]
+        private static void* Memset(void* destination, int value, ulong count)
+        {
+            byte* dst = (byte*)destination;
+            byte fill = (byte)value;
+
+            for (ulong i = 0; i < count; i++)
+                dst[i] = fill;
+
+            return destination;
+        }
+
         [RuntimeExport("memcpy")]
         private static void* Memcpy(void* destination, void* source, ulong count)
         {

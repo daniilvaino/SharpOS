@@ -15,6 +15,8 @@ namespace OS.Boot
             info.MemoryMapAvailable = 0;
             info.GraphicsAvailable = 0;
             info.MemoryMap = default;
+            info.ExternalElfImage = null;
+            info.ExternalElfImageSize = 0;
             info.WriteChar = &UefiPlatformBridge.WriteChar;
             info.Shutdown = &UefiPlatformBridge.Shutdown;
 
@@ -28,6 +30,13 @@ namespace OS.Boot
             {
                 info.MemoryMapAvailable = 1;
                 info.Capabilities |= PlatformCapabilities.MemoryMap;
+            }
+
+            if (UefiFileLoader.TryLoadAppElf(context, out void* elfImage, out uint elfSize))
+            {
+                info.ExternalElfImage = elfImage;
+                info.ExternalElfImageSize = elfSize;
+                info.Capabilities |= PlatformCapabilities.ExternalElf;
             }
 
             return info;

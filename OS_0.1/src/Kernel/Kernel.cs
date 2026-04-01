@@ -32,7 +32,7 @@ namespace OS.Kernel
                 RunHeapSmokeTest();
                 InitializePager();
                 RunPagerValidation();
-                RunElfValidation();
+                RunElfValidation(bootInfo);
             }
 
             DemoApp.Run();
@@ -131,9 +131,9 @@ namespace OS.Kernel
             PagingDiagnostics.DumpSummary();
         }
 
-        private static void RunElfValidation()
+        private static void RunElfValidation(BootInfo bootInfo)
         {
-            ElfValidation.Run();
+            ElfValidation.Run(bootInfo);
         }
 
         private static void PrintHeapAddress(string label, void* pointer)

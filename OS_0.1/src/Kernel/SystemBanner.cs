@@ -69,6 +69,7 @@ namespace OS.Kernel
             WriteCapability(capabilities, PlatformCapabilities.MemoryMap, "MemoryMap", ref first);
             WriteCapability(capabilities, PlatformCapabilities.Graphics, "Graphics", ref first);
             WriteCapability(capabilities, PlatformCapabilities.MonotonicTimer, "MonotonicTimer", ref first);
+            WriteCapability(capabilities, PlatformCapabilities.ExternalElf, "ExternalElf", ref first);
         }
 
         private static void WriteCapability(PlatformCapabilities all, PlatformCapabilities one, string name, ref bool first)

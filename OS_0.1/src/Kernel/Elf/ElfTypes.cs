@@ -41,6 +41,19 @@ namespace OS.Kernel.Elf
         HeaderReadFailed = 13,
     }
 
+    internal enum ElfLoadError : uint
+    {
+        None = 0,
+        NoLoadSegments = 1,
+        ProgramHeaderReadFailed = 2,
+        SegmentFileSizeExceedsMemorySize = 3,
+        SegmentAddressOverflow = 4,
+        SegmentFileRangeOutOfBounds = 5,
+        SegmentPageMapFailed = 6,
+        SegmentCopyFailed = 7,
+        SegmentZeroFillFailed = 8,
+    }
+
     internal struct Elf64Header
     {
         public const uint Size = 64;
@@ -77,5 +90,14 @@ namespace OS.Kernel.Elf
     {
         public MemoryBlock Image;
         public Elf64Header Header;
+    }
+
+    internal struct ElfLoadedImage
+    {
+        public ulong EntryPoint;
+        public uint LoadedSegmentCount;
+        public ulong LoadedPages;
+        public ulong LowestVirtualAddress;
+        public ulong HighestVirtualAddressExclusive;
     }
 }

@@ -50,6 +50,36 @@ namespace OS.Kernel.Elf
             Log.EndLine();
         }
 
+        public static void WriteLoadError(ElfLoadError error)
+        {
+            Log.Begin(LogLevel.Error);
+            Console.Write("elf load error: ");
+            WriteLoadErrorName(error);
+            Log.EndLine();
+        }
+
+        public static void DumpLoadedImage(ElfLoadedImage image)
+        {
+            Log.Begin(LogLevel.Info);
+            Console.Write("elf loaded segments/pages: ");
+            Console.WriteUInt(image.LoadedSegmentCount);
+            Console.Write("/");
+            Console.WriteULong(image.LoadedPages);
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("elf loaded range: 0x");
+            Console.WriteHex(image.LowestVirtualAddress, 16);
+            Console.Write("..0x");
+            Console.WriteHex(image.HighestVirtualAddressExclusive, 16);
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("elf entry ready = 0x");
+            Console.WriteHex(image.EntryPoint, 16);
+            Log.EndLine();
+        }
+
         private static void DumpLoadSegment(uint loadIndex, Elf64ProgramHeader header)
         {
             Log.Begin(LogLevel.Info);
@@ -68,7 +98,7 @@ namespace OS.Kernel.Elf
             Log.EndLine();
         }
 
-        private static void WriteProgramFlags(uint flags)
+        internal static void WriteProgramFlags(uint flags)
         {
             bool first = true;
 
@@ -98,6 +128,22 @@ namespace OS.Kernel.Elf
 
             if (first)
                 Console.Write("None");
+        }
+
+        private static void WriteLoadErrorName(ElfLoadError error)
+        {
+            switch (error)
+            {
+                case ElfLoadError.NoLoadSegments: Console.Write("no_load_segments"); break;
+                case ElfLoadError.ProgramHeaderReadFailed: Console.Write("phdr_read_failed"); break;
+                case ElfLoadError.SegmentFileSizeExceedsMemorySize: Console.Write("segment_filesz_gt_memsz"); break;
+                case ElfLoadError.SegmentAddressOverflow: Console.Write("segment_address_overflow"); break;
+                case ElfLoadError.SegmentFileRangeOutOfBounds: Console.Write("segment_file_range_out_of_bounds"); break;
+                case ElfLoadError.SegmentPageMapFailed: Console.Write("segment_page_map_failed"); break;
+                case ElfLoadError.SegmentCopyFailed: Console.Write("segment_copy_failed"); break;
+                case ElfLoadError.SegmentZeroFillFailed: Console.Write("segment_zero_fill_failed"); break;
+                default: Console.Write("unknown"); break;
+            }
         }
 
         private static void WriteParseErrorName(ElfParseError error)

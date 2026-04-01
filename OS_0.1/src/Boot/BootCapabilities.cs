@@ -14,5 +14,6 @@ namespace OS.Boot
         MemoryMap = 1UL << 2,
         Graphics = 1UL << 3,
         MonotonicTimer = 1UL << 4,
+        ExternalElf = 1UL << 5,
     }
 }
