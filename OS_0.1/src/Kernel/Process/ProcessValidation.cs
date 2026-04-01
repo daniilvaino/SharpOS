@@ -119,9 +119,12 @@ namespace OS.Kernel.Process
             KernelAssert.Equal(processImage.EntryPoint, startup->EntryPoint, "process validation: startup entry mismatch");
             KernelAssert.Equal(processImage.StackTop, startup->StackTop, "process validation: startup stack top mismatch");
             KernelAssert.Equal(processImage.StackBase, startup->StackBase, "process validation: startup stack base mismatch");
-            KernelAssert.True(
-                (startup->Flags & ProcessStartupBlock.FlagMarkerAddressIsPhysical) == ProcessStartupBlock.FlagMarkerAddressIsPhysical,
-                "process validation: marker address flag missing");
+            if (startup->MarkerAddress != 0)
+            {
+                KernelAssert.True(
+                    (startup->Flags & ProcessStartupBlock.FlagMarkerAddressIsPhysical) == ProcessStartupBlock.FlagMarkerAddressIsPhysical,
+                    "process validation: marker address flag missing");
+            }
 
             KernelAssert.True(
                 (startup->Flags & ProcessStartupBlock.FlagServiceTableAddressIsPhysical) == ProcessStartupBlock.FlagServiceTableAddressIsPhysical,
@@ -152,6 +155,9 @@ namespace OS.Kernel.Process
             AppServiceTable* table = (AppServiceTable*)processImage.ServiceTablePhysical;
             KernelAssert.Equal(AppServiceTable.CurrentAbiVersion, table->AbiVersion, "process validation: service table abi version mismatch");
             KernelAssert.True(table->WriteStringAddress != 0, "process validation: service write pointer is null");
+            KernelAssert.True(table->WriteUIntAddress != 0, "process validation: service write uint pointer is null");
+            KernelAssert.True(table->WriteHexAddress != 0, "process validation: service write hex pointer is null");
+            KernelAssert.True(table->GetAbiVersionAddress != 0, "process validation: service get abi version pointer is null");
             KernelAssert.True(table->ExitAddress != 0, "process validation: service exit pointer is null");
         }
 

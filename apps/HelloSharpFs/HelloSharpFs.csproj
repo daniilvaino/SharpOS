@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net7.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <RuntimeMetadataVersion>v4.0.30319</RuntimeMetadataVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+
+    <PublishAot>true</PublishAot>
+    <IlcSystemModule>HelloSharpFs</IlcSystemModule>
+    <EntryPointSymbol>SharpAppEntry</EntryPointSymbol>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\sdk\MinimalRuntime.cs" Link="sdk\MinimalRuntime.cs" />
+    <Compile Include="..\sdk\AppStartupBlock.cs" Link="sdk\AppStartupBlock.cs" />
+    <Compile Include="..\sdk\AppServiceTable.cs" Link="sdk\AppServiceTable.cs" />
+    <Compile Include="..\sdk\AppRuntime.cs" Link="sdk\AppRuntime.cs" />
+    <Compile Include="..\sdk\AppHost.cs" Link="sdk\AppHost.cs" />
+  </ItemGroup>
+
+  <Target Name="CustomizeReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
+    <ItemGroup>
+      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" />
+      <ReferencePath Remove="@(ReferencePath)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="RemoveHostConfigurationOptions" BeforeTargets="WriteIlcRspFileForCompilation" DependsOnTargets="PrepareForILLink">
+    <ItemGroup>
+      <RuntimeHostConfigurationOption Remove="@(RuntimeHostConfigurationOption)" />
+    </ItemGroup>
+  </Target>
+</Project>

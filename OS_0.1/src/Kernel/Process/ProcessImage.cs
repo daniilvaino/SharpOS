@@ -4,6 +4,7 @@ namespace OS.Kernel.Process
     {
         public uint AbiVersion;
         public uint AbiFlags;
+        public AppServiceAbi ServiceAbi;
 
         public ulong EntryPoint;
         public ulong ImageStart;

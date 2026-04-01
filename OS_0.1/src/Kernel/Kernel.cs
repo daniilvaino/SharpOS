@@ -1,6 +1,7 @@
 using OS.Boot;
 using OS.Kernel.Elf;
 using OS.Hal;
+using OS.Kernel.Diagnostics;
 using OS.Kernel.Memory;
 using OS.Kernel.Paging;
 using OS.TestApp;
@@ -11,6 +12,8 @@ namespace OS.Kernel
     {
         public static void Start(BootInfo bootInfo)
         {
+            Panic.Mode = PanicMode.Shutdown;
+
             SystemBanner.Print(bootInfo);
             Log.Write(LogLevel.Info, "kernel start");
 

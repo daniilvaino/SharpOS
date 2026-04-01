@@ -1,4 +1,4 @@
-namespace OS.Kernel.Process
+namespace SharpOS.AppSdk
 {
     internal unsafe struct AppServiceTable
     {

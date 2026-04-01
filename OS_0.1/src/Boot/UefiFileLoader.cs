@@ -2,35 +2,59 @@ namespace OS.Boot
 {
     internal static unsafe class UefiFileLoader
     {
-        private const string PrimaryAppPath = "\\EFI\\BOOT\\APP.ELF";
-        private const string FallbackAppPath = "\\APP.ELF";
+        public static BootFileStatus Exists(BootContext context, char* path)
+        {
+            if (path == null)
+                return BootFileStatus.InvalidParameter;
 
-        public static bool TryLoadAppElf(BootContext context, out void* image, out uint imageSize)
+            return UefiFile.TryExists(context, path) ? BootFileStatus.Ok : BootFileStatus.NotFound;
+        }
+
+        public static BootFileStatus ReadAll(BootContext context, char* path, out void* image, out uint imageSize)
         {
             image = null;
             imageSize = 0;
 
-            EFI_SYSTEM_TABLE* systemTable = context.SystemTable;
-            if (systemTable == null || systemTable->BootServices == null)
-                return false;
+            if (path == null)
+                return BootFileStatus.InvalidParameter;
 
-            if (!UefiFile.TryOpenRoot(context, out EFI_FILE_PROTOCOL* root))
-                return false;
+            if (!UefiFile.TryExists(context, path))
+                return BootFileStatus.NotFound;
 
-            EFI_FILE_PROTOCOL* file = null;
-            bool opened = UefiFile.TryOpenReadOnly(root, PrimaryAppPath, out file) ||
-                UefiFile.TryOpenReadOnly(root, FallbackAppPath, out file);
+            return UefiFile.TryReadAll(context, path, out image, out imageSize)
+                ? BootFileStatus.Ok
+                : BootFileStatus.DeviceError;
+        }
 
-            if (!opened || file == null)
-            {
-                UefiFile.Close(root);
-                return false;
-            }
+        public static BootFileStatus ReadDirectoryEntry(
+            BootContext context,
+            char* directoryPath,
+            uint index,
+            char* nameBuffer,
+            uint nameBufferChars,
+            out uint nameLength,
+            out ulong attributes)
+        {
+            nameLength = 0;
+            attributes = 0;
 
-            bool loaded = UefiFile.TryReadAll(systemTable->BootServices, file, out image, out imageSize);
-            UefiFile.Close(file);
-            UefiFile.Close(root);
-            return loaded;
+            if (directoryPath == null || nameBuffer == null || nameBufferChars == 0)
+                return BootFileStatus.InvalidParameter;
+
+            if (!UefiFile.TryExists(context, directoryPath))
+                return BootFileStatus.NotFound;
+
+            return UefiFile.TryReadDirectoryEntry(
+                context,
+                directoryPath,
+                index,
+                nameBuffer,
+                nameBufferChars,
+                out nameLength,
+                out attributes,
+                out BootFileStatus status)
+                ? BootFileStatus.Ok
+                : status;
         }
     }
 }

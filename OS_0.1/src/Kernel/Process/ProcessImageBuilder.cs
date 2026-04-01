@@ -1,6 +1,7 @@
 using OS.Kernel.Elf;
 using OS.Kernel.Paging;
 using OS.Kernel.Util;
+using OS.Hal;
 
 namespace OS.Kernel.Process
 {
@@ -10,7 +11,7 @@ namespace OS.Kernel.Process
         private const uint DefaultStackPages = 8;
         private const ulong DefaultStackMappedTop = 0x0000000000800000UL;
 
-        public static bool TryBuild(ref ElfLoadedImage loadedImage, ulong markerVirtualAddress, out ProcessImage processImage)
+        public static bool TryBuild(ref ElfLoadedImage loadedImage, ulong markerVirtualAddress, AppServiceAbi serviceAbi, out ProcessImage processImage)
         {
             processImage = default;
             processImage.EntryPoint = loadedImage.EntryPoint;
@@ -19,10 +20,14 @@ namespace OS.Kernel.Process
             processImage.MappedImagePages = loadedImage.LoadedPages;
             processImage.StackPages = DefaultStackPages;
             processImage.StackMappedTop = DefaultStackMappedTop;
+            processImage.ServiceAbi = serviceAbi;
 
             ulong stackSize = (ulong)DefaultStackPages * PageSize;
             if (DefaultStackMappedTop < stackSize)
+            {
+                Log.Write(LogLevel.Warn, "process build: invalid default stack top");
                 return false;
+            }
 
             processImage.StackBase = DefaultStackMappedTop - stackSize;
             processImage.StackTop = DefaultStackMappedTop;
@@ -33,14 +38,19 @@ namespace OS.Kernel.Process
                 processImage.StackBase,
                 processImage.StackMappedTop))
             {
+                Log.Write(LogLevel.Warn, "process build: image/stack overlap");
                 return false;
             }
 
             if (!MapStack(ref processImage))
+            {
+                Log.Write(LogLevel.Warn, "process build: stack mapping failed");
                 return false;
+            }
 
             if (!ProcessStartupBuilder.TryBuild(ref processImage, markerVirtualAddress))
             {
+                Log.Write(LogLevel.Warn, "process build: startup block build failed");
                 UnmapStack(processImage.StackBase, processImage.MappedStackPages);
                 return false;
             }
@@ -56,6 +66,7 @@ namespace OS.Kernel.Process
                 ulong physicalPage = global::OS.Kernel.PhysicalMemory.AllocPage();
                 if (physicalPage == 0)
                 {
+                    Log.Write(LogLevel.Warn, "process build: physical page allocation failed for stack");
                     UnmapStack(processImage.StackBase, processImage.MappedStackPages);
                     return false;
                 }
@@ -64,6 +75,7 @@ namespace OS.Kernel.Process
 
                 if (!Pager.Map(currentVirtual, physicalPage, PageFlags.Writable | PageFlags.NoExecute))
                 {
+                    Log.Write(LogLevel.Warn, "process build: pager map failed for stack page");
                     UnmapStack(processImage.StackBase, processImage.MappedStackPages);
                     return false;
                 }

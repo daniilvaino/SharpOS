@@ -192,7 +192,7 @@ namespace OS.Boot
         public readonly delegate* unmanaged<EFI_FILE_PROTOCOL*, ulong*, void*, ulong> Read;
         private readonly void* _Write;
         private readonly void* _GetPosition;
-        private readonly void* _SetPosition;
+        public readonly delegate* unmanaged<EFI_FILE_PROTOCOL*, ulong, ulong> SetPosition;
         public readonly delegate* unmanaged<EFI_FILE_PROTOCOL*, EFI_GUID*, ulong*, void*, ulong> GetInfo;
     }
 

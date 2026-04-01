@@ -1,4 +1,5 @@
 using OS.Kernel.Paging;
+using OS.Hal;
 
 namespace OS.Kernel.Process
 {
@@ -12,51 +13,93 @@ namespace OS.Kernel.Process
         public static bool TryBuild(ref ProcessImage processImage, ulong markerVirtualAddress)
         {
             if (processImage.StackMappedTop <= processImage.StackBase)
+            {
+                Log.Write(LogLevel.Warn, "process startup: invalid stack range");
                 return false;
+            }
 
             ulong serviceSize = (ulong)sizeof(AppServiceTable);
             ulong startupSize = (ulong)sizeof(ProcessStartupBlock);
             if (serviceSize == 0 || startupSize == 0)
+            {
+                Log.Write(LogLevel.Warn, "process startup: invalid structure sizes");
                 return false;
+            }
 
             if (processImage.StackMappedTop < processImage.StackBase + serviceSize + startupSize + StackHeadroom)
+            {
+                Log.Write(LogLevel.Warn, "process startup: insufficient stack room for startup data");
                 return false;
+            }
 
             ulong serviceVirtual = AlignDown(processImage.StackMappedTop - serviceSize, ServiceTableAlignment);
             if (serviceVirtual < processImage.StackBase)
+            {
+                Log.Write(LogLevel.Warn, "process startup: service table virtual out of stack bounds");
                 return false;
+            }
 
             ulong startupVirtual = AlignDown(serviceVirtual - startupSize, StartupBlockAlignment);
             if (startupVirtual < processImage.StackBase)
+            {
+                Log.Write(LogLevel.Warn, "process startup: startup block virtual out of stack bounds");
                 return false;
+            }
 
             if (startupVirtual < processImage.StackBase + StackHeadroom)
+            {
+                Log.Write(LogLevel.Warn, "process startup: startup block leaves no stack headroom");
                 return false;
+            }
 
             ulong entryStackTop = AlignDown(startupVirtual - StackHeadroom, StackAlignment);
             if (entryStackTop <= processImage.StackBase || entryStackTop > startupVirtual)
+            {
+                Log.Write(LogLevel.Warn, "process startup: entry stack top is invalid");
                 return false;
+            }
 
             if (!Pager.TryQuery(processImage.EntryPoint, out ulong entryPhysical, out _))
+            {
+                Log.Write(LogLevel.Warn, "process startup: entrypoint virtual is not mapped");
                 return false;
+            }
 
             if (!Pager.TryQuery(entryStackTop - 1, out ulong stackTopProbePhysical, out _))
+            {
+                Log.Write(LogLevel.Warn, "process startup: stack top probe is not mapped");
                 return false;
+            }
 
             if (!Pager.TryQuery(startupVirtual, out ulong startupPhysical, out _))
+            {
+                Log.Write(LogLevel.Warn, "process startup: startup block virtual is not mapped");
                 return false;
+            }
 
-            if (!AppServiceBuilder.TryBuild(serviceVirtual, out ulong servicePhysical))
+            if (!AppServiceBuilder.TryBuild(serviceVirtual, processImage.ServiceAbi, out ulong servicePhysical))
+            {
+                Log.Write(LogLevel.Warn, "process startup: service table build failed");
                 return false;
+            }
 
-            if (!Pager.TryQuery(markerVirtualAddress, out ulong markerPhysical, out _))
-                return false;
+            ulong markerPhysical = 0;
+            uint startupFlags = ProcessStartupBlock.FlagServiceTableAddressIsPhysical;
+
+            if (markerVirtualAddress != 0)
+            {
+                if (!Pager.TryQuery(markerVirtualAddress, out markerPhysical, out _))
+                {
+                    Log.Write(LogLevel.Warn, "process startup: marker address is not mapped");
+                    return false;
+                }
+
+                startupFlags |= ProcessStartupBlock.FlagMarkerAddressIsPhysical;
+            }
 
             ProcessStartupBlock startup = default;
             startup.AbiVersion = ProcessStartupBlock.CurrentAbiVersion;
-            startup.Flags =
-                ProcessStartupBlock.FlagMarkerAddressIsPhysical |
-                ProcessStartupBlock.FlagServiceTableAddressIsPhysical;
+            startup.Flags = startupFlags;
             startup.ImageBase = processImage.ImageStart;
             startup.ImageEnd = processImage.ImageEnd;
             startup.EntryPoint = processImage.EntryPoint;
