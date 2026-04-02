@@ -17,6 +17,7 @@ namespace OS.Kernel.Elf
         {
             public string Name;
             public string Path;
+            public uint AppAbiVersion;
             public int ExpectedExitCode;
             public bool ValidateMarker;
             public bool OptionalIfMissing;
@@ -42,6 +43,7 @@ namespace OS.Kernel.Elf
             ExternalElfApp hello = default;
             hello.Name = ElfAppContract.HelloAppName;
             hello.Path = ElfAppContract.HelloAppPath;
+            hello.AppAbiVersion = ProcessStartupBlock.AbiVersionV1;
             hello.ExpectedExitCode = ElfAppContract.HelloExitCodeExpected;
             hello.ValidateMarker = false;
             hello.ServiceAbi = AppServiceAbi.WindowsX64;
@@ -49,6 +51,7 @@ namespace OS.Kernel.Elf
             ExternalElfApp abiInfo = default;
             abiInfo.Name = ElfAppContract.AbiInfoAppName;
             abiInfo.Path = ElfAppContract.AbiInfoAppPath;
+            abiInfo.AppAbiVersion = ProcessStartupBlock.AbiVersionV1;
             abiInfo.ExpectedExitCode = ElfAppContract.AbiInfoExitCodeExpected;
             abiInfo.ValidateMarker = false;
             abiInfo.ServiceAbi = AppServiceAbi.WindowsX64;
@@ -56,6 +59,7 @@ namespace OS.Kernel.Elf
             ExternalElfApp helloCs = default;
             helloCs.Name = ElfAppContract.HelloCsAppName;
             helloCs.Path = ElfAppContract.HelloCsAppPath;
+            helloCs.AppAbiVersion = ProcessStartupBlock.AbiVersionV2;
             helloCs.ExpectedExitCode = ElfAppContract.HelloCsExitCodeExpected;
             helloCs.ValidateMarker = false;
             helloCs.OptionalIfMissing = true;
@@ -64,6 +68,7 @@ namespace OS.Kernel.Elf
             ExternalElfApp marker = default;
             marker.Name = ElfAppContract.MarkerAppName;
             marker.Path = ElfAppContract.MarkerAppPath;
+            marker.AppAbiVersion = ProcessStartupBlock.AbiVersionV1;
             marker.ExpectedExitCode = ElfAppContract.MarkerExitCodeExpected;
             marker.ValidateMarker = true;
             marker.ServiceAbi = AppServiceAbi.WindowsX64;
@@ -160,13 +165,18 @@ namespace OS.Kernel.Elf
 
             Log.Write(LogLevel.Info, "process build start");
             ulong markerVirtualAddress = app.ValidateMarker ? ElfAppContract.MarkerVirtualAddress : 0;
-            if (!ProcessImageBuilder.TryBuild(ref loadedImage, markerVirtualAddress, app.ServiceAbi, out ProcessImage processImage))
+            if (!ProcessImageBuilder.TryBuild(
+                ref loadedImage,
+                markerVirtualAddress,
+                app.ServiceAbi,
+                app.AppAbiVersion,
+                out ProcessImage processImage))
             {
                 CleanupLoadedImageMappings(ref loadedImage);
                 return AppRunResult.ProcessBuildFailed;
             }
 
-            if (!TryValidateProcess(ref processImage))
+            if (!TryValidateProcess(ref processImage, app.AppAbiVersion))
             {
                 CleanupProcessMappings(ref processImage, ref loadedImage);
                 return AppRunResult.ProcessValidationFailed;
@@ -266,9 +276,9 @@ namespace OS.Kernel.Elf
             return loadSegments != 0;
         }
 
-        private static bool TryValidateProcess(ref ProcessImage processImage)
+        private static bool TryValidateProcess(ref ProcessImage processImage, uint expectedAbiVersion)
         {
-            if (processImage.AbiVersion != ElfAppContract.AbiVersion)
+            if (processImage.AbiVersion != expectedAbiVersion)
                 return false;
 
             if (processImage.EntryPoint == 0 ||

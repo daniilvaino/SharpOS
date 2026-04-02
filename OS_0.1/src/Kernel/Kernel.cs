@@ -2,6 +2,7 @@ using OS.Boot;
 using OS.Kernel.Elf;
 using OS.Hal;
 using OS.Kernel.Diagnostics;
+using OS.Kernel.Input;
 using OS.Kernel.Memory;
 using OS.Kernel.Paging;
 using OS.TestApp;
@@ -16,6 +17,7 @@ namespace OS.Kernel
 
             SystemBanner.Print(bootInfo);
             Log.Write(LogLevel.Info, "kernel start");
+            RunKeyboardDiagnostics();
 
             if ((bootInfo.Capabilities & PlatformCapabilities.MemoryMap) != PlatformCapabilities.MemoryMap)
             {
@@ -39,6 +41,18 @@ namespace OS.Kernel
             }
 
             DemoApp.Run();
+        }
+
+        private static void RunKeyboardDiagnostics()
+        {
+            if (false)
+            {
+                InputDiagnostics.Run();
+            }
+            else
+            {
+                Console.WriteLine("skipped keyboard demo");
+            }
         }
 
         private static void PrintMemorySummary(BootInfo bootInfo)

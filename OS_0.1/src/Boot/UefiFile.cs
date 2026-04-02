@@ -107,6 +107,50 @@ namespace OS.Boot
             return loaded;
         }
 
+        public static bool TryReadIntoBuffer(
+            BootContext context,
+            char* path,
+            void* destinationBuffer,
+            uint destinationCapacity,
+            out uint bytesRead,
+            out BootFileStatus status)
+        {
+            bytesRead = 0;
+            status = BootFileStatus.DeviceError;
+
+            EFI_SYSTEM_TABLE* systemTable = context.SystemTable;
+            if (systemTable == null || systemTable->BootServices == null || path == null || destinationBuffer == null || destinationCapacity == 0)
+            {
+                status = BootFileStatus.InvalidParameter;
+                return false;
+            }
+
+            if (!TryOpenRoot(context, out EFI_FILE_PROTOCOL* root))
+            {
+                status = BootFileStatus.DeviceError;
+                return false;
+            }
+
+            if (!TryOpenReadOnly(root, path, out EFI_FILE_PROTOCOL* file))
+            {
+                Close(root);
+                status = BootFileStatus.NotFound;
+                return false;
+            }
+
+            bool loaded = TryReadIntoBuffer(
+                systemTable->BootServices,
+                file,
+                destinationBuffer,
+                destinationCapacity,
+                out bytesRead,
+                out status);
+
+            Close(file);
+            Close(root);
+            return loaded;
+        }
+
         public static bool TryReadDirectoryEntry(
             BootContext context,
             char* directoryPath,
@@ -297,6 +341,49 @@ namespace OS.Boot
             return true;
         }
 
+        public static bool TryReadIntoBuffer(
+            EFI_BOOT_SERVICES* bootServices,
+            EFI_FILE_PROTOCOL* file,
+            void* destinationBuffer,
+            uint destinationCapacity,
+            out uint bytesRead,
+            out BootFileStatus status)
+        {
+            bytesRead = 0;
+            status = BootFileStatus.DeviceError;
+
+            if (bootServices == null || file == null || destinationBuffer == null || destinationCapacity == 0)
+            {
+                status = BootFileStatus.InvalidParameter;
+                return false;
+            }
+
+            if (!TryGetFileSize(bootServices, file, out ulong fileSize))
+            {
+                status = BootFileStatus.DeviceError;
+                return false;
+            }
+
+            if (fileSize > destinationCapacity)
+            {
+                bytesRead = fileSize > 0xFFFFFFFFUL ? 0xFFFFFFFFU : (uint)fileSize;
+                status = BootFileStatus.BufferTooSmall;
+                return false;
+            }
+
+            ulong readSize = fileSize;
+            ulong readStatus = file->Read(file, &readSize, destinationBuffer);
+            if (readStatus != EfiSuccess || readSize != fileSize)
+            {
+                status = BootFileStatus.DeviceError;
+                return false;
+            }
+
+            bytesRead = (uint)fileSize;
+            status = BootFileStatus.Ok;
+            return true;
+        }
+
         public static void Close(EFI_FILE_PROTOCOL* file)
         {
             if (file == null || file->Close == null)
@@ -355,6 +442,38 @@ namespace OS.Boot
                 return;
 
             bootServices->FreePool(buffer);
+        }
+
+        private static bool TryGetFileSize(EFI_BOOT_SERVICES* bootServices, EFI_FILE_PROTOCOL* file, out ulong fileSize)
+        {
+            fileSize = 0;
+
+            if (bootServices == null || file == null || file->GetInfo == null)
+                return false;
+
+            EFI_GUID fileInfoGuid = FileInfoGuid();
+            ulong infoBufferSize = 0;
+            ulong infoStatus = file->GetInfo(file, &fileInfoGuid, &infoBufferSize, null);
+            if (infoStatus != EfiBufferTooSmall && infoStatus != EfiSuccess)
+                return false;
+
+            if (infoBufferSize < (ulong)sizeof(EFI_FILE_INFO))
+                infoBufferSize = 1024;
+
+            if (!TryAllocatePool(bootServices, infoBufferSize, out void* infoBuffer))
+                return false;
+
+            infoStatus = file->GetInfo(file, &fileInfoGuid, &infoBufferSize, infoBuffer);
+            if (infoStatus != EfiSuccess)
+            {
+                FreePool(bootServices, infoBuffer);
+                return false;
+            }
+
+            EFI_FILE_INFO* fileInfo = (EFI_FILE_INFO*)infoBuffer;
+            fileSize = fileInfo->FileSize;
+            FreePool(bootServices, infoBuffer);
+            return true;
         }
 
         private static EFI_GUID LoadedImageProtocolGuid()

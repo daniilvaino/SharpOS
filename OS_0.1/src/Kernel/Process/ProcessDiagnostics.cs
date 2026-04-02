@@ -41,7 +41,9 @@ namespace OS.Kernel.Process
             Log.EndLine();
 
             Log.Begin(LogLevel.Info);
-            Console.Write("process abi version/flags: ");
+            Console.Write("process abi requested/active/flags: ");
+            Console.WriteUInt(processImage.RequestedAbiVersion);
+            Console.Write("/");
             Console.WriteUInt(processImage.AbiVersion);
             Console.Write("/");
             Console.WriteUInt(processImage.AbiFlags);

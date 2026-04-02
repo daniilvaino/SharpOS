@@ -77,7 +77,11 @@ namespace OS.Kernel.Process
                 return false;
             }
 
-            if (!AppServiceBuilder.TryBuild(serviceVirtual, processImage.ServiceAbi, out ulong servicePhysical))
+            if (!AppServiceBuilder.TryBuild(
+                serviceVirtual,
+                processImage.ServiceAbi,
+                processImage.RequestedAbiVersion,
+                out ulong servicePhysical))
             {
                 Log.Write(LogLevel.Warn, "process startup: service table build failed");
                 return false;
@@ -98,7 +102,7 @@ namespace OS.Kernel.Process
             }
 
             ProcessStartupBlock startup = default;
-            startup.AbiVersion = ProcessStartupBlock.CurrentAbiVersion;
+            startup.AbiVersion = processImage.RequestedAbiVersion;
             startup.Flags = startupFlags;
             startup.ImageBase = processImage.ImageStart;
             startup.ImageEnd = processImage.ImageEnd;

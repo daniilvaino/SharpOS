@@ -15,5 +15,6 @@ namespace OS.Boot
         Graphics = 1UL << 3,
         MonotonicTimer = 1UL << 4,
         ExternalElf = 1UL << 5,
+        KeyboardInput = 1UL << 6,
     }
 }

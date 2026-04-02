@@ -17,6 +17,20 @@ namespace OS.Boot
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct EFI_INPUT_KEY
+    {
+        public readonly ushort ScanCode;
+        public readonly ushort UnicodeChar;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe readonly struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL
+    {
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_INPUT_PROTOCOL*, bool, ulong> Reset;
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_INPUT_PROTOCOL*, EFI_INPUT_KEY*, ulong> ReadKeyStroke;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal readonly struct EFI_TABLE_HEADER
     {
         public readonly ulong Signature;
@@ -148,7 +162,7 @@ namespace OS.Boot
         public readonly char* FirmwareVendor;
         public readonly uint FirmwareRevision;
         public readonly EFI_HANDLE ConsoleInHandle;
-        public readonly void* ConIn;
+        public readonly EFI_SIMPLE_TEXT_INPUT_PROTOCOL* ConIn;
         public readonly EFI_HANDLE ConsoleOutHandle;
         public readonly EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL* ConOut;
         public readonly EFI_HANDLE StandardErrorHandle;

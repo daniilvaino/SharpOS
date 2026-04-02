@@ -11,9 +11,15 @@ namespace OS.Kernel.Process
         private const uint DefaultStackPages = 8;
         private const ulong DefaultStackMappedTop = 0x0000000000800000UL;
 
-        public static bool TryBuild(ref ElfLoadedImage loadedImage, ulong markerVirtualAddress, AppServiceAbi serviceAbi, out ProcessImage processImage)
+        public static bool TryBuild(
+            ref ElfLoadedImage loadedImage,
+            ulong markerVirtualAddress,
+            AppServiceAbi serviceAbi,
+            uint requestedAbiVersion,
+            out ProcessImage processImage)
         {
             processImage = default;
+            processImage.RequestedAbiVersion = NormalizeAbiVersion(requestedAbiVersion);
             processImage.EntryPoint = loadedImage.EntryPoint;
             processImage.ImageStart = loadedImage.LowestVirtualAddress;
             processImage.ImageEnd = loadedImage.HighestVirtualAddressExclusive;
@@ -56,6 +62,14 @@ namespace OS.Kernel.Process
             }
 
             return true;
+        }
+
+        private static uint NormalizeAbiVersion(uint value)
+        {
+            if (value <= AppServiceTable.AbiVersionV1)
+                return AppServiceTable.AbiVersionV1;
+
+            return AppServiceTable.AbiVersionV2;
         }
 
         private static bool MapStack(ref ProcessImage processImage)

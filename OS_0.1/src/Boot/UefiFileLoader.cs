@@ -26,6 +26,32 @@ namespace OS.Boot
                 : BootFileStatus.DeviceError;
         }
 
+        public static BootFileStatus ReadIntoBuffer(
+            BootContext context,
+            char* path,
+            void* buffer,
+            uint capacity,
+            out uint bytesRead)
+        {
+            bytesRead = 0;
+
+            if (path == null || buffer == null || capacity == 0)
+                return BootFileStatus.InvalidParameter;
+
+            if (!UefiFile.TryExists(context, path))
+                return BootFileStatus.NotFound;
+
+            return UefiFile.TryReadIntoBuffer(
+                context,
+                path,
+                buffer,
+                capacity,
+                out bytesRead,
+                out BootFileStatus status)
+                ? BootFileStatus.Ok
+                : status;
+        }
+
         public static BootFileStatus ReadDirectoryEntry(
             BootContext context,
             char* directoryPath,

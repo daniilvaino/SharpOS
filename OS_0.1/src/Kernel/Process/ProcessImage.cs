@@ -2,6 +2,7 @@ namespace OS.Kernel.Process
 {
     internal struct ProcessImage
     {
+        public uint RequestedAbiVersion;
         public uint AbiVersion;
         public uint AbiFlags;
         public AppServiceAbi ServiceAbi;

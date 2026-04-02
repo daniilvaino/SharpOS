@@ -74,6 +74,36 @@ namespace OS.Hal
             s_bootInfo.Shutdown();
         }
 
+        public static KeyboardReadStatus TryReadKey(out ushort unicodeChar, out ushort scanCode)
+        {
+            unicodeChar = 0;
+            scanCode = 0;
+
+            if (!s_initialized)
+                return KeyboardReadStatus.Unsupported;
+
+            if (!HasCapability(PlatformCapabilities.KeyboardInput))
+                return KeyboardReadStatus.Unsupported;
+
+            if (s_bootInfo.KeyboardTryReadKey == null)
+                return KeyboardReadStatus.Unsupported;
+
+            ushort readUnicodeChar = 0;
+            ushort readScanCode = 0;
+            uint status = s_bootInfo.KeyboardTryReadKey(&readUnicodeChar, &readScanCode);
+            if (status == (uint)BootKeyReadStatus.Ok)
+            {
+                unicodeChar = readUnicodeChar;
+                scanCode = readScanCode;
+                return KeyboardReadStatus.KeyAvailable;
+            }
+
+            if (status == (uint)BootKeyReadStatus.NotReady)
+                return KeyboardReadStatus.NoKey;
+
+            return KeyboardReadStatus.DeviceError;
+        }
+
         public static bool FileExists(string path)
         {
             if (!s_initialized)

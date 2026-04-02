@@ -2,7 +2,9 @@ namespace OS.Kernel.Process
 {
     internal unsafe struct ProcessStartupBlock
     {
-        public const uint CurrentAbiVersion = 1;
+        public const uint AbiVersionV1 = 1;
+        public const uint AbiVersionV2 = 2;
+        public const uint CurrentAbiVersion = AbiVersionV2;
         public const uint FlagMarkerAddressIsPhysical = 1U << 0;
         public const uint FlagServiceTableAddressIsPhysical = 1U << 1;
 

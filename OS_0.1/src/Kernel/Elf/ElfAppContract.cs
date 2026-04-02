@@ -2,7 +2,8 @@ namespace OS.Kernel.Elf
 {
     internal static class ElfAppContract
     {
-        public const uint AbiVersion = 1;
+        public const uint AbiVersionV1 = 1;
+        public const uint AbiVersionV2 = 2;
 
         public const string HelloAppName = "HELLO.ELF";
         public const string HelloAppPath = "\\EFI\\BOOT\\HELLO.ELF";

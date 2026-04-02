@@ -17,8 +17,10 @@ namespace OS.Boot
             info.MemoryMap = default;
             info.WriteChar = &UefiPlatformBridge.WriteChar;
             info.Shutdown = &UefiPlatformBridge.Shutdown;
+            info.KeyboardTryReadKey = &UefiPlatformBridge.KeyboardTryReadKey;
             info.FileExists = &UefiPlatformBridge.FileExists;
             info.FileReadAll = &UefiPlatformBridge.FileReadAll;
+            info.FileReadIntoBuffer = &UefiPlatformBridge.FileReadIntoBuffer;
             info.DirectoryReadEntry = &UefiPlatformBridge.DirectoryReadEntry;
 
             if (systemTable->ConOut != null)
@@ -26,6 +28,9 @@ namespace OS.Boot
 
             if (systemTable->RuntimeServices != null)
                 info.Capabilities |= PlatformCapabilities.Shutdown;
+
+            if (UefiPlatformBridge.HasKeyboardInput())
+                info.Capabilities |= PlatformCapabilities.KeyboardInput;
 
             if (UefiMemoryMapBuilder.TryBuild(systemTable, out info.MemoryMap))
             {
@@ -70,6 +75,31 @@ namespace OS.Boot
             s_systemTable->RuntimeServices->ResetSystem(EFI_RESET_TYPE.EfiResetShutdown, 0, 0, null);
         }
 
+        public static bool HasKeyboardInput()
+        {
+            if (!s_initialized)
+                return false;
+
+            return UefiKeyboard.IsAvailable(s_systemTable);
+        }
+
+        public static uint KeyboardTryReadKey(ushort* unicodeChar, ushort* scanCode)
+        {
+            if (unicodeChar == null || scanCode == null)
+                return (uint)BootKeyReadStatus.InvalidParameter;
+
+            if (!s_initialized)
+                return (uint)BootKeyReadStatus.Unsupported;
+
+            BootKeyReadStatus status;
+            if (!UefiKeyboard.TryReadKey(s_context, out ushort readUnicodeChar, out ushort readScanCode, out status))
+                return (uint)status;
+
+            *unicodeChar = readUnicodeChar;
+            *scanCode = readScanCode;
+            return (uint)BootKeyReadStatus.Ok;
+        }
+
         public static bool HasFileAccess()
         {
             if (!s_initialized)
@@ -95,6 +125,16 @@ namespace OS.Boot
             BootFileStatus status = UefiFileLoader.ReadAll(s_context, path, out void* image, out uint imageSize);
             *buffer = image;
             *size = imageSize;
+            return (uint)status;
+        }
+
+        public static uint FileReadIntoBuffer(char* path, void* buffer, uint capacity, uint* bytesRead)
+        {
+            if (bytesRead == null)
+                return (uint)BootFileStatus.InvalidParameter;
+
+            BootFileStatus status = UefiFileLoader.ReadIntoBuffer(s_context, path, buffer, capacity, out uint readSize);
+            *bytesRead = readSize;
             return (uint)status;
         }
 

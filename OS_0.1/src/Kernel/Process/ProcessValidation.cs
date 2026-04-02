@@ -114,7 +114,7 @@ namespace OS.Kernel.Process
                 "process validation: startup block not writable");
 
             ProcessStartupBlock* startup = (ProcessStartupBlock*)processImage.StartupBlockPhysical;
-            KernelAssert.Equal(ProcessStartupBlock.CurrentAbiVersion, startup->AbiVersion, "process validation: startup abi version mismatch");
+            KernelAssert.Equal(processImage.RequestedAbiVersion, startup->AbiVersion, "process validation: startup abi version mismatch");
             KernelAssert.Equal(processImage.AbiFlags, startup->Flags, "process validation: startup flags mismatch");
             KernelAssert.Equal(processImage.EntryPoint, startup->EntryPoint, "process validation: startup entry mismatch");
             KernelAssert.Equal(processImage.StackTop, startup->StackTop, "process validation: startup stack top mismatch");
@@ -153,12 +153,21 @@ namespace OS.Kernel.Process
                 "process validation: service table not writable");
 
             AppServiceTable* table = (AppServiceTable*)processImage.ServiceTablePhysical;
-            KernelAssert.Equal(AppServiceTable.CurrentAbiVersion, table->AbiVersion, "process validation: service table abi version mismatch");
+            KernelAssert.Equal(processImage.RequestedAbiVersion, table->AbiVersion, "process validation: service table abi version mismatch");
             KernelAssert.True(table->WriteStringAddress != 0, "process validation: service write pointer is null");
             KernelAssert.True(table->WriteUIntAddress != 0, "process validation: service write uint pointer is null");
             KernelAssert.True(table->WriteHexAddress != 0, "process validation: service write hex pointer is null");
             KernelAssert.True(table->GetAbiVersionAddress != 0, "process validation: service get abi version pointer is null");
             KernelAssert.True(table->ExitAddress != 0, "process validation: service exit pointer is null");
+
+            if (processImage.RequestedAbiVersion >= AppServiceTable.AbiVersionV2)
+            {
+                KernelAssert.True(table->FileExistsAddress != 0, "process validation: service file exists pointer is null");
+                KernelAssert.True(table->ReadFileAddress != 0, "process validation: service read file pointer is null");
+                KernelAssert.True(table->ReadDirEntryAddress != 0, "process validation: service read directory pointer is null");
+                KernelAssert.True(table->TryReadKeyAddress != 0, "process validation: service read key pointer is null");
+                KernelAssert.True(table->RunAppAddress != 0, "process validation: service run app pointer is null");
+            }
         }
 
         private static bool ContainsAddress(ulong start, ulong size, ulong address)

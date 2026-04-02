@@ -1,5 +1,5 @@
 param(
-    [string]$AppProject = "apps/HelloSharp/HelloSharp.csproj",
+    [string]$AppProject = "apps/HelloSharpFs/HelloSharpFs.csproj",
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     [string]$RuntimeIdentifier = "linux-x64",
