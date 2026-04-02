@@ -2,6 +2,9 @@ namespace SharpOS.AppSdk
 {
     internal static unsafe class AppHost
     {
+        private const int MaxTempTextChars = 512;
+        private const int MaxTempPathChars = 260;
+
         public static void WriteString(byte* text)
         {
             AppServiceTable* services = AppRuntime.Services;
@@ -13,6 +16,18 @@ namespace SharpOS.AppSdk
                 return;
 
             write((ulong)text);
+        }
+
+        public static void WriteString(string text)
+        {
+            if (text == null || text.Length == 0)
+                return;
+
+            byte* buffer = stackalloc byte[MaxTempTextChars];
+            if (!TryEncodeAscii(text, buffer, MaxTempTextChars, out _))
+                return;
+
+            WriteString(buffer);
         }
 
         public static void WriteUInt(uint value)
@@ -72,6 +87,11 @@ namespace SharpOS.AppSdk
             return FileExistsEx(path) == AppServiceStatus.Ok;
         }
 
+        public static bool FileExists(string path)
+        {
+            return FileExistsEx(path) == AppServiceStatus.Ok;
+        }
+
         public static AppServiceStatus FileExistsEx(byte* path)
         {
             AppServiceTable* services = AppRuntime.Services;
@@ -88,6 +108,15 @@ namespace SharpOS.AppSdk
             AppFileExistsRequest request = default;
             request.PathAddress = (ulong)path;
             return (AppServiceStatus)fileExists((ulong)(&request));
+        }
+
+        public static AppServiceStatus FileExistsEx(string path)
+        {
+            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
+            if (!TryEncodeAscii(path, pathBuffer, MaxTempPathChars + 1, out _))
+                return AppServiceStatus.InvalidParameter;
+
+            return FileExistsEx(pathBuffer);
         }
 
         public static AppServiceStatus TryReadFile(byte* path, byte* buffer, uint bufferCapacity, out uint bytesRead)
@@ -113,6 +142,18 @@ namespace SharpOS.AppSdk
             AppServiceStatus status = (AppServiceStatus)readFile((ulong)(&request));
             bytesRead = request.BytesRead;
             return status;
+        }
+
+        public static AppServiceStatus TryReadFile(string path, byte* buffer, uint bufferCapacity, out uint bytesRead)
+        {
+            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
+            if (!TryEncodeAscii(path, pathBuffer, MaxTempPathChars + 1, out _))
+            {
+                bytesRead = 0;
+                return AppServiceStatus.InvalidParameter;
+            }
+
+            return TryReadFile(pathBuffer, buffer, bufferCapacity, out bytesRead);
         }
 
         public static AppServiceStatus TryReadDirEntry(
@@ -145,6 +186,23 @@ namespace SharpOS.AppSdk
             entry.NameLength = request.NameLength;
             entry.IsDirectory = request.IsDirectory;
             return status;
+        }
+
+        public static AppServiceStatus TryReadDirEntry(
+            string directoryPath,
+            uint entryIndex,
+            byte* nameBuffer,
+            uint nameBufferCapacity,
+            out FileEntry entry)
+        {
+            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
+            if (!TryEncodeAscii(directoryPath, pathBuffer, MaxTempPathChars + 1, out _))
+            {
+                entry = default;
+                return AppServiceStatus.InvalidParameter;
+            }
+
+            return TryReadDirEntry(pathBuffer, entryIndex, nameBuffer, nameBufferCapacity, out entry);
         }
 
         public static AppServiceStatus TryReadKey(out KeyInfo key)
@@ -199,6 +257,51 @@ namespace SharpOS.AppSdk
         public static AppServiceStatus TryRunApp(byte* path, out int exitCode)
         {
             return TryRunApp(path, AppStartupBlock.AbiVersionV1, AppServiceAbi.WindowsX64, out exitCode);
+        }
+
+        public static AppServiceStatus TryRunApp(
+            string path,
+            uint appAbiVersion,
+            AppServiceAbi serviceAbi,
+            out int exitCode)
+        {
+            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
+            if (!TryEncodeAscii(path, pathBuffer, MaxTempPathChars + 1, out _))
+            {
+                exitCode = 0;
+                return AppServiceStatus.InvalidParameter;
+            }
+
+            return TryRunApp(pathBuffer, appAbiVersion, serviceAbi, out exitCode);
+        }
+
+        public static AppServiceStatus TryRunApp(string path, out int exitCode)
+        {
+            return TryRunApp(path, AppStartupBlock.AbiVersionV1, AppServiceAbi.WindowsX64, out exitCode);
+        }
+
+        public static bool TryEncodeAscii(string text, byte* destination, int destinationCapacity, out uint bytesWritten)
+        {
+            bytesWritten = 0;
+            if (destination == null || destinationCapacity <= 0 || text == null)
+                return false;
+
+            int textLength = text.Length;
+            if (textLength + 1 > destinationCapacity)
+                return false;
+
+            fixed (char* source = text)
+            {
+                for (int i = 0; i < textLength; i++)
+                {
+                    char value = source[i];
+                    destination[i] = value <= 0x7F ? (byte)value : (byte)'?';
+                }
+            }
+
+            destination[textLength] = 0;
+            bytesWritten = (uint)textLength;
+            return true;
         }
 
         private static bool HasAbiV2Services(AppServiceTable* services)
