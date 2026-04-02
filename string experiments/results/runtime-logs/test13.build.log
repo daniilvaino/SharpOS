@@ -1,0 +1,3 @@
+Building freestanding app via WSL distro 'Ubuntu'...
+Built freestanding ELF artifact: C:\work\OS\apps\HelloSharpFs\bin\Release\out-linux-x64\HELLOCS.ELF
+Copied freestanding ELF to ESP: C:\work\OS\OS_0.1\.qemu\esp\EFI\BOOT\HELLOCS.ELF

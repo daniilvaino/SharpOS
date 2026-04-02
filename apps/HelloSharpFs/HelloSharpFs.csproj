@@ -23,6 +23,7 @@
     <Compile Include="..\sdk\AppServiceTable.cs" Link="sdk\AppServiceTable.cs" />
     <Compile Include="..\sdk\AppRuntime.cs" Link="sdk\AppRuntime.cs" />
     <Compile Include="..\sdk\AppHost.cs" Link="sdk\AppHost.cs" />
+    <Compile Include="..\sdk\StringExperimentSuite.cs" Link="sdk\StringExperimentSuite.cs" />
     <Compile Include="..\sdk\KeyInfo.cs" Link="sdk\KeyInfo.cs" />
     <Compile Include="..\sdk\FileEntry.cs" Link="sdk\FileEntry.cs" />
   </ItemGroup>

@@ -17,6 +17,25 @@ namespace OS.Kernel.Elf
 
             Log.Write(LogLevel.Info, "elf load start");
 
+            if (!TryGetImagePageSpan(ref result, out ulong imagePageStart, out uint imagePageCount))
+            {
+                error = ElfLoadError.SegmentAddressOverflow;
+                return false;
+            }
+
+            ulong imagePhysicalBase = global::OS.Kernel.PhysicalMemory.AllocPages(imagePageCount);
+            if (imagePhysicalBase == 0)
+            {
+                error = ElfLoadError.SegmentPageMapFailed;
+                return false;
+            }
+
+            if (!ZeroPhysicalPages(imagePhysicalBase, imagePageCount))
+            {
+                error = ElfLoadError.SegmentPageMapFailed;
+                return false;
+            }
+
             for (ushort i = 0; i < result.Header.ProgramHeaderCount; i++)
             {
                 if (!ElfParser.TryGetProgramHeader(ref result, i, out Elf64ProgramHeader header))
@@ -41,6 +60,8 @@ namespace OS.Kernel.Elf
                     ref result,
                     header,
                     loadedImage.LoadedSegmentCount,
+                    imagePageStart,
+                    imagePhysicalBase,
                     out uint mappedPages,
                     out ulong segmentEndExclusive,
                     out ElfLoadError segmentError))
@@ -72,6 +93,8 @@ namespace OS.Kernel.Elf
             ref ElfParseResult result,
             Elf64ProgramHeader header,
             uint loadIndex,
+            ulong imageVirtualBase,
+            ulong imagePhysicalBase,
             out uint mappedPages,
             out ulong segmentEndExclusive,
             out ElfLoadError error)
@@ -101,7 +124,7 @@ namespace OS.Kernel.Elf
             PageFlags pageFlags = ProgramFlagsToPageFlags(header.Flags);
             LogMapSegment(loadIndex, header, segmentEndExclusive, pageCount);
 
-            if (!MapSegmentPages(pageStart, pageCount, pageFlags, out mappedPages))
+            if (!MapSegmentPages(pageStart, pageCount, pageFlags, imageVirtualBase, imagePhysicalBase, out mappedPages))
             {
                 error = ElfLoadError.SegmentPageMapFailed;
                 return false;
@@ -135,21 +158,37 @@ namespace OS.Kernel.Elf
             return true;
         }
 
-        private static bool MapSegmentPages(ulong virtualAddress, uint pageCount, PageFlags flags, out uint mappedPages)
+        private static bool MapSegmentPages(
+            ulong virtualAddress,
+            uint pageCount,
+            PageFlags flags,
+            ulong imageVirtualBase,
+            ulong imagePhysicalBase,
+            out uint mappedPages)
         {
             mappedPages = 0;
             ulong currentVirtual = virtualAddress;
 
             for (uint i = 0; i < pageCount; i++)
             {
-                ulong page = global::OS.Kernel.PhysicalMemory.AllocPage();
-                if (page == 0)
+                if (currentVirtual < imageVirtualBase)
                 {
                     RollbackMappedPages(virtualAddress, mappedPages);
                     return false;
                 }
 
-                OS.Kernel.Util.Memory.Zero((void*)page, (uint)PageSize);
+                ulong delta = currentVirtual - imageVirtualBase;
+                if (!TryAdd(imagePhysicalBase, delta, out ulong page))
+                {
+                    RollbackMappedPages(virtualAddress, mappedPages);
+                    return false;
+                }
+
+                if ((page & (PageSize - 1)) != 0)
+                {
+                    RollbackMappedPages(virtualAddress, mappedPages);
+                    return false;
+                }
 
                 if (!Pager.Map(currentVirtual, page, flags))
                 {
@@ -163,6 +202,74 @@ namespace OS.Kernel.Elf
                     RollbackMappedPages(virtualAddress, mappedPages);
                     return false;
                 }
+            }
+
+            return true;
+        }
+
+        private static bool TryGetImagePageSpan(ref ElfParseResult result, out ulong imagePageStart, out uint imagePageCount)
+        {
+            imagePageStart = 0;
+            imagePageCount = 0;
+
+            bool hasLoadSegments = false;
+            ulong lowestPageStart = 0;
+            ulong highestPageEndExclusive = 0;
+
+            for (ushort i = 0; i < result.Header.ProgramHeaderCount; i++)
+            {
+                if (!ElfParser.TryGetProgramHeader(ref result, i, out Elf64ProgramHeader header))
+                    return false;
+
+                if (header.Type != ElfProgramType.Load || header.MemorySize == 0)
+                    continue;
+
+                if (!TryAdd(header.VirtualAddress, header.MemorySize, out ulong segmentEndExclusive))
+                    return false;
+
+                ulong pageStart = AlignDown(header.VirtualAddress);
+                if (!TryAlignUp(segmentEndExclusive, out ulong pageEndExclusive))
+                    return false;
+
+                if (!hasLoadSegments)
+                {
+                    lowestPageStart = pageStart;
+                    highestPageEndExclusive = pageEndExclusive;
+                    hasLoadSegments = true;
+                    continue;
+                }
+
+                if (pageStart < lowestPageStart)
+                    lowestPageStart = pageStart;
+
+                if (pageEndExclusive > highestPageEndExclusive)
+                    highestPageEndExclusive = pageEndExclusive;
+            }
+
+            if (!hasLoadSegments || highestPageEndExclusive <= lowestPageStart)
+                return false;
+
+            ulong span = highestPageEndExclusive - lowestPageStart;
+            if ((span & (PageSize - 1)) != 0)
+                return false;
+
+            ulong pageCount = span / PageSize;
+            if (pageCount == 0 || pageCount > 0xFFFFFFFFUL)
+                return false;
+
+            imagePageStart = lowestPageStart;
+            imagePageCount = (uint)pageCount;
+            return true;
+        }
+
+        private static bool ZeroPhysicalPages(ulong basePhysicalAddress, uint pageCount)
+        {
+            ulong current = basePhysicalAddress;
+            for (uint i = 0; i < pageCount; i++)
+            {
+                OS.Kernel.Util.Memory.Zero((void*)current, (uint)PageSize);
+                if (i + 1 < pageCount && !TryAdd(current, PageSize, out current))
+                    return false;
             }
 
             return true;

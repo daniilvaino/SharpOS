@@ -1,0 +1,56 @@
+WSL command failed with exit code 1
+MSBuild version 17.4.8+6918b863a for .NET
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(21,21): warning CS0649: Field 'AppServiceTable.AbiVersion' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(12,21): warning CS0649: Field 'AppStartupBlock.Flags' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(16,22): warning CS0649: Field 'AppStartupBlock.EntryPoint' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(14,22): warning CS0649: Field 'AppStartupBlock.ImageBase' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(29,22): warning CS0649: Field 'AppServiceTable.ReadFileAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(30,22): warning CS0649: Field 'AppServiceTable.ReadDirEntryAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(24,22): warning CS0649: Field 'AppServiceTable.WriteUIntAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(22,21): warning CS0649: Field 'AppServiceTable.Reserved' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(31,22): warning CS0649: Field 'AppServiceTable.TryReadKeyAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(32,22): warning CS0649: Field 'AppServiceTable.RunAppAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(15,22): warning CS0649: Field 'AppStartupBlock.ImageEnd' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(28,22): warning CS0649: Field 'AppServiceTable.FileExistsAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(23,22): warning CS0649: Field 'AppServiceTable.WriteStringAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(24,20): warning CS0649: Field 'AppStartupBlock.ExitCode' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(19,22): warning CS0649: Field 'AppStartupBlock.StackTop' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(25,20): warning CS0649: Field 'AppStartupBlock.Reserved' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(11,21): warning CS0649: Field 'AppStartupBlock.AbiVersion' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(25,22): warning CS0649: Field 'AppServiceTable.WriteHexAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(22,22): warning CS0649: Field 'AppStartupBlock.ServiceTableAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(18,22): warning CS0649: Field 'AppStartupBlock.StackBase' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppStartupBlock.cs(21,22): warning CS0649: Field 'AppStartupBlock.MarkerAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(27,22): warning CS0649: Field 'AppServiceTable.ExitAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+/mnt/c/work/OS/apps/sdk/AppServiceTable.cs(26,22): warning CS0649: Field 'AppServiceTable.GetAbiVersionAddress' is never assigned to, and will always have its default value 0 [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+  HelloSharpFs -> /mnt/c/work/OS/apps/HelloSharpFs/bin/Release/net7.0/linux-x64/HelloSharpFs.dll
+  Generating native code
+EXEC : error : One or more errors occurred. (Invalid IL or CLR metadata) [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
+  System.AggregateException: One or more errors occurred. (Invalid IL or CLR metadata)
+   ---> Internal.TypeSystem.TypeSystemException+InvalidProgramException: Invalid IL or CLR metadata
+     at Internal.TypeSystem.ThrowHelper.ThrowInvalidProgramException() in /_/src/coreclr/tools/Common/TypeSystem/Common/ThrowHelper.cs:line 41
+     at Internal.JitInterface.CorInfoImpl.CompileMethodInternal(IMethodNode, MethodIL) in /_/src/coreclr/tools/Common/JitInterface/CorInfoImpl.cs:line 399
+     at Internal.JitInterface.CorInfoImpl.CompileMethod(MethodCodeNode, MethodIL ) in /_/src/coreclr/tools/aot/ILCompiler.RyuJit/JitInterface/CorInfoImpl.RyuJit.cs:line 63
+     at ILCompiler.RyuJitCompilation.CompileSingleMethod(CorInfoImpl, MethodCodeNode) in /_/src/coreclr/tools/aot/ILCompiler.RyuJit/Compiler/RyuJitCompilation.cs:line 202
+     at System.Threading.Tasks.Parallel.<>c__DisplayClass19_0`1.<ForWorker>b__1(RangeWorker&, Int32, Boolean& )
+  --- End of stack trace from previous location ---
+     at System.Threading.Tasks.Parallel.<>c__DisplayClass19_0`1.<ForWorker>b__1(RangeWorker&, Int32, Boolean& )
+     at System.Threading.Tasks.TaskReplicator.Replica.Execute()
+     --- End of inner exception stack trace ---
+     at System.Threading.Tasks.TaskReplicator.Run[TState](ReplicatableUserAction`1, ParallelOptions, Boolean)
+     at System.Threading.Tasks.Parallel.ForWorker[TLocal](Int32, Int32, ParallelOptions, Action`1, Action`2, Func`4, Func`1, Action`1)
+  --- End of stack trace from previous location ---
+     at System.Threading.Tasks.Parallel.ThrowSingleCancellationExceptionOrOtherException(ICollection, CancellationToken, Exception)
+     at System.Threading.Tasks.Parallel.ForWorker[TLocal](Int32, Int32, ParallelOptions, Action`1, Action`2, Func`4, Func`1, Action`1)
+     at System.Threading.Tasks.Parallel.ForEachWorker[TSource,TLocal](IEnumerable`1, ParallelOptions, Action`1, Action`2, Action`3, Func`4, Func`5, Func`1, Action`1)
+     at System.Threading.Tasks.Parallel.ForEach[TSource](IEnumerable`1, ParallelOptions, Action`1)
+     at ILCompiler.RyuJitCompilation.CompileMultiThreaded(List`1) in /_/src/coreclr/tools/aot/ILCompiler.RyuJit/Compiler/RyuJitCompilation.cs:line 150
+     at ILCompiler.RyuJitCompilation.ComputeDependencyNodeDependencies(List`1) in /_/src/coreclr/tools/aot/ILCompiler.RyuJit/Compiler/RyuJitCompilation.cs:line 140
+     at ILCompiler.DependencyAnalysisFramework.DependencyAnalyzer`2.ComputeMarkedNodes() in /_/src/coreclr/tools/aot/ILCompiler.DependencyAnalysisFramework/DependencyAnalyzer.cs:line 315
+     at ILCompiler.RyuJitCompilation.CompileInternal(String, ObjectDumper) in /_/src/coreclr/tools/aot/ILCompiler.RyuJit/Compiler/RyuJitCompilation.cs:line 88
+     at ILCompiler.Compilation.ILCompiler.ICompilation.Compile(String, ObjectDumper) in /_/src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/Compilation.cs:line 528
+     at ILCompiler.Program.Run(String[]) in /_/src/coreclr/tools/aot/ILCompiler/Program.cs:line 958
+     at ILCompiler.Program.Main(String[]) in /_/src/coreclr/tools/aot/ILCompiler/Program.cs:line 1150
+/usr/lib/dotnet/sdk/7.0.119/Sdks/Microsoft.DotNet.ILCompiler/build/Microsoft.NETCore.Native.targets(278,5): error MSB3073: The command ""/root/.nuget/packages/runtime.linux-x64.microsoft.dotnet.ilcompiler/7.0.19/tools/ilc" @"obj/Release/net7.0/linux-x64/native/HelloSharpFs.ilc.rsp"" exited with code 1. [/mnt/c/work/OS/apps/HelloSharpFs/HelloSharpFs.csproj]
