@@ -185,11 +185,23 @@ namespace OS.Kernel.Elf
             ProcessDiagnostics.DumpSummary(ref processImage);
 
             Log.Write(LogLevel.Info, "jump start");
-            if (!JumpStub.Run(
-                processImage.EntryPointPhysical,
-                processImage.StackTopPhysical,
-                processImage.StartupBlockPhysical,
-                out int returnExitCode))
+            ProcessManager.SetCurrent(ref processImage, ref loadedImage);
+            bool jumpOk;
+            int returnExitCode = 0;
+            try
+            {
+                jumpOk = JumpStub.Run(
+                    processImage.EntryPointPhysical,
+                    processImage.StackTopPhysical,
+                    processImage.StartupBlockPhysical,
+                    out returnExitCode);
+            }
+            finally
+            {
+                ProcessManager.ClearCurrent();
+            }
+
+            if (!jumpOk)
             {
                 CleanupProcessMappings(ref processImage, ref loadedImage);
                 return AppRunResult.JumpFailed;

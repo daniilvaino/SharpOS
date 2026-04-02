@@ -606,55 +606,124 @@ namespace OS.Kernel.Process
             if (bootInfo.FileReadAll == null)
                 return AppServiceStatus.Unsupported;
 
-            void* imagePointer = null;
-            uint imageSize = 0;
-            uint readStatus = bootInfo.FileReadAll(path, &imagePointer, &imageSize);
-            AppServiceStatus mappedReadStatus = MapBootFileStatus(readStatus);
-            if (mappedReadStatus != AppServiceStatus.Ok)
-                return mappedReadStatus;
-
-            MemoryBlock image = new MemoryBlock(imagePointer, imageSize);
-            if (!image.IsValid)
-                return AppServiceStatus.DeviceError;
-
-            if (!ElfParser.TryParse(image, out ElfParseResult parseResult, out _))
+            if (!ProcessManager.TrySuspendCurrentForNested(out MappingContext parentMappingContext, out bool parentSuspended))
                 return AppServiceStatus.Unsupported;
 
-            if (!TryValidateSegments(ref parseResult))
-                return AppServiceStatus.Unsupported;
+            if (parentSuspended)
+                Log.Write(LogLevel.Info, "nested app start");
 
-            if (!ElfLoader.TryLoad(ref parseResult, out ElfLoadedImage loadedImage, out _))
-                return AppServiceStatus.DeviceError;
+            AppServiceStatus result = AppServiceStatus.DeviceError;
+            ElfLoadedImage loadedImage = default;
+            ProcessImage processImage = default;
+            bool imageLoaded = false;
+            bool processBuilt = false;
 
-            if (!ProcessImageBuilder.TryBuild(ref loadedImage, 0, serviceAbi, appAbiVersion, out ProcessImage processImage))
+            try
             {
-                CleanupLoadedImageMappings(ref loadedImage);
-                return AppServiceStatus.DeviceError;
+                do
+                {
+                    void* imagePointer = null;
+                    uint imageSize = 0;
+                    uint readStatus = bootInfo.FileReadAll(path, &imagePointer, &imageSize);
+                    AppServiceStatus mappedReadStatus = MapBootFileStatus(readStatus);
+                    if (mappedReadStatus != AppServiceStatus.Ok)
+                    {
+                        result = mappedReadStatus;
+                        break;
+                    }
+
+                    MemoryBlock image = new MemoryBlock(imagePointer, imageSize);
+                    if (!image.IsValid)
+                    {
+                        result = AppServiceStatus.DeviceError;
+                        break;
+                    }
+
+                    if (!ElfParser.TryParse(image, out ElfParseResult parseResult, out _))
+                    {
+                        result = AppServiceStatus.Unsupported;
+                        break;
+                    }
+
+                    if (!TryValidateSegments(ref parseResult))
+                    {
+                        result = AppServiceStatus.Unsupported;
+                        break;
+                    }
+
+                    if (!ElfLoader.TryLoad(ref parseResult, out loadedImage, out _))
+                    {
+                        result = AppServiceStatus.DeviceError;
+                        break;
+                    }
+
+                    imageLoaded = true;
+
+                    if (!ProcessImageBuilder.TryBuild(ref loadedImage, 0, serviceAbi, appAbiVersion, out processImage))
+                    {
+                        result = AppServiceStatus.DeviceError;
+                        break;
+                    }
+
+                    processBuilt = true;
+
+                    if (!TryValidateProcess(ref processImage, appAbiVersion))
+                    {
+                        result = AppServiceStatus.DeviceError;
+                        break;
+                    }
+
+                    if (!JumpStub.Run(
+                        processImage.EntryPointPhysical,
+                        processImage.StackTopPhysical,
+                        processImage.StartupBlockPhysical,
+                        out int returnExitCode))
+                    {
+                        result = AppServiceStatus.DeviceError;
+                        break;
+                    }
+
+                    bool exitByService = TryConsumeExit(out int serviceExitCode);
+                    exitCode = exitByService ? serviceExitCode : returnExitCode;
+                    if (parentSuspended)
+                    {
+                        Log.Begin(LogLevel.Info);
+                        Console.Write("nested app exit code = ");
+                        Console.WriteInt(exitCode);
+                        Log.EndLine();
+                    }
+
+                    result = AppServiceStatus.Ok;
+                }
+                while (false);
+
+                if (processBuilt)
+                {
+                    if (!CleanupProcessMappings(ref processImage, ref loadedImage))
+                        result = AppServiceStatus.DeviceError;
+                }
+                else if (imageLoaded)
+                {
+                    CleanupLoadedImageMappings(ref loadedImage);
+                }
+            }
+            finally
+            {
+                if (parentSuspended)
+                {
+                    if (!ProcessManager.TryRestoreAfterNested(ref parentMappingContext))
+                    {
+                        Log.Write(LogLevel.Warn, "parent context restore failed");
+                        result = AppServiceStatus.DeviceError;
+                    }
+                    else
+                    {
+                        Log.Write(LogLevel.Info, "parent context restored");
+                    }
+                }
             }
 
-            if (!TryValidateProcess(ref processImage, appAbiVersion))
-            {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
-                return AppServiceStatus.DeviceError;
-            }
-
-            if (!JumpStub.Run(
-                processImage.EntryPointPhysical,
-                processImage.StackTopPhysical,
-                processImage.StartupBlockPhysical,
-                out int returnExitCode))
-            {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
-                return AppServiceStatus.DeviceError;
-            }
-
-            bool exitByService = TryConsumeExit(out int serviceExitCode);
-            exitCode = exitByService ? serviceExitCode : returnExitCode;
-
-            if (!CleanupProcessMappings(ref processImage, ref loadedImage))
-                return AppServiceStatus.DeviceError;
-
-            return AppServiceStatus.Ok;
+            return result;
         }
 
         private static bool TryValidateSegments(ref ElfParseResult result)

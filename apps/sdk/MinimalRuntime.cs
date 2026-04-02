@@ -219,6 +219,10 @@ namespace System
             private const string RuntimeLibrary = "*";
 
             [MethodImpl(MethodImplOptions.InternalCall)]
+            [RuntimeImport(RuntimeLibrary, "__managed__Startup")]
+            internal static extern void ManagedStartup();
+
+            [MethodImpl(MethodImplOptions.InternalCall)]
             [RuntimeImport(RuntimeLibrary, "RhNewString")]
             internal static extern string RhNewString(EETypePtr pEEType, int length);
         }

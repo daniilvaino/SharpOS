@@ -214,20 +214,20 @@ namespace SharpOS.AppSdk
             string s = "abc";
             string t = "xyz";
 
-            byte* labelObjS = stackalloc byte[] { (byte)'o', (byte)'b', (byte)'j', (byte)'_', (byte)'s', (byte)'=', 0 };
-            byte* labelObjT = stackalloc byte[] { (byte)'o', (byte)'b', (byte)'j', (byte)'_', (byte)'t', (byte)'=', 0 };
-            byte* labelPtrS = stackalloc byte[] { (byte)'p', (byte)'t', (byte)'r', (byte)'_', (byte)'s', (byte)'=', 0 };
-            byte* labelPtrT = stackalloc byte[] { (byte)'p', (byte)'t', (byte)'r', (byte)'_', (byte)'t', (byte)'=', 0 };
-            byte* labelLenProp = stackalloc byte[] { (byte)'l', (byte)'e', (byte)'n', (byte)'_', (byte)'p', (byte)'r', (byte)'o', (byte)'p', (byte)'=', 0 };
-            byte* labelLenRaw = stackalloc byte[] { (byte)'l', (byte)'e', (byte)'n', (byte)'_', (byte)'r', (byte)'a', (byte)'w', (byte)'=', 0 };
-            byte* labelOffset = stackalloc byte[] { (byte)'o', (byte)'f', (byte)'f', (byte)'s', (byte)'e', (byte)'t', (byte)'=', 0 };
-            byte* labelRaw0 = stackalloc byte[] { (byte)'r', (byte)'a', (byte)'w', (byte)'0', (byte)'=', 0 };
-            byte* labelRaw1 = stackalloc byte[] { (byte)'r', (byte)'a', (byte)'w', (byte)'1', (byte)'=', 0 };
-            byte* labelRaw2 = stackalloc byte[] { (byte)'r', (byte)'a', (byte)'w', (byte)'2', (byte)'=', 0 };
-            byte* labelC0 = stackalloc byte[] { (byte)'c', (byte)'0', (byte)'=', 0 };
-            byte* labelC1 = stackalloc byte[] { (byte)'c', (byte)'1', (byte)'=', 0 };
-            byte* labelC2 = stackalloc byte[] { (byte)'c', (byte)'2', (byte)'=', 0 };
-            byte* nl = stackalloc byte[] { (byte)'\n', 0 };
+            const string LabelObjS = "obj_s=";
+            const string LabelObjT = "obj_t=";
+            const string LabelPtrS = "ptr_s=";
+            const string LabelPtrT = "ptr_t=";
+            const string LabelLenProp = "len_prop=";
+            const string LabelLenRaw = "len_raw=";
+            const string LabelOffset = "offset=";
+            const string LabelRaw0 = "raw0=";
+            const string LabelRaw1 = "raw1=";
+            const string LabelRaw2 = "raw2=";
+            const string LabelC0 = "c0=";
+            const string LabelC1 = "c1=";
+            const string LabelC2 = "c2=";
+            const string NewLine = "\n";
 
             fixed (char* ps = s)
             fixed (char* pt = t)
@@ -240,61 +240,61 @@ namespace SharpOS.AppSdk
                 ulong raw1 = *((ulong*)(objS + 8));
                 ulong raw2 = *((ulong*)(objS + 16));
 
-                AppHost.WriteString(labelObjS);
+                AppHost.WriteString(LabelObjS);
                 AppHost.WriteHex((ulong)objS);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelObjT);
+                AppHost.WriteString(LabelObjT);
                 AppHost.WriteHex((ulong)objT);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelPtrS);
+                AppHost.WriteString(LabelPtrS);
                 AppHost.WriteHex((ulong)ps);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelPtrT);
+                AppHost.WriteString(LabelPtrT);
                 AppHost.WriteHex((ulong)pt);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelLenProp);
+                AppHost.WriteString(LabelLenProp);
                 AppHost.WriteUInt((uint)s.Length);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelLenRaw);
+                AppHost.WriteString(LabelLenRaw);
                 AppHost.WriteUInt((uint)rawLen);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelOffset);
+                AppHost.WriteString(LabelOffset);
                 AppHost.WriteUInt((uint)offsetToData);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelRaw0);
+                AppHost.WriteString(LabelRaw0);
                 AppHost.WriteHex(raw0);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelRaw1);
+                AppHost.WriteString(LabelRaw1);
                 AppHost.WriteHex(raw1);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelRaw2);
+                AppHost.WriteString(LabelRaw2);
                 AppHost.WriteHex(raw2);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
                 uint c0 = rawLen > 0 ? ps[0] : 0u;
                 uint c1 = rawLen > 1 ? ps[1] : 0u;
                 uint c2 = rawLen > 2 ? ps[2] : 0u;
 
-                AppHost.WriteString(labelC0);
+                AppHost.WriteString(LabelC0);
                 AppHost.WriteUInt(c0);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelC1);
+                AppHost.WriteString(LabelC1);
                 AppHost.WriteUInt(c1);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(labelC2);
+                AppHost.WriteString(LabelC2);
                 AppHost.WriteUInt(c2);
-                AppHost.WriteString(nl);
+                AppHost.WriteString(NewLine);
 
                 if (s.Length == 3 && rawLen == 3 && c0 == (uint)'a' && c1 == (uint)'b' && c2 == (uint)'c')
                     return 1;
