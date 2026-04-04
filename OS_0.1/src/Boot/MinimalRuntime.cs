@@ -35,7 +35,9 @@ namespace System
 
     public struct Nullable<T> where T : struct { }
 
-    public sealed class String { public readonly int Length; }
+    public abstract class Type { }
+    public class RuntimeType : Type { }
+
     public abstract class Array { }
     public abstract class Delegate { }
     public abstract class MulticastDelegate : Delegate { }
@@ -137,6 +139,7 @@ namespace Internal.Runtime.CompilerHelpers
 
 namespace OS.Boot
 {
+    using SharpOS.Std.NoRuntime;
     using System.Runtime;
 
     internal static unsafe class NativeMemoryStubs
@@ -144,51 +147,19 @@ namespace OS.Boot
         [RuntimeExport("memset")]
         private static void* Memset(void* destination, int value, ulong count)
         {
-            byte* dst = (byte*)destination;
-            byte fill = (byte)value;
-
-            for (ulong i = 0; i < count; i++)
-                dst[i] = fill;
-
-            return destination;
+            return MemoryPrimitives.Memset(destination, (byte)value, count);
         }
 
         [RuntimeExport("memcpy")]
         private static void* Memcpy(void* destination, void* source, ulong count)
         {
-            byte* dst = (byte*)destination;
-            byte* src = (byte*)source;
-
-            for (ulong i = 0; i < count; i++)
-                dst[i] = src[i];
-
-            return destination;
+            return MemoryPrimitives.Memcpy(destination, source, count);
         }
 
         [RuntimeExport("memmove")]
         private static void* Memmove(void* destination, void* source, ulong count)
         {
-            byte* dst = (byte*)destination;
-            byte* src = (byte*)source;
-
-            if (dst == src || count == 0)
-                return destination;
-
-            if (dst < src || dst >= src + count)
-            {
-                for (ulong i = 0; i < count; i++)
-                    dst[i] = src[i];
-            }
-            else
-            {
-                while (count > 0)
-                {
-                    count--;
-                    dst[count] = src[count];
-                }
-            }
-
-            return destination;
+            return MemoryPrimitives.Memmove(destination, source, count);
         }
     }
 }

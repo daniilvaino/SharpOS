@@ -54,14 +54,19 @@ namespace HelloSharpFs
             AppHost.WriteString(NewLine);
 
             uint result = StringExperimentSuite.RunSelected(out uint testId);
+            if (testId != 0)
+            {
+                AppHost.WriteString(TestIdPrefix);
+                AppHost.WriteUInt(testId);
+                AppHost.WriteString(NewLine);
 
-            AppHost.WriteString(TestIdPrefix);
-            AppHost.WriteUInt(testId);
-            AppHost.WriteString(NewLine);
+                AppHost.WriteString(ResultPrefix);
+                AppHost.WriteUInt(result);
+                AppHost.WriteString(NewLine);
 
-            AppHost.WriteString(ResultPrefix);
-            AppHost.WriteUInt(result);
-            AppHost.WriteString(NewLine);
+                AppHost.Exit(ExitCode);
+                return;
+            }
 
             uint selectedIndex = 0;
             uint visibleCount = 0;

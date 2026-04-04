@@ -13,6 +13,12 @@ namespace SharpOS.AppSdk
 #elif EXP_TEST_03
             testId = 3;
             return Test03_Indexer_LoopSum();
+#elif EXP_TEST_07
+            testId = 7;
+            return Test07_StringEqualsLiteral();
+#elif EXP_TEST_08
+            testId = 8;
+            return Test08_StringNotEquals();
 #elif EXP_TEST_09
             testId = 9;
             return Test09_AsciiEncode_Indexer();
@@ -69,6 +75,22 @@ namespace SharpOS.AppSdk
                 sum += s[i];
 
             return sum;
+        }
+#endif
+
+#if EXP_TEST_07
+        private static uint Test07_StringEqualsLiteral()
+        {
+            string s = "abc";
+            return s == "abc" ? 1u : 0u;
+        }
+#endif
+
+#if EXP_TEST_08
+        private static uint Test08_StringNotEquals()
+        {
+            string s = "abc";
+            return s != "abd" ? 1u : 0u;
         }
 #endif
 

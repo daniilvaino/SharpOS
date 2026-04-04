@@ -46,64 +46,6 @@ namespace System
     public abstract class Type { }
     public class RuntimeType : Type { }
 
-    [StructLayout(LayoutKind.Sequential)]
-    public sealed unsafe class String
-    {
-        public static readonly string Empty = "";
-        public readonly int Length;
-        private char _firstChar;
-
-        public String(char c, int count)
-        {
-            Length = count;
-            _firstChar = c;
-        }
-
-        public char this[int index]
-        {
-            get
-            {
-                fixed (char* p = &_firstChar)
-                {
-                    return p[index];
-                }
-            }
-        }
-
-        public ref char GetPinnableReference()
-        {
-            return ref _firstChar;
-        }
-
-        public static string Concat(string str0, string str1)
-        {
-            return SharpOS.AppSdk.StringAlgorithms.Concat(str0, str1);
-        }
-
-        private static string Ctor(char c, int count)
-        {
-            if (count <= 0)
-                return Empty;
-
-            string result = FastAllocateString(count);
-            fixed (char* dst = &result.GetPinnableReference())
-            {
-                for (int i = 0; i < count; i++)
-                    dst[i] = c;
-            }
-
-            return result;
-        }
-
-        private static string FastAllocateString(int length)
-        {
-            if (length <= 0)
-                return Empty;
-
-            return Runtime.RuntimeImports.RhNewString(EETypePtr.EETypePtrOf<string>(), length);
-        }
-    }
-
     public unsafe struct EETypePtr
     {
         internal Internal.Runtime.MethodTable* _value;
@@ -308,86 +250,27 @@ namespace Internal.Runtime.CompilerHelpers
 
 namespace SharpOS.AppSdk
 {
+    using SharpOS.Std.NoRuntime;
     using System.Runtime;
-
-    internal static unsafe class StringAlgorithms
-    {
-        internal static string Concat(string str0, string str1)
-        {
-            if (str0 == null)
-                str0 = string.Empty;
-
-            if (str1 == null)
-                str1 = string.Empty;
-
-            int len0 = str0.Length;
-            int len1 = str1.Length;
-            int total = len0 + len1;
-            if (total <= 0)
-                return string.Empty;
-
-            string result = new string('\0', total);
-            fixed (char* dst = result)
-            {
-                for (int i = 0; i < len0; i++)
-                    dst[i] = str0[i];
-
-                for (int i = 0; i < len1; i++)
-                    dst[len0 + i] = str1[i];
-            }
-
-            return result;
-        }
-    }
 
     internal static unsafe class NativeMemoryStubs
     {
         [RuntimeExport("memset")]
         private static void* Memset(void* destination, int value, ulong count)
         {
-            byte* dst = (byte*)destination;
-            byte fill = (byte)value;
-            for (ulong i = 0; i < count; i++)
-                dst[i] = fill;
-
-            return destination;
+            return MemoryPrimitives.Memset(destination, (byte)value, count);
         }
 
         [RuntimeExport("memcpy")]
         private static void* Memcpy(void* destination, void* source, ulong count)
         {
-            byte* dst = (byte*)destination;
-            byte* src = (byte*)source;
-            for (ulong i = 0; i < count; i++)
-                dst[i] = src[i];
-
-            return destination;
+            return MemoryPrimitives.Memcpy(destination, source, count);
         }
 
         [RuntimeExport("memmove")]
         private static void* Memmove(void* destination, void* source, ulong count)
         {
-            byte* dst = (byte*)destination;
-            byte* src = (byte*)source;
-
-            if (dst == src || count == 0)
-                return destination;
-
-            if (dst < src || dst >= src + count)
-            {
-                for (ulong i = 0; i < count; i++)
-                    dst[i] = src[i];
-            }
-            else
-            {
-                while (count > 0)
-                {
-                    count--;
-                    dst[count] = src[count];
-                }
-            }
-
-            return destination;
+            return MemoryPrimitives.Memmove(destination, source, count);
         }
     }
 }
