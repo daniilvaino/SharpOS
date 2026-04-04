@@ -11,9 +11,18 @@ namespace HelloSharpFs
         private const string AbiPrefix = "abi=";
         private const string TestIdPrefix = "test_id=";
         private const string ResultPrefix = "test_result=";
-        private const string NestedStatusPrefix = "nested_status=";
-        private const string NestedExitPrefix = " nested_exit=";
-        private const string NestedPath = "\\EFI\\BOOT\\HELLO.ELF";
+        private const string BootDirectory = "\\EFI\\BOOT";
+        private const uint MaxDirectoryScanEntries = 256;
+        private const uint MaxNameBytes = 256;
+        private const ushort ScanCodeUp = 0x01;
+        private const ushort ScanCodeDown = 0x02;
+        private const ushort ScanCodeRight = 0x03;
+        private const ushort ScanCodeLeft = 0x04;
+        private const ushort ScanCodeEscape = 0x17;
+        private const ushort CharEnter = 0x000D;
+        private const ushort CharEscape = 0x001B;
+        private const ushort CharRLower = (ushort)'r';
+        private const ushort CharRUpper = (ushort)'R';
         private const string NewLine = "\n";
 
         private static int Main()
@@ -54,171 +63,268 @@ namespace HelloSharpFs
             AppHost.WriteUInt(result);
             AppHost.WriteString(NewLine);
 
-            RunNestedSmoke();
-
-            byte* entryname = stackalloc byte[256];
-            FileEntry fileEntry;
-
             uint selectedIndex = 0;
-            uint cachedEntryCount = 0;
-            for (;  ; )
+            uint visibleCount = 0;
+            bool needsRedraw = true;
+
+            for (; ; )
             {
-                bool enterNow = false;
-                KeyInfo keyInfo;
-                if (AppHost.TryReadKey(out keyInfo) == AppServiceStatus.Ok)
+                if (needsRedraw)
                 {
-                    if (keyInfo.ScanCode == 0x03 && cachedEntryCount != 0)
+                    RenderLauncher(selectedIndex, out visibleCount);
+                    if (visibleCount == 0)
                     {
-                        if (selectedIndex < cachedEntryCount - 1)
-                            selectedIndex += 1;
-                        else
-                            selectedIndex = 0;
+                        selectedIndex = 0;
+                    }
+                    else if (selectedIndex >= visibleCount)
+                    {
+                        selectedIndex = visibleCount - 1;
                     }
 
-                    if (keyInfo.ScanCode == 0x04 && cachedEntryCount != 0)
-                    {
-                        if (selectedIndex == 0)
-                            selectedIndex = cachedEntryCount - 1;
-                        else
-                            selectedIndex -= 1;
-                    }
-
-                    if (keyInfo.UnicodeChar == 0x000D)
-                    {
-                        AppHost.WriteString("ENTER\n");
-                        enterNow = true;
-                    }
-                    
-                    if (keyInfo.UnicodeChar == 0x001B || keyInfo.ScanCode == 0x0017)
-                    {
-                        AppHost.Exit(ExitCode);
-                        return;
-                    }
+                    needsRedraw = false;
                 }
-                else
+
+                KeyInfo keyInfo;
+                if (AppHost.TryReadKey(out keyInfo) != AppServiceStatus.Ok)
+                    continue;
+
+                if (IsEscape(keyInfo))
                 {
+                    AppHost.Exit(ExitCode);
+                    return;
+                }
+
+                if (IsRefresh(keyInfo))
+                {
+                    needsRedraw = true;
                     continue;
                 }
 
-                string dir = @"\EFI\BOOT";
-                uint currentEntryCount = 0;
-                for (uint i = 0; i < 256; i++)
+                if (IsNext(keyInfo) && visibleCount != 0)
                 {
-                    var appServiceStatus = AppHost.TryReadDirEntry(dir, i, entryname, 256, out fileEntry);
-                    if (appServiceStatus == AppServiceStatus.Ok)
+                    if (selectedIndex + 1 >= visibleCount)
                     {
-                        currentEntryCount += 1;
-                        string filename = AppString.FromAscii(entryname, fileEntry.NameLength);
-                        if (!enterNow)
-                        {
-                            if (i == selectedIndex)
-                            {
-                                AppHost.WriteString("[");
-                            }
-                            //else AppHost.WriteString(" ");
-                            AppHost.WriteString(filename);
-                            if (i == selectedIndex)
-                            {
-                                AppHost.WriteString("]");
-                            }
-                            AppHost.WriteString(" ");
-                        }
-                        if (enterNow)
-                        {
-                            if (i == selectedIndex)
-                            {
-                                string path = StringAlgorithms.Concat(dir, @"\");
-                                path = StringAlgorithms.Concat(path, filename);
-                                enterNow = false;
-                                int childExit;
-                                ResolveLaunchAbi(filename, out uint abiVersion, out AppServiceAbi serviceAbi);
-                                AppServiceStatus runStatus = AppHost.TryRunApp(path, abiVersion, serviceAbi, out childExit);
-
-                                AppHost.WriteString("run_status=");
-                                AppHost.WriteUInt((uint)runStatus);
-                                AppHost.WriteString(" run_exit=");
-                                AppHost.WriteUInt((uint)childExit);
-                                AppHost.WriteString("\n");
-                                break;
-                            }
-                        }
-
-                    }
-                    else if (appServiceStatus == AppServiceStatus.EndOfDirectory)
-                    {
-                        break;
+                        selectedIndex = 0;
                     }
                     else
                     {
-                        AppHost.Exit(90);
-                        return;
+                        selectedIndex++;
                     }
-                    
+
+                    needsRedraw = true;
+                    continue;
                 }
 
-                cachedEntryCount = currentEntryCount;
-                if (cachedEntryCount == 0)
+                if (IsPrevious(keyInfo) && visibleCount != 0)
                 {
-                    selectedIndex = 0;
-                }
-                else if (selectedIndex >= cachedEntryCount)
-                {
-                    selectedIndex = cachedEntryCount - 1;
+                    if (selectedIndex == 0)
+                    {
+                        selectedIndex = visibleCount - 1;
+                    }
+                    else
+                    {
+                        selectedIndex--;
+                    }
+
+                    needsRedraw = true;
+                    continue;
                 }
 
-                AppHost.WriteString(NewLine);
+                if (!IsEnter(keyInfo))
+                    continue;
+
+                if (visibleCount == 0)
+                {
+                    WriteResultBlock("none", AppServiceStatus.NotFound, 0);
+                    needsRedraw = true;
+                    continue;
+                }
+
+                byte* selectedNameBuffer = stackalloc byte[(int)MaxNameBytes];
+                if (!TryRunSelectedEntry(selectedIndex, selectedNameBuffer, MaxNameBytes, out uint selectedNameLength, out AppServiceStatus runStatus, out int childExitCode))
+                {
+                    WriteResultBlock("none", AppServiceStatus.NotFound, 0);
+                    needsRedraw = true;
+                    continue;
+                }
+
+                string selectedName = AppString.FromAscii(selectedNameBuffer, selectedNameLength);
+                WriteResultBlock(selectedName, runStatus, childExitCode);
+                needsRedraw = true;
             }
-            
-
-            AppHost.Exit(ExitCode);
         }
 
-        private static void RunNestedSmoke()
+        private static void RenderLauncher(uint selectedIndex, out uint visibleCount)
         {
-            int childExitCode = 0;
-            AppServiceStatus status = AppHost.TryRunApp(
-                NestedPath,
-                AppStartupBlock.AbiVersionV1,
-                AppServiceAbi.WindowsX64,
-                out childExitCode);
+            visibleCount = 0;
+            byte* entryName = stackalloc byte[(int)MaxNameBytes];
+            FileEntry fileEntry = default;
 
-            AppHost.WriteString(NestedStatusPrefix);
-            AppHost.WriteUInt((uint)status);
-            AppHost.WriteString(NestedExitPrefix);
-            AppHost.WriteUInt((uint)childExitCode);
+            AppHost.WriteString("================ LAUNCHER ================\n");
+            for (uint i = 0; i < MaxDirectoryScanEntries; i++)
+            {
+                AppServiceStatus status = AppHost.TryReadDirEntry(BootDirectory, i, entryName, MaxNameBytes, out fileEntry);
+                if (status == AppServiceStatus.EndOfDirectory)
+                    break;
+
+                if (status != AppServiceStatus.Ok)
+                    continue;
+
+                if (!IsVisibleLauncherEntry(entryName, fileEntry.NameLength, fileEntry.IsDirectory))
+                    continue;
+
+                string fileName = AppString.FromAscii(entryName, fileEntry.NameLength);
+                AppHost.WriteString(visibleCount == selectedIndex ? "> " : "  ");
+                AppHost.WriteString(fileName);
+                AppHost.WriteString(NewLine);
+                visibleCount++;
+            }
+
+            if (visibleCount == 0)
+            {
+                AppHost.WriteString("(no .ELF files)\n");
+            }
+
+            AppHost.WriteString(NewLine);
+            AppHost.WriteString("Enter=run  R=refresh  Esc=exit\n");
+            AppHost.WriteString("==========================================\n");
+        }
+
+        private static bool TryRunSelectedEntry(
+            uint selectedIndex,
+            byte* selectedNameBuffer,
+            uint selectedNameBufferCapacity,
+            out uint selectedNameLength,
+            out AppServiceStatus runStatus,
+            out int exitCode)
+        {
+            selectedNameLength = 0;
+            runStatus = AppServiceStatus.NotFound;
+            exitCode = 0;
+            if (selectedNameBuffer == null || selectedNameBufferCapacity == 0)
+                return false;
+
+            byte* entryName = stackalloc byte[(int)MaxNameBytes];
+            FileEntry fileEntry = default;
+            uint visibleIndex = 0;
+
+            for (uint i = 0; i < MaxDirectoryScanEntries; i++)
+            {
+                AppServiceStatus status = AppHost.TryReadDirEntry(BootDirectory, i, entryName, MaxNameBytes, out fileEntry);
+                if (status == AppServiceStatus.EndOfDirectory)
+                    break;
+
+                if (status != AppServiceStatus.Ok)
+                    continue;
+
+                if (!IsVisibleLauncherEntry(entryName, fileEntry.NameLength, fileEntry.IsDirectory))
+                    continue;
+
+                if (visibleIndex == selectedIndex)
+                {
+                    if (fileEntry.NameLength + 1 > selectedNameBufferCapacity)
+                        return false;
+
+                    for (uint j = 0; j < fileEntry.NameLength; j++)
+                        selectedNameBuffer[j] = entryName[j];
+
+                    selectedNameBuffer[fileEntry.NameLength] = 0;
+                    selectedNameLength = fileEntry.NameLength;
+
+                    string selectedName = AppString.FromAscii(selectedNameBuffer, selectedNameLength);
+                    string path = StringAlgorithms.Concat(BootDirectory, @"\");
+                    path = StringAlgorithms.Concat(path, selectedName);
+                    runStatus = AppHost.TryRunApp(path, out exitCode);
+                    return true;
+                }
+
+                visibleIndex++;
+            }
+
+            return false;
+        }
+
+        private static bool IsVisibleLauncherEntry(byte* name, uint nameLength, uint isDirectory)
+        {
+            if (name == null || nameLength < 4 || isDirectory != 0)
+                return false;
+
+            byte c0 = name[nameLength - 4];
+            byte c1 = name[nameLength - 3];
+            byte c2 = name[nameLength - 2];
+            byte c3 = name[nameLength - 1];
+
+            if (c0 != (byte)'.')
+                return false;
+
+            return IsAsciiLetter(c1, (byte)'E') &&
+                   IsAsciiLetter(c2, (byte)'L') &&
+                   IsAsciiLetter(c3, (byte)'F');
+        }
+
+        private static bool IsAsciiLetter(byte value, byte upper)
+        {
+            if (value == upper)
+                return true;
+
+            return value == (byte)(upper + 32);
+        }
+
+        private static bool IsEnter(KeyInfo keyInfo)
+        {
+            return keyInfo.UnicodeChar == CharEnter;
+        }
+
+        private static bool IsEscape(KeyInfo keyInfo)
+        {
+            return keyInfo.UnicodeChar == CharEscape || keyInfo.ScanCode == ScanCodeEscape;
+        }
+
+        private static bool IsRefresh(KeyInfo keyInfo)
+        {
+            return keyInfo.UnicodeChar == CharRLower || keyInfo.UnicodeChar == CharRUpper;
+        }
+
+        private static bool IsNext(KeyInfo keyInfo)
+        {
+            return keyInfo.ScanCode == ScanCodeDown || keyInfo.ScanCode == ScanCodeRight;
+        }
+
+        private static bool IsPrevious(KeyInfo keyInfo)
+        {
+            return keyInfo.ScanCode == ScanCodeUp || keyInfo.ScanCode == ScanCodeLeft;
+        }
+
+        private static void WriteResultBlock(string name, AppServiceStatus status, int exitCode)
+        {
+            AppHost.WriteString("---- app result ----\n");
+            AppHost.WriteString("name: ");
+            AppHost.WriteString(name);
+            AppHost.WriteString(NewLine);
+            AppHost.WriteString("status: ");
+            AppHost.WriteString(StatusName(status));
+            AppHost.WriteString(NewLine);
+            AppHost.WriteString("exit: ");
+            AppHost.WriteUInt((uint)exitCode);
+            AppHost.WriteString(NewLine);
+            AppHost.WriteString("--------------------\n");
             AppHost.WriteString(NewLine);
         }
 
-        private static void ResolveLaunchAbi(string filename, out uint abiVersion, out AppServiceAbi serviceAbi)
+        private static string StatusName(AppServiceStatus status)
         {
-            if (IsHelloCsElfName(filename))
+            switch (status)
             {
-                abiVersion = AppStartupBlock.AbiVersionV2;
-                serviceAbi = AppServiceAbi.SystemV;
-                return;
+                case AppServiceStatus.Ok: return "ok";
+                case AppServiceStatus.NoData: return "no_data";
+                case AppServiceStatus.NotFound: return "not_found";
+                case AppServiceStatus.EndOfDirectory: return "end_of_directory";
+                case AppServiceStatus.BufferTooSmall: return "buffer_too_small";
+                case AppServiceStatus.InvalidParameter: return "invalid_parameter";
+                case AppServiceStatus.Unsupported: return "unsupported";
+                case AppServiceStatus.DeviceError: return "device_error";
+                default: return "unknown";
             }
-
-            abiVersion = AppStartupBlock.AbiVersionV1;
-            serviceAbi = AppServiceAbi.WindowsX64;
-        }
-
-        private static bool IsHelloCsElfName(string filename)
-        {
-            if (filename == null || filename.Length != 11)
-                return false;
-
-            return
-                filename[0] == 'H' &&
-                filename[1] == 'E' &&
-                filename[2] == 'L' &&
-                filename[3] == 'L' &&
-                filename[4] == 'O' &&
-                filename[5] == 'C' &&
-                filename[6] == 'S' &&
-                filename[7] == '.' &&
-                filename[8] == 'E' &&
-                filename[9] == 'L' &&
-                filename[10] == 'F';
         }
 
         internal static unsafe class AppString

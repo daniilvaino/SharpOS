@@ -4,5 +4,6 @@ namespace OS.Kernel.Process
     {
         WindowsX64 = 0,
         SystemV = 1,
+        Auto = 0xFFFFFFFF,
     }
 }

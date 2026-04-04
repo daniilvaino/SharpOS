@@ -8,10 +8,10 @@ namespace OS.Kernel.File
 
         public static void DumpDirectory(string path)
         {
-            Log.Begin(LogLevel.Info);
-            Console.Write("dir ");
-            Console.Write(path);
-            Log.EndLine();
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("dir ");
+            UiText.Write(path);
+            DebugLog.EndLine();
 
             uint index = 0;
             char* nameBuffer = stackalloc char[(int)FileInfoLite.MaxNameChars];
@@ -19,26 +19,26 @@ namespace OS.Kernel.File
             while (index < MaxDumpEntries &&
                 FileSystem.TryReadDirectoryEntry(path, index, nameBuffer, FileInfoLite.MaxNameChars, out uint nameLength, out uint isDirectory))
             {
-                Log.Begin(LogLevel.Info);
-                Console.Write(isDirectory != 0 ? "dir: " : "file: ");
+                DebugLog.Begin(LogLevel.Info);
+                UiText.Write(isDirectory != 0 ? "dir: " : "file: ");
                 WriteName(nameBuffer, nameLength);
-                Log.EndLine();
+                DebugLog.EndLine();
 
                 index++;
             }
 
             uint listed = FileSystem.List(path);
 
-            Log.Begin(LogLevel.Info);
-            Console.Write("dir entries: ");
-            Console.WriteUInt(listed);
-            Log.EndLine();
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("dir entries: ");
+            UiText.WriteUInt(listed);
+            DebugLog.EndLine();
         }
 
         private static void WriteName(char* name, uint nameLength)
         {
             for (uint i = 0; i < nameLength; i++)
-                Console.WriteChar(name[i]);
+                UiText.WriteChar(name[i]);
         }
     }
 }

@@ -26,18 +26,18 @@ namespace OS.Kernel.Elf
 
         public static void Run(BootInfo bootInfo)
         {
-            Log.Write(LogLevel.Info, "elf validation start");
+            DebugLog.Write(LogLevel.Info, "elf validation start");
 
             if (!FileSystem.Init())
             {
-                Log.Write(LogLevel.Warn, "fs init failed");
-                Log.Write(LogLevel.Info, "elf validation done");
+                DebugLog.Write(LogLevel.Warn, "fs init failed");
+                DebugLog.Write(LogLevel.Info, "elf validation done");
                 Platform.Shutdown();
                 Platform.Halt();
                 return;
             }
 
-            Log.Write(LogLevel.Info, "fs init ok");
+            DebugLog.Write(LogLevel.Info, "fs init ok");
             FileDiagnostics.DumpDirectory(BootDirectoryPath);
 
             ExternalElfApp hello = default;
@@ -80,18 +80,18 @@ namespace OS.Kernel.Elf
             RunAppAndAccumulate(ref helloCs, ref passed, ref failed);
             RunAppAndAccumulate(ref marker, ref passed, ref failed);
 
-            Log.Write(LogLevel.Info, "app batch summary");
-            Log.Begin(LogLevel.Info);
-            Console.Write("passed: ");
-            Console.WriteUInt(passed);
-            Log.EndLine();
+            DebugLog.Write(LogLevel.Info, "app batch summary");
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("passed: ");
+            UiText.WriteUInt(passed);
+            DebugLog.EndLine();
 
-            Log.Begin(LogLevel.Info);
-            Console.Write("failed: ");
-            Console.WriteUInt(failed);
-            Log.EndLine();
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("failed: ");
+            UiText.WriteUInt(failed);
+            DebugLog.EndLine();
 
-            Log.Write(LogLevel.Info, "elf validation done");
+            DebugLog.Write(LogLevel.Info, "elf validation done");
             Platform.Shutdown();
             Platform.Halt();
         }
@@ -100,10 +100,10 @@ namespace OS.Kernel.Elf
         {
             if (app.OptionalIfMissing && !FileSystem.Exists(app.Path))
             {
-                Log.Begin(LogLevel.Warn);
-                Console.Write("optional app not found: ");
-                Console.Write(app.Path);
-                Log.EndLine();
+                DebugLog.Begin(LogLevel.Warn);
+                UiText.Write("optional app not found: ");
+                UiText.Write(app.Path);
+                DebugLog.EndLine();
                 return;
             }
 
@@ -115,20 +115,20 @@ namespace OS.Kernel.Elf
             }
 
             failed++;
-            Log.Begin(LogLevel.Warn);
-            Console.Write("app failed: ");
-            Console.Write(app.Path);
-            Console.Write(" reason=");
-            Console.Write(ResultName(result));
-            Log.EndLine();
+            DebugLog.Begin(LogLevel.Warn);
+            UiText.Write("app failed: ");
+            UiText.Write(app.Path);
+            UiText.Write(" reason=");
+            UiText.Write(ResultName(result));
+            DebugLog.EndLine();
         }
 
         private static AppRunResult RunApp(ref ExternalElfApp app)
         {
-            Log.Begin(LogLevel.Info);
-            Console.Write("app run start: ");
-            Console.Write(app.Path);
-            Log.EndLine();
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("app run start: ");
+            UiText.Write(app.Path);
+            DebugLog.EndLine();
 
             if (!FileSystem.Exists(app.Path))
                 return AppRunResult.FileNotFound;
@@ -137,11 +137,11 @@ namespace OS.Kernel.Elf
                 return AppRunResult.ReadFailed;
 
             MemoryBlock image = fileBuffer.AsMemoryBlock();
-            Log.Write(LogLevel.Info, "open elf file ok");
-            Log.Begin(LogLevel.Info);
-            Console.Write("read elf bytes = ");
-            Console.WriteUInt(fileBuffer.Length);
-            Log.EndLine();
+            DebugLog.Write(LogLevel.Info, "open elf file ok");
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("read elf bytes = ");
+            UiText.WriteUInt(fileBuffer.Length);
+            DebugLog.EndLine();
 
             if (!ElfParser.TryParse(image, out ElfParseResult parseResult, out ElfParseError parseError))
             {
@@ -163,7 +163,7 @@ namespace OS.Kernel.Elf
             ElfLoadValidation.Run(ref parseResult, ref loadedImage);
             ElfDiagnostics.DumpLoadedImage(loadedImage);
 
-            Log.Write(LogLevel.Info, "process build start");
+            DebugLog.Write(LogLevel.Info, "process build start");
             ulong markerVirtualAddress = app.ValidateMarker ? ElfAppContract.MarkerVirtualAddress : 0;
             if (!ProcessImageBuilder.TryBuild(
                 ref loadedImage,
@@ -184,7 +184,7 @@ namespace OS.Kernel.Elf
 
             ProcessDiagnostics.DumpSummary(ref processImage);
 
-            Log.Write(LogLevel.Info, "jump start");
+            DebugLog.Write(LogLevel.Info, "jump start");
             ProcessManager.SetCurrent(ref processImage, ref loadedImage);
             bool jumpOk;
             int returnExitCode = 0;
@@ -211,18 +211,18 @@ namespace OS.Kernel.Elf
             processImage.ExitCode = exitByService ? serviceExitCode : returnExitCode;
 
             if (!exitByService)
-                Log.Write(LogLevel.Warn, "process returned without Exit");
+                DebugLog.Write(LogLevel.Warn, "process returned without Exit");
 
-            Log.Write(LogLevel.Info, "process returned");
-            Log.Begin(LogLevel.Info);
-            Console.Write("process exit code = ");
-            Console.WriteInt(processImage.ExitCode);
-            Log.EndLine();
+            DebugLog.Write(LogLevel.Info, "process returned");
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("process exit code = ");
+            UiText.WriteInt(processImage.ExitCode);
+            DebugLog.EndLine();
 
-            Log.Begin(LogLevel.Info);
-            Console.Write("exit source = ");
-            Console.Write(exitByService ? "service" : "return");
-            Log.EndLine();
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("exit source = ");
+            UiText.Write(exitByService ? "service" : "return");
+            DebugLog.EndLine();
 
             if (processImage.ExitCode != app.ExpectedExitCode)
             {
@@ -246,7 +246,7 @@ namespace OS.Kernel.Elf
         {
             if (result.Header.Type != ElfType.Executable)
             {
-                Log.Write(LogLevel.Warn, "unsupported ELF type: only ET_EXEC is supported");
+                DebugLog.Write(LogLevel.Warn, "unsupported ELF type: only ET_EXEC is supported");
                 return false;
             }
 
@@ -259,13 +259,13 @@ namespace OS.Kernel.Elf
 
                 if (header.Type == ElfProgramType.Interpreter)
                 {
-                    Log.Write(LogLevel.Warn, "unsupported ELF program header: PT_INTERP");
+                    DebugLog.Write(LogLevel.Warn, "unsupported ELF program header: PT_INTERP");
                     return false;
                 }
 
                 if (header.Type == ElfProgramType.Dynamic)
                 {
-                    Log.Write(LogLevel.Warn, "unsupported ELF program header: PT_DYNAMIC");
+                    DebugLog.Write(LogLevel.Warn, "unsupported ELF program header: PT_DYNAMIC");
                     return false;
                 }
 
@@ -321,10 +321,10 @@ namespace OS.Kernel.Elf
             if (!TryReadMappedUInt32(ElfAppContract.MarkerVirtualAddress, out uint markerValue))
                 return false;
 
-            Log.Begin(LogLevel.Info);
-            Console.Write("process wrote marker = 0x");
-            Console.WriteHex(markerValue, 8);
-            Log.EndLine();
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("process wrote marker = 0x");
+            UiText.WriteHex(markerValue, 8);
+            DebugLog.EndLine();
 
             return markerValue == ElfAppContract.MarkerExpectedValue;
         }
@@ -356,7 +356,7 @@ namespace OS.Kernel.Elf
             if (!imageCleanupOk || !stackCleanupOk)
                 return false;
 
-            Log.Write(LogLevel.Info, "app mappings released");
+            DebugLog.Write(LogLevel.Info, "app mappings released");
             return true;
         }
 
@@ -422,3 +422,4 @@ namespace OS.Kernel.Elf
         }
     }
 }
+

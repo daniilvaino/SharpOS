@@ -334,6 +334,26 @@ function New-MarkerElfImage {
     return (New-BaseElfImage -TextSegment $text -DataSegment (New-DefaultDataSegment))
 }
 
+function New-AppAbiManifest {
+    param(
+        [uint16]$AppAbiVersion,
+        [uint16]$ServiceAbi,
+        [uint32]$Flags = 0
+    )
+
+    [byte[]]$bytes = New-Object byte[] 16
+    $bytes[0] = [byte][char]'S'
+    $bytes[1] = [byte][char]'A'
+    $bytes[2] = [byte][char]'B'
+    $bytes[3] = [byte][char]'I'
+    Write-U16 -Buffer $bytes -Offset 4 -Value 1
+    Write-U16 -Buffer $bytes -Offset 6 -Value $AppAbiVersion
+    Write-U16 -Buffer $bytes -Offset 8 -Value $ServiceAbi
+    Write-U16 -Buffer $bytes -Offset 10 -Value 0
+    Write-U32 -Buffer $bytes -Offset 12 -Value $Flags
+    return $bytes
+}
+
 $repoRoot = Split-Path -Parent $PSCommandPath
 $efiProjectDir = Join-Path $repoRoot "OS_0.1"
 $projectFile = Join-Path $efiProjectDir "OS_0.1.csproj"
@@ -434,10 +454,22 @@ Copy-Item -LiteralPath $builtEfi -Destination $bootx64 -Force
 $helloElf = Join-Path $espBootDir "HELLO.ELF"
 $abiInfoElf = Join-Path $espBootDir "ABIINFO.ELF"
 $markerElf = Join-Path $espBootDir "MARKER.ELF"
+[string]$helloCsElf = Join-Path $espBootDir "HELLOCS.ELF"
 [string]$legacyAppElf = Join-Path $espBootDir "APP.ELF"
 [System.IO.File]::WriteAllBytes($helloElf, (New-HelloElfImage))
 [System.IO.File]::WriteAllBytes($abiInfoElf, (New-AbiInfoElfImage))
 [System.IO.File]::WriteAllBytes($markerElf, (New-MarkerElfImage))
+[System.IO.File]::WriteAllBytes("$helloElf.abi", (New-AppAbiManifest -AppAbiVersion 1 -ServiceAbi 0))
+[System.IO.File]::WriteAllBytes("$abiInfoElf.abi", (New-AppAbiManifest -AppAbiVersion 1 -ServiceAbi 0))
+[System.IO.File]::WriteAllBytes("$markerElf.abi", (New-AppAbiManifest -AppAbiVersion 1 -ServiceAbi 0))
+
+if (Test-Path -LiteralPath $helloCsElf) {
+    [System.IO.File]::WriteAllBytes("$helloCsElf.abi", (New-AppAbiManifest -AppAbiVersion 2 -ServiceAbi 1))
+}
+elseif (Test-Path -LiteralPath "$helloCsElf.abi") {
+    Remove-Item -LiteralPath "$helloCsElf.abi" -Force
+}
+
 if (Test-Path -LiteralPath $legacyAppElf) {
     Remove-Item -LiteralPath $legacyAppElf -Force
 }
@@ -446,6 +478,9 @@ Write-Host "Prepared EFI image: $bootx64"
 Write-Host "Prepared app ELF: $helloElf"
 Write-Host "Prepared app ELF: $abiInfoElf"
 Write-Host "Prepared app ELF: $markerElf"
+if (Test-Path -LiteralPath $helloCsElf) {
+    Write-Host "Prepared app ELF: $helloCsElf"
+}
 if ($NoRun) {
     Write-Host "NoRun set: build finished, QEMU launch skipped."
     exit 0

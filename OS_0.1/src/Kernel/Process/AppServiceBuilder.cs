@@ -15,10 +15,23 @@ namespace OS.Kernel.Process
         private const uint MaxNameChars = 260;
         private const ulong EfiFileAttributeDirectory = 0x0000000000000010UL;
         private const ulong PageSize = X64PageTable.PageSize;
+        private const uint AbiManifestBufferSize = 64;
+        private const uint AbiManifestByteSize = 16;
+        private const char AbiManifestSuffixDot = '.';
+        private const char AbiManifestSuffixA = 'a';
+        private const char AbiManifestSuffixB = 'b';
+        private const char AbiManifestSuffixI = 'i';
 
         private const uint SystemVThunkPageSize = 4096;
         private const uint SystemVOneArgThunkSize = 24;
         private const uint SystemVNoArgThunkSize = 21;
+
+        private enum AbiResolveSource : uint
+        {
+            Request = 0,
+            Manifest = 1,
+            Fallback = 2,
+        }
 
         private static int s_exitRequested;
         private static int s_exitCode;
@@ -319,19 +332,19 @@ namespace OS.Kernel.Process
                 if (value == 0)
                     return;
 
-                Console.WriteChar((char)value);
+                UiText.WriteChar((char)value);
             }
         }
 
         private static void WriteUInt(uint value)
         {
-            Console.WriteUInt(value);
+            UiText.WriteUInt(value);
         }
 
         private static void WriteHex(ulong value)
         {
-            Console.Write("0x");
-            Console.WriteHex(value, 16);
+            UiText.Write("0x");
+            UiText.WriteHex(value, 16);
         }
 
         private static uint GetAbiVersion()
@@ -483,14 +496,22 @@ namespace OS.Kernel.Process
             if (request->PathAddress == 0)
                 return (uint)AppServiceStatus.InvalidParameter;
 
-            if (!TryParseServiceAbi(request->ServiceAbi, out AppServiceAbi serviceAbi))
-                return (uint)AppServiceStatus.InvalidParameter;
-
-            uint appAbiVersion = NormalizeAbiVersion(request->AppAbiVersion);
-
             char* pathBuffer = stackalloc char[(int)MaxPathChars];
             if (!TryReadAsciiPath(request->PathAddress, pathBuffer, MaxPathChars))
                 return (uint)AppServiceStatus.InvalidParameter;
+
+            if (!TryResolveRunAppAbi(
+                pathBuffer,
+                request->AppAbiVersion,
+                request->ServiceAbi,
+                out uint appAbiVersion,
+                out AppServiceAbi serviceAbi,
+                out AbiResolveSource abiSource))
+            {
+                return (uint)AppServiceStatus.InvalidParameter;
+            }
+
+            LogRunAppAbiSelection(abiSource, appAbiVersion, serviceAbi);
 
             int savedExitRequested = s_exitRequested;
             int savedExitCode = s_exitCode;
@@ -532,6 +553,157 @@ namespace OS.Kernel.Process
             return false;
         }
 
+        private static bool TryResolveRunAppAbi(
+            char* path,
+            uint requestedAbiVersion,
+            uint requestedServiceAbi,
+            out uint appAbiVersion,
+            out AppServiceAbi serviceAbi,
+            out AbiResolveSource source)
+        {
+            appAbiVersion = AppServiceTable.AbiVersionV1;
+            serviceAbi = AppServiceAbi.WindowsX64;
+            source = AbiResolveSource.Fallback;
+
+            bool autoAppAbi = requestedAbiVersion == AppServiceTable.AutoSelectAbiVersion;
+            bool autoServiceAbi = requestedServiceAbi == (uint)AppServiceAbi.Auto;
+
+            if (!autoAppAbi && !autoServiceAbi)
+            {
+                if (!TryParseServiceAbi(requestedServiceAbi, out serviceAbi))
+                    return false;
+
+                appAbiVersion = NormalizeAbiVersion(requestedAbiVersion);
+                source = AbiResolveSource.Request;
+                return true;
+            }
+
+            uint resolvedFromRequestAbi = NormalizeAbiVersion(requestedAbiVersion);
+            AppServiceAbi resolvedFromRequestService = AppServiceAbi.WindowsX64;
+            if (!autoServiceAbi && !TryParseServiceAbi(requestedServiceAbi, out resolvedFromRequestService))
+                return false;
+
+            if (TryReadAbiManifest(path, out uint manifestAbiVersion, out AppServiceAbi manifestServiceAbi))
+            {
+                appAbiVersion = autoAppAbi ? manifestAbiVersion : resolvedFromRequestAbi;
+                serviceAbi = autoServiceAbi ? manifestServiceAbi : resolvedFromRequestService;
+                source = AbiResolveSource.Manifest;
+                return true;
+            }
+
+            appAbiVersion = autoAppAbi ? AppServiceTable.AbiVersionV1 : resolvedFromRequestAbi;
+            serviceAbi = autoServiceAbi ? AppServiceAbi.WindowsX64 : resolvedFromRequestService;
+            source = AbiResolveSource.Fallback;
+            return true;
+        }
+
+        private static bool TryReadAbiManifest(char* path, out uint appAbiVersion, out AppServiceAbi serviceAbi)
+        {
+            appAbiVersion = AppServiceTable.AbiVersionV1;
+            serviceAbi = AppServiceAbi.WindowsX64;
+
+            BootInfo bootInfo = Platform.GetBootInfo();
+            if (bootInfo.FileReadIntoBuffer == null)
+                return false;
+
+            char* manifestPath = stackalloc char[(int)MaxPathChars];
+            if (!TryBuildAbiManifestPath(path, manifestPath, MaxPathChars))
+                return false;
+
+            byte* manifestBuffer = stackalloc byte[(int)AbiManifestBufferSize];
+            uint bytesRead = 0;
+            uint status = bootInfo.FileReadIntoBuffer(
+                manifestPath,
+                manifestBuffer,
+                AbiManifestBufferSize,
+                &bytesRead);
+
+            if (status != (uint)BootFileStatus.Ok)
+                return false;
+
+            if (bytesRead < AbiManifestByteSize)
+                return false;
+
+            return TryParseAbiManifest(manifestBuffer, out appAbiVersion, out serviceAbi);
+        }
+
+        private static bool TryBuildAbiManifestPath(char* path, char* destination, uint destinationChars)
+        {
+            if (path == null || destination == null || destinationChars < 6)
+                return false;
+
+            uint index = 0;
+            while (index < destinationChars - 1 && path[index] != '\0')
+            {
+                destination[index] = path[index];
+                index++;
+            }
+
+            if (index == destinationChars - 1)
+            {
+                destination[index] = '\0';
+                return false;
+            }
+
+            if ((index + 4 + 1) > destinationChars)
+            {
+                destination[index] = '\0';
+                return false;
+            }
+
+            destination[index + 0] = AbiManifestSuffixDot;
+            destination[index + 1] = AbiManifestSuffixA;
+            destination[index + 2] = AbiManifestSuffixB;
+            destination[index + 3] = AbiManifestSuffixI;
+            destination[index + 4] = '\0';
+            return true;
+        }
+
+        private static bool TryParseAbiManifest(byte* buffer, out uint appAbiVersion, out AppServiceAbi serviceAbi)
+        {
+            appAbiVersion = AppServiceTable.AbiVersionV1;
+            serviceAbi = AppServiceAbi.WindowsX64;
+
+            if (buffer == null)
+                return false;
+
+            if (buffer[0] != (byte)'S' ||
+                buffer[1] != (byte)'A' ||
+                buffer[2] != (byte)'B' ||
+                buffer[3] != (byte)'I')
+            {
+                return false;
+            }
+
+            ushort formatVersion = ReadU16(buffer + 4);
+            if (formatVersion != 1)
+                return false;
+
+            ushort rawAppAbi = ReadU16(buffer + 6);
+            ushort rawServiceAbi = ReadU16(buffer + 8);
+
+            if (rawAppAbi == AppServiceTable.AbiVersionV1)
+                appAbiVersion = AppServiceTable.AbiVersionV1;
+            else if (rawAppAbi == AppServiceTable.AbiVersionV2)
+                appAbiVersion = AppServiceTable.AbiVersionV2;
+            else
+                return false;
+
+            if (rawServiceAbi == (ushort)AppServiceAbi.WindowsX64)
+                serviceAbi = AppServiceAbi.WindowsX64;
+            else if (rawServiceAbi == (ushort)AppServiceAbi.SystemV)
+                serviceAbi = AppServiceAbi.SystemV;
+            else
+                return false;
+
+            return true;
+        }
+
+        private static ushort ReadU16(byte* source)
+        {
+            return (ushort)(source[0] | (source[1] << 8));
+        }
+
         private static bool TryParseServiceAbi(uint value, out AppServiceAbi serviceAbi)
         {
             if (value == (uint)AppServiceAbi.WindowsX64)
@@ -548,6 +720,39 @@ namespace OS.Kernel.Process
 
             serviceAbi = AppServiceAbi.WindowsX64;
             return false;
+        }
+
+        private static void LogRunAppAbiSelection(AbiResolveSource source, uint appAbiVersion, AppServiceAbi serviceAbi)
+        {
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("runapp abi source=");
+            UiText.Write(AbiResolveSourceName(source));
+            UiText.Write(" app=");
+            UiText.WriteUInt(appAbiVersion);
+            UiText.Write(" service=");
+            UiText.Write(ServiceAbiName(serviceAbi));
+            DebugLog.EndLine();
+        }
+
+        private static string AbiResolveSourceName(AbiResolveSource source)
+        {
+            switch (source)
+            {
+                case AbiResolveSource.Request: return "request";
+                case AbiResolveSource.Manifest: return "manifest";
+                case AbiResolveSource.Fallback: return "fallback";
+                default: return "fallback";
+            }
+        }
+
+        private static string ServiceAbiName(AppServiceAbi serviceAbi)
+        {
+            switch (serviceAbi)
+            {
+                case AppServiceAbi.WindowsX64: return "win64";
+                case AppServiceAbi.SystemV: return "sysv";
+                default: return "unknown";
+            }
         }
 
         private static AppServiceStatus TryWriteAsciiName(
@@ -610,7 +815,7 @@ namespace OS.Kernel.Process
                 return AppServiceStatus.Unsupported;
 
             if (parentSuspended)
-                Log.Write(LogLevel.Info, "nested app start");
+                DebugLog.Write(LogLevel.Info, "---- child start ----");
 
             AppServiceStatus result = AppServiceStatus.DeviceError;
             ElfLoadedImage loadedImage = default;
@@ -687,10 +892,11 @@ namespace OS.Kernel.Process
                     exitCode = exitByService ? serviceExitCode : returnExitCode;
                     if (parentSuspended)
                     {
-                        Log.Begin(LogLevel.Info);
-                        Console.Write("nested app exit code = ");
-                        Console.WriteInt(exitCode);
-                        Log.EndLine();
+                        DebugLog.Begin(LogLevel.Info);
+                        UiText.Write("---- child end: exit=");
+                        UiText.WriteInt(exitCode);
+                        UiText.Write(" ----");
+                        DebugLog.EndLine();
                     }
 
                     result = AppServiceStatus.Ok;
@@ -713,12 +919,12 @@ namespace OS.Kernel.Process
                 {
                     if (!ProcessManager.TryRestoreAfterNested(ref parentMappingContext))
                     {
-                        Log.Write(LogLevel.Warn, "parent context restore failed");
+                        DebugLog.Write(LogLevel.Warn, "parent context restore failed");
                         result = AppServiceStatus.DeviceError;
                     }
                     else
                     {
-                        Log.Write(LogLevel.Info, "parent context restored");
+                        DebugLog.Write(LogLevel.Info, "parent context restored");
                     }
                 }
             }

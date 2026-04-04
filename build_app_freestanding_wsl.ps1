@@ -7,6 +7,10 @@ param(
     [string]$ArtifactName = "HELLOCS.ELF",
     [string]$EspBootDir = "OS_0.1/.qemu/esp/EFI/BOOT",
     [string]$DefineConstants = "",
+    [ValidateRange(1, 2)]
+    [int]$AppAbiVersion = 2,
+    [ValidateSet(0, 1)]
+    [int]$ServiceAbi = 1,
     [switch]$NoCopy
 )
 
@@ -56,6 +60,33 @@ function Invoke-Wsl {
     }
 
     return $output
+}
+
+function New-AppAbiManifestBytes {
+    param(
+        [int]$AppAbiVersionValue,
+        [int]$ServiceAbiValue
+    )
+
+    [byte[]]$bytes = New-Object byte[] 16
+    $bytes[0] = [byte][char]'S'
+    $bytes[1] = [byte][char]'A'
+    $bytes[2] = [byte][char]'B'
+    $bytes[3] = [byte][char]'I'
+
+    $bytes[4] = 1
+    $bytes[5] = 0
+    $bytes[6] = [byte]($AppAbiVersionValue -band 0xFF)
+    $bytes[7] = [byte](($AppAbiVersionValue -shr 8) -band 0xFF)
+    $bytes[8] = [byte]($ServiceAbiValue -band 0xFF)
+    $bytes[9] = [byte](($ServiceAbiValue -shr 8) -band 0xFF)
+    $bytes[10] = 0
+    $bytes[11] = 0
+    $bytes[12] = 0
+    $bytes[13] = 0
+    $bytes[14] = 0
+    $bytes[15] = 0
+    return $bytes
 }
 
 $repoRoot = Split-Path -Parent $PSCommandPath
@@ -123,6 +154,11 @@ if (-not (Test-Path -LiteralPath $artifactWindowsPath)) {
 
 Write-Host "Built freestanding ELF artifact: $artifactWindowsPath"
 
+$manifestBytes = New-AppAbiManifestBytes -AppAbiVersionValue $AppAbiVersion -ServiceAbiValue $ServiceAbi
+$artifactManifestPath = "$artifactWindowsPath.abi"
+[System.IO.File]::WriteAllBytes($artifactManifestPath, $manifestBytes)
+Write-Host "Built ABI manifest: $artifactManifestPath"
+
 if ($NoCopy) {
     Write-Host "NoCopy set: ESP copy skipped."
     exit 0
@@ -131,6 +167,9 @@ if ($NoCopy) {
 $espBootDirPath = Join-Path $repoRoot $EspBootDir
 New-Item -ItemType Directory -Force -Path $espBootDirPath | Out-Null
 $destinationPath = Join-Path $espBootDirPath $ArtifactName
+$destinationManifestPath = "$destinationPath.abi"
 
 Copy-Item -LiteralPath $artifactWindowsPath -Destination $destinationPath -Force
+Copy-Item -LiteralPath $artifactManifestPath -Destination $destinationManifestPath -Force
 Write-Host "Copied freestanding ELF to ESP: $destinationPath"
+Write-Host "Copied ABI manifest to ESP: $destinationManifestPath"

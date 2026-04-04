@@ -256,7 +256,7 @@ namespace SharpOS.AppSdk
 
         public static AppServiceStatus TryRunApp(byte* path, out int exitCode)
         {
-            return TryRunApp(path, AppStartupBlock.AbiVersionV1, AppServiceAbi.WindowsX64, out exitCode);
+            return TryRunApp(path, AppServiceTable.AutoSelectAbiVersion, AppServiceAbi.Auto, out exitCode);
         }
 
         public static AppServiceStatus TryRunApp(
@@ -277,7 +277,7 @@ namespace SharpOS.AppSdk
 
         public static AppServiceStatus TryRunApp(string path, out int exitCode)
         {
-            return TryRunApp(path, AppStartupBlock.AbiVersionV1, AppServiceAbi.WindowsX64, out exitCode);
+            return TryRunApp(path, AppServiceTable.AutoSelectAbiVersion, AppServiceAbi.Auto, out exitCode);
         }
 
         public static bool TryEncodeAscii(string text, byte* destination, int destinationCapacity, out uint bytesWritten)

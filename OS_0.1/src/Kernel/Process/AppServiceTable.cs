@@ -17,6 +17,7 @@ namespace OS.Kernel.Process
         public const uint AbiVersionV1 = 1;
         public const uint AbiVersionV2 = 2;
         public const uint CurrentAbiVersion = AbiVersionV2;
+        public const uint AutoSelectAbiVersion = 0xFFFFFFFF;
 
         public uint AbiVersion;
         public uint Reserved;
