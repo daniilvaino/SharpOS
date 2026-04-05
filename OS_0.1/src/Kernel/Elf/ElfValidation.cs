@@ -13,7 +13,7 @@ namespace OS.Kernel.Elf
         private const ulong PageSize = X64PageTable.PageSize;
         private const string BootDirectoryPath = "\\EFI\\BOOT";
         private const ulong KernelLowSyncStart = 0x00100000UL;
-        private const ulong KernelLowSyncEndExclusive = 0x08000000UL;
+        private const ulong KernelLowSyncEndExclusive = 0x20000000UL;
 
         private struct ExternalElfApp
         {
