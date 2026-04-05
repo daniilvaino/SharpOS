@@ -5,9 +5,16 @@ namespace OS.Kernel
 {
     internal static unsafe class SystemBanner
     {
+        private const string BuildId = "cr3-stack-v5";
+
         public static void Print(BootInfo bootInfo)
         {
             Log.Write(LogLevel.Info, "SharpOS 0.1");
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("build: ");
+            Console.Write(BuildId);
+            Log.EndLine();
 
             Log.Begin(LogLevel.Info);
             Console.Write("boot: ");

@@ -20,8 +20,8 @@ namespace OS.Kernel.Process
         public ulong MappedStackPages;
         public int ExitCode;
 
-        // Execution scaffold uses resolved physical addresses for controlled jump
-        // while paging remains software-managed.
+        // Physical probes used only for builder/validation internals.
+        // Runtime execution uses virtual entry/stack/startup addresses.
         public ulong EntryPointPhysical;
         public ulong StackTopPhysical;
         public ulong StartupBlockPhysical;

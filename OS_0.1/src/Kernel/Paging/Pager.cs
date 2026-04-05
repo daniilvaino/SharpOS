@@ -101,6 +101,30 @@ namespace OS.Kernel.Paging
             return true;
         }
 
+        public static bool TryActivatePagerRoot()
+        {
+            if (!s_initialized)
+                return false;
+
+            return X64PageTable.TryActivatePagerCr3();
+        }
+
+        public static bool TryActivateKernelRoot()
+        {
+            if (!s_initialized)
+                return false;
+
+            return X64PageTable.TryActivateKernelCr3();
+        }
+
+        public static bool IsPagerRootActive()
+        {
+            if (!s_initialized)
+                return false;
+
+            return X64PageTable.IsPagerCr3Active();
+        }
+
         public static bool TryQuery(ulong virtualAddress, out ulong physicalAddress, out PageFlags flags)
         {
             physicalAddress = 0;
@@ -109,11 +133,25 @@ namespace OS.Kernel.Paging
             if (!s_initialized)
                 return false;
 
-            if (!X64PageTable.TryQuery(virtualAddress, out ulong pageBasePhysicalAddress, out flags))
+            if (!X64PageTable.TryQuery(virtualAddress, out ulong resolvedPhysicalAddress, out flags))
                 return false;
 
-            ulong pageOffset = virtualAddress & (X64PageTable.PageSize - 1);
-            physicalAddress = pageBasePhysicalAddress + pageOffset;
+            physicalAddress = resolvedPhysicalAddress;
+            return true;
+        }
+
+        public static bool TryQueryKernel(ulong virtualAddress, out ulong physicalAddress, out PageFlags flags)
+        {
+            physicalAddress = 0;
+            flags = PageFlags.None;
+
+            if (!s_initialized)
+                return false;
+
+            if (!X64PageTable.TryQueryKernel(virtualAddress, out ulong resolvedPhysicalAddress, out flags))
+                return false;
+
+            physicalAddress = resolvedPhysicalAddress;
             return true;
         }
 
@@ -124,6 +162,24 @@ namespace OS.Kernel.Paging
                 return false;
 
             return X64PageTable.TryGetWalkInfo(virtualAddress, out walkInfo);
+        }
+
+        public static bool TryGetPagerCr3(out ulong pagerCr3)
+        {
+            pagerCr3 = 0;
+            if (!s_initialized)
+                return false;
+
+            return X64PageTable.TryGetPagerCr3(out pagerCr3);
+        }
+
+        public static bool TryGetKernelCr3(out ulong kernelCr3)
+        {
+            kernelCr3 = 0;
+            if (!s_initialized)
+                return false;
+
+            return X64PageTable.TryGetKernelCr3(out kernelCr3);
         }
 
         public static void GetSummary(out PagingSummary summary)

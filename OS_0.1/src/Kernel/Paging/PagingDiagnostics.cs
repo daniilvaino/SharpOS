@@ -5,9 +5,14 @@ namespace OS.Kernel.Paging
     internal struct PagingSummary
     {
         public bool IsInitialized;
+        public bool IsPagerRootActive;
         public ulong PageSize;
         public ulong DirectMapBase;
         public ulong RootTablePhysical;
+        public ulong KernelRootTablePhysical;
+        public ulong KernelCr3;
+        public ulong PagerCr3;
+        public ulong ActiveCr3;
         public uint TablePages;
         public uint SpareTablePages;
         public uint MappedPages;
@@ -45,6 +50,25 @@ namespace OS.Kernel.Paging
             Log.Begin(LogLevel.Info);
             Console.Write("pager root table: 0x");
             Console.WriteHex(summary.RootTablePhysical, 8);
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("kernel root table: 0x");
+            Console.WriteHex(summary.KernelRootTablePhysical, 8);
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("cr3 kernel/pager/active: 0x");
+            Console.WriteHex(summary.KernelCr3, 16);
+            Console.Write("/0x");
+            Console.WriteHex(summary.PagerCr3, 16);
+            Console.Write("/0x");
+            Console.WriteHex(summary.ActiveCr3, 16);
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("pager root active: ");
+            Console.Write(summary.IsPagerRootActive ? "yes" : "no");
             Log.EndLine();
 
             Log.Begin(LogLevel.Info);

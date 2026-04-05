@@ -87,18 +87,18 @@ namespace OS.Kernel.Process
                 return false;
             }
 
-            ulong markerPhysical = 0;
-            uint startupFlags = ProcessStartupBlock.FlagServiceTableAddressIsPhysical;
+            ulong markerAddress = 0;
+            uint startupFlags = 0;
 
             if (markerVirtualAddress != 0)
             {
-                if (!Pager.TryQuery(markerVirtualAddress, out markerPhysical, out _))
+                if (!Pager.TryQuery(markerVirtualAddress, out _, out _))
                 {
                     Log.Write(LogLevel.Warn, "process startup: marker address is not mapped");
                     return false;
                 }
 
-                startupFlags |= ProcessStartupBlock.FlagMarkerAddressIsPhysical;
+                markerAddress = markerVirtualAddress;
             }
 
             ProcessStartupBlock startup = default;
@@ -109,12 +109,16 @@ namespace OS.Kernel.Process
             startup.EntryPoint = processImage.EntryPoint;
             startup.StackBase = processImage.StackBase;
             startup.StackTop = entryStackTop;
-            startup.MarkerAddress = markerPhysical;
-            startup.ServiceTableAddress = servicePhysical;
+            startup.MarkerAddress = markerAddress;
+            startup.ServiceTableAddress = serviceVirtual;
             startup.ExitCode = 0;
             startup.Reserved = 0;
 
-            *((ProcessStartupBlock*)startupPhysical) = startup;
+            ProcessStartupBlock* startupPointer = Pager.IsPagerRootActive()
+                ? (ProcessStartupBlock*)startupVirtual
+                : (ProcessStartupBlock*)startupPhysical;
+
+            *startupPointer = startup;
 
             processImage.AbiVersion = startup.AbiVersion;
             processImage.AbiFlags = startup.Flags;

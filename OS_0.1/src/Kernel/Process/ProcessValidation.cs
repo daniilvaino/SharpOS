@@ -113,25 +113,17 @@ namespace OS.Kernel.Process
                 (startupFlags & PageFlags.Writable) == PageFlags.Writable,
                 "process validation: startup block not writable");
 
-            ProcessStartupBlock* startup = (ProcessStartupBlock*)processImage.StartupBlockPhysical;
+            ProcessStartupBlock* startup = Pager.IsPagerRootActive()
+                ? (ProcessStartupBlock*)processImage.StartupBlockVirtual
+                : (ProcessStartupBlock*)processImage.StartupBlockPhysical;
+
             KernelAssert.Equal(processImage.RequestedAbiVersion, startup->AbiVersion, "process validation: startup abi version mismatch");
             KernelAssert.Equal(processImage.AbiFlags, startup->Flags, "process validation: startup flags mismatch");
             KernelAssert.Equal(processImage.EntryPoint, startup->EntryPoint, "process validation: startup entry mismatch");
             KernelAssert.Equal(processImage.StackTop, startup->StackTop, "process validation: startup stack top mismatch");
             KernelAssert.Equal(processImage.StackBase, startup->StackBase, "process validation: startup stack base mismatch");
-            if (startup->MarkerAddress != 0)
-            {
-                KernelAssert.True(
-                    (startup->Flags & ProcessStartupBlock.FlagMarkerAddressIsPhysical) == ProcessStartupBlock.FlagMarkerAddressIsPhysical,
-                    "process validation: marker address flag missing");
-            }
-
-            KernelAssert.True(
-                (startup->Flags & ProcessStartupBlock.FlagServiceTableAddressIsPhysical) == ProcessStartupBlock.FlagServiceTableAddressIsPhysical,
-                "process validation: service table address flag missing");
-
             KernelAssert.True(startup->ServiceTableAddress != 0, "process validation: startup service table is null");
-            KernelAssert.Equal(processImage.ServiceTablePhysical, startup->ServiceTableAddress, "process validation: startup service table mismatch");
+            KernelAssert.Equal(processImage.ServiceTableVirtual, startup->ServiceTableAddress, "process validation: startup service table mismatch");
         }
 
         private static void ValidateServiceTable(ref ProcessImage processImage)
@@ -152,7 +144,10 @@ namespace OS.Kernel.Process
                 (serviceFlags & PageFlags.Writable) == PageFlags.Writable,
                 "process validation: service table not writable");
 
-            AppServiceTable* table = (AppServiceTable*)processImage.ServiceTablePhysical;
+            AppServiceTable* table = Pager.IsPagerRootActive()
+                ? (AppServiceTable*)processImage.ServiceTableVirtual
+                : (AppServiceTable*)processImage.ServiceTablePhysical;
+
             KernelAssert.Equal(processImage.RequestedAbiVersion, table->AbiVersion, "process validation: service table abi version mismatch");
             KernelAssert.True(table->WriteStringAddress != 0, "process validation: service write pointer is null");
             KernelAssert.True(table->WriteUIntAddress != 0, "process validation: service write uint pointer is null");

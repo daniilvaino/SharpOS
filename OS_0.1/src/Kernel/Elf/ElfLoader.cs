@@ -23,6 +23,12 @@ namespace OS.Kernel.Elf
                 return false;
             }
 
+            if (!TryPrepareImageVirtualSpan(imagePageStart, imagePageCount))
+            {
+                error = ElfLoadError.SegmentPageMapFailed;
+                return false;
+            }
+
             ulong imagePhysicalBase = global::OS.Kernel.PhysicalMemory.AllocPages(imagePageCount);
             if (imagePhysicalBase == 0)
             {
@@ -86,6 +92,21 @@ namespace OS.Kernel.Elf
             }
 
             Log.Write(LogLevel.Info, "elf image loaded");
+            return true;
+        }
+
+        private static bool TryPrepareImageVirtualSpan(ulong pageStart, uint pageCount)
+        {
+            ulong currentVirtual = pageStart;
+            for (uint i = 0; i < pageCount; i++)
+            {
+                if (Pager.TryQuery(currentVirtual, out _, out _) && !Pager.Unmap(currentVirtual))
+                    return false;
+
+                if (i + 1 < pageCount && !TryAdd(currentVirtual, PageSize, out currentVirtual))
+                    return false;
+            }
+
             return true;
         }
 
@@ -192,6 +213,24 @@ namespace OS.Kernel.Elf
 
                 if (!Pager.Map(currentVirtual, page, flags))
                 {
+                    Log.Begin(LogLevel.Error);
+                    Console.Write("map seg page failed: vaddr=0x");
+                    Console.WriteHex(currentVirtual, 16);
+                    Console.Write(" paddr=0x");
+                    Console.WriteHex(page, 16);
+                    if (Pager.TryQuery(currentVirtual, out ulong existingPhysical, out PageFlags existingFlags))
+                    {
+                        Console.Write(" existing=0x");
+                        Console.WriteHex(existingPhysical, 16);
+                        Console.Write(" existing_flags=");
+                        WritePageFlags(existingFlags);
+                    }
+                    else
+                    {
+                        Console.Write(" existing=none");
+                    }
+
+                    Log.EndLine();
                     RollbackMappedPages(virtualAddress, mappedPages);
                     return false;
                 }
@@ -466,6 +505,32 @@ namespace OS.Kernel.Elf
             Console.Write(" tail: ");
             Console.WriteULong(zeroBytes);
             Log.EndLine();
+        }
+
+        private static void WritePageFlags(PageFlags flags)
+        {
+            bool first = true;
+            WriteFlag(flags, PageFlags.Present, "Present", ref first);
+            WriteFlag(flags, PageFlags.Writable, "Writable", ref first);
+            WriteFlag(flags, PageFlags.User, "User", ref first);
+            WriteFlag(flags, PageFlags.WriteThrough, "WriteThrough", ref first);
+            WriteFlag(flags, PageFlags.CacheDisable, "CacheDisable", ref first);
+            WriteFlag(flags, PageFlags.Global, "Global", ref first);
+            WriteFlag(flags, PageFlags.NoExecute, "NoExecute", ref first);
+            if (first)
+                Console.Write("None");
+        }
+
+        private static void WriteFlag(PageFlags value, PageFlags flag, string text, ref bool first)
+        {
+            if ((value & flag) != flag)
+                return;
+
+            if (!first)
+                Console.Write("|");
+
+            Console.Write(text);
+            first = false;
         }
     }
 }

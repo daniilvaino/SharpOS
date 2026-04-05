@@ -3,18 +3,25 @@ namespace OS.Kernel.Paging
     internal static unsafe class X64PageTable
     {
         public const ulong PageSize = 4096;
+        private const ulong LargePage2MBSize = 2UL * 1024UL * 1024UL;
+        private const ulong LargePage1GBSize = 1024UL * 1024UL * 1024UL;
 
         private const ulong PresentMask = 1UL << 0;
         private const ulong WritableMask = 1UL << 1;
         private const ulong UserMask = 1UL << 2;
         private const ulong PageSizeMask = 1UL << 7;
         private const ulong AddressMask = 0x000FFFFFFFFFF000UL;
+        private const ulong AddressMask2MB = 0x000FFFFFFFE00000UL;
+        private const ulong AddressMask1GB = 0x000FFFFFC0000000UL;
 
         private const ulong LeafFlagMask =
             (ulong)(PageFlags.Present | PageFlags.Writable | PageFlags.User |
             PageFlags.WriteThrough | PageFlags.CacheDisable | PageFlags.Global | PageFlags.NoExecute);
 
         private static ulong s_rootTable;
+        private static ulong s_kernelRootTable;
+        private static ulong s_kernelCr3;
+        private static ulong s_pagerCr3;
         private static ulong s_sparePageList;
         private static uint s_sparePageCount;
 
@@ -27,9 +34,36 @@ namespace OS.Kernel.Paging
         private static uint s_unmapCalls;
         private static uint s_unmapFailures;
 
+        private enum ResolvedEntryLevel : byte
+        {
+            Pt = 1,
+            PdLarge = 2,
+            PdptLarge = 3,
+        }
+
+        public static ulong RootTablePhysical => s_rootTable;
+
+        public static ulong KernelRootTablePhysical => s_kernelRootTable;
+
         public static bool Init(PagingRequirements requirements)
         {
             ResetState();
+
+            if (!Cr3Accessor.TryInitialize())
+                return false;
+
+            if (!Cr3Accessor.TryRead(out ulong currentCr3))
+                return false;
+
+            s_kernelCr3 = currentCr3;
+            s_kernelRootTable = currentCr3 & AddressMask;
+            if (s_kernelRootTable == 0)
+                return false;
+
+            if (!TryCloneTableRecursive(s_kernelRootTable, 4, out s_rootTable))
+                return false;
+
+            s_pagerCr3 = (s_rootTable & AddressMask) | (s_kernelCr3 & ~AddressMask);
 
             uint reservePages = requirements.InitialPageTablePages;
             if (reservePages == 0)
@@ -46,8 +80,48 @@ namespace OS.Kernel.Paging
                 s_tablePages++;
             }
 
-            s_rootTable = PopSparePage();
             return s_rootTable != 0;
+        }
+
+        public static bool TryActivatePagerCr3()
+        {
+            if (s_pagerCr3 == 0)
+                return false;
+
+            return Cr3Accessor.TryWrite(s_pagerCr3);
+        }
+
+        public static bool TryActivateKernelCr3()
+        {
+            if (s_kernelCr3 == 0)
+                return false;
+
+            return Cr3Accessor.TryWrite(s_kernelCr3);
+        }
+
+        public static bool IsPagerCr3Active()
+        {
+            if (!Cr3Accessor.TryRead(out ulong activeCr3))
+                return false;
+
+            return (activeCr3 & AddressMask) == (s_rootTable & AddressMask);
+        }
+
+        public static bool TryGetActiveCr3(out ulong activeCr3)
+        {
+            return Cr3Accessor.TryRead(out activeCr3);
+        }
+
+        public static bool TryGetPagerCr3(out ulong pagerCr3)
+        {
+            pagerCr3 = s_pagerCr3;
+            return pagerCr3 != 0;
+        }
+
+        public static bool TryGetKernelCr3(out ulong kernelCr3)
+        {
+            kernelCr3 = s_kernelCr3;
+            return kernelCr3 != 0;
         }
 
         public static bool Map(ulong virtualAddress, ulong physicalAddress, PageFlags flags)
@@ -97,20 +171,20 @@ namespace OS.Kernel.Paging
         {
             s_unmapCalls++;
 
-            if (!TryGetLeafEntry(virtualAddress, out ulong* entry))
+            if (!TryResolveMappedEntry(virtualAddress, out ulong* entry, out ulong value, out ResolvedEntryLevel level))
             {
                 s_unmapFailures++;
                 return false;
             }
 
-            if ((*entry & PresentMask) == 0)
+            if ((value & PresentMask) == 0)
             {
                 s_unmapFailures++;
                 return false;
             }
 
             *entry = 0;
-            if (s_mappedPages > 0)
+            if (level == ResolvedEntryLevel.Pt && s_mappedPages > 0)
                 s_mappedPages--;
 
             return true;
@@ -119,20 +193,16 @@ namespace OS.Kernel.Paging
         public static bool TryQuery(ulong virtualAddress, out ulong physicalAddress, out PageFlags flags)
         {
             s_queryCalls++;
-            physicalAddress = 0;
-            flags = PageFlags.None;
+            bool found = TryQueryForRoot(s_rootTable, virtualAddress, out physicalAddress, out flags);
+            if (found)
+                s_queryHits++;
 
-            if (!TryGetLeafEntry(virtualAddress, out ulong* entry))
-                return false;
+            return found;
+        }
 
-            ulong value = *entry;
-            if ((value & PresentMask) == 0)
-                return false;
-
-            physicalAddress = value & AddressMask;
-            flags = (PageFlags)(value & LeafFlagMask);
-            s_queryHits++;
-            return true;
+        public static bool TryQueryKernel(ulong virtualAddress, out ulong physicalAddress, out PageFlags flags)
+        {
+            return TryQueryForRoot(s_kernelRootTable, virtualAddress, out physicalAddress, out flags);
         }
 
         public static bool TryGetWalkInfo(ulong virtualAddress, out PageWalkInfo walkInfo)
@@ -177,6 +247,15 @@ namespace OS.Kernel.Paging
         {
             summary = default;
             summary.RootTablePhysical = s_rootTable;
+            summary.KernelRootTablePhysical = s_kernelRootTable;
+            summary.KernelCr3 = s_kernelCr3;
+            summary.PagerCr3 = s_pagerCr3;
+            if (Cr3Accessor.TryRead(out ulong activeCr3))
+            {
+                summary.ActiveCr3 = activeCr3;
+                summary.IsPagerRootActive = (activeCr3 & AddressMask) == (s_rootTable & AddressMask);
+            }
+
             summary.TablePages = s_tablePages;
             summary.SpareTablePages = s_sparePageCount;
             summary.MappedPages = s_mappedPages;
@@ -205,6 +284,110 @@ namespace OS.Kernel.Paging
                 return false;
 
             entry = &pt[PtIndex(virtualAddress)];
+            return true;
+        }
+
+        private static bool TryResolveMappedEntry(
+            ulong virtualAddress,
+            out ulong* entry,
+            out ulong value,
+            out ResolvedEntryLevel level)
+        {
+            return TryResolveMappedEntryForRoot(s_rootTable, virtualAddress, out entry, out value, out level);
+        }
+
+        private static bool TryResolveMappedEntryForRoot(
+            ulong rootTable,
+            ulong virtualAddress,
+            out ulong* entry,
+            out ulong value,
+            out ResolvedEntryLevel level)
+        {
+            entry = null;
+            value = 0;
+            level = 0;
+
+            if (rootTable == 0)
+                return false;
+
+            ulong* pml4 = (ulong*)rootTable;
+            uint pml4Index = Pml4Index(virtualAddress);
+            ulong pml4Entry = pml4[pml4Index];
+            if (!IsPresent(pml4Entry) || IsLargePage(pml4Entry))
+                return false;
+
+            ulong* pdpt = (ulong*)(pml4Entry & AddressMask);
+            uint pdptIndex = PdptIndex(virtualAddress);
+            ulong pdptEntry = pdpt[pdptIndex];
+            if (!IsPresent(pdptEntry))
+                return false;
+
+            if (IsLargePage(pdptEntry))
+            {
+                entry = &pdpt[pdptIndex];
+                value = pdptEntry;
+                level = ResolvedEntryLevel.PdptLarge;
+                return true;
+            }
+
+            ulong* pd = (ulong*)(pdptEntry & AddressMask);
+            uint pdIndex = PdIndex(virtualAddress);
+            ulong pdEntry = pd[pdIndex];
+            if (!IsPresent(pdEntry))
+                return false;
+
+            if (IsLargePage(pdEntry))
+            {
+                entry = &pd[pdIndex];
+                value = pdEntry;
+                level = ResolvedEntryLevel.PdLarge;
+                return true;
+            }
+
+            ulong* pt = (ulong*)(pdEntry & AddressMask);
+            uint ptIndex = PtIndex(virtualAddress);
+            ulong ptEntry = pt[ptIndex];
+
+            entry = &pt[ptIndex];
+            value = ptEntry;
+            level = ResolvedEntryLevel.Pt;
+            return true;
+        }
+
+        private static bool TryQueryForRoot(ulong rootTable, ulong virtualAddress, out ulong physicalAddress, out PageFlags flags)
+        {
+            physicalAddress = 0;
+            flags = PageFlags.None;
+
+            if (!TryResolveMappedEntryForRoot(rootTable, virtualAddress, out ulong* entry, out ulong value, out ResolvedEntryLevel level))
+                return false;
+
+            if ((value & PresentMask) == 0)
+                return false;
+
+            ulong basePhysical;
+            ulong offset;
+            if (level == ResolvedEntryLevel.Pt)
+            {
+                basePhysical = value & AddressMask;
+                offset = virtualAddress & (PageSize - 1);
+            }
+            else if (level == ResolvedEntryLevel.PdLarge)
+            {
+                basePhysical = value & AddressMask2MB;
+                offset = virtualAddress & (LargePage2MBSize - 1);
+            }
+            else
+            {
+                basePhysical = value & AddressMask1GB;
+                offset = virtualAddress & (LargePage1GBSize - 1);
+            }
+
+            if (basePhysical > 0xFFFFFFFFFFFFFFFFUL - offset)
+                return false;
+
+            physicalAddress = basePhysical + offset;
+            flags = (PageFlags)(value & LeafFlagMask);
             return true;
         }
 
@@ -292,6 +475,46 @@ namespace OS.Kernel.Paging
             return page;
         }
 
+        private static bool TryCloneTableRecursive(ulong sourceTablePage, uint level, out ulong clonedTablePage)
+        {
+            clonedTablePage = 0;
+            if (sourceTablePage == 0 || level == 0)
+                return false;
+
+            ulong newTablePage = global::OS.Kernel.PhysicalMemory.AllocPage();
+            if (newTablePage == 0)
+                return false;
+
+            s_tablePages++;
+            OS.Kernel.Util.Memory.MemCopy((void*)newTablePage, (void*)sourceTablePage, (uint)PageSize);
+
+            if (level == 1)
+            {
+                clonedTablePage = newTablePage;
+                return true;
+            }
+
+            ulong* entries = (ulong*)newTablePage;
+            for (uint i = 0; i < 512; i++)
+            {
+                ulong entry = entries[i];
+                if ((entry & PresentMask) == 0 || (entry & PageSizeMask) != 0)
+                    continue;
+
+                ulong childSourceTable = entry & AddressMask;
+                if (childSourceTable == 0)
+                    return false;
+
+                if (!TryCloneTableRecursive(childSourceTable, level - 1, out ulong childClonedTable))
+                    return false;
+
+                entries[i] = (entry & ~AddressMask) | childClonedTable;
+            }
+
+            clonedTablePage = newTablePage;
+            return true;
+        }
+
         private static void ZeroPage(ulong pageAddress)
         {
             ulong* page = (ulong*)pageAddress;
@@ -329,6 +552,9 @@ namespace OS.Kernel.Paging
         private static void ResetState()
         {
             s_rootTable = 0;
+            s_kernelRootTable = 0;
+            s_kernelCr3 = 0;
+            s_pagerCr3 = 0;
             s_sparePageList = 0;
             s_sparePageCount = 0;
             s_tablePages = 0;

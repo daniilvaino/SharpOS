@@ -22,9 +22,12 @@ namespace OS.Kernel.Process
         private const char AbiManifestSuffixB = 'b';
         private const char AbiManifestSuffixI = 'i';
 
-        private const uint SystemVThunkPageSize = 4096;
-        private const uint SystemVOneArgThunkSize = 24;
-        private const uint SystemVNoArgThunkSize = 21;
+        private const uint ServiceThunkPageSize = 4096;
+        private const uint ServiceThunkSlotSize = 64;
+        private const ulong ServiceThunkVirtualBase = 0x0000700000010000UL;
+        private const uint ServiceThunkSearchPages = 1024;
+        private const ulong KernelLowSyncStart = 0x00100000UL;
+        private const ulong KernelLowSyncEndExclusive = 0x08000000UL;
 
         private enum AbiResolveSource : uint
         {
@@ -37,7 +40,19 @@ namespace OS.Kernel.Process
         private static int s_exitCode;
         private static uint s_publishedAbiVersion = AppServiceTable.AbiVersionV1;
 
-        private static bool s_systemVThunksInitialized;
+        private static bool s_serviceThunksInitialized;
+        private static ulong s_serviceThunkPageVirtual;
+        private static ulong s_serviceThunkPagePhysical;
+        private static ulong s_win64WriteStringThunk;
+        private static ulong s_win64WriteUIntThunk;
+        private static ulong s_win64WriteHexThunk;
+        private static ulong s_win64GetAbiVersionThunk;
+        private static ulong s_win64ExitThunk;
+        private static ulong s_win64FileExistsThunk;
+        private static ulong s_win64ReadFileThunk;
+        private static ulong s_win64ReadDirEntryThunk;
+        private static ulong s_win64TryReadKeyThunk;
+        private static ulong s_win64RunAppThunk;
         private static ulong s_systemVWriteStringThunk;
         private static ulong s_systemVWriteUIntThunk;
         private static ulong s_systemVWriteHexThunk;
@@ -83,23 +98,27 @@ namespace OS.Kernel.Process
             ulong tableTryReadKeyAddress = 0;
             ulong tableRunAppAddress = 0;
 
+            if (!Pager.TryGetKernelCr3(out ulong kernelCr3))
+                return false;
+
+            if (!EnsureServiceThunks(
+                kernelCr3,
+                (ulong)writeStringAddress,
+                (ulong)writeUIntAddress,
+                (ulong)writeHexAddress,
+                (ulong)getAbiVersionAddress,
+                (ulong)exitAddress,
+                (ulong)fileExistsAddress,
+                (ulong)readFileAddress,
+                (ulong)readDirEntryAddress,
+                (ulong)tryReadKeyAddress,
+                (ulong)runAppAddress))
+            {
+                return false;
+            }
+
             if (serviceAbi == AppServiceAbi.SystemV)
             {
-                if (!EnsureSystemVThunks(
-                    (ulong)writeStringAddress,
-                    (ulong)writeUIntAddress,
-                    (ulong)writeHexAddress,
-                    (ulong)getAbiVersionAddress,
-                    (ulong)exitAddress,
-                    (ulong)fileExistsAddress,
-                    (ulong)readFileAddress,
-                    (ulong)readDirEntryAddress,
-                    (ulong)tryReadKeyAddress,
-                    (ulong)runAppAddress))
-                {
-                    return false;
-                }
-
                 tableWriteStringAddress = s_systemVWriteStringThunk;
                 tableWriteUIntAddress = s_systemVWriteUIntThunk;
                 tableWriteHexAddress = s_systemVWriteHexThunk;
@@ -114,13 +133,21 @@ namespace OS.Kernel.Process
                     tableRunAppAddress = s_systemVRunAppThunk;
                 }
             }
-            else if (publishedAbiVersion >= AppServiceTable.AbiVersionV2)
+            else
             {
-                tableFileExistsAddress = (ulong)fileExistsAddress;
-                tableReadFileAddress = (ulong)readFileAddress;
-                tableReadDirEntryAddress = (ulong)readDirEntryAddress;
-                tableTryReadKeyAddress = (ulong)tryReadKeyAddress;
-                tableRunAppAddress = (ulong)runAppAddress;
+                tableWriteStringAddress = s_win64WriteStringThunk;
+                tableWriteUIntAddress = s_win64WriteUIntThunk;
+                tableWriteHexAddress = s_win64WriteHexThunk;
+                tableGetAbiVersionAddress = s_win64GetAbiVersionThunk;
+                tableExitAddress = s_win64ExitThunk;
+                if (publishedAbiVersion >= AppServiceTable.AbiVersionV2)
+                {
+                    tableFileExistsAddress = s_win64FileExistsThunk;
+                    tableReadFileAddress = s_win64ReadFileThunk;
+                    tableReadDirEntryAddress = s_win64ReadDirEntryThunk;
+                    tableTryReadKeyAddress = s_win64TryReadKeyThunk;
+                    tableRunAppAddress = s_win64RunAppThunk;
+                }
             }
 
             AppServiceTable table = default;
@@ -137,7 +164,11 @@ namespace OS.Kernel.Process
             table.TryReadKeyAddress = tableTryReadKeyAddress;
             table.RunAppAddress = tableRunAppAddress;
 
-            *((AppServiceTable*)servicePhysical) = table;
+            AppServiceTable* serviceTablePointer = Pager.IsPagerRootActive()
+                ? (AppServiceTable*)serviceVirtual
+                : (AppServiceTable*)servicePhysical;
+
+            *serviceTablePointer = table;
             s_exitRequested = 0;
             s_exitCode = 0;
             s_publishedAbiVersion = publishedAbiVersion;
@@ -152,7 +183,8 @@ namespace OS.Kernel.Process
             return AppServiceTable.AbiVersionV2;
         }
 
-        private static bool EnsureSystemVThunks(
+        private static bool EnsureServiceThunks(
+            ulong kernelCr3,
             ulong writeStringTarget,
             ulong writeUIntTarget,
             ulong writeHexTarget,
@@ -164,136 +196,353 @@ namespace OS.Kernel.Process
             ulong tryReadKeyTarget,
             ulong runAppTarget)
         {
-            if (s_systemVThunksInitialized)
+            if (s_serviceThunksInitialized)
                 return true;
 
-            ulong thunkPage = global::OS.Kernel.PhysicalMemory.AllocPage();
-            if (thunkPage == 0)
+            if (Pager.IsPagerRootActive())
                 return false;
 
-            global::OS.Kernel.Util.Memory.Zero((void*)thunkPage, SystemVThunkPageSize);
-
-            byte* page = (byte*)thunkPage;
-            uint cursor = 0;
-
-            s_systemVWriteStringThunk = thunkPage + cursor;
-            if (!TryWriteSystemVOneArgThunk(page + cursor, writeStringTarget))
+            kernelCr3 &= 0x000FFFFFFFFFF000UL;
+            if (kernelCr3 == 0)
                 return false;
-            cursor += SystemVOneArgThunkSize;
 
-            s_systemVWriteUIntThunk = thunkPage + cursor;
-            if (!TryWriteSystemVOneArgThunk(page + cursor, writeUIntTarget))
+            bool initialized = false;
+            try
+            {
+                ulong thunkPagePhysical = global::OS.Kernel.PhysicalMemory.AllocPage();
+                if (thunkPagePhysical == 0)
+                    return false;
+
+                if (!TryMapServiceThunkPage(thunkPagePhysical, out ulong thunkPageVirtual))
+                    return false;
+
+                global::OS.Kernel.Util.Memory.Zero((void*)thunkPagePhysical, ServiceThunkPageSize);
+
+                byte* page = (byte*)thunkPagePhysical;
+                uint cursor = 0;
+
+                s_win64WriteStringThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeWin64OneArgThunk(page + cursor, writeStringTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64WriteUIntThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeWin64OneArgThunk(page + cursor, writeUIntTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64WriteHexThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeWin64OneArgThunk(page + cursor, writeHexTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64GetAbiVersionThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeWin64NoArgThunk(page + cursor, getAbiVersionTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64ExitThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeWin64OneArgThunk(page + cursor, exitTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64FileExistsThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeWin64OneArgThunk(page + cursor, fileExistsTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64ReadFileThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeWin64OneArgThunk(page + cursor, readFileTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64ReadDirEntryThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeWin64OneArgThunk(page + cursor, readDirEntryTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64TryReadKeyThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeWin64OneArgThunk(page + cursor, tryReadKeyTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64RunAppThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeWin64OneArgThunk(page + cursor, runAppTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVWriteStringThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeSystemVOneArgThunk(page + cursor, writeStringTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVWriteUIntThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeSystemVOneArgThunk(page + cursor, writeUIntTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVWriteHexThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeSystemVOneArgThunk(page + cursor, writeHexTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVGetAbiVersionThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeSystemVNoArgThunk(page + cursor, getAbiVersionTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVExitThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeSystemVOneArgThunk(page + cursor, exitTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVFileExistsThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeSystemVOneArgThunk(page + cursor, fileExistsTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVReadFileThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeSystemVOneArgThunk(page + cursor, readFileTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVReadDirEntryThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeSystemVOneArgThunk(page + cursor, readDirEntryTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVTryReadKeyThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeSystemVOneArgThunk(page + cursor, tryReadKeyTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVRunAppThunk = thunkPageVirtual + cursor;
+                if (!TryWriteKernelBridgeSystemVOneArgThunk(page + cursor, runAppTarget, kernelCr3))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_serviceThunkPagePhysical = thunkPagePhysical;
+                s_serviceThunkPageVirtual = thunkPageVirtual;
+                s_serviceThunksInitialized = true;
+                initialized = true;
+            }
+            finally
+            {
+                if (!initialized)
+                    s_serviceThunksInitialized = false;
+            }
+
+            return initialized;
+        }
+
+        private static bool TryMapServiceThunkPage(ulong thunkPagePhysical, out ulong thunkPageVirtual)
+        {
+            thunkPageVirtual = 0;
+            if ((thunkPagePhysical & (PageSize - 1)) != 0)
                 return false;
-            cursor += SystemVOneArgThunkSize;
 
-            s_systemVWriteHexThunk = thunkPage + cursor;
-            if (!TryWriteSystemVOneArgThunk(page + cursor, writeHexTarget))
+            for (uint i = 0; i < ServiceThunkSearchPages; i++)
+            {
+                ulong candidate = ServiceThunkVirtualBase + ((ulong)i * PageSize);
+                if (Pager.TryQuery(candidate, out _, out _))
+                    continue;
+
+                if (Pager.Map(candidate, thunkPagePhysical, PageFlags.Writable))
+                {
+                    thunkPageVirtual = candidate;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryWriteKernelBridgeWin64OneArgThunk(byte* destination, ulong target, ulong kernelCr3)
+        {
+            if (destination == null || target == 0 || kernelCr3 == 0)
                 return false;
-            cursor += SystemVOneArgThunkSize;
 
-            s_systemVGetAbiVersionThunk = thunkPage + cursor;
-            if (!TryWriteSystemVNoArgThunk(page + cursor, getAbiVersionTarget))
-                return false;
-            cursor += SystemVNoArgThunkSize;
-
-            s_systemVExitThunk = thunkPage + cursor;
-            if (!TryWriteSystemVOneArgThunk(page + cursor, exitTarget))
-                return false;
-            cursor += SystemVOneArgThunkSize;
-
-            s_systemVFileExistsThunk = thunkPage + cursor;
-            if (!TryWriteSystemVOneArgThunk(page + cursor, fileExistsTarget))
-                return false;
-            cursor += SystemVOneArgThunkSize;
-
-            s_systemVReadFileThunk = thunkPage + cursor;
-            if (!TryWriteSystemVOneArgThunk(page + cursor, readFileTarget))
-                return false;
-            cursor += SystemVOneArgThunkSize;
-
-            s_systemVReadDirEntryThunk = thunkPage + cursor;
-            if (!TryWriteSystemVOneArgThunk(page + cursor, readDirEntryTarget))
-                return false;
-            cursor += SystemVOneArgThunkSize;
-
-            s_systemVTryReadKeyThunk = thunkPage + cursor;
-            if (!TryWriteSystemVOneArgThunk(page + cursor, tryReadKeyTarget))
-                return false;
-            cursor += SystemVOneArgThunkSize;
-
-            s_systemVRunAppThunk = thunkPage + cursor;
-            if (!TryWriteSystemVOneArgThunk(page + cursor, runAppTarget))
-                return false;
-            cursor += SystemVOneArgThunkSize;
-
-            s_systemVThunksInitialized = true;
+            // pushfq
+            destination[0] = 0x9C;
+            // cli
+            destination[1] = 0xFA;
+            // push r15
+            destination[2] = 0x41;
+            destination[3] = 0x57;
+            // mov r15, cr3
+            destination[4] = 0x41;
+            destination[5] = 0x0F;
+            destination[6] = 0x20;
+            destination[7] = 0xDF;
+            // mov rax, imm64 (kernel CR3)
+            destination[8] = 0x48;
+            destination[9] = 0xB8;
+            WriteU64(destination + 10, kernelCr3);
+            // mov cr3, rax
+            destination[18] = 0x0F;
+            destination[19] = 0x22;
+            destination[20] = 0xD8;
+            // mov rax, imm64 (target)
+            destination[21] = 0x48;
+            destination[22] = 0xB8;
+            WriteU64(destination + 23, target);
+            // sub rsp, 0x20
+            destination[31] = 0x48;
+            destination[32] = 0x83;
+            destination[33] = 0xEC;
+            destination[34] = 0x20;
+            // call rax
+            destination[35] = 0xFF;
+            destination[36] = 0xD0;
+            // add rsp, 0x20
+            destination[37] = 0x48;
+            destination[38] = 0x83;
+            destination[39] = 0xC4;
+            destination[40] = 0x20;
+            // mov rax, r15
+            destination[41] = 0x4C;
+            destination[42] = 0x89;
+            destination[43] = 0xF8;
+            // mov cr3, rax
+            destination[44] = 0x0F;
+            destination[45] = 0x22;
+            destination[46] = 0xD8;
+            // pop r15
+            destination[47] = 0x41;
+            destination[48] = 0x5F;
+            // popfq
+            destination[49] = 0x9D;
+            // ret
+            destination[50] = 0xC3;
             return true;
         }
 
-        private static bool TryWriteSystemVOneArgThunk(byte* destination, ulong target)
+        private static bool TryWriteKernelBridgeWin64NoArgThunk(byte* destination, ulong target, ulong kernelCr3)
         {
-            if (destination == null || target == 0)
+            return TryWriteKernelBridgeWin64OneArgThunk(destination, target, kernelCr3);
+        }
+
+        private static bool TryWriteKernelBridgeSystemVOneArgThunk(byte* destination, ulong target, ulong kernelCr3)
+        {
+            if (destination == null || target == 0 || kernelCr3 == 0)
                 return false;
 
-            // mov rax, imm64
-            destination[0] = 0x48;
-            destination[1] = 0xB8;
-            WriteU64(destination + 2, target);
-
+            // pushfq
+            destination[0] = 0x9C;
+            // cli
+            destination[1] = 0xFA;
+            // push r15
+            destination[2] = 0x41;
+            destination[3] = 0x57;
+            // mov r15, cr3
+            destination[4] = 0x41;
+            destination[5] = 0x0F;
+            destination[6] = 0x20;
+            destination[7] = 0xDF;
+            // mov rax, imm64 (kernel CR3)
+            destination[8] = 0x48;
+            destination[9] = 0xB8;
+            WriteU64(destination + 10, kernelCr3);
+            // mov cr3, rax
+            destination[18] = 0x0F;
+            destination[19] = 0x22;
+            destination[20] = 0xD8;
+            // mov rax, imm64 (target)
+            destination[21] = 0x48;
+            destination[22] = 0xB8;
+            WriteU64(destination + 23, target);
             // mov rcx, rdi
-            destination[10] = 0x48;
-            destination[11] = 0x89;
-            destination[12] = 0xF9;
-
-            // sub rsp, 0x28
-            destination[13] = 0x48;
-            destination[14] = 0x83;
-            destination[15] = 0xEC;
-            destination[16] = 0x28;
-
+            destination[31] = 0x48;
+            destination[32] = 0x89;
+            destination[33] = 0xF9;
+            // sub rsp, 0x20
+            destination[34] = 0x48;
+            destination[35] = 0x83;
+            destination[36] = 0xEC;
+            destination[37] = 0x20;
             // call rax
-            destination[17] = 0xFF;
-            destination[18] = 0xD0;
-
-            // add rsp, 0x28
-            destination[19] = 0x48;
-            destination[20] = 0x83;
-            destination[21] = 0xC4;
-            destination[22] = 0x28;
-
+            destination[38] = 0xFF;
+            destination[39] = 0xD0;
+            // add rsp, 0x20
+            destination[40] = 0x48;
+            destination[41] = 0x83;
+            destination[42] = 0xC4;
+            destination[43] = 0x20;
+            // mov rax, r15
+            destination[44] = 0x4C;
+            destination[45] = 0x89;
+            destination[46] = 0xF8;
+            // mov cr3, rax
+            destination[47] = 0x0F;
+            destination[48] = 0x22;
+            destination[49] = 0xD8;
+            // pop r15
+            destination[50] = 0x41;
+            destination[51] = 0x5F;
+            // popfq
+            destination[52] = 0x9D;
             // ret
-            destination[23] = 0xC3;
+            destination[53] = 0xC3;
             return true;
         }
 
-        private static bool TryWriteSystemVNoArgThunk(byte* destination, ulong target)
+        private static bool TryWriteKernelBridgeSystemVNoArgThunk(byte* destination, ulong target, ulong kernelCr3)
         {
-            if (destination == null || target == 0)
+            if (destination == null || target == 0 || kernelCr3 == 0)
                 return false;
 
-            // mov rax, imm64
-            destination[0] = 0x48;
-            destination[1] = 0xB8;
-            WriteU64(destination + 2, target);
-
-            // sub rsp, 0x28
-            destination[10] = 0x48;
-            destination[11] = 0x83;
-            destination[12] = 0xEC;
-            destination[13] = 0x28;
-
+            // pushfq
+            destination[0] = 0x9C;
+            // cli
+            destination[1] = 0xFA;
+            // push r15
+            destination[2] = 0x41;
+            destination[3] = 0x57;
+            // mov r15, cr3
+            destination[4] = 0x41;
+            destination[5] = 0x0F;
+            destination[6] = 0x20;
+            destination[7] = 0xDF;
+            // mov rax, imm64 (kernel CR3)
+            destination[8] = 0x48;
+            destination[9] = 0xB8;
+            WriteU64(destination + 10, kernelCr3);
+            // mov cr3, rax
+            destination[18] = 0x0F;
+            destination[19] = 0x22;
+            destination[20] = 0xD8;
+            // mov rax, imm64 (target)
+            destination[21] = 0x48;
+            destination[22] = 0xB8;
+            WriteU64(destination + 23, target);
+            // sub rsp, 0x20
+            destination[31] = 0x48;
+            destination[32] = 0x83;
+            destination[33] = 0xEC;
+            destination[34] = 0x20;
             // call rax
-            destination[14] = 0xFF;
-            destination[15] = 0xD0;
-
-            // add rsp, 0x28
-            destination[16] = 0x48;
-            destination[17] = 0x83;
-            destination[18] = 0xC4;
-            destination[19] = 0x28;
-
+            destination[35] = 0xFF;
+            destination[36] = 0xD0;
+            // add rsp, 0x20
+            destination[37] = 0x48;
+            destination[38] = 0x83;
+            destination[39] = 0xC4;
+            destination[40] = 0x20;
+            // mov rax, r15
+            destination[41] = 0x4C;
+            destination[42] = 0x89;
+            destination[43] = 0xF8;
+            // mov cr3, rax
+            destination[44] = 0x0F;
+            destination[45] = 0x22;
+            destination[46] = 0xD8;
+            // pop r15
+            destination[47] = 0x41;
+            destination[48] = 0x5F;
+            // popfq
+            destination[49] = 0x9D;
             // ret
-            destination[20] = 0xC3;
+            destination[50] = 0xC3;
             return true;
         }
 
@@ -878,11 +1127,38 @@ namespace OS.Kernel.Process
                         break;
                     }
 
+                    if (!JumpStub.EnsureInitialized())
+                    {
+                        result = AppServiceStatus.DeviceError;
+                        break;
+                    }
+
+                    if (!TrySyncKernelLowMappings(ref processImage))
+                    {
+                        result = AppServiceStatus.DeviceError;
+                        break;
+                    }
+
+                    if (!Pager.TryGetPagerCr3(out ulong pagerCr3))
+                    {
+                        result = AppServiceStatus.DeviceError;
+                        break;
+                    }
+
+                    pagerCr3 &= 0x000FFFFFFFFFF000UL;
+                    if (pagerCr3 == 0)
+                    {
+                        result = AppServiceStatus.DeviceError;
+                        break;
+                    }
+
+                    int returnExitCode = 0;
                     if (!JumpStub.Run(
-                        processImage.EntryPointPhysical,
-                        processImage.StackTopPhysical,
-                        processImage.StartupBlockPhysical,
-                        out int returnExitCode))
+                        processImage.EntryPoint,
+                        processImage.StackTop,
+                        processImage.StartupBlockVirtual,
+                        pagerCr3,
+                        out returnExitCode))
                     {
                         result = AppServiceStatus.DeviceError;
                         break;
@@ -971,9 +1247,8 @@ namespace OS.Kernel.Process
                 return false;
 
             if (processImage.EntryPoint == 0 ||
-                processImage.EntryPointPhysical == 0 ||
-                processImage.StackTopPhysical == 0 ||
-                processImage.StartupBlockPhysical == 0)
+                processImage.StackTop == 0 ||
+                processImage.StartupBlockVirtual == 0)
             {
                 return false;
             }
@@ -1045,6 +1320,45 @@ namespace OS.Kernel.Process
 
             address += PageSize;
             return true;
+        }
+
+        private static bool TrySyncKernelLowMappings(ref ProcessImage processImage)
+        {
+            for (ulong current = KernelLowSyncStart; current < KernelLowSyncEndExclusive; current += PageSize)
+            {
+                if (IsInRange(current, processImage.ImageStart, processImage.ImageEnd))
+                    continue;
+
+                if (IsInRange(current, processImage.StackBase, processImage.StackMappedTop))
+                    continue;
+
+                if (!Pager.TryQueryKernel(current, out ulong kernelPhysical, out PageFlags kernelFlags))
+                    continue;
+
+                ulong kernelPagePhysical = kernelPhysical & ~(PageSize - 1);
+                PageFlags normalizedKernelFlags = PageFlagOps.NormalizeForMap(kernelFlags);
+
+                if (Pager.TryQuery(current, out ulong pagerPhysical, out PageFlags pagerFlags))
+                {
+                    ulong pagerPagePhysical = pagerPhysical & ~(PageSize - 1);
+                    PageFlags normalizedPagerFlags = PageFlagOps.NormalizeForMap(pagerFlags);
+                    if (pagerPagePhysical == kernelPagePhysical && normalizedPagerFlags == normalizedKernelFlags)
+                        continue;
+
+                    if (!Pager.Unmap(current))
+                        return false;
+                }
+
+                if (!Pager.Map(current, kernelPagePhysical, kernelFlags))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsInRange(ulong address, ulong startInclusive, ulong endExclusive)
+        {
+            return address >= startInclusive && address < endExclusive;
         }
     }
 }

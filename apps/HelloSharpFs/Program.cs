@@ -7,6 +7,8 @@ namespace HelloSharpFs
     internal static unsafe class AppEntry
     {
         private const int ExitCode = 21;
+        private const bool EnableLauncherExplorer = true;
+        private const bool EnableStringExperimentMode = false;
         private const string Banner = "string exp start\n";
         private const string AbiPrefix = "abi=";
         private const string TestIdPrefix = "test_id=";
@@ -53,17 +55,26 @@ namespace HelloSharpFs
             AppHost.WriteUInt(AppHost.GetAbiVersion());
             AppHost.WriteString(NewLine);
 
-            uint result = StringExperimentSuite.RunSelected(out uint testId);
-            if (testId != 0)
+            if (EnableStringExperimentMode)
             {
-                AppHost.WriteString(TestIdPrefix);
-                AppHost.WriteUInt(testId);
-                AppHost.WriteString(NewLine);
+                uint result = StringExperimentSuite.RunSelected(out uint testId);
+                if (testId != 0)
+                {
+                    AppHost.WriteString(TestIdPrefix);
+                    AppHost.WriteUInt(testId);
+                    AppHost.WriteString(NewLine);
 
-                AppHost.WriteString(ResultPrefix);
-                AppHost.WriteUInt(result);
-                AppHost.WriteString(NewLine);
+                    AppHost.WriteString(ResultPrefix);
+                    AppHost.WriteUInt(result);
+                    AppHost.WriteString(NewLine);
 
+                    AppHost.Exit(ExitCode);
+                    return;
+                }
+            }
+
+            if (!EnableLauncherExplorer)
+            {
                 AppHost.Exit(ExitCode);
                 return;
             }

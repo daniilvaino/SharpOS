@@ -136,8 +136,10 @@ namespace OS.Kernel
             if (summary.PageSize != requirements.PageSize)
                 Panic.Fail("pager requirements mismatch: page size");
 
-            if (summary.TablePages != requirements.InitialPageTablePages)
-                Panic.Fail("pager requirements mismatch: initial table pages");
+            // TablePages now includes cloned kernel page-table hierarchy + reserve pages.
+            // The requirements contract is about pre-reserved spare pages for later mappings.
+            if (summary.SpareTablePages < requirements.InitialPageTablePages)
+                Panic.Fail("pager requirements mismatch: initial spare table pages");
 
             Log.Write(LogLevel.Info, "pager requirements applied");
         }

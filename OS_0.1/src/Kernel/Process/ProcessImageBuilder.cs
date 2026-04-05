@@ -9,7 +9,7 @@ namespace OS.Kernel.Process
     {
         private const ulong PageSize = X64PageTable.PageSize;
         private const uint DefaultStackPages = 8;
-        private const ulong DefaultStackMappedTop = 0x0000000000800000UL;
+        private const ulong DefaultStackMappedTop = 0x0000004000000000UL;
 
         public static bool TryBuild(
             ref ElfLoadedImage loadedImage,
@@ -74,6 +74,12 @@ namespace OS.Kernel.Process
 
         private static bool MapStack(ref ProcessImage processImage)
         {
+            if (!TryPrepareStackVirtualSpan(processImage.StackBase, processImage.StackPages))
+            {
+                Log.Write(LogLevel.Warn, "process build: stack span preparation failed");
+                return false;
+            }
+
             ulong currentVirtual = processImage.StackBase;
             for (uint i = 0; i < processImage.StackPages; i++)
             {
@@ -89,6 +95,18 @@ namespace OS.Kernel.Process
 
                 if (!Pager.Map(currentVirtual, physicalPage, PageFlags.Writable | PageFlags.NoExecute))
                 {
+                    Log.Begin(LogLevel.Warn);
+                    Console.Write("process build: stack map fail vaddr=0x");
+                    Console.WriteHex(currentVirtual, 16);
+                    if (Pager.TryQuery(currentVirtual, out ulong existingPhysical, out PageFlags existingFlags))
+                    {
+                        Console.Write(" existing=0x");
+                        Console.WriteHex(existingPhysical, 16);
+                        Console.Write(" flags=0x");
+                        Console.WriteHex((ulong)existingFlags, 16);
+                    }
+
+                    Log.EndLine();
                     Log.Write(LogLevel.Warn, "process build: pager map failed for stack page");
                     UnmapStack(processImage.StackBase, processImage.MappedStackPages);
                     return false;
@@ -96,6 +114,24 @@ namespace OS.Kernel.Process
 
                 processImage.MappedStackPages++;
                 if (i + 1 < processImage.StackPages)
+                    currentVirtual += PageSize;
+            }
+
+            return true;
+        }
+
+        private static bool TryPrepareStackVirtualSpan(ulong stackBase, uint pageCount)
+        {
+            if (pageCount == 0)
+                return false;
+
+            ulong currentVirtual = stackBase;
+            for (uint i = 0; i < pageCount; i++)
+            {
+                if (Pager.TryQuery(currentVirtual, out _, out _) && !Pager.Unmap(currentVirtual))
+                    return false;
+
+                if (i + 1 < pageCount)
                     currentVirtual += PageSize;
             }
 

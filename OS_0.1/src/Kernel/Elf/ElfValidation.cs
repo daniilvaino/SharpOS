@@ -12,6 +12,8 @@ namespace OS.Kernel.Elf
     {
         private const ulong PageSize = X64PageTable.PageSize;
         private const string BootDirectoryPath = "\\EFI\\BOOT";
+        private const ulong KernelLowSyncStart = 0x00100000UL;
+        private const ulong KernelLowSyncEndExclusive = 0x08000000UL;
 
         private struct ExternalElfApp
         {
@@ -184,16 +186,48 @@ namespace OS.Kernel.Elf
 
             ProcessDiagnostics.DumpSummary(ref processImage);
 
+            if (!JumpStub.EnsureInitialized())
+            {
+                CleanupProcessMappings(ref processImage, ref loadedImage);
+                return AppRunResult.JumpFailed;
+            }
+
+            if (!TrySyncKernelLowMappings(ref processImage))
+            {
+                CleanupProcessMappings(ref processImage, ref loadedImage);
+                return AppRunResult.JumpFailed;
+            }
+
+            if (!TryValidateJumpContext(ref processImage))
+            {
+                CleanupProcessMappings(ref processImage, ref loadedImage);
+                return AppRunResult.JumpFailed;
+            }
+
+            if (!Pager.TryGetPagerCr3(out ulong pagerCr3))
+            {
+                CleanupProcessMappings(ref processImage, ref loadedImage);
+                return AppRunResult.JumpFailed;
+            }
+
+            pagerCr3 &= 0x000FFFFFFFFFF000UL;
+            if (pagerCr3 == 0)
+            {
+                CleanupProcessMappings(ref processImage, ref loadedImage);
+                return AppRunResult.JumpFailed;
+            }
+
             DebugLog.Write(LogLevel.Info, "jump start");
             ProcessManager.SetCurrent(ref processImage, ref loadedImage);
-            bool jumpOk;
+            bool jumpOk = false;
             int returnExitCode = 0;
             try
             {
                 jumpOk = JumpStub.Run(
-                    processImage.EntryPointPhysical,
-                    processImage.StackTopPhysical,
-                    processImage.StartupBlockPhysical,
+                    processImage.EntryPoint,
+                    processImage.StackTop,
+                    processImage.StartupBlockVirtual,
+                    pagerCr3,
                     out returnExitCode);
             }
             finally
@@ -294,9 +328,8 @@ namespace OS.Kernel.Elf
                 return false;
 
             if (processImage.EntryPoint == 0 ||
-                processImage.EntryPointPhysical == 0 ||
-                processImage.StackTopPhysical == 0 ||
-                processImage.StartupBlockPhysical == 0)
+                processImage.StackTop == 0 ||
+                processImage.StartupBlockVirtual == 0)
             {
                 return false;
             }
@@ -314,6 +347,126 @@ namespace OS.Kernel.Elf
                 return false;
 
             return true;
+        }
+
+        private static bool TrySyncKernelLowMappings(ref ProcessImage processImage)
+        {
+            uint importedCount = 0;
+            uint replacedCount = 0;
+
+            for (ulong current = KernelLowSyncStart; current < KernelLowSyncEndExclusive; current += PageSize)
+            {
+                if (IsInRange(current, processImage.ImageStart, processImage.ImageEnd))
+                    continue;
+
+                if (IsInRange(current, processImage.StackBase, processImage.StackMappedTop))
+                    continue;
+
+                if (!Pager.TryQueryKernel(current, out ulong kernelPhysical, out PageFlags kernelFlags))
+                    continue;
+
+                ulong kernelPagePhysical = kernelPhysical & ~(PageSize - 1);
+                PageFlags normalizedKernelFlags = PageFlagOps.NormalizeForMap(kernelFlags);
+
+                if (Pager.TryQuery(current, out ulong pagerPhysical, out PageFlags pagerFlags))
+                {
+                    ulong pagerPagePhysical = pagerPhysical & ~(PageSize - 1);
+                    PageFlags normalizedPagerFlags = PageFlagOps.NormalizeForMap(pagerFlags);
+                    if (pagerPagePhysical == kernelPagePhysical && normalizedPagerFlags == normalizedKernelFlags)
+                        continue;
+
+                    if (!Pager.Unmap(current))
+                    {
+                        DebugLog.Write(LogLevel.Warn, "kernel mapping sync: unmap failed");
+                        return false;
+                    }
+
+                    replacedCount++;
+                }
+
+                if (!Pager.Map(current, kernelPagePhysical, kernelFlags))
+                {
+                    DebugLog.Write(LogLevel.Warn, "kernel mapping sync: map failed");
+                    return false;
+                }
+
+                importedCount++;
+            }
+
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("kernel low sync imported/replaced: ");
+            UiText.WriteUInt(importedCount);
+            UiText.Write("/");
+            UiText.WriteUInt(replacedCount);
+            DebugLog.EndLine();
+            return true;
+        }
+
+        private static bool TryValidateJumpContext(ref ProcessImage processImage)
+        {
+            if (!TryLogMappedAddress("entry map", processImage.EntryPoint, false))
+                return false;
+
+            if (!TryLogMappedAddress("stack top map", processImage.StackTop - 1, false))
+                return false;
+
+            if (!TryLogMappedAddress("startup block map", processImage.StartupBlockVirtual, false))
+                return false;
+
+            if (!TryLogMappedAddress("service table map", processImage.ServiceTableVirtual, false))
+                return false;
+
+            if (!JumpStub.TryGetAddress(out ulong jumpStubAddress))
+            {
+                DebugLog.Write(LogLevel.Warn, "jump context: stub address unavailable");
+                return false;
+            }
+
+            if (!TryLogMappedAddress("jump stub map", jumpStubAddress, true))
+                return false;
+
+            return true;
+        }
+
+        private static bool TryLogMappedAddress(string label, ulong virtualAddress, bool requireExecutable)
+        {
+            if (!Pager.TryQuery(virtualAddress, out ulong physicalAddress, out PageFlags flags))
+            {
+                DebugLog.Begin(LogLevel.Warn);
+                UiText.Write(label);
+                UiText.Write(": unmapped vaddr=0x");
+                UiText.WriteHex(virtualAddress, 16);
+                DebugLog.EndLine();
+                return false;
+            }
+
+            if (requireExecutable && (flags & PageFlags.NoExecute) == PageFlags.NoExecute)
+            {
+                DebugLog.Begin(LogLevel.Warn);
+                UiText.Write(label);
+                UiText.Write(": NX vaddr=0x");
+                UiText.WriteHex(virtualAddress, 16);
+                UiText.Write(" paddr=0x");
+                UiText.WriteHex(physicalAddress, 16);
+                DebugLog.EndLine();
+                return false;
+            }
+
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write(label);
+            UiText.Write(": vaddr=0x");
+            UiText.WriteHex(virtualAddress, 16);
+            UiText.Write(" paddr=0x");
+            UiText.WriteHex(physicalAddress, 16);
+            UiText.Write(" flags=0x");
+            UiText.WriteHex((ulong)flags, 16);
+            DebugLog.EndLine();
+            return true;
+        }
+
+        private static bool IsInRange(ulong address, ulong startInclusive, ulong endExclusive)
+        {
+            return address >= startInclusive && address < endExclusive;
         }
 
         private static bool TryVerifyMarker()
