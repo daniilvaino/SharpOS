@@ -9,13 +9,15 @@ namespace OS.Kernel.Process
     {
         private const ulong PageSize = X64PageTable.PageSize;
         private const uint DefaultStackPages = 8;
-        private const ulong DefaultStackMappedTop = 0x0000004000000000UL;
+        public const ulong DefaultStackMappedTop = 0x0000004000000000UL;
+        public const ulong NestedStackMappedTop  = 0x0000008000000000UL;
 
         public static bool TryBuild(
             ref ElfLoadedImage loadedImage,
             ulong markerVirtualAddress,
             AppServiceAbi serviceAbi,
             uint requestedAbiVersion,
+            ulong stackMappedTop,
             out ProcessImage processImage)
         {
             processImage = default;
@@ -25,18 +27,18 @@ namespace OS.Kernel.Process
             processImage.ImageEnd = loadedImage.HighestVirtualAddressExclusive;
             processImage.MappedImagePages = loadedImage.LoadedPages;
             processImage.StackPages = DefaultStackPages;
-            processImage.StackMappedTop = DefaultStackMappedTop;
+            processImage.StackMappedTop = stackMappedTop;
             processImage.ServiceAbi = serviceAbi;
 
             ulong stackSize = (ulong)DefaultStackPages * PageSize;
-            if (DefaultStackMappedTop < stackSize)
+            if (stackMappedTop < stackSize)
             {
-                Log.Write(LogLevel.Warn, "process build: invalid default stack top");
+                Log.Write(LogLevel.Warn, "process build: invalid stack top");
                 return false;
             }
 
-            processImage.StackBase = DefaultStackMappedTop - stackSize;
-            processImage.StackTop = DefaultStackMappedTop;
+            processImage.StackBase = stackMappedTop - stackSize;
+            processImage.StackTop = stackMappedTop;
 
             if (RangesOverlap(
                 processImage.ImageStart,

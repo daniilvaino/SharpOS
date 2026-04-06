@@ -70,14 +70,11 @@ namespace OS.Kernel.Process
             mappingContext = default;
             ProcessImage processImage = s_currentContext.ProcessImage;
 
+            // Only save image mappings. The stack is at a different virtual address
+            // range in the child process and must NOT be unmapped while we are still
+            // executing on it (pager CR3 is active during a service call).
             if (!TryCaptureRange(processImage.ImageStart, processImage.ImageEnd, out mappingContext.ImageSnapshot))
                 return false;
-
-            if (!TryCaptureRange(processImage.StackBase, processImage.StackMappedTop, out mappingContext.StackSnapshot))
-            {
-                ReleaseSnapshot(ref mappingContext.ImageSnapshot);
-                return false;
-            }
 
             return true;
         }
@@ -145,13 +142,9 @@ namespace OS.Kernel.Process
         private static bool TryUnmapCurrentProcessRanges()
         {
             ProcessImage processImage = s_currentContext.ProcessImage;
-            if (!TryUnmapRange(processImage.ImageStart, processImage.ImageEnd))
-                return false;
-
-            if (!TryUnmapRange(processImage.StackBase, processImage.StackMappedTop))
-                return false;
-
-            return true;
+            // Only unmap the image. The stack stays mapped because we are still
+            // executing on it. The child uses a different stack virtual range.
+            return TryUnmapRange(processImage.ImageStart, processImage.ImageEnd);
         }
 
         private static bool TryUnmapRange(ulong startInclusive, ulong endExclusive)
@@ -175,13 +168,8 @@ namespace OS.Kernel.Process
 
         private static bool TryRestoreMappings(ref MappingContext mappingContext)
         {
-            if (!TryRestoreSnapshot(ref mappingContext.ImageSnapshot))
-                return false;
-
-            if (!TryRestoreSnapshot(ref mappingContext.StackSnapshot))
-                return false;
-
-            return true;
+            // Only restore image. Stack was never unmapped (child used a different range).
+            return TryRestoreSnapshot(ref mappingContext.ImageSnapshot);
         }
 
         private static bool TryRestoreSnapshot(ref MappingSnapshot snapshot)
@@ -193,13 +181,14 @@ namespace OS.Kernel.Process
 
                 if (Pager.TryQuery(entry.VirtualAddress, out ulong existingPhysical, out PageFlags existingFlags))
                 {
-                    if (existingPhysical != entry.PhysicalAddress)
-                        return false;
+                    PageFlags normalizedExisting = PageFlagOps.NormalizeForMap(existingFlags);
+                    if (existingPhysical == entry.PhysicalAddress && normalizedExisting == expectedFlags)
+                        continue;
 
-                    if (PageFlagOps.NormalizeForMap(existingFlags) != expectedFlags)
+                    // Stale mapping (e.g. kernel identity-map re-inserted by TrySyncKernelLowMappings).
+                    // Unmap it so we can restore the correct parent page below.
+                    if (!Pager.Unmap(entry.VirtualAddress))
                         return false;
-
-                    continue;
                 }
 
                 if (!Pager.Map(entry.VirtualAddress, entry.PhysicalAddress, entry.Flags))
@@ -212,7 +201,7 @@ namespace OS.Kernel.Process
         private static void ReleaseMappingContext(ref MappingContext mappingContext)
         {
             ReleaseSnapshot(ref mappingContext.ImageSnapshot);
-            ReleaseSnapshot(ref mappingContext.StackSnapshot);
+            // StackSnapshot is not used (child uses a different stack virtual range).
         }
 
         private static void ReleaseSnapshot(ref MappingSnapshot snapshot)

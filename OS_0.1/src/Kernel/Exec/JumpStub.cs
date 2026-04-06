@@ -13,6 +13,17 @@ namespace OS.Kernel.Exec
         private static ulong s_stubVirtualAddress;
         private static ulong s_stubPhysicalAddress;
 
+        // EfiLoaderCode buffer provided by the bootloader.
+        // Firmware CR3 maps EfiLoaderCode as executable; EfiConventionalMemory is NX on real hardware.
+        private static void* s_execBuffer;
+        private static uint s_execBufferSize;
+
+        public static void SetExecBuffer(void* buffer, uint size)
+        {
+            s_execBuffer = buffer;
+            s_execBufferSize = size;
+        }
+
         public static bool EnsureInitialized()
         {
             if (s_initialized)
@@ -39,9 +50,6 @@ namespace OS.Kernel.Exec
         {
             exitCode = 0;
 
-            if (Pager.IsPagerRootActive())
-                return false;
-
             if (!s_initialized)
                 return false;
 
@@ -60,14 +68,70 @@ namespace OS.Kernel.Exec
 
         private static bool TryInitialize()
         {
-            ulong stubPhysical = global::OS.Kernel.PhysicalMemory.AllocPage();
-            if (stubPhysical == 0)
+            if (!TryAllocFromExecBuffer(out ulong stubPhysical, out ulong stubVirtual) &&
+                !TryAllocFromPhysicalMemory(out stubPhysical, out stubVirtual))
                 return false;
 
-            if ((stubPhysical & (PageSize - 1)) != 0)
+            OS.Kernel.Util.Memory.Zero((void*)stubVirtual, StubPageSize);
+            if (!TryWriteStub((byte*)stubVirtual))
                 return false;
 
-            ulong stubVirtual = stubPhysical;
+            s_stubPhysicalAddress = stubPhysical;
+            s_stubVirtualAddress = stubVirtual;
+            s_jump = (delegate* unmanaged<ulong, ulong, ulong, ulong, int>)stubVirtual;
+            s_initialized = true;
+            return true;
+        }
+
+        // Preferred: use EfiLoaderCode buffer from bootloader.
+        // Firmware CR3 maps it executable — no NX fault when s_jump() is called
+        // before the CR3 switch to the pager root.
+        private static bool TryAllocFromExecBuffer(out ulong stubPhysical, out ulong stubVirtual)
+        {
+            stubPhysical = 0;
+            stubVirtual = 0;
+
+            if (s_execBuffer == null || s_execBufferSize < StubPageSize)
+                return false;
+
+            ulong addr = (ulong)s_execBuffer;
+            if ((addr & (PageSize - 1)) != 0)
+                return false;   // bootloader must provide page-aligned address
+
+            stubPhysical = addr;
+            stubVirtual = addr;
+
+            // The pager clones the firmware CR3, so EfiLoaderCode pages are already mapped.
+            if (Pager.TryQuery(stubVirtual, out ulong mappedPhysical, out _))
+            {
+                // Already in pager (expected). Verify it maps to our physical page.
+                if ((mappedPhysical & ~(PageSize - 1)) != stubPhysical)
+                    return false;
+            }
+            else
+            {
+                // Not cloned for some reason — map it explicitly.
+                if (!Pager.Map(stubVirtual, stubPhysical, PageFlags.Writable))
+                    return false;
+            }
+
+            return true;
+        }
+
+        // Fallback: allocate from EfiConventionalMemory.
+        // Works on QEMU/OVMF without strict NX policy; fails on real hardware (INSYDE NX).
+        private static bool TryAllocFromPhysicalMemory(out ulong stubPhysical, out ulong stubVirtual)
+        {
+            stubPhysical = 0;
+            stubVirtual = 0;
+
+            ulong page = global::OS.Kernel.PhysicalMemory.AllocPage();
+            if (page == 0 || (page & (PageSize - 1)) != 0)
+                return false;
+
+            stubPhysical = page;
+            stubVirtual = page;
+
             if (Pager.TryQuery(stubVirtual, out ulong mappedPhysical, out _))
             {
                 if ((mappedPhysical & ~(PageSize - 1)) != stubPhysical)
@@ -78,14 +142,6 @@ namespace OS.Kernel.Exec
                 return false;
             }
 
-            OS.Kernel.Util.Memory.Zero((void*)stubVirtual, StubPageSize);
-            if (!TryWriteStub((byte*)stubVirtual))
-                return false;
-
-            s_stubPhysicalAddress = stubPhysical;
-            s_stubVirtualAddress = stubVirtual;
-            s_jump = (delegate* unmanaged<ulong, ulong, ulong, ulong, int>)stubVirtual;
-            s_initialized = true;
             return true;
         }
 

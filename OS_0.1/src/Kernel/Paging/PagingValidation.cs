@@ -7,11 +7,22 @@ namespace OS.Kernel.Paging
     internal static unsafe class PagingValidation
     {
         private const ulong PageSize = X64PageTable.PageSize;
-        private const ulong ValidationBaseVirtual = 0xFFFF800000100000UL;
+        // Chosen at runtime by FindFreeValidationBase() — first absent PML4 slot >= index 64.
+        // Hard-coding a fixed address is fragile: firmware maps different ranges as large pages
+        // on different hardware (real INSYDE uses kernel space, QEMU OVMF uses 8GB+ for PCIe MMIO).
+        private static ulong s_validationBase;
 
         public static void Run()
         {
             Log.Write(LogLevel.Info, "pager validation start");
+            s_validationBase = FindFreeValidationBase();
+            if (s_validationBase == 0)
+            {
+                Log.Write(LogLevel.Warn, "pager validation: no free PML4 slot, skipping map tests");
+                ValidateUtilityLayer();
+                Log.Write(LogLevel.Info, "pager validation done (partial)");
+                return;
+            }
             ValidateUtilityLayer();
             ValidateOffsetAndDuplicates();
             ValidateNeighborsAndFlags();
@@ -63,7 +74,7 @@ namespace OS.Kernel.Paging
 
         private static void ValidateOffsetAndDuplicates()
         {
-            ulong virtualAddress = ValidationBaseVirtual + 0x1000UL;
+            ulong virtualAddress = s_validationBase + 0x1000UL;
             ulong physicalAddress = AllocPageOrFail("pager validation: physical page alloc failed (offset)");
             PageFlags flags = PageFlags.Writable | PageFlags.Global | PageFlags.NoExecute;
 
@@ -86,7 +97,7 @@ namespace OS.Kernel.Paging
 
         private static void ValidateNeighborsAndFlags()
         {
-            ulong firstVirtual = ValidationBaseVirtual + 0x8000UL;
+            ulong firstVirtual = s_validationBase + 0x8000UL;
             ulong secondVirtual = firstVirtual + PageSize;
             ulong thirdVirtual = secondVirtual + PageSize;
 
@@ -126,7 +137,7 @@ namespace OS.Kernel.Paging
         private static void ValidateRangeApi()
         {
             const uint rangePages = 3;
-            ulong virtualStart = ValidationBaseVirtual + 0x12000UL;
+            ulong virtualStart = s_validationBase + 0x12000UL;
             ulong physicalStart = AllocPagesOrFail(rangePages, "pager validation: physical pages alloc failed (range)");
             PageFlags flags = PageFlags.Writable | PageFlags.Global;
 
@@ -161,6 +172,34 @@ namespace OS.Kernel.Paging
             KernelAssert.True(Pager.TryQuery(virtualAddress, out ulong physicalAddress, out PageFlags flags), "pager validation: query failed (flags round trip)");
             KernelAssert.Equal(expectedPhysicalAddress, physicalAddress, "pager validation: physical mismatch (flags round trip)");
             KernelAssert.Equal((ulong)(expectedFlags | PageFlags.Present), (ulong)flags, "pager validation: flags mismatch (flags round trip)");
+        }
+
+        // Find the first PML4 slot (index >= 64) that is completely absent in the pager tables.
+        // An absent PML4 entry means GetOrCreateNextTable can freely build PDPT/PD/PT there.
+        // Slots 0-63 cover 0-32TB and may contain firmware identity/MMIO mappings.
+        private static ulong FindFreeValidationBase()
+        {
+            for (uint pml4Index = 64; pml4Index < 256; pml4Index++)
+            {
+                // Construct canonical user-space VA for this PML4 slot.
+                ulong va = (ulong)pml4Index << 39;
+                if (!Pager.TryGetWalkInfo(va, out PageWalkInfo walk))
+                    continue;
+
+                // Slot is free if its PML4 entry is not present.
+                if (!walk.Pml4Present)
+                {
+                    Log.Begin(LogLevel.Info);
+                    Console.Write("pager validation base: 0x");
+                    Console.WriteHex(va, 16);
+                    Console.Write(" (PML4[");
+                    Console.WriteUInt(pml4Index);
+                    Console.Write("])");
+                    Log.EndLine();
+                    return va;
+                }
+            }
+            return 0;
         }
 
         private static ulong AllocPageOrFail(string panicMessage)

@@ -9,6 +9,14 @@ namespace OS.Kernel.Paging
         private static bool s_initialized;
         private static delegate* unmanaged<ulong> s_readCr3;
         private static delegate* unmanaged<ulong, void> s_writeCr3;
+        private static void* s_execBuffer;
+        private static uint s_execBufferSize;
+
+        public static void SetExecBuffer(void* buffer, uint size)
+        {
+            s_execBuffer = buffer;
+            s_execBufferSize = size;
+        }
 
         public static bool TryRead(out ulong value)
         {
@@ -37,9 +45,17 @@ namespace OS.Kernel.Paging
             if (s_initialized)
                 return true;
 
-            void* stubBuffer = global::OS.Kernel.Memory.KernelHeap.Alloc(StubBufferSize);
-            if (stubBuffer == null)
-                return false;
+            void* stubBuffer;
+            if (s_execBuffer != null && s_execBufferSize >= StubBufferSize)
+            {
+                stubBuffer = s_execBuffer;
+            }
+            else
+            {
+                stubBuffer = global::OS.Kernel.Memory.KernelHeap.Alloc(StubBufferSize);
+                if (stubBuffer == null)
+                    return false;
+            }
 
             OS.Kernel.Util.Memory.Zero(stubBuffer, StubBufferSize);
             byte* destination = (byte*)stubBuffer;

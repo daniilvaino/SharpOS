@@ -2,6 +2,58 @@ namespace SharpOS.Std.NoRuntime
 {
     internal static unsafe class StringAlgorithms
     {
+        internal static string PadLeft(string str, int totalWidth, char paddingChar)
+        {
+            if (str == null)
+                str = string.Empty;
+
+            int len = str.Length;
+            if (totalWidth <= len)
+                return str;
+
+            int padCount = totalWidth - len;
+            string result = StringRuntime.FastAllocateString(totalWidth);
+            if (result.Length != totalWidth)
+                return str;
+
+            fixed (char* dst = result)
+            {
+                for (int i = 0; i < padCount; i++)
+                    dst[i] = paddingChar;
+
+                for (int i = 0; i < len; i++)
+                    dst[padCount + i] = str[i];
+            }
+
+            return result;
+        }
+
+        internal static string PadRight(string str, int totalWidth, char paddingChar)
+        {
+            if (str == null)
+                str = string.Empty;
+
+            int len = str.Length;
+            if (totalWidth <= len)
+                return str;
+
+            int padCount = totalWidth - len;
+            string result = StringRuntime.FastAllocateString(totalWidth);
+            if (result.Length != totalWidth)
+                return str;
+
+            fixed (char* dst = result)
+            {
+                for (int i = 0; i < len; i++)
+                    dst[i] = str[i];
+
+                for (int i = 0; i < padCount; i++)
+                    dst[len + i] = paddingChar;
+            }
+
+            return result;
+        }
+
         internal static string Concat(string str0, string str1)
         {
             if (str0 == null)

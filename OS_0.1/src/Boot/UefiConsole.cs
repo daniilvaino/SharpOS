@@ -2,6 +2,48 @@ namespace OS.Boot
 {
     internal static unsafe class UefiConsole
     {
+        // Enumerate all ConOut text modes and switch to the one with most columns*rows.
+        // This makes the text fill the screen on systems where firmware defaults to a
+        // low-resolution mode (e.g. 800x600 on a desktop GPU).
+        public static void TryMaximizeTextMode(EFI_SYSTEM_TABLE* systemTable)
+        {
+            if (systemTable == null || systemTable->ConOut == null)
+                return;
+
+            EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL* conOut = systemTable->ConOut;
+            if (conOut->Mode == null || conOut->QueryMode == null || conOut->SetMode == null)
+                return;
+
+            int maxMode = conOut->Mode->MaxMode;
+            if (maxMode <= 1)
+                return;
+
+            int bestMode = conOut->Mode->Mode;
+            ulong bestScore = 0;
+
+            for (int i = 0; i < maxMode; i++)
+            {
+                ulong cols = 0, rows = 0;
+                ulong status = conOut->QueryMode(conOut, (ulong)i, &cols, &rows);
+                if (status != 0)
+                    continue;
+
+                ulong score = cols * rows;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestMode = i;
+                }
+            }
+
+            if (bestMode != conOut->Mode->Mode)
+            {
+                conOut->SetMode(conOut, (ulong)bestMode);
+                if (conOut->ClearScreen != null)
+                    conOut->ClearScreen(conOut);
+            }
+        }
+
         public static void Write(EFI_SYSTEM_TABLE* systemTable, string text)
         {
             if (systemTable == null || systemTable->ConOut == null || text == null || text.Length == 0)
@@ -41,6 +83,7 @@ namespace OS.Boot
             buffer[0] = value;
             buffer[1] = '\0';
             systemTable->ConOut->OutputString(systemTable->ConOut, buffer);
+
         }
     }
 }

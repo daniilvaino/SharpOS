@@ -23,11 +23,53 @@ namespace SharpOS.AppSdk
             if (text == null || text.Length == 0)
                 return;
 
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null)
+                return;
+
+            delegate* unmanaged<uint, void> writeChar = (delegate* unmanaged<uint, void>)services->WriteCharAddress;
+            if (writeChar != null)
+            {
+                fixed (char* source = text)
+                {
+                    for (int i = 0; i < text.Length; i++)
+                        writeChar((uint)source[i]);
+                }
+                return;
+            }
+
+            // Fallback: ASCII-only path (WriteChar not available)
             byte* buffer = stackalloc byte[MaxTempTextChars];
             if (!TryEncodeAscii(text, buffer, MaxTempTextChars, out _))
                 return;
 
             WriteString(buffer);
+        }
+
+        public static void WriteBuildId()
+        {
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null)
+                return;
+
+            delegate* unmanaged<void> writeBuildId = (delegate* unmanaged<void>)services->WriteBuildIdAddress;
+            if (writeBuildId == null)
+                return;
+
+            writeBuildId();
+        }
+
+        public static void WriteChar(char c)
+        {
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null)
+                return;
+
+            delegate* unmanaged<uint, void> writeChar = (delegate* unmanaged<uint, void>)services->WriteCharAddress;
+            if (writeChar == null)
+                return;
+
+            writeChar((uint)c);
         }
 
         public static void WriteUInt(uint value)

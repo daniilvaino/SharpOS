@@ -45,6 +45,16 @@ namespace OS.Kernel.Paging
 
         public static ulong KernelRootTablePhysical => s_kernelRootTable;
 
+        public static void SetExecBuffer(void* buffer, uint size)
+        {
+            Cr3Accessor.SetExecBuffer(buffer, size);
+        }
+
+        public static void SetJumpStubBuffer(void* buffer, uint size)
+        {
+            global::OS.Kernel.Exec.JumpStub.SetExecBuffer(buffer, size);
+        }
+
         public static bool Init(PagingRequirements requirements)
         {
             ResetState();

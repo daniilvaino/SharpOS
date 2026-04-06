@@ -35,6 +35,10 @@ namespace OS.Kernel
 
                 InitializeHeap();
                 RunHeapSmokeTest();
+                if (bootInfo.ExecStubBuffer != null)
+                    X64PageTable.SetExecBuffer(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize);
+                if (bootInfo.JumpStubExecBuffer != null)
+                    X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
                 InitializePager();
                 RunPagerValidation();
                 RunElfValidation(bootInfo);

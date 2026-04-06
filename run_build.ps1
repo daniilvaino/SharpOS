@@ -392,8 +392,11 @@ $QemuExe = Resolve-FirstPath -Candidates @(
     "C:\Program Files\QEMU\qemu-system-x86_64.exe"
 ) -Label "qemu-system-x86_64.exe"
 
+# Strict-NX OVMF (built via .\ovmf\build.ps1) is preferred.
+# Falls back to the system QEMU OVMF if not yet built.
 $OvmfCode = Resolve-FirstPath -Candidates @(
     $OvmfCode,
+    (Join-Path $repoRoot "ovmf\OVMF_CODE.strict-nx.fd"),
     "C:\msys64\mingw64\share\qemu\edk2-x86_64-code.fd",
     "C:\Program Files\qemu\share\edk2-x86_64-code.fd",
     "C:\Program Files\QEMU\share\edk2-x86_64-code.fd",
@@ -403,6 +406,7 @@ $OvmfCode = Resolve-FirstPath -Candidates @(
 
 $OvmfVars = Resolve-OptionalPath -Candidates @(
     $OvmfVars,
+    (Join-Path $repoRoot "ovmf\OVMF_VARS.strict-nx.fd"),
     "C:\msys64\mingw64\share\qemu\edk2-x86_64-vars.fd",
     "C:\msys64\mingw64\share\qemu\edk2-i386-vars.fd",
     "C:\Program Files\qemu\share\edk2-x86_64-vars.fd",
@@ -455,6 +459,7 @@ $helloElf = Join-Path $espBootDir "HELLO.ELF"
 $abiInfoElf = Join-Path $espBootDir "ABIINFO.ELF"
 $markerElf = Join-Path $espBootDir "MARKER.ELF"
 [string]$helloCsElf = Join-Path $espBootDir "HELLOCS.ELF"
+[string]$fetchElf = Join-Path $espBootDir "FETCH.ELF"
 [string]$legacyAppElf = Join-Path $espBootDir "APP.ELF"
 [System.IO.File]::WriteAllBytes($helloElf, (New-HelloElfImage))
 [System.IO.File]::WriteAllBytes($abiInfoElf, (New-AbiInfoElfImage))
@@ -470,6 +475,13 @@ elseif (Test-Path -LiteralPath "$helloCsElf.abi") {
     Remove-Item -LiteralPath "$helloCsElf.abi" -Force
 }
 
+if (Test-Path -LiteralPath $fetchElf) {
+    [System.IO.File]::WriteAllBytes("$fetchElf.abi", (New-AppAbiManifest -AppAbiVersion 2 -ServiceAbi 1))
+}
+elseif (Test-Path -LiteralPath "$fetchElf.abi") {
+    Remove-Item -LiteralPath "$fetchElf.abi" -Force
+}
+
 if (Test-Path -LiteralPath $legacyAppElf) {
     Remove-Item -LiteralPath $legacyAppElf -Force
 }
@@ -481,12 +493,16 @@ Write-Host "Prepared app ELF: $markerElf"
 if (Test-Path -LiteralPath $helloCsElf) {
     Write-Host "Prepared app ELF: $helloCsElf"
 }
+if (Test-Path -LiteralPath $fetchElf) {
+    Write-Host "Prepared app ELF: $fetchElf"
+}
 if ($NoRun) {
     Write-Host "NoRun set: build finished, QEMU launch skipped."
     exit 0
 }
 
 Write-Host "Launching QEMU..."
+Write-Host "Firmware: $OvmfCode"
 Write-Host "COM1 is attached to this terminal (-serial mon:stdio)."
 Write-Host "Exit QEMU: Ctrl+], then X; if hotkeys are blocked, run .\run_build.ps1 -Stop in another terminal."
 if (-not $localOvmfVars) {
@@ -502,11 +518,20 @@ if ($Host -and $Host.UI -and $Host.UI.RawUI) {
     $windowTitleSet = $true
 }
 
+# OVMF SerialDxe mirrors ConOut to COM1 as UTF-8.
+# Switch the terminal to UTF-8 so box-drawing chars render correctly.
+$savedOutputEncoding = [Console]::OutputEncoding
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$savedInputEncoding = [Console]::InputEncoding
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+
 Push-Location $qemuWorkDir
 try {
-    $qemuArgs = @(
-        "-machine", "q35,accel=tcg",
-        "-cpu", "qemu64",
+    $machineArgs = @("-machine", "q35,accel=tcg")
+    # +nx: expose the NX/XD bit to firmware and OS (required for NX memory protection policy)
+    $cpuArgs = @("-cpu", "qemu64,+nx")
+
+    $qemuArgs = $machineArgs + $cpuArgs + @(
         "-m", "256",
         "-nographic",
         "-serial", "mon:stdio",
@@ -531,6 +556,8 @@ try {
 }
 finally {
     Pop-Location
+    [Console]::OutputEncoding = $savedOutputEncoding
+    [Console]::InputEncoding = $savedInputEncoding
     if ($windowTitleSet) {
         try {
 			Start-Sleep -Milliseconds 1000

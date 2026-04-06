@@ -36,6 +36,26 @@ namespace System
             return SharpOS.Std.NoRuntime.StringAlgorithms.Concat(str0, str1);
         }
 
+        public string PadLeft(int totalWidth)
+        {
+            return SharpOS.Std.NoRuntime.StringAlgorithms.PadLeft(this, totalWidth, ' ');
+        }
+
+        public string PadLeft(int totalWidth, char paddingChar)
+        {
+            return SharpOS.Std.NoRuntime.StringAlgorithms.PadLeft(this, totalWidth, paddingChar);
+        }
+
+        public string PadRight(int totalWidth)
+        {
+            return SharpOS.Std.NoRuntime.StringAlgorithms.PadRight(this, totalWidth, ' ');
+        }
+
+        public string PadRight(int totalWidth, char paddingChar)
+        {
+            return SharpOS.Std.NoRuntime.StringAlgorithms.PadRight(this, totalWidth, paddingChar);
+        }
+
         public static bool operator ==(string str0, string str1)
         {
             if ((object)str0 == (object)str1)

@@ -31,6 +31,8 @@ namespace OS.Kernel.Process
         public ulong ReadDirEntryAddress;
         public ulong TryReadKeyAddress;
         public ulong RunAppAddress;
+        public ulong WriteCharAddress;
+        public ulong WriteBuildIdAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

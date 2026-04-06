@@ -28,6 +28,19 @@ namespace OS.Boot
         public char* FirmwareVendor;
         public PlatformCapabilities Capabilities;
 
+        // Executable stub buffer allocated via AllocatePool(EfiLoaderCode) in the bootloader.
+        // EfiLoaderCode pages are guaranteed executable even when firmware enforces W^X.
+        // Used by Cr3Accessor for CR3 read/write shellcode.
+        public void* ExecStubBuffer;
+        public uint ExecStubBufferSize;
+
+        // Page-aligned EfiLoaderCode buffer for JumpStub shellcode.
+        // JumpStub calls its shellcode under the firmware CR3 (before the CR3 switch),
+        // so EfiConventionalMemory (NX-protected on real hardware) cannot be used.
+        // Allocated as AllocatePool(EfiLoaderCode, 4096+4095) and aligned up in the bootloader.
+        public void* JumpStubExecBuffer;
+        public uint JumpStubExecBufferSize;
+
         public ulong MemoryMapAvailable;
         public ulong GraphicsAvailable;
         public MemoryMapInfo MemoryMap;

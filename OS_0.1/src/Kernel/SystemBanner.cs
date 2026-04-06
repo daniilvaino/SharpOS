@@ -5,7 +5,7 @@ namespace OS.Kernel
 {
     internal static unsafe class SystemBanner
     {
-        private const string BuildId = "cr3-stack-v5";
+        internal const string BuildId = "cr3-stack-v5";
 
         public static void Print(BootInfo bootInfo)
         {

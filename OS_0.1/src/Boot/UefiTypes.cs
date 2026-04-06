@@ -10,10 +10,29 @@ namespace OS.Boot
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct EFI_SIMPLE_TEXT_OUTPUT_MODE
+    {
+        public int MaxMode;
+        public int Mode;
+        public int Attribute;
+        public int CursorColumn;
+        public int CursorRow;
+        public byte CursorVisible;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal unsafe readonly struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL
     {
-        private readonly IntPtr _pad;
-        public readonly delegate* unmanaged<void*, char*, void*> OutputString;
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL*, bool, ulong> Reset;
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL*, char*, ulong> OutputString;
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL*, char*, ulong> TestString;
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL*, ulong, ulong*, ulong*, ulong> QueryMode;
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL*, ulong, ulong> SetMode;
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL*, ulong, ulong> SetAttribute;
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL*, ulong> ClearScreen;
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL*, ulong, ulong, ulong> SetCursorPosition;
+        public readonly delegate* unmanaged<EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL*, bool, ulong> EnableCursor;
+        public readonly EFI_SIMPLE_TEXT_OUTPUT_MODE* Mode;
     }
 
     [StructLayout(LayoutKind.Sequential)]

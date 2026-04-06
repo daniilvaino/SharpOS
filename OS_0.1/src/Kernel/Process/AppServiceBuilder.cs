@@ -63,6 +63,10 @@ namespace OS.Kernel.Process
         private static ulong s_systemVReadDirEntryThunk;
         private static ulong s_systemVTryReadKeyThunk;
         private static ulong s_systemVRunAppThunk;
+        private static ulong s_win64WriteCharThunk;
+        private static ulong s_systemVWriteCharThunk;
+        private static ulong s_win64WriteBuildIdThunk;
+        private static ulong s_systemVWriteBuildIdThunk;
 
         public static bool TryBuild(
             ulong serviceVirtual,
@@ -86,6 +90,8 @@ namespace OS.Kernel.Process
             delegate* managed<ulong, uint> readDirEntryAddress = &ReadDirEntry;
             delegate* managed<ulong, uint> tryReadKeyAddress = &TryReadKey;
             delegate* managed<ulong, uint> runAppAddress = &RunApp;
+            delegate* managed<uint, void> writeCharAddress = &WriteChar;
+            delegate* managed<void> writeBuildIdAddress = &WriteBuildId;
 
             ulong tableWriteStringAddress = (ulong)writeStringAddress;
             ulong tableWriteUIntAddress = (ulong)writeUIntAddress;
@@ -97,6 +103,8 @@ namespace OS.Kernel.Process
             ulong tableReadDirEntryAddress = 0;
             ulong tableTryReadKeyAddress = 0;
             ulong tableRunAppAddress = 0;
+            ulong tableWriteCharAddress = 0;
+            ulong tableWriteBuildIdAddress = 0;
 
             if (!EnsureServiceThunks(
                 (ulong)writeStringAddress,
@@ -108,7 +116,9 @@ namespace OS.Kernel.Process
                 (ulong)readFileAddress,
                 (ulong)readDirEntryAddress,
                 (ulong)tryReadKeyAddress,
-                (ulong)runAppAddress))
+                (ulong)runAppAddress,
+                (ulong)writeCharAddress,
+                (ulong)writeBuildIdAddress))
             {
                 return false;
             }
@@ -120,6 +130,8 @@ namespace OS.Kernel.Process
                 tableWriteHexAddress = s_systemVWriteHexThunk;
                 tableGetAbiVersionAddress = s_systemVGetAbiVersionThunk;
                 tableExitAddress = s_systemVExitThunk;
+                tableWriteCharAddress = s_systemVWriteCharThunk;
+                tableWriteBuildIdAddress = s_systemVWriteBuildIdThunk;
                 if (publishedAbiVersion >= AppServiceTable.AbiVersionV2)
                 {
                     tableFileExistsAddress = s_systemVFileExistsThunk;
@@ -136,6 +148,8 @@ namespace OS.Kernel.Process
                 tableWriteHexAddress = s_win64WriteHexThunk;
                 tableGetAbiVersionAddress = s_win64GetAbiVersionThunk;
                 tableExitAddress = s_win64ExitThunk;
+                tableWriteCharAddress = s_win64WriteCharThunk;
+                tableWriteBuildIdAddress = s_win64WriteBuildIdThunk;
                 if (publishedAbiVersion >= AppServiceTable.AbiVersionV2)
                 {
                     tableFileExistsAddress = s_win64FileExistsThunk;
@@ -159,6 +173,8 @@ namespace OS.Kernel.Process
             table.ReadDirEntryAddress = tableReadDirEntryAddress;
             table.TryReadKeyAddress = tableTryReadKeyAddress;
             table.RunAppAddress = tableRunAppAddress;
+            table.WriteCharAddress = tableWriteCharAddress;
+            table.WriteBuildIdAddress = tableWriteBuildIdAddress;
 
             AppServiceTable* serviceTablePointer = Pager.IsPagerRootActive()
                 ? (AppServiceTable*)serviceVirtual
@@ -189,7 +205,9 @@ namespace OS.Kernel.Process
             ulong readFileTarget,
             ulong readDirEntryTarget,
             ulong tryReadKeyTarget,
-            ulong runAppTarget)
+            ulong runAppTarget,
+            ulong writeCharTarget,
+            ulong writeBuildIdTarget)
         {
             if (s_serviceThunksInitialized)
                 return true;
@@ -309,6 +327,26 @@ namespace OS.Kernel.Process
 
                 s_systemVRunAppThunk = thunkPageVirtual + cursor;
                 if (!TryWriteSystemVOneArgThunk(page + cursor, runAppTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64WriteCharThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64OneArgThunk(page + cursor, writeCharTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVWriteCharThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVOneArgThunk(page + cursor, writeCharTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64WriteBuildIdThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64NoArgThunk(page + cursor, writeBuildIdTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVWriteBuildIdThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVNoArgThunk(page + cursor, writeBuildIdTarget))
                     return false;
                 cursor += ServiceThunkSlotSize;
 
@@ -464,6 +502,16 @@ namespace OS.Kernel.Process
         {
             UiText.Write("0x");
             UiText.WriteHex(value, 16);
+        }
+
+        private static void WriteChar(uint codePoint)
+        {
+            UiText.WriteChar((char)codePoint);
+        }
+
+        private static void WriteBuildId()
+        {
+            UiText.Write(OS.Kernel.SystemBanner.BuildId);
         }
 
         private static uint GetAbiVersion()
@@ -983,7 +1031,7 @@ namespace OS.Kernel.Process
 
                     imageLoaded = true;
 
-                    if (!ProcessImageBuilder.TryBuild(ref loadedImage, 0, serviceAbi, appAbiVersion, out processImage))
+                    if (!ProcessImageBuilder.TryBuild(ref loadedImage, 0, serviceAbi, appAbiVersion, ProcessImageBuilder.NestedStackMappedTop, out processImage))
                     {
                         result = AppServiceStatus.DeviceError;
                         break;
@@ -1052,7 +1100,10 @@ namespace OS.Kernel.Process
                 if (processBuilt)
                 {
                     if (!CleanupProcessMappings(ref processImage, ref loadedImage))
+                    {
+                        DebugLog.Write(LogLevel.Warn, "child cleanup mappings failed");
                         result = AppServiceStatus.DeviceError;
+                    }
                 }
                 else if (imageLoaded)
                 {
@@ -1208,16 +1259,11 @@ namespace OS.Kernel.Process
                 ulong kernelPagePhysical = kernelPhysical & ~(PageSize - 1);
                 PageFlags normalizedKernelFlags = PageFlagOps.NormalizeForMap(kernelFlags);
 
-                if (Pager.TryQuery(current, out ulong pagerPhysical, out PageFlags pagerFlags))
-                {
-                    ulong pagerPagePhysical = pagerPhysical & ~(PageSize - 1);
-                    PageFlags normalizedPagerFlags = PageFlagOps.NormalizeForMap(pagerFlags);
-                    if (pagerPagePhysical == kernelPagePhysical && normalizedPagerFlags == normalizedKernelFlags)
-                        continue;
-
-                    if (!Pager.Unmap(current))
-                        return false;
-                }
+                // Skip pages already in pager — don't overwrite intentional mappings
+                // (JumpStub, service thunks etc. need executable flags that differ from
+                // the kernel CR3 view on real hardware with NX-protected data pages).
+                if (Pager.TryQuery(current, out _, out _))
+                    continue;
 
                 if (!Pager.Map(current, kernelPagePhysical, kernelFlags))
                     return false;

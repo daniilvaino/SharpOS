@@ -172,6 +172,7 @@ namespace OS.Kernel.Elf
                 markerVirtualAddress,
                 app.ServiceAbi,
                 app.AppAbiVersion,
+                ProcessImageBuilder.DefaultStackMappedTop,
                 out ProcessImage processImage))
             {
                 CleanupLoadedImageMappings(ref loadedImage);
@@ -352,7 +353,6 @@ namespace OS.Kernel.Elf
         private static bool TrySyncKernelLowMappings(ref ProcessImage processImage)
         {
             uint importedCount = 0;
-            uint replacedCount = 0;
 
             for (ulong current = KernelLowSyncStart; current < KernelLowSyncEndExclusive; current += PageSize)
             {
@@ -368,21 +368,11 @@ namespace OS.Kernel.Elf
                 ulong kernelPagePhysical = kernelPhysical & ~(PageSize - 1);
                 PageFlags normalizedKernelFlags = PageFlagOps.NormalizeForMap(kernelFlags);
 
-                if (Pager.TryQuery(current, out ulong pagerPhysical, out PageFlags pagerFlags))
-                {
-                    ulong pagerPagePhysical = pagerPhysical & ~(PageSize - 1);
-                    PageFlags normalizedPagerFlags = PageFlagOps.NormalizeForMap(pagerFlags);
-                    if (pagerPagePhysical == kernelPagePhysical && normalizedPagerFlags == normalizedKernelFlags)
-                        continue;
-
-                    if (!Pager.Unmap(current))
-                    {
-                        DebugLog.Write(LogLevel.Warn, "kernel mapping sync: unmap failed");
-                        return false;
-                    }
-
-                    replacedCount++;
-                }
+                // Skip pages already mapped in pager — they were set up intentionally
+                // (e.g. JumpStub maps its shellcode page executable; overwriting with kernel
+                // CR3 flags would re-add NX on real hardware where firmware uses NX for data).
+                if (Pager.TryQuery(current, out _, out _))
+                    continue;
 
                 if (!Pager.Map(current, kernelPagePhysical, kernelFlags))
                 {
@@ -394,10 +384,8 @@ namespace OS.Kernel.Elf
             }
 
             DebugLog.Begin(LogLevel.Info);
-            UiText.Write("kernel low sync imported/replaced: ");
+            UiText.Write("kernel low sync imported: ");
             UiText.WriteUInt(importedCount);
-            UiText.Write("/");
-            UiText.WriteUInt(replacedCount);
             DebugLog.EndLine();
             return true;
         }

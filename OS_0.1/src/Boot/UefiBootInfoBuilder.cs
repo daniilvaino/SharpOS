@@ -6,6 +6,7 @@ namespace OS.Boot
         {
             EFI_SYSTEM_TABLE* systemTable = context.SystemTable;
             UefiPlatformBridge.Initialize(context);
+            UefiConsole.TryMaximizeTextMode(systemTable);
 
             BootInfo info = default;
             info.BootMode = BootMode.Uefi;
@@ -31,6 +32,36 @@ namespace OS.Boot
 
             if (UefiPlatformBridge.HasKeyboardInput())
                 info.Capabilities |= PlatformCapabilities.KeyboardInput;
+
+            // Allocate EfiLoaderCode buffers before the memory map is captured.
+            // EfiLoaderCode is mapped executable by firmware even with W^X/NX policies.
+            if (systemTable->BootServices != null)
+            {
+                // Cr3Accessor: 64-byte shellcode (mov rax,cr3 / mov cr3,rax)
+                const uint ExecStubSize = 64;
+                void* cr3StubAlloc = null;
+                ulong cr3Status = systemTable->BootServices->AllocatePool(
+                    EFI_MEMORY_TYPE.EfiLoaderCode, ExecStubSize, &cr3StubAlloc);
+                if (cr3Status == 0 && cr3StubAlloc != null)
+                {
+                    info.ExecStubBuffer = cr3StubAlloc;
+                    info.ExecStubBufferSize = ExecStubSize;
+                }
+
+                // JumpStub: shellcode called under firmware CR3 (before CR3 switch).
+                // Needs page alignment for Pager.Map → allocate 4096+4095 and align up.
+                const uint JumpStubRawSize = 4096 + 4095;
+                void* jumpStubRaw = null;
+                ulong jumpStatus = systemTable->BootServices->AllocatePool(
+                    EFI_MEMORY_TYPE.EfiLoaderCode, JumpStubRawSize, &jumpStubRaw);
+                if (jumpStatus == 0 && jumpStubRaw != null)
+                {
+                    ulong raw = (ulong)jumpStubRaw;
+                    ulong aligned = (raw + 4095UL) & ~4095UL;
+                    info.JumpStubExecBuffer = (void*)aligned;
+                    info.JumpStubExecBufferSize = 4096;
+                }
+            }
 
             if (UefiMemoryMapBuilder.TryBuild(systemTable, out info.MemoryMap))
             {
