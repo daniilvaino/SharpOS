@@ -139,24 +139,6 @@ namespace OS.Kernel
                 return;
             }
 
-            void* a = SharpOS.Std.NoRuntime.GcHeap.AllocateRaw(64);
-            void* b = SharpOS.Std.NoRuntime.GcHeap.AllocateRaw(128);
-            void* c = SharpOS.Std.NoRuntime.GcHeap.AllocateRaw(256);
-
-            Log.Begin(LogLevel.Info);
-            Console.Write("alloc 64 ->0x");  Console.WriteHexRaw((ulong)a, 16); Log.EndLine();
-            Log.Begin(LogLevel.Info);
-            Console.Write("alloc 128->0x"); Console.WriteHexRaw((ulong)b, 16); Log.EndLine();
-            Log.Begin(LogLevel.Info);
-            Console.Write("alloc 256->0x"); Console.WriteHexRaw((ulong)c, 16); Log.EndLine();
-
-            Log.Begin(LogLevel.Info);
-            Console.Write("gc count=");
-            Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocCount);
-            Console.Write(" bytes=");
-            Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocBytes);
-            Log.EndLine();
-
             // Test managed allocation via NativeAOT `new` keyword.
             // All three paths go through our [RuntimeExport] stubs into GcHeap.
             Log.Write(LogLevel.Info, "gc: new object()...");
@@ -178,7 +160,34 @@ namespace OS.Kernel
             Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocBytes);
             Log.EndLine();
 
+            // Phase 3.2 smoke-test: Mark phase. Pass each kept object as a root,
+            // count how many objects get marked transitively.
+            Log.Write(LogLevel.Info, "mark: begin");
+            SharpOS.Std.NoRuntime.GcMark.Begin();
+            SharpOS.Std.NoRuntime.GcMark.MarkFromRoot(GetObjectAddress(s_keep1));
+            SharpOS.Std.NoRuntime.GcMark.MarkFromRoot(GetObjectAddress(s_keep2));
+            SharpOS.Std.NoRuntime.GcMark.MarkFromRoot(GetObjectAddress(s_keep3));
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("mark: marked=");
+            Console.WriteUIntRaw(SharpOS.Std.NoRuntime.GcMark.LastMarkedCount);
+            Log.EndLine();
+
+            // Clean up — unmark all objects so next GC pass has clean slate.
+            SharpOS.Std.NoRuntime.GcMark.UnmarkAllObjects();
+            Log.Write(LogLevel.Info, "mark: unmark done");
+
             Log.Write(LogLevel.Info, "---- gc heap test end ----");
+        }
+
+        // Helper: extract raw address from a managed reference.
+        // `ref` + `fixed` pattern — takes address of local, casts to nint*, reads.
+        private static nint GetObjectAddress(object obj)
+        {
+            if (obj == null) return 0;
+            // The local `obj` is a managed reference (pointer to object).
+            // Read its value via address-of-local cast.
+            return *(nint*)&obj;
         }
 
         private static void InitializePager()
