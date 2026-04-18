@@ -1,3 +1,4 @@
+using OS.Kernel.Memory;
 using SharpOS.Std.NoRuntime;
 
 namespace OS.Hal
@@ -12,6 +13,12 @@ namespace OS.Hal
         // (HeapDiagnostics, итерирующий список блоков heap). Вызов managed-пути
         // в таких контекстах создаст новый блок в том же list и приведёт к
         // бесконечной итерации.
+        //
+        // ВАЖНО: без Runtime.WorkstationGC.lib (step 28 phase 3.1) frozen-string
+        // literals (включая string.Empty) не инициализируются на старте. Поэтому
+        // CAN'T безопасно проверять s.Length на возврат из NumberFormatting —
+        // если heap не готов, FastAllocateString вернёт невалидный string.Empty
+        // и s.Length крашит на чтении [s+8]. Проверяем готовность heap ЯВНО.
 
         public static void Write(string text) => Platform.Write(text);
 
@@ -21,6 +28,11 @@ namespace OS.Hal
 
         public static void WriteInt(int value)
         {
+            if (!KernelHeap.IsInitialized)
+            {
+                WriteIntRaw(value);
+                return;
+            }
             string s = NumberFormatting.IntToString(value);
             if (s.Length > 0)
             {
@@ -32,6 +44,11 @@ namespace OS.Hal
 
         public static void WriteUInt(uint value)
         {
+            if (!KernelHeap.IsInitialized)
+            {
+                WriteUIntRaw(value);
+                return;
+            }
             string s = NumberFormatting.UIntToString(value);
             if (s.Length > 0)
             {
@@ -43,6 +60,11 @@ namespace OS.Hal
 
         public static void WriteULong(ulong value)
         {
+            if (!KernelHeap.IsInitialized)
+            {
+                WriteULongRaw(value);
+                return;
+            }
             string s = NumberFormatting.ULongToString(value);
             if (s.Length > 0)
             {
@@ -59,6 +81,11 @@ namespace OS.Hal
 
         public static void WriteHex(ulong value, int minDigits)
         {
+            if (!KernelHeap.IsInitialized)
+            {
+                WriteHexRaw(value, minDigits);
+                return;
+            }
             string s = NumberFormatting.ULongToHex(value, minDigits);
             if (s.Length > 0)
             {

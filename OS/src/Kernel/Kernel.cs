@@ -124,8 +124,10 @@ namespace OS.Kernel
             HeapDiagnostics.DumpBlocks();
         }
 
-        // Static field to keep allocated object alive (prevents DCE).
+        // Static fields to keep allocated objects alive (prevents DCE).
         private static object s_keep1;
+        private static object s_keep2;
+        private static object s_keep3;
 
         private static void RunGcHeapNoNewTest()
         {
@@ -155,15 +157,25 @@ namespace OS.Kernel
             Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocBytes);
             Log.EndLine();
 
-            // Now try `new object()` — most minimal managed alloc.
-            // Trace each step so we see exactly where it dies.
-            Log.Write(LogLevel.Info, "gc: about to new object()");
+            // Test managed allocation via NativeAOT `new` keyword.
+            // All three paths go through our [RuntimeExport] stubs into GcHeap.
+            Log.Write(LogLevel.Info, "gc: new object()...");
             s_keep1 = new object();
-            Log.Write(LogLevel.Info, "gc: new object() returned");
+            Log.Write(LogLevel.Info, "gc: new object() ok");
+
+            Log.Write(LogLevel.Info, "gc: new int[5]...");
+            s_keep2 = new int[5];
+            Log.Write(LogLevel.Info, "gc: new int[5] ok");
+
+            Log.Write(LogLevel.Info, "gc: new string(x,3)...");
+            s_keep3 = new string('x', 3);
+            Log.Write(LogLevel.Info, "gc: new string(x,3) ok");
 
             Log.Begin(LogLevel.Info);
-            Console.Write("gc after new: count=");
+            Console.Write("gc final: count=");
             Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocCount);
+            Console.Write(" bytes=");
+            Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocBytes);
             Log.EndLine();
 
             Log.Write(LogLevel.Info, "---- gc heap test end ----");
