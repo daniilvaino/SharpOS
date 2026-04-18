@@ -160,22 +160,26 @@ namespace OS.Kernel
             Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocBytes);
             Log.EndLine();
 
-            // Phase 3.2 smoke-test: Mark phase. Pass each kept object as a root,
-            // count how many objects get marked transitively.
-            Log.Write(LogLevel.Info, "mark: begin");
+            // Phase 3.2+3.3 smoke-test: Mark only s_keep1 as root. Sweep should
+            // convert the other two objects (s_keep2, s_keep3 if in heap) to
+            // free-object markers.
+            Log.Write(LogLevel.Info, "mark: begin (only s_keep1 kept)");
             SharpOS.Std.NoRuntime.GcMark.Begin();
             SharpOS.Std.NoRuntime.GcMark.MarkFromRoot(GetObjectAddress(s_keep1));
-            SharpOS.Std.NoRuntime.GcMark.MarkFromRoot(GetObjectAddress(s_keep2));
-            SharpOS.Std.NoRuntime.GcMark.MarkFromRoot(GetObjectAddress(s_keep3));
 
             Log.Begin(LogLevel.Info);
             Console.Write("mark: marked=");
             Console.WriteUIntRaw(SharpOS.Std.NoRuntime.GcMark.LastMarkedCount);
             Log.EndLine();
 
-            // Clean up — unmark all objects so next GC pass has clean slate.
-            SharpOS.Std.NoRuntime.GcMark.UnmarkAllObjects();
-            Log.Write(LogLevel.Info, "mark: unmark done");
+            SharpOS.Std.NoRuntime.GcSweep.Run();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("sweep: kept=");
+            Console.WriteUIntRaw(SharpOS.Std.NoRuntime.GcSweep.LastKeptCount);
+            Console.Write(" swept=");
+            Console.WriteUIntRaw(SharpOS.Std.NoRuntime.GcSweep.LastSweptCount);
+            Log.EndLine();
 
             Log.Write(LogLevel.Info, "---- gc heap test end ----");
         }

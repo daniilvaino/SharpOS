@@ -112,6 +112,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\GC\GcMemorySource.KernelHeap.cs" Link="src\Std\GC\GcMemorySource.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\GcRuntimeExports.cs" Link="src\Std\GC\GcRuntimeExports.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\GcMark.cs" Link="src\Std\GC\GcMark.cs" />
+    <Compile Include="..\std\no-runtime\shared\GC\GcSweep.cs" Link="src\Std\GC\GcSweep.cs" />
     <Compile Include="..\std\no-runtime\shared\StringRuntime.KernelHeap.cs" Link="src\Std\StringRuntime.cs" />
   </ItemGroup>
 

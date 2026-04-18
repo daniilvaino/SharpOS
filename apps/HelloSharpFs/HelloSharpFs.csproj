@@ -42,6 +42,7 @@
     <Compile Include="..\..\std\no-runtime\shared\GC\GcHeap.cs" Link="std\GC\GcHeap.cs" />
     <Compile Include="..\..\std\no-runtime\shared\GC\GcMemorySource.AppStatic.cs" Link="std\GC\GcMemorySource.cs" />
     <Compile Include="..\..\std\no-runtime\shared\GC\GcMark.cs" Link="std\GC\GcMark.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\GC\GcSweep.cs" Link="std\GC\GcSweep.cs" />
     <Compile Include="..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
   </ItemGroup>
 
