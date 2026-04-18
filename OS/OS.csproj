@@ -11,7 +11,7 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
 
-    <IlcSystemModule>OS_0.1</IlcSystemModule>
+    <IlcSystemModule>OS</IlcSystemModule>
     <EntryPointSymbol>EfiMain</EntryPointSymbol>
     <LinkerSubsystem>EFI_APPLICATION</LinkerSubsystem>
 
@@ -83,6 +83,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\DefaultMemberAttribute.cs" Link="src\Std\DefaultMemberAttribute.cs" />
     <Compile Include="..\std\no-runtime\shared\SystemString.cs" Link="src\Std\SystemString.cs" />
     <Compile Include="..\std\no-runtime\shared\StringAlgorithms.cs" Link="src\Std\StringAlgorithms.cs" />
+    <Compile Include="..\std\no-runtime\shared\NumberFormatting.cs" Link="src\Std\NumberFormatting.cs" />
     <Compile Include="..\std\no-runtime\shared\StringRuntime.Fallback.cs" Link="src\Std\StringRuntime.cs" />
   </ItemGroup>
 

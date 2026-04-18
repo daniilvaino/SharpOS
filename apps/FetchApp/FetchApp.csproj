@@ -30,6 +30,7 @@
     <Compile Include="..\..\std\no-runtime\shared\DefaultMemberAttribute.cs" Link="std\DefaultMemberAttribute.cs" />
     <Compile Include="..\..\std\no-runtime\shared\SystemString.cs" Link="std\SystemString.cs" />
     <Compile Include="..\..\std\no-runtime\shared\StringAlgorithms.cs" Link="std\StringAlgorithms.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\NumberFormatting.cs" Link="std\NumberFormatting.cs" />
     <Compile Include="..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
   </ItemGroup>
 

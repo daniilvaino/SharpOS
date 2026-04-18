@@ -64,3 +64,6 @@ ovmf/*.fd
 
 # vs
 **/.vs/
+
+# Legacy / reference material not part of the current project
+old SharpOS/

@@ -355,8 +355,8 @@ function New-AppAbiManifest {
 }
 
 $repoRoot = Split-Path -Parent $PSCommandPath
-$efiProjectDir = Join-Path $repoRoot "OS_0.1"
-$projectFile = Join-Path $efiProjectDir "OS_0.1.csproj"
+$efiProjectDir = Join-Path $repoRoot "OS"
+$projectFile = Join-Path $efiProjectDir "OS.csproj"
 if (-not (Test-Path -LiteralPath $projectFile)) {
     throw "Project file not found: $projectFile"
 }
@@ -430,7 +430,7 @@ $env:DOTNET_CLI_HOME = Join-Path $repoRoot ".dotnet-home"
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1"
 New-Item -ItemType Directory -Force -Path $env:DOTNET_CLI_HOME | Out-Null
 
-Write-Host "Building OS_0.1 ($Configuration)..."
+Write-Host "Building OS ($Configuration)..."
 Push-Location $efiProjectDir
 try {
     & dotnet publish $projectFile -c $Configuration -r win-x64
@@ -443,7 +443,7 @@ finally {
 }
 
 $publishDir = Join-Path $efiProjectDir "bin\$Configuration\$targetFramework\win-x64\publish"
-$builtEfi = Join-Path $publishDir "OS_0.1.exe"
+$builtEfi = Join-Path $publishDir "OS.exe"
 if (-not (Test-Path -LiteralPath $builtEfi)) {
     $builtEfi = Get-ChildItem -LiteralPath $publishDir -Filter *.exe -File -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
 }

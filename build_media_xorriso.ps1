@@ -2,8 +2,8 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     [switch]$NoBuild,
-    [string]$EspSource = (Join-Path $PSScriptRoot "OS_0.1\.qemu\esp"),
-    [string]$OutputDir = (Join-Path $PSScriptRoot "OS_0.1\.qemu\media"),
+    [string]$EspSource = (Join-Path $PSScriptRoot "OS\.qemu\esp"),
+    [string]$OutputDir = (Join-Path $PSScriptRoot "OS\.qemu\media"),
     [int]$EspImageSizeMb = 64,
     [int]$VhdDiskSizeMb = 128,
     [int]$VhdEspStartLba = 2048,

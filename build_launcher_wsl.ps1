@@ -5,7 +5,7 @@ param(
     [string]$RuntimeIdentifier = "linux-x64",
     [string]$Distro = "Ubuntu",
     [string]$ArtifactName = "HELLOCS.ELF",
-    [string]$EspBootDir = "OS_0.1/.qemu/esp/EFI/BOOT",
+    [string]$EspBootDir = "OS/.qemu/esp/EFI/BOOT",
     [string]$DefineConstants = "",
     [ValidateRange(1, 2)]
     [int]$AppAbiVersion = 2,
