@@ -160,12 +160,24 @@ namespace OS.Kernel
             Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocBytes);
             Log.EndLine();
 
-            // Phase 3.2+3.3 smoke-test: Mark only s_keep1 as root. Sweep should
-            // convert the other two objects (s_keep2, s_keep3 if in heap) to
-            // free-object markers.
-            Log.Write(LogLevel.Info, "mark: begin (only s_keep1 kept)");
+            // Phase 3.4 smoke-test: capture stack top, register one static
+            // root (s_keep1). The others (s_keep2, s_keep3) remain unregistered
+            // and should be swept. Conservative stack scan is also invoked
+            // from MarkAll — it covers references ILC chose to spill to the
+            // stack; refs living in callee-saved registers remain invisible
+            // until we add a register-spill trampoline (future work).
+            SharpOS.Std.NoRuntime.GcRoots.CaptureStackTop();
+            SharpOS.Std.NoRuntime.GcRoots.Register(ref s_keep1);
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("roots: registered=");
+            Console.WriteUIntRaw((uint)SharpOS.Std.NoRuntime.GcRoots.Count);
+            Console.Write(" stackTop=0x");
+            Console.WriteHexRaw((ulong)SharpOS.Std.NoRuntime.GcRoots.StackTop, 16);
+            Log.EndLine();
+
             SharpOS.Std.NoRuntime.GcMark.Begin();
-            SharpOS.Std.NoRuntime.GcMark.MarkFromRoot(GetObjectAddress(s_keep1));
+            SharpOS.Std.NoRuntime.GcRoots.MarkAll();
 
             Log.Begin(LogLevel.Info);
             Console.Write("mark: marked=");
