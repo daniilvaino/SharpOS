@@ -62,6 +62,21 @@ namespace FetchApp
             AppHost.WriteString(L12); AppHost.WriteString("\n");
             AppHost.WriteString(L13); AppHost.WriteString("\n");
             AppHost.WriteString("\n");
+
+            // Smoke-test: std/ string queries + transforms (stage 3 + 4)
+            string demo = "  Hello, SharpOS!  ";
+            AppHost.WriteString("std demo:\n");
+            AppHost.WriteString("  raw:        '"); AppHost.WriteString(demo); AppHost.WriteString("'\n");
+            AppHost.WriteString("  Trim:       '"); AppHost.WriteString(demo.Trim()); AppHost.WriteString("'\n");
+            AppHost.WriteString("  Upper:      '"); AppHost.WriteString(demo.ToUpperInvariant()); AppHost.WriteString("'\n");
+            AppHost.WriteString("  Lower:      '"); AppHost.WriteString(demo.ToLowerInvariant()); AppHost.WriteString("'\n");
+            AppHost.WriteString("  Sub(2,5):   '"); AppHost.WriteString(demo.Substring(2, 5)); AppHost.WriteString("'\n");
+            AppHost.WriteString("  Repl(','): '"); AppHost.WriteString(demo.Replace(',', ';')); AppHost.WriteString("'\n");
+            AppHost.WriteString("  Repl(Sharp->Dark): '"); AppHost.WriteString(demo.Replace("Sharp", "Dark")); AppHost.WriteString("'\n");
+            AppHost.WriteString("  IndexOf(','):  "); AppHost.WriteUInt((uint)demo.IndexOf(',')); AppHost.WriteString("\n");
+            AppHost.WriteString("  Contains('OS'): "); AppHost.WriteString(demo.Contains("OS") ? "true" : "false"); AppHost.WriteString("\n");
+            AppHost.WriteString("  StartsWith('  Hello'): "); AppHost.WriteString(demo.StartsWith("  Hello") ? "true" : "false"); AppHost.WriteString("\n");
+            AppHost.WriteString("\n");
         }
 
         private static void Line(string logo, string info)

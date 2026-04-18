@@ -195,15 +195,101 @@ QEMU strict-nx OVMF: `.\run_build.ps1`:
 - `pager table pages/spare: 1039/1` — managed путь, heap поднят
 - HELLO, ABIINFO, HELLOCS запускаются, лаунчер работает
 
+---
+
+## Стадии 3+4 SUPER-1a: queries, char helpers, transforms
+
+### Цель
+
+Закрыть "без массивов" часть SUPER-1a: обычный C# код со строками (IndexOf, Contains, Trim, Substring, Replace, ToUpper/Lower) работает одинаково в приложениях и ядре.
+
+### Что сделано
+
+**1. `std/no-runtime/shared/CharHelpers.cs`** — static helpers:
+- `IsDigit`, `IsLetter`, `IsLetterOrDigit`, `IsWhiteSpace`
+- `ToUpperInvariant`, `ToLowerInvariant` — ASCII-only, non-ASCII проходит без изменений
+
+Делать `char.IsDigit(c)` через partial struct Char в `System` не стал — потребовало бы переделать примитивные structs в обоих MinimalRuntime.cs на partial. Доступно как `CharHelpers.IsDigit(c)`, BCL-обёртка — задача следующего PR.
+
+**2. `std/no-runtime/shared/StringQueries.cs`** — без аллокации:
+- `IndexOf(char)`, `IndexOf(char, startIndex)`, `IndexOf(string)`, `IndexOf(string, startIndex)`
+- `LastIndexOf(char)`, `LastIndexOf(string)`
+- `Contains(char)`, `Contains(string)`
+- `StartsWith(string)`, `EndsWith(string)`
+- `IsNullOrEmpty`, `IsNullOrWhiteSpace`
+
+Подстрочный поиск — наивный O(n·m), без KMP; для текущих нужд достаточно.
+
+**3. `std/no-runtime/shared/StringTransforms.cs`** — через `FastAllocateString`:
+- `Substring(startIndex)`, `Substring(startIndex, length)`
+- `Trim`, `TrimStart`, `TrimEnd` (whitespace через `CharHelpers`)
+- `Replace(char, char)` — same-length fast path, возвращает `str` если символа нет
+- `Replace(string, string)` — два прохода: считаем вхождения → аллоцируем результат → заполняем
+- `ToUpperInvariant`, `ToLowerInvariant` — посимвольно
+
+Short-circuit: если результат совпадает с исходной строкой — возвращается исходная ссылка без аллокации.
+
+**4. Пробросы в `SystemString.cs`**
+
+Instance методы на `String`:
+- Queries: `IndexOf`, `LastIndexOf`, `Contains`, `StartsWith`, `EndsWith`
+- Static queries: `String.IsNullOrEmpty`, `String.IsNullOrWhiteSpace`
+- Transforms: `Substring`, `Trim`, `TrimStart`, `TrimEnd`, `Replace`, `ToUpperInvariant`, `ToLowerInvariant`
+
+Клиентский код пишется как обычный C#: `s.Trim().ToUpperInvariant()`, `if (path.StartsWith("\\EFI"))`, `var name = fileName.Substring(0, fileName.IndexOf('.'))`.
+
+**5. Подключение в csproj**
+
+`CharHelpers.cs`, `StringQueries.cs`, `StringTransforms.cs` добавлены в `OS.csproj`, `HelloSharpFs.csproj`, `FetchApp.csproj`.
+
+### Smoke-test в FetchApp
+
+Демо-блок после логотипа:
+```
+std demo:
+  raw:        '  Hello, SharpOS!  '
+  Trim:       'Hello, SharpOS!'
+  Upper:      '  HELLO, SHARPOS!  '
+  Lower:      '  hello, sharpos!  '
+  Sub(2,5):   'Hello'
+  Repl(','): '  Hello; SharpOS!  '
+  Repl(Sharp->Dark): '  Hello, DarkOS!  '
+  IndexOf(','):  7
+  Contains('OS'): true
+  StartsWith('  Hello'): true
+```
+
+Запуск в QEMU strict-nx OVMF — все значения корректные. Smoke-test оставлен как живая демонстрация.
+
+### Работает
+
+| API | Apps | Kernel |
+|---|---|---|
+| `CharHelpers.*` (IsDigit/IsLetter/IsWhiteSpace/ToUpper/ToLowerInvariant) | ✓ | ✓ |
+| `s.IndexOf`, `LastIndexOf`, `Contains`, `StartsWith`, `EndsWith` | ✓ | ✓ |
+| `String.IsNullOrEmpty`, `IsNullOrWhiteSpace` | ✓ | ✓ |
+| `s.Substring`, `Trim`, `TrimStart`, `TrimEnd` | ✓ | ✓ (после heap init) |
+| `s.Replace(char,char)`, `Replace(string,string)` | ✓ | ✓ (после heap init) |
+| `s.ToUpperInvariant`, `ToLowerInvariant` | ✓ | ✓ (после heap init) |
+
+---
+
+## Итог step 28 / SUPER-1a
+
+SUPER-1a полностью закрыта: std/ покрывает обычный C# код со строками и числами без массивов.
+
+Наработанные файлы в `std/no-runtime/shared/`:
+- `NumberFormatting.cs` (int/uint/long/ulong → string, hex)
+- `CharHelpers.cs` (ASCII char classification + case)
+- `StringQueries.cs` (IndexOf/Contains/StartsWith/...)
+- `StringTransforms.cs` (Substring/Trim/Replace/ToUpper/Lower)
+- `StringRuntime.KernelHeap.cs` (kernel string allocation)
+- `SystemString.cs` пополнен instance-методами
+
+Ядро стало полноценным потребителем общего std — всё что работает в приложениях, работает и в ядре (с guard на ранний boot в `Console.*`).
+
 ### Что дальше
 
-Стадия 3 SUPER-1a — string queries + char helpers:
-- `String.IndexOf`, `LastIndexOf`, `Contains`, `StartsWith`, `EndsWith`, `IsNullOrEmpty`, `IsNullOrWhiteSpace`
-- `char.IsDigit`, `IsLetter`, `IsLetterOrDigit`, `IsWhiteSpace`, `ToUpperInvariant`, `ToLowerInvariant` для ASCII
+SUPER-1b (StringBuilder, Split, Join с массивами) требует массивов → SUPER-3 (managed collections) → SUPER-2 (managed heap extended).
 
-Не требуют аллокации, простые чистые функции. Работают сразу везде.
-
-Стадия 4 SUPER-1a — string transforms с одним выходом:
-- `Substring`, `Trim`, `Replace(char,char)`, `Replace(string,string)`, `ToUpperInvariant`, `ToLowerInvariant`
-
-Используют `FastAllocateString`, работают в ядре после стадии 2.
+Альтернатива — SUPER-4 (IDT / CPU exceptions) как параллельная ветка фундамента, не пересекается с std/.

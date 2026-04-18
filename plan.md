@@ -34,9 +34,9 @@
 
 2. **KernelHeap-бэкед StringRuntime для ядра** ✅ (step 28) — `StringRuntime.KernelHeap.cs` с реальной аллокацией через `KernelHeap.Alloc`. MethodTable берётся из `string.Empty` (надёжнее чем NativeAOT `[Intrinsic] EETypePtrOf<T>`). Ядро теперь полноценный потребитель общего std: `NumberFormatting` работает одинаково в приложениях и ядре. `Console.*` мигрирован на managed-путь с `*Raw` fallback для раннего boot и для кода, итерирующего heap (`HeapDiagnostics`).
 
-3. **String queries + char helpers** — `IndexOf`, `Contains`, `StartsWith`, `EndsWith`, `IsNullOrEmpty`, `char.IsDigit/IsLetter/...`. Не требуют аллокации, просты.
+3. **String queries + char helpers** ✅ (step 28) — `CharHelpers` (IsDigit/IsLetter/IsLetterOrDigit/IsWhiteSpace/ToUpper/ToLowerInvariant для ASCII), `StringQueries` (IndexOf/LastIndexOf/Contains/StartsWith/EndsWith/IsNullOrEmpty/IsNullOrWhiteSpace). Пробросы в `SystemString` как instance-методы. Без аллокаций.
 
-4. **String transforms с одним выходом** — `Substring`, `ToUpperInvariant`, `ToLowerInvariant`, `Trim`, `Replace`. Используют `FastAllocateString`, работают везде где стадия 2 закончена.
+4. **String transforms с одним выходом** ✅ (step 28) — `StringTransforms` (Substring/Trim/TrimStart/TrimEnd/Replace(char,char)/Replace(string,string)/ToUpperInvariant/ToLowerInvariant). Пробросы в `SystemString`. Используют `FastAllocateString`, работают в ядре после стадии 2 и в приложениях.
 
 **Критерий готовности 1a:** в приложении и в ядре пишешь `var s = 42.ToString() + " items"; if (s.Contains("item")) { ... }` — компилируется и работает. `Console.WriteUInt` и прочие inline-реализации в ядре мигрируют на `NumberFormatting`.
 
