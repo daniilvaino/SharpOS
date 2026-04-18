@@ -1,7 +1,18 @@
+using SharpOS.Std.NoRuntime;
+
 namespace OS.Hal
 {
     internal static unsafe class Console
     {
+        // Default API — идёт через NumberFormatting (managed-путь).
+        // Для раннего boot (до KernelHeap.Init) автоматически откатывается на
+        // stackalloc fallback (*Raw), чтобы числа в логе не терялись.
+        //
+        // *Raw варианты — для кода, который не может аллоцировать во время работы
+        // (HeapDiagnostics, итерирующий список блоков heap). Вызов managed-пути
+        // в таких контекстах создаст новый блок в том же list и приведёт к
+        // бесконечной итерации.
+
         public static void Write(string text) => Platform.Write(text);
 
         public static void WriteLine(string text) => Platform.WriteLine(text);
@@ -9,6 +20,61 @@ namespace OS.Hal
         public static void WriteChar(char value) => Platform.WriteChar(value);
 
         public static void WriteInt(int value)
+        {
+            string s = NumberFormatting.IntToString(value);
+            if (s.Length > 0)
+            {
+                Write(s);
+                return;
+            }
+            WriteIntRaw(value);
+        }
+
+        public static void WriteUInt(uint value)
+        {
+            string s = NumberFormatting.UIntToString(value);
+            if (s.Length > 0)
+            {
+                Write(s);
+                return;
+            }
+            WriteUIntRaw(value);
+        }
+
+        public static void WriteULong(ulong value)
+        {
+            string s = NumberFormatting.ULongToString(value);
+            if (s.Length > 0)
+            {
+                Write(s);
+                return;
+            }
+            WriteULongRaw(value);
+        }
+
+        public static void WriteHex(ulong value)
+        {
+            WriteHex(value, 1);
+        }
+
+        public static void WriteHex(ulong value, int minDigits)
+        {
+            string s = NumberFormatting.ULongToHex(value, minDigits);
+            if (s.Length > 0)
+            {
+                Write(s);
+                return;
+            }
+            WriteHexRaw(value, minDigits);
+        }
+
+        // ---- Raw (stackalloc) path ----
+        // Публичные для кода, который обязан избегать аллокаций heap во время
+        // своей работы — например, итератор HeapBlock* → block.Next.
+        // Обычный Console.* в таком контексте аллоцировал бы новые блоки в тот
+        // же linked-list, и итерация ушла бы в бесконечность.
+
+        public static void WriteIntRaw(int value)
         {
             if (value == 0)
             {
@@ -28,10 +94,10 @@ namespace OS.Hal
                 value = -value;
             }
 
-            WriteUInt((uint)value);
+            WriteUIntRaw((uint)value);
         }
 
-        public static void WriteUInt(uint value)
+        public static void WriteUIntRaw(uint value)
         {
             if (value == 0)
             {
@@ -53,7 +119,7 @@ namespace OS.Hal
                 WriteChar(digits[i]);
         }
 
-        public static void WriteULong(ulong value)
+        public static void WriteULongRaw(ulong value)
         {
             if (value == 0)
             {
@@ -75,12 +141,7 @@ namespace OS.Hal
                 WriteChar(digits[i]);
         }
 
-        public static void WriteHex(ulong value)
-        {
-            WriteHex(value, 1);
-        }
-
-        public static void WriteHex(ulong value, int minDigits)
+        public static void WriteHexRaw(ulong value, int minDigits)
         {
             if (minDigits < 1)
                 minDigits = 1;

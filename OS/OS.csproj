@@ -84,7 +84,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\SystemString.cs" Link="src\Std\SystemString.cs" />
     <Compile Include="..\std\no-runtime\shared\StringAlgorithms.cs" Link="src\Std\StringAlgorithms.cs" />
     <Compile Include="..\std\no-runtime\shared\NumberFormatting.cs" Link="src\Std\NumberFormatting.cs" />
-    <Compile Include="..\std\no-runtime\shared\StringRuntime.Fallback.cs" Link="src\Std\StringRuntime.cs" />
+    <Compile Include="..\std\no-runtime\shared\StringRuntime.KernelHeap.cs" Link="src\Std\StringRuntime.cs" />
   </ItemGroup>
 
 </Project>

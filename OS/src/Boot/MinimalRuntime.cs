@@ -1,5 +1,11 @@
 using System;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+
+namespace Internal.Runtime
+{
+    internal struct MethodTable { }
+}
 
 namespace System
 {
@@ -48,7 +54,33 @@ namespace System
 
     public class Attribute { }
 
-    public enum AttributeTargets { }
+    public enum AttributeTargets
+    {
+        Constructor = 0x20,
+        Method = 0x40,
+    }
+
+    public unsafe struct EETypePtr
+    {
+        internal Internal.Runtime.MethodTable* _value;
+
+        internal EETypePtr(Internal.Runtime.MethodTable* value)
+        {
+            _value = value;
+        }
+
+        internal Internal.Runtime.MethodTable* ToPointer()
+        {
+            return _value;
+        }
+
+        [Intrinsic]
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static EETypePtr EETypePtrOf<T>()
+        {
+            return default;
+        }
+    }
 
     public sealed class AttributeUsageAttribute : Attribute
     {
@@ -72,6 +104,24 @@ namespace System
         public static class RuntimeFeature
         {
             public const string UnmanagedSignatureCallingConvention = nameof(UnmanagedSignatureCallingConvention);
+        }
+
+        public enum MethodImplOptions
+        {
+            AggressiveInlining = 0x0100,
+            InternalCall = 0x1000,
+        }
+
+        [AttributeUsage(AttributeTargets.Method | AttributeTargets.Constructor)]
+        public sealed class MethodImplAttribute : Attribute
+        {
+            public MethodImplAttribute(MethodImplOptions methodImplOptions) { }
+        }
+
+        [AttributeUsage(AttributeTargets.Method)]
+        public sealed class IntrinsicAttribute : Attribute
+        {
+            public IntrinsicAttribute() { }
         }
     }
 }

@@ -30,9 +30,9 @@
 
 **Внутри 1a есть стадии по мере усложнения инфраструктуры:**
 
-1. **NumberFormatting в std/** — `UIntToString/IntToString/ULongToString/LongToString/UIntToHex/ULongToHex` возвращают `string`. Линкуется во все проекты. Работает в приложениях сразу. В ядре пока возвращает пустые строки из-за `StringRuntime.Fallback`.
+1. **NumberFormatting в std/** ✅ (step 28) — `UIntToString/IntToString/ULongToString/LongToString/UIntToHex/ULongToHex` возвращают `string`. Линкуется во все проекты. Работает в приложениях. В ядре пока возвращает пустые строки из-за `StringRuntime.Fallback`.
 
-2. **KernelHeap-бэкед StringRuntime для ядра** — добавить `EETypePtr` intrinsic в kernel `MinimalRuntime.cs`, сделать `StringRuntime.KernelHeap.cs` с реальной аллокацией через `KernelHeap.Alloc`. Аккуратная работа — NativeAOT intrinsic поведение в kernel win-x64 контексте непредсказуемо. После этого `NumberFormatting` работает одинаково в приложениях и ядре. Это первая точка где ядро становится полноценным managed потребителем общего std.
+2. **KernelHeap-бэкед StringRuntime для ядра** ✅ (step 28) — `StringRuntime.KernelHeap.cs` с реальной аллокацией через `KernelHeap.Alloc`. MethodTable берётся из `string.Empty` (надёжнее чем NativeAOT `[Intrinsic] EETypePtrOf<T>`). Ядро теперь полноценный потребитель общего std: `NumberFormatting` работает одинаково в приложениях и ядре. `Console.*` мигрирован на managed-путь с `*Raw` fallback для раннего boot и для кода, итерирующего heap (`HeapDiagnostics`).
 
 3. **String queries + char helpers** — `IndexOf`, `Contains`, `StartsWith`, `EndsWith`, `IsNullOrEmpty`, `char.IsDigit/IsLetter/...`. Не требуют аллокации, просты.
 
