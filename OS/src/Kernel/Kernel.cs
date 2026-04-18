@@ -48,6 +48,7 @@ namespace OS.Kernel
                     X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
 
                 RunGcHeapNoNewTest();
+                GcStressTest.Run();
                 InitializePager();
                 RunPagerValidation();
                 RunElfValidation(bootInfo);

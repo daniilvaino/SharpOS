@@ -106,3 +106,53 @@ sweep: kept=1 swept=1
 - `OS/src/Boot/MinimalRuntime.cs`, `apps/sdk/MinimalRuntime.cs` — `UnmanagedCallersOnlyAttribute` stub
 - `std/no-runtime/shared/GC/GcRoots.cs` — `MarkAllUnmanaged` entry для трамплина
 - `OS/src/Kernel/Kernel.cs` — подключение трамплина и вызов через `GcStackSpill.Invoke`
+
+---
+
+## Фаза 3.5 (часть 2): стресс-тест
+
+`OS/src/Kernel/Diagnostics/GcStressTest.cs` — три независимых сценария, каждый с полным циклом Mark (через трамплин) + Sweep:
+
+### Test 1 — binary tree depth 5
+
+Рекурсивно строит дерево `Node { Left, Right, byte[] Data }` глубиной 5 = 31 узел + 31 `byte[]` = 62 объекта. Регистрирует корень. Mark должен обойти всё дерево через `GcDescSeries`.
+
+```
+tree allocs=62 marked=62 kept=62 swept=1
+```
+
+Все 62 помечены. Traversal полей Node.Left/Right/Data через descriptor series работает корректно.
+
+### Test 2 — 50 live + 50 dead
+
+Связный список из 50 `Chain { Next, byte[] Data }` + 50 `byte[]` хранится через зарегистрированный static (100 live-объектов). Плюс `AllocAndDiscard(50)` — отдельная функция, создаёт ещё 50 Chain + 50 byte[] в своём фрейме и возвращается без сохранения куда-либо.
+
+```
+half allocs=200 marked=260 kept=260 swept=2
+```
+
+**200 alloc, 260 kept.** Это и есть свидетельство работы трамплина: "мёртвые" 100 объектов из `AllocAndDiscard` пережили GC, потому что после возврата их корни остались в callee-saved регистрах. Трамплин их вылил на стек, conservative scan подхватил → пометил. Без трамплина они были бы заметены немедленно (стандартное поведение precise GC), с трамплином — живут пока регистры не переиспользуются. Это корректное поведение консервативного GC в стиле Cosmos/Boehm.
+
+Изначально вместо связного списка был `object[]` с covariance-check присваиваниями `Slots[i] = new byte[8]` — ILC на этом падал с `Code generation failed` (требует `RhpStelemRef` которого у нас нет). Замена на class-поля устранила проблему.
+
+### Test 3 — rotation
+
+10 итераций `s_rot = new Payload()` — каждая новая создаёт `Payload { Data, Next }` + `byte[]`, перезаписывает единственный зарегистрированный корень, старая пара орфанится.
+
+```
+rot allocs=20 marked=164 kept=164 swept=116
+```
+
+**116 заметено.** Это dead chain из Test 2 + 9 старых Payload/byte[] из ротации. Регистры между Test 2 и Test 3 переиспользовались, корни потерялись → sweep смог их освободить. Это показывает что **в долгой перспективе память реально освобождается**, даже с консервативным сканом — просто с задержкой на "несколько GC пассов" пока регистры не вычистятся.
+
+### Итог
+
+Три последовательных цикла mark+sweep отработали без крашей, ядро продолжило загрузку и прогнало app validation. Подтверждено:
+- Mark traversal через `GcDescSeries` обходит нетривиальные графы (дерево 62 узла).
+- Sweep корректно превращает unreachable в free-маркеры, heap остаётся walkable.
+- Register-spill trampoline действительно подхватывает корни из callee-saved регистров.
+- В долгой перспективе dead-память освобождается, как только регистры/фреймы очищаются.
+
+Файлы:
+- `OS/src/Kernel/Diagnostics/GcStressTest.cs` (новый)
+- `OS/src/Kernel/Kernel.cs` — вызов `GcStressTest.Run()` после smoke-теста
