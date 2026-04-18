@@ -398,3 +398,84 @@ gc after new: count=4          ← +1 от RhpNewFast!
 Изменения:
 - `OS/OS.csproj` — добавлен Target `ExcludeNativeAotRuntime`; GcRuntimeExports линкуется; GcMemorySource.KernelHeap / GcSegment / GcHeap линкуются
 - `OS/src/Kernel/Kernel.cs` — временный smoke-test `RunGcHeapNoNewTest` (оставлен как proof-of-life)
+
+---
+
+## Довесок: Console.Write* guard + полноценный `new` в ядре
+
+После того как исключили `Runtime.WorkstationGC.lib`, frozen-string литералы (включая `string.Empty`) остались без штатной инициализации. При раннем boot `Console.WriteInt(65536)` вызывал `NumberFormatting.IntToString` → `StringRuntime.FastAllocateString(5)` которая до `KernelHeap.Init` возвращала `string.Empty` = garbage. Далее `if (result.Length != digits)` читал `[garbage + 8]` → page fault.
+
+Почему добавление `new int[]` / `new string(...)` в наш код триггерило краш: введение этих типов в reachability graph меняло codegen ILC для frozen-string инициализации (точный механизм не исследован до конца).
+
+Фикс — `Console.WriteInt/UInt/ULong/Hex` теперь явно проверяют `KernelHeap.IsInitialized` **до** вызова `NumberFormatting`. Если heap не готов — сразу на `*Raw` (stackalloc). Никогда не трогает `string.Empty` в раннем boot, поэтому его состояние (валидный или garbage) больше не имеет значения.
+
+После этого все три формы `new` работают в ядре:
+```
+gc: new object()...    ok    (через RhpNewFast)
+gc: new int[5]...      ok    (через RhpNewArray)
+gc: new string(x,3)... ok    (ILC заинлайнил в frozen literal)
+gc final: count=2 bytes=80
+```
+
+Commits: `68d70bc` (unified runtime, WorkstationGC exclusion) + `9d52600` (Console guard).
+
+---
+
+## Довесок: Mark + Sweep phases
+
+**Фаза 3.2 — Mark** (`std/no-runtime/shared/GC/GcMark.cs`):
+- Адаптация Kevin Gosse's `GCHeap.Mark.cs` под NoStdLib.
+- Iterative DFS через fixed-size mark stack (4096 × 8 bytes = 32KB в `.bss`).
+- `GcObject.EnumerateObjectReferences` — парсит NativeAOT GC descriptors (негативное space от MT pointer) через `delegate*<nint, void>` (без managed delegate allocation).
+- Mark bit в низшем бите MT pointer. Проверка `GcHeap.FindSegmentContaining(ptr) != null` перед mark'ом — для будущего conservative stack scanning.
+- `UnmarkAllObjects` — линейный walk с safety breakout при `size == 0` или `MT == null`.
+
+**Фаза 3.3 — Sweep** (`std/no-runtime/shared/GC/GcSweep.cs`):
+- Линейный walk, marked → Unmark (для next pass), unmarked → free-object marker.
+- Synthetic `GcMethodTable` в `.bss` (`ComponentSize=1, Flags=0, BaseSize=12`) для free blocks. `Length` устанавливается чтобы `ComputeSize()` дал aligned-размер блока → heap остаётся walkable.
+- Counters `LastKeptCount` / `LastSweptCount`.
+
+Первый полноценный GC-цикл в ядре:
+```
+mark: begin (only s_keep1 kept)
+mark: marked=1
+sweep: kept=1 swept=1
+```
+
+Commits: `390d053` (Mark) + `9308b08` (Sweep).
+
+---
+
+## Итог step 28
+
+Step 28 охватил:
+
+**SUPER-1a стадии 1–4 полностью:**
+- NumberFormatting (int/uint/long/ulong → string, hex)
+- CharHelpers (IsDigit/IsLetter/IsWhiteSpace/ToUpper/Lower для ASCII)
+- StringQueries (IndexOf/Contains/StartsWith/EndsWith/IsNullOrEmpty)
+- StringTransforms (Substring/Trim/Replace/ToUpper/Lower)
+- Kernel string allocation через `KernelHeap.Alloc`
+
+**SUPER-2 фазы 1–3.3:**
+- GC layout types (GcMethodTable, GcObject, GcDescSeries)
+- Segments + bump allocator (`GcHeap`)
+- Pluggable MemorySource (KernelHeap для ядра, AppStatic 1MB pool для apps)
+- `[RuntimeExport]` stubs (RhpNewFast/NewArray/RhNewString/AssignRef)
+- Исключение `Runtime.WorkstationGC.lib` из линковки ядра
+- Mark phase (iterative DFS через GcDescSeries)
+- Sweep phase (free-object markers)
+
+**Другие попутные штуки:**
+- FetchApp (neofetch-like) + `WriteChar`/`WriteBuildId` сервисы
+- OVMF strict-nx PcdDxeNxMemoryProtectionPolicy
+- JumpStub в EfiLoaderCode для NX-enforced firmware
+- Rename `OS_0.1` → `OS`
+- `ConOut.TryMaximizeTextMode` для экранов с маленьким текстом
+- std PadLeft/PadRight
+
+**Что осталось для SUPER-2** (уходит в step 29):
+- Фаза 3.4 — RootSource (conservative stack scan + static roots registry)
+- Фаза 3.5 — GC.Collect() + freelist reuse + threshold auto-trigger
+- Фаза 4 — миграция apps на unified runtime, удаление C-стаба
+- Фаза 5 — стабилизация, stress-тесты, интеграция с std collections
