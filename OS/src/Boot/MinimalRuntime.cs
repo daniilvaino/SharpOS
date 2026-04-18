@@ -56,6 +56,7 @@ namespace System
 
     public enum AttributeTargets
     {
+        Field = 0x100,
         Constructor = 0x20,
         Method = 0x40,
     }
@@ -133,6 +134,12 @@ namespace System.Runtime.InteropServices
     sealed class StructLayoutAttribute : Attribute
     {
         public StructLayoutAttribute(LayoutKind layoutKind) { }
+    }
+
+    [AttributeUsage(AttributeTargets.Field)]
+    public sealed class FieldOffsetAttribute : Attribute
+    {
+        public FieldOffsetAttribute(int offset) { }
     }
 
     internal enum LayoutKind

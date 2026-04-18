@@ -34,6 +34,9 @@
     <Compile Include="..\..\std\no-runtime\shared\StringQueries.cs" Link="std\StringQueries.cs" />
     <Compile Include="..\..\std\no-runtime\shared\StringTransforms.cs" Link="std\StringTransforms.cs" />
     <Compile Include="..\..\std\no-runtime\shared\NumberFormatting.cs" Link="std\NumberFormatting.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\GC\MethodTable.cs" Link="std\GC\MethodTable.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\GC\GcDescSeries.cs" Link="std\GC\GcDescSeries.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\GC\GcObject.cs" Link="std\GC\GcObject.cs" />
     <Compile Include="..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
   </ItemGroup>
 

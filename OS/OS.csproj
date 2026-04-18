@@ -87,6 +87,9 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\StringQueries.cs" Link="src\Std\StringQueries.cs" />
     <Compile Include="..\std\no-runtime\shared\StringTransforms.cs" Link="src\Std\StringTransforms.cs" />
     <Compile Include="..\std\no-runtime\shared\NumberFormatting.cs" Link="src\Std\NumberFormatting.cs" />
+    <Compile Include="..\std\no-runtime\shared\GC\MethodTable.cs" Link="src\Std\GC\MethodTable.cs" />
+    <Compile Include="..\std\no-runtime\shared\GC\GcDescSeries.cs" Link="src\Std\GC\GcDescSeries.cs" />
+    <Compile Include="..\std\no-runtime\shared\GC\GcObject.cs" Link="src\Std\GC\GcObject.cs" />
     <Compile Include="..\std\no-runtime\shared\StringRuntime.KernelHeap.cs" Link="src\Std\StringRuntime.cs" />
   </ItemGroup>
 
