@@ -133,6 +133,13 @@ namespace System.Runtime.InteropServices
         public FieldOffsetAttribute(int offset) { }
     }
 
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class UnmanagedCallersOnlyAttribute : Attribute
+    {
+        public Type[] CallConvs;
+        public string EntryPoint;
+    }
+
     internal enum LayoutKind
     {
         Sequential = 0,

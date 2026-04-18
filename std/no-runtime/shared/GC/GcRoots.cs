@@ -87,6 +87,18 @@ namespace SharpOS.Std.NoRuntime
             }
         }
 
+        // Unmanaged entry point for the register-spill trampoline.
+        // Called from a shellcode stub that pushes all callee-saved regs
+        // (RBX/RBP/RDI/RSI/R12..R15) onto the stack; MarkAll then runs
+        // and its ScanStack walks past those pushed regs, so any managed
+        // root that happens to live in a callee-saved register is seen
+        // by the conservative scan.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        public static void MarkAllUnmanaged()
+        {
+            MarkAll();
+        }
+
         // Iterate registered static slots + conservative stack scan.
         // GcMark.Begin must have been called by the caller.
         //

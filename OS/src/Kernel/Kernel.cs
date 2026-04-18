@@ -35,11 +35,19 @@ namespace OS.Kernel
 
                 InitializeHeap();
                 RunHeapSmokeTest();
-                RunGcHeapNoNewTest();
+
+                // Install exec-memory stubs BEFORE the GC test — the smoke
+                // test calls MarkAll through the register-spill trampoline.
                 if (bootInfo.ExecStubBuffer != null)
+                {
                     X64PageTable.SetExecBuffer(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize);
+                    if (!GcStackSpill.TryInitialize(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize))
+                        Log.Write(LogLevel.Warn, "gc spill trampoline unavailable");
+                }
                 if (bootInfo.JumpStubExecBuffer != null)
                     X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
+
+                RunGcHeapNoNewTest();
                 InitializePager();
                 RunPagerValidation();
                 RunElfValidation(bootInfo);
@@ -160,12 +168,10 @@ namespace OS.Kernel
             Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocBytes);
             Log.EndLine();
 
-            // Phase 3.4 smoke-test: capture stack top, register one static
-            // root (s_keep1). The others (s_keep2, s_keep3) remain unregistered
-            // and should be swept. Conservative stack scan is also invoked
-            // from MarkAll — it covers references ILC chose to spill to the
-            // stack; refs living in callee-saved registers remain invisible
-            // until we add a register-spill trampoline (future work).
+            // Phase 3.4 + 3.5 smoke-test: register s_keep1 as a static root;
+            // others remain unregistered and should be swept. MarkAll runs
+            // through the register-spill trampoline so refs in callee-saved
+            // regs become visible to the conservative stack scan.
             SharpOS.Std.NoRuntime.GcRoots.CaptureStackTop();
             SharpOS.Std.NoRuntime.GcRoots.Register(ref s_keep1);
 
@@ -177,7 +183,12 @@ namespace OS.Kernel
             Log.EndLine();
 
             SharpOS.Std.NoRuntime.GcMark.Begin();
-            SharpOS.Std.NoRuntime.GcRoots.MarkAll();
+
+            // Call MarkAll through the register-spill trampoline so refs
+            // living in callee-saved regs (RBX, R12..R15, etc.) get pushed
+            // onto the stack and become visible to the conservative scan.
+            delegate* unmanaged<void> markFn = &SharpOS.Std.NoRuntime.GcRoots.MarkAllUnmanaged;
+            GcStackSpill.Invoke(markFn);
 
             Log.Begin(LogLevel.Info);
             Console.Write("mark: marked=");

@@ -37,8 +37,10 @@ namespace OS.Boot
             // EfiLoaderCode is mapped executable by firmware even with W^X/NX policies.
             if (systemTable->BootServices != null)
             {
-                // Cr3Accessor: 64-byte shellcode (mov rax,cr3 / mov cr3,rax)
-                const uint ExecStubSize = 64;
+                // Shared exec-stub buffer, layout:
+                //   0..63   Cr3Accessor (read stub @0, write stub @32)
+                //   64..127 GcStackSpill (callee-saved register push/pop trampoline)
+                const uint ExecStubSize = 128;
                 void* cr3StubAlloc = null;
                 ulong cr3Status = systemTable->BootServices->AllocatePool(
                     EFI_MEMORY_TYPE.EfiLoaderCode, ExecStubSize, &cr3StubAlloc);
