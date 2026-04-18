@@ -90,6 +90,9 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\GC\MethodTable.cs" Link="src\Std\GC\MethodTable.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\GcDescSeries.cs" Link="src\Std\GC\GcDescSeries.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\GcObject.cs" Link="src\Std\GC\GcObject.cs" />
+    <Compile Include="..\std\no-runtime\shared\GC\GcSegment.cs" Link="src\Std\GC\GcSegment.cs" />
+    <Compile Include="..\std\no-runtime\shared\GC\GcHeap.cs" Link="src\Std\GC\GcHeap.cs" />
+    <Compile Include="..\std\no-runtime\shared\GC\GcMemorySource.KernelHeap.cs" Link="src\Std\GC\GcMemorySource.cs" />
     <Compile Include="..\std\no-runtime\shared\StringRuntime.KernelHeap.cs" Link="src\Std\StringRuntime.cs" />
   </ItemGroup>
 

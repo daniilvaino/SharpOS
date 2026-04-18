@@ -37,6 +37,9 @@
     <Compile Include="..\..\std\no-runtime\shared\GC\MethodTable.cs" Link="std\GC\MethodTable.cs" />
     <Compile Include="..\..\std\no-runtime\shared\GC\GcDescSeries.cs" Link="std\GC\GcDescSeries.cs" />
     <Compile Include="..\..\std\no-runtime\shared\GC\GcObject.cs" Link="std\GC\GcObject.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\GC\GcSegment.cs" Link="std\GC\GcSegment.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\GC\GcHeap.cs" Link="std\GC\GcHeap.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\GC\GcMemorySource.AppStatic.cs" Link="std\GC\GcMemorySource.cs" />
     <Compile Include="..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
   </ItemGroup>
 

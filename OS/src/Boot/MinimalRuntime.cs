@@ -134,6 +134,8 @@ namespace System.Runtime.InteropServices
     sealed class StructLayoutAttribute : Attribute
     {
         public StructLayoutAttribute(LayoutKind layoutKind) { }
+        public int Size;
+        public int Pack;
     }
 
     [AttributeUsage(AttributeTargets.Field)]
