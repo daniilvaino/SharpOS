@@ -78,6 +78,23 @@ detach vdisk
     </ItemGroup>
   </Target>
 
+  <!-- Exclude NativeAOT's Runtime.WorkstationGC.lib from the link. We provide
+       our own GC (SharpOS.Std.NoRuntime.GcHeap) and the low-level runtime
+       helpers NativeAOT would otherwise pull from WorkstationGC (RhpNewFast,
+       RhpReversePInvoke, RhpFallbackFailFast, etc.) are supplied via our
+       own [RuntimeExport]'d methods. See gc-experiment/PLAN.md.
+
+       We remove from BOTH NativeLibrary (for any downstream consumer) AND
+       LinkerArg (because Windows.targets snapshots NativeLibrary into
+       LinkerArg inside SetupOSSpecificProps, before our Target runs). -->
+  <Target Name="ExcludeNativeAotRuntime" AfterTargets="SetupOSSpecificProps" BeforeTargets="LinkNative">
+    <ItemGroup>
+      <NativeLibrary Remove="$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)" />
+      <LinkerArg Remove="&quot;$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)&quot;" />
+    </ItemGroup>
+    <Message Text="After exclude, LinkerArg = @(LinkerArg)" Importance="high" />
+  </Target>
+
   <ItemGroup>
     <Compile Include="..\std\no-runtime\shared\MemoryPrimitives.cs" Link="src\Std\MemoryPrimitives.cs" />
     <Compile Include="..\std\no-runtime\shared\DefaultMemberAttribute.cs" Link="src\Std\DefaultMemberAttribute.cs" />
@@ -93,6 +110,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\GC\GcSegment.cs" Link="src\Std\GC\GcSegment.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\GcHeap.cs" Link="src\Std\GC\GcHeap.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\GcMemorySource.KernelHeap.cs" Link="src\Std\GC\GcMemorySource.cs" />
+    <Compile Include="..\std\no-runtime\shared\GC\GcRuntimeExports.cs" Link="src\Std\GC\GcRuntimeExports.cs" />
     <Compile Include="..\std\no-runtime\shared\StringRuntime.KernelHeap.cs" Link="src\Std\StringRuntime.cs" />
   </ItemGroup>
 

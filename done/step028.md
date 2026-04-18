@@ -323,3 +323,78 @@ Smoke-test в Kernel.cs validated что парсинг работает для 
 **Отложено на фазу 3:** атрибутные флаги (IsArray/IsValueType/ContainsGCPointers) — NativeAOT's bit semantics требует research в eetype.h, Gosse's CoreCLR bits не подходят.
 
 Все три проекта (OS, HelloSharpFs, FetchApp) компилируются, 0 errors. GC types доступны для использования везде.
+
+---
+
+## Довесок: SUPER-2 фаза 2 + 3.1 — unified runtime в ядре
+
+### Фаза 2 — Segments + pluggable MemorySource
+
+Новые файлы в `std/no-runtime/shared/GC/`:
+- `GcSegment.cs` — `GcSegmentHeader` с linked list (Start/ObjectStart/End/Current/Next)
+- `GcHeap.cs` — bump-allocator через цепочку segments, `Init()` / `AllocateRaw(size)` / `FindSegmentContaining(addr)`
+- `GcMemorySource.KernelHeap.cs` — backing через `KernelHeap.Alloc` (линкуется в OS.csproj)
+- `GcMemorySource.AppStatic.cs` — static 1MB пул в бинаре app'а через `[StructLayout(Size=...)]` (линкуется в apps)
+
+`MinimalRuntime` в обеих ветках — добавлены `Size` и `Pack` поля в `StructLayoutAttribute` (нужно для `[StructLayout(Size=N)]`).
+
+Проверено smoke-test: 256KB сегмент получен от KernelHeap, три аллокации по 64/128/256 байт отработали с правильным 16-byte alignment, счётчики `count=3 bytes=448` совпали.
+
+### Фаза 3.1 — RuntimeExports + исключение Runtime.WorkstationGC.lib
+
+**Открытие:** NativeAOT публикация `win-x64` тихо линкует `Runtime.WorkstationGC.lib` — полный GC Microsoft (thread.cpp, EHHelpers.cpp, WorkstationGC алгоритмы). До этой фазы наш "GcHeap" существовал параллельно этому невидимому GC — два heap'а в ядре.
+
+**Выкидывание через MSBuild.** Стандартные способы отключения не сработали — библиотека добавляется в `NativeLibrary` ItemGroup в таргете `SetupOSSpecificProps`, и сразу же снапшотится в `LinkerArg` (строка 76 `Microsoft.NETCore.Native.Windows.targets`). Наш Remove должен убирать ИЗ ОБОИХ:
+
+```xml
+<Target Name="ExcludeNativeAotRuntime" AfterTargets="SetupOSSpecificProps" BeforeTargets="LinkNative">
+  <ItemGroup>
+    <NativeLibrary Remove="$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)" />
+    <LinkerArg Remove="&quot;$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)&quot;" />
+  </ItemGroup>
+</Target>
+```
+
+**Stubs в `GcRuntimeExports.cs`** для всех runtime helpers которые NativeAOT теперь ждёт от нас:
+- `RhpNewFast(mt)` — через `GcHeap.AllocateRaw(mt->BaseSize)` + запись MT header
+- `RhpNewArray(mt, n)` — аналогично, плюс length на offset +8
+- `RhNewString(mt, n)` — делегирует в RhpNewArray
+- `RhpAssignRef(dst, src)` / `RhpCheckedAssignRef` — простой `*dst = src` (у нас нет generational GC, write barrier не нужен)
+
+В итоге линкер видит только наши `[RuntimeExport]` символы, никаких duplicate symbol ошибок. Ядро бутает без `Runtime.WorkstationGC.lib`.
+
+### Подтверждение работы через smoke-test
+
+В QEMU strict-nx OVMF:
+```
+---- gc heap test begin ----
+heap grow pages: 65
+alloc 64 ->0x0000000000103328
+alloc 128->0x0000000000103368
+alloc 256->0x00000000001033E8
+gc count=3 bytes=448
+gc: about to new object()
+gc: new object() returned
+gc after new: count=4          ← +1 от RhpNewFast!
+---- gc heap test end ----
+```
+
+`new object()` в ядре идёт через наш `[RuntimeExport] RhpNewFast` → `GcHeap.AllocateRaw(24)` → нашу память. **Первый раз у SharpOS настоящий managed GC.**
+
+### Известные ограничения (для будущих фаз)
+
+`new int[n]` и `new string(char, int)` в ядре ломают ранний boot. Крах случается в `NumberFormatting.IntToString` → `StringRuntime.FastAllocateString(5)` которая возвращает garbage. Гипотеза — добавление таких types в reachability graph заставляет ILC переключать frozen string literals (`string.Empty`, `"0"`, etc.) с eager инициализации на lazy, а наш стриппнутый runtime lazy-init не поддерживает. Требует отдельного исследования — возможно через manual bootstrap инициализацию frozen strings или `DisableLazyStatics` флаг ILC. Пока в ядре `new object()` работает (единственный `new` синтаксис), остальное через явные вызовы `StringRuntime.FastAllocateString` и future `GcRuntimeExports.NewArray<T>(n)` helpers.
+
+### Известные побочные моменты
+
+- Приложения (HelloSharpFs, FetchApp) продолжают использовать C-стаб (`RhNewString` через `runtime_stubs.c` в WSL-сборке). Миграция на unified runtime — фаза 4.
+- Mark / Sweep / root scanning ещё не реализованы — фаза 3.2-3.4. Heap сейчас bump-allocator, не освобождает память.
+
+### Код
+
+Новые файлы:
+- `std/no-runtime/shared/GC/GcRuntimeExports.cs` — все `[RuntimeExport]` stubs
+
+Изменения:
+- `OS/OS.csproj` — добавлен Target `ExcludeNativeAotRuntime`; GcRuntimeExports линкуется; GcMemorySource.KernelHeap / GcSegment / GcHeap линкуются
+- `OS/src/Kernel/Kernel.cs` — временный smoke-test `RunGcHeapNoNewTest` (оставлен как proof-of-life)

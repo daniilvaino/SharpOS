@@ -35,6 +35,7 @@ namespace OS.Kernel
 
                 InitializeHeap();
                 RunHeapSmokeTest();
+                RunGcHeapNoNewTest();
                 if (bootInfo.ExecStubBuffer != null)
                     X64PageTable.SetExecBuffer(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize);
                 if (bootInfo.JumpStubExecBuffer != null)
@@ -121,6 +122,51 @@ namespace OS.Kernel
 
             HeapDiagnostics.DumpSummary();
             HeapDiagnostics.DumpBlocks();
+        }
+
+        // Static field to keep allocated object alive (prevents DCE).
+        private static object s_keep1;
+
+        private static void RunGcHeapNoNewTest()
+        {
+            Log.Write(LogLevel.Info, "---- gc heap test begin ----");
+
+            if (!SharpOS.Std.NoRuntime.GcHeap.Init())
+            {
+                Log.Write(LogLevel.Error, "gc heap init failed");
+                return;
+            }
+
+            void* a = SharpOS.Std.NoRuntime.GcHeap.AllocateRaw(64);
+            void* b = SharpOS.Std.NoRuntime.GcHeap.AllocateRaw(128);
+            void* c = SharpOS.Std.NoRuntime.GcHeap.AllocateRaw(256);
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("alloc 64 ->0x");  Console.WriteHexRaw((ulong)a, 16); Log.EndLine();
+            Log.Begin(LogLevel.Info);
+            Console.Write("alloc 128->0x"); Console.WriteHexRaw((ulong)b, 16); Log.EndLine();
+            Log.Begin(LogLevel.Info);
+            Console.Write("alloc 256->0x"); Console.WriteHexRaw((ulong)c, 16); Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("gc count=");
+            Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocCount);
+            Console.Write(" bytes=");
+            Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocBytes);
+            Log.EndLine();
+
+            // Now try `new object()` — most minimal managed alloc.
+            // Trace each step so we see exactly where it dies.
+            Log.Write(LogLevel.Info, "gc: about to new object()");
+            s_keep1 = new object();
+            Log.Write(LogLevel.Info, "gc: new object() returned");
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("gc after new: count=");
+            Console.WriteULongRaw(SharpOS.Std.NoRuntime.GcHeap.AllocCount);
+            Log.EndLine();
+
+            Log.Write(LogLevel.Info, "---- gc heap test end ----");
         }
 
         private static void InitializePager()

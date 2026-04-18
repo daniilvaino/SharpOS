@@ -1,0 +1,88 @@
+// NativeAOT runtime export symbols backed by GcHeap.
+//
+// NativeAOT's codegen emits calls to RhpNewFast / RhpNewArray / RhNewString
+// for `new T()`, `new T[n]`, `new string(...)`. These are normally provided
+// by the NativeAOT runtime (AllocFast.asm etc.). In our freestanding setup
+// we define them as [RuntimeExport] C# methods that allocate from GcHeap.
+//
+// Layout (matches dotnet/runtime/src/coreclr/nativeaot/Runtime/portable.cpp):
+//   Object : [MethodTable*](8)     — BaseSize bytes total
+//   Array  : [MethodTable*](8)[Length(4)]    — BaseSize + Length*ComponentSize
+//   String : same as Array (NativeAOT treats string as an array in this path)
+//
+// Signatures copied from portable.cpp. Linked into OS.csproj (kernel) only
+// for phase 3; apps keep C-stub RhNewString until phase 4 when we migrate
+// them off.
+
+using System.Runtime;
+
+namespace SharpOS.Std.NoRuntime
+{
+    internal static unsafe class GcRuntimeExports
+    {
+        [RuntimeExport("RhpNewFast")]
+        private static void* RhpNewFast(GcMethodTable* mt)
+        {
+            if (mt == null)
+                return null;
+
+            uint size = mt->BaseSize;
+            void* obj = GcHeap.AllocateRaw(size);
+            if (obj == null)
+                return null;
+
+            *(GcMethodTable**)obj = mt;
+            return obj;
+        }
+
+        [RuntimeExport("RhpNewArray")]
+        private static void* RhpNewArray(GcMethodTable* mt, int numElements)
+        {
+            if (mt == null || numElements < 0)
+                return null;
+
+            // size = BaseSize + numElements * ComponentSize, pointer-aligned
+            ulong size64 = (ulong)mt->BaseSize + ((ulong)(uint)numElements * (ulong)mt->ComponentSize);
+            size64 = (size64 + 7UL) & ~7UL;
+            if (size64 > 0xFFFFFFFFUL)
+                return null;
+
+            void* obj = GcHeap.AllocateRaw((uint)size64);
+            if (obj == null)
+                return null;
+
+            *(GcMethodTable**)obj = mt;
+            // Length field lives at offset 8 (sizeof(MethodTable*) on x64).
+            *(int*)((byte*)obj + 8) = numElements;
+            return obj;
+        }
+
+        [RuntimeExport("RhNewString")]
+        private static void* RhNewString(GcMethodTable* mt, int numElements)
+        {
+            // NativeAOT's portable.cpp delegates RhNewString to RhpNewArray.
+            // string's MT has ComponentSize = 2 (one char) and BaseSize covers
+            // the header + null-terminator slot.
+            return RhpNewArray(mt, numElements);
+        }
+
+        // Write barrier for managed reference assignment (e.g. `s_field = obj`).
+        // In NativeAOT's generational GC this marks the containing card dirty.
+        // Our GC is single-threaded non-generational mark-sweep — no write
+        // barrier needed, just plain pointer store.
+        [RuntimeExport("RhpAssignRef")]
+        private static void RhpAssignRef(void** dst, void* src)
+        {
+            *dst = src;
+        }
+
+        // Same as RhpAssignRef with a null-pointer check before write. We
+        // don't care about the check (CLR uses it to protect against bad
+        // targets during lazy init) — just perform the store.
+        [RuntimeExport("RhpCheckedAssignRef")]
+        private static void RhpCheckedAssignRef(void** dst, void* src)
+        {
+            *dst = src;
+        }
+    }
+}
