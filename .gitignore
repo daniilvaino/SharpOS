@@ -67,3 +67,6 @@ ovmf/*.fd
 
 # Legacy / reference material not part of the current project
 old SharpOS/
+
+# GC research — external reference projects, not part of the tree
+gc-experiment/

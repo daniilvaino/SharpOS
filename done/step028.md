@@ -293,3 +293,16 @@ SUPER-1a полностью закрыта: std/ покрывает обычны
 SUPER-1b (StringBuilder, Split, Join с массивами) требует массивов → SUPER-3 (managed collections) → SUPER-2 (managed heap extended).
 
 Альтернатива — SUPER-4 (IDT / CPU exceptions) как параллельная ветка фундамента, не пересекается с std/.
+
+---
+
+## Довесок: разведка SUPER-2 phase 0
+
+Решили делать GC дальше. Прогнали разведку — результат в `gc-experiment/PLAN.md`.
+
+Главное:
+- `EETypePtr.EETypePtrOf<T>()` intrinsic работает для всех типов в kernel (не только для string). Риск SUPER-2 снят.
+- Обнаружен баг в `StringRuntime.KernelHeap.cs`: MT для созданных строк был 0, потому что `fixed (char* p = string.Empty); *(p-12)` в NativeAOT возвращает null (Empty — special case). Все наши строки работали случайно, т.к. нигде не dispatch на MT.
+- Исправлено на intrinsic-путь. Код чище, работает корректно.
+
+Дальше — фаза 1 SUPER-2 (копирование core алгоритма из Kevin Gosse).

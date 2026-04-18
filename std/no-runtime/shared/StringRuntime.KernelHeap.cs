@@ -9,9 +9,12 @@
 //   offset 8  : Length (4 bytes)
 //   offset 12 : char _firstChar; ... ; char '\0'  ((length+1) * 2 bytes)
 //
-// MethodTable pointer comes from a live string literal (string.Empty).
-// This is more robust than relying on [Intrinsic] EETypePtrOf<T>() which
-// may not be honoured by NativeAOT in the win-x64 EFI_APPLICATION target.
+// MethodTable is obtained via the NativeAOT intrinsic EETypePtr.EETypePtrOf<T>().
+// The earlier literal-based path (reading MT from `fixed (char* p = string.Empty)`)
+// was broken: string.Empty is a special case in NativeAOT that returns a zero MT
+// via the fixed/GetPinnableReference path, even though non-empty string literals
+// and the intrinsic both give the real MT. This was confirmed by SUPER-2 phase 0
+// reconnaissance — see gc-experiment/PLAN.md.
 
 namespace SharpOS.Std.NoRuntime
 {
@@ -33,11 +36,9 @@ namespace SharpOS.Std.NoRuntime
             if (raw == null)
                 return string.Empty;
 
-            void* methodTable;
-            fixed (char* emptyChars = string.Empty)
-            {
-                methodTable = *(void**)((byte*)emptyChars - HeaderSize);
-            }
+            // NativeAOT intrinsic — reliable for all types including string.
+            // Confirmed in kernel context during SUPER-2 phase 0 recon.
+            void* methodTable = System.EETypePtr.EETypePtrOf<string>().ToPointer();
 
             *(void**)raw = methodTable;
             *(int*)((byte*)raw + 8) = length;
