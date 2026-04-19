@@ -65,14 +65,16 @@ detach vdisk
 
   <!-- Build id: surfaced in SystemBanner / WriteBuildId service. Passed in by
        run_build.ps1 as /p:BuildId=<git-short-sha>[-tag]. Falls back to "local"
-       if the property isn't set. Generated .cs is compiled into the kernel. -->
+       if the property isn't set. Generated .cs is compiled into the kernel.
+       NOTE: $(IntermediateOutputPath) is only set after SDK init, so compute
+       the file path INSIDE the target, not in a top-level PropertyGroup. -->
   <PropertyGroup>
     <BuildId Condition="'$(BuildId)' == ''">local</BuildId>
-    <BuildInfoGeneratedFile>$(IntermediateOutputPath)BuildInfo.g.cs</BuildInfoGeneratedFile>
   </PropertyGroup>
 
   <Target Name="GenerateBuildInfo" BeforeTargets="BeforeCompile">
     <PropertyGroup>
+      <BuildInfoGeneratedFile>$(IntermediateOutputPath)BuildInfo.g.cs</BuildInfoGeneratedFile>
       <BuildInfoFileContents>namespace OS.Kernel%0A{%0A    internal static class BuildInfo%0A    {%0A        internal const string Id = "$(BuildId)"%3B%0A    }%0A}%0A</BuildInfoFileContents>
     </PropertyGroup>
     <WriteLinesToFile File="$(BuildInfoGeneratedFile)" Lines="$(BuildInfoFileContents)" Overwrite="true" WriteOnlyWhenDifferent="true" />
@@ -134,6 +136,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\GC\GcMark.cs" Link="src\Std\GC\GcMark.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\GcSweep.cs" Link="src\Std\GC\GcSweep.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\GcRoots.cs" Link="src\Std\GC\GcRoots.cs" />
+    <Compile Include="..\std\no-runtime\shared\GC\GC.cs" Link="src\Std\GC\GC.cs" />
     <Compile Include="..\std\no-runtime\shared\StringRuntime.KernelHeap.cs" Link="src\Std\StringRuntime.cs" />
   </ItemGroup>
 

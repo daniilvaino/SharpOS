@@ -139,10 +139,7 @@ namespace OS.Kernel.Diagnostics
 
         private static void RunGc()
         {
-            GcMark.Begin();
-            delegate* unmanaged<void> markFn = &GcRoots.MarkAllUnmanaged;
-            GcStackSpill.Invoke(markFn);
-            GcSweep.Run();
+            KernelGC.Collect();
         }
 
         private static void LogResult(string label, ulong allocs)
@@ -157,6 +154,10 @@ namespace OS.Kernel.Diagnostics
             Console.WriteUIntRaw(GcSweep.LastKeptCount);
             Console.Write(" swept=");
             Console.WriteUIntRaw(GcSweep.LastSweptCount);
+            Console.Write(" freelist=");
+            Console.WriteUIntRaw(GcHeap.FreelistNodes);
+            Console.Write(" reuse=");
+            Console.WriteULongRaw(GcHeap.FreelistReuseCount);
             Log.EndLine();
         }
     }

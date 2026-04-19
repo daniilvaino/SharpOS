@@ -183,20 +183,12 @@ namespace OS.Kernel
             Console.WriteHexRaw((ulong)SharpOS.Std.NoRuntime.GcRoots.StackTop, 16);
             Log.EndLine();
 
-            SharpOS.Std.NoRuntime.GcMark.Begin();
-
-            // Call MarkAll through the register-spill trampoline so refs
-            // living in callee-saved regs (RBX, R12..R15, etc.) get pushed
-            // onto the stack and become visible to the conservative scan.
-            delegate* unmanaged<void> markFn = &SharpOS.Std.NoRuntime.GcRoots.MarkAllUnmanaged;
-            GcStackSpill.Invoke(markFn);
+            KernelGC.Collect();
 
             Log.Begin(LogLevel.Info);
             Console.Write("mark: marked=");
             Console.WriteUIntRaw(SharpOS.Std.NoRuntime.GcMark.LastMarkedCount);
             Log.EndLine();
-
-            SharpOS.Std.NoRuntime.GcSweep.Run();
 
             Log.Begin(LogLevel.Info);
             Console.Write("sweep: kept=");

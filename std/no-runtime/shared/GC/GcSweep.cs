@@ -114,6 +114,9 @@ namespace SharpOS.Std.NoRuntime
 
                 seg = seg->Next;
             }
+
+            // Re-link the just-created free markers so AllocateRaw can reuse them.
+            GcHeap.RebuildFreelist();
         }
     }
 }
