@@ -84,5 +84,29 @@ namespace SharpOS.Std.NoRuntime
         {
             *dst = src;
         }
+
+        // Reference-array element store (ILC generates a call to this for
+        // `arr[i] = obj` where arr is object[] or any other reference-type
+        // array). Signature MUST match the NativeAOT contract exactly
+        // (Array, nint, object) — ILC matches [RuntimeExport] targets by
+        // signature, not just name. See dotnet/runtime TypeCast.cs:745.
+        //
+        // The real runtime does null/bounds/covariance-type checks plus a
+        // write barrier; we skip all of them (kernel code is trusted, our
+        // GC is single-threaded non-generational so no barrier needed).
+        //
+        // Array layout (NativeAOT x64):
+        //   +0:  MethodTable*
+        //   +8:  Length (int32 + 4-byte pad)
+        //   +16: element[0], element[1], ...   (8 bytes each for refs)
+        [RuntimeExport("RhpStelemRef")]
+        public static unsafe void RhpStelemRef(System.Array array, nint index, object value)
+        {
+            if (array == null) return;
+            nint arrayAddr = *(nint*)&array;
+            nint valueAddr = value == null ? 0 : *(nint*)&value;
+            byte* slot = (byte*)arrayAddr + 16 + ((long)index * 8);
+            *(nint*)slot = valueAddr;
+        }
     }
 }

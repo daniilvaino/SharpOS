@@ -133,7 +133,14 @@ half allocs=200 marked=260 kept=260 swept=2
 
 **200 alloc, 260 kept.** Это и есть свидетельство работы трамплина: "мёртвые" 100 объектов из `AllocAndDiscard` пережили GC, потому что после возврата их корни остались в callee-saved регистрах. Трамплин их вылил на стек, conservative scan подхватил → пометил. Без трамплина они были бы заметены немедленно (стандартное поведение precise GC), с трамплином — живут пока регистры не переиспользуются. Это корректное поведение консервативного GC в стиле Cosmos/Boehm.
 
-Изначально вместо связного списка был `object[]` с covariance-check присваиваниями `Slots[i] = new byte[8]` — ILC на этом падал с `Code generation failed` (требует `RhpStelemRef` которого у нас нет). Замена на class-поля устранила проблему.
+Изначально вместо `object[]` был связный список `Chain { Next, Data }` — потому что присваивание `Slots[i] = new byte[8]` ILC-ом зарубалось с `Code generation failed`. Разбор показал что проблема не в stelem.ref и не в `RhpStelemRef` helper, а в отсутствии `Internal.Runtime.CompilerHelpers.ThrowHelpers` (ILC ищет этот класс в модуле по фиксированному имени для генерации bounds-check throw-сайтов — `System.InvalidOperationException: Expected type 'Internal.Runtime.CompilerHelpers.ThrowHelpers' not found in module 'OS'`). Фикс в двух местах:
+
+1. `std/no-runtime/shared/ThrowHelpers.cs` — stub класс в нужном namespace, все 9 методов (`ThrowIndexOutOfRangeException`, `ThrowOverflowException`, `ThrowNullReferenceException`, `ThrowDivideByZero`, `ThrowArrayTypeMismatch`, `ThrowPlatformNotSupported`, `ThrowTypeLoadException`, `ThrowArgumentException`, `ThrowArgumentOutOfRangeException`) делают `while(true);` (у нас нет exception-инфраструктуры — halt лучшее что можем сделать).
+2. `std/no-runtime/shared/GC/GcRuntimeExports.cs` — добавлен `[RuntimeExport("RhpStelemRef")]` с корректной signature `(System.Array array, nint index, object value)`. Внутри — raw pointer-store без covariance-check и write-barrier (kernel trusted, GC не generational).
+
+После этого Test 2 переведён обратно на `object[]`-версию, результат эквивалентный (swept=51 — ровно мёртвый `object[] + 50 byte[]` из `AllocAndDiscard`).
+
+Подключено в `OS/OS.csproj`, `apps/FetchApp/FetchApp.csproj`, `apps/HelloSharpFs/HelloSharpFs.csproj`.
 
 ### Test 3 — rotation
 

@@ -18,12 +18,9 @@ namespace OS.Kernel.Diagnostics
             public byte[] Data;
         }
 
-        // Linked list for Test 2 — avoids object[] which would require
-        // covariance-check runtime helpers (RhpStelemRef) we don't provide.
-        private class Chain
+        private class Bag
         {
-            public Chain Next;
-            public byte[] Data;
+            public object[] Slots;
         }
 
         private class Payload
@@ -84,23 +81,20 @@ namespace OS.Kernel.Diagnostics
             return n;
         }
 
-        // Test 2: chain of 50 Chain nodes + 50 byte[] held via registered
-        // list head + 50 Chain/byte[] pairs allocated in a helper frame
-        // that returns (ref popped off stack → unreachable).
+        // Test 2: 50 byte[] held via registered Bag + 50 byte[] allocated in
+        // a helper frame that returns (refs pop off caller's stack → dead).
+        // Exercises RhpStelemRef for reference-array element stores.
         private static void Test2_HalfLive()
         {
             Log.Write(LogLevel.Info, "-- test 2: 50 live + 50 dead --");
             ulong before = GcHeap.AllocCount;
 
-            Chain head = null;
+            var bag = new Bag();
+            bag.Slots = new object[50];
             for (int i = 0; i < 50; i++)
-            {
-                var n = new Chain();
-                n.Data = new byte[8];
-                n.Next = head;
-                head = n;
-            }
-            s_bag = head;
+                bag.Slots[i] = new byte[8];
+
+            s_bag = bag;
             GcRoots.Register(ref s_bag);
 
             AllocAndDiscard(50);
@@ -111,18 +105,13 @@ namespace OS.Kernel.Diagnostics
             LogResult("half", after - before);
         }
 
-        // Separate frame so the list head ref pops off caller's stack
-        // when this returns — the whole 50-Chain list becomes unreachable.
+        // Separate frame so the array ref pops off caller's stack when
+        // this returns — the 50 byte[]s become unreachable.
         private static void AllocAndDiscard(int count)
         {
-            Chain localHead = null;
+            var tmp = new object[count];
             for (int i = 0; i < count; i++)
-            {
-                var n = new Chain();
-                n.Data = new byte[8];
-                n.Next = localHead;
-                localHead = n;
-            }
+                tmp[i] = new byte[8];
         }
 
         // Test 3: 10× assign s_rot = new Payload(); each iteration orphans
