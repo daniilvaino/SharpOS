@@ -1,7 +1,7 @@
 # step029
 
 Дата: 2026-04-19
-Статус: в работе
+Статус: завершён
 
 ## Контекст
 
@@ -207,3 +207,66 @@ rot allocs=20 marked=164 kept=164 swept=116
 - `apps/sdk/AppRuntime.cs` — `GcHeap.Init()` в `Initialize`
 - `build_launcher_wsl.ps1`, `build_fetch_wsl.ps1` — удалён блок генерации/компиляции/линковки `runtime_stubs.c`
 - `apps/HelloSharpFs/runtime_stubs.c` — удалён
+
+---
+
+## Уборка legacy inline-хаков: `AppString` → `std/`
+
+Инвентарь показал что в `apps/HelloSharpFs/Program.cs` висел локальный класс `AppString` с методами `FromAscii(byte*, uint)` и `FromAsciiZ(byte*)` — ручной ASCII→managed string decode. Логика переиспользуемая, место ей в `std/`.
+
+- `std/no-runtime/shared/SystemString.cs` — добавлены `string.FromAscii(byte* src, int length)`, перегрузка `(byte* src, uint length)`, и `string.FromAsciiZ(byte* src)`. Non-ASCII байты (>0x7F) → `'?'`.
+- `apps/HelloSharpFs/Program.cs` — удалён класс `AppString`, все три вызова `AppString.FromAscii(...)` заменены на `string.FromAscii(...)`.
+- Ручной цикл `for (uint j = 0; j < fileEntry.NameLength; j++) selectedNameBuffer[j] = entryName[j]` заменён на `MemoryPrimitives.Memcpy(...)`.
+
+---
+
+## Build-id automation
+
+Раньше `SystemBanner.BuildId` был хардкодом `"cr3-stack-v5"` — приходилось править руками и легко забывать. Заменили на автосборку:
+
+- `build-tag.txt` в корне репы — свободная пользовательская метка, может быть пустым.
+- `run_build.ps1` перед `dotnet publish` собирает:
+  - `git rev-parse --short HEAD` → `<sha>`
+  - тег из `build-tag.txt` (если непустой) → добавляется через дефис
+  - передаёт результат как `/p:BuildId=...`
+  - fallback `local` если git недоступен
+- `OS/OS.csproj` — Target `GenerateBuildInfo` пишет `obj/.../BuildInfo.g.cs` с `internal static class BuildInfo { internal const string Id = "..."; }`, подключает в компиляцию.
+- `OS/src/Kernel/SystemBanner.cs` — `BuildId` теперь property `=> BuildInfo.Id`.
+
+Поведение:
+| `build-tag.txt` | git | результат |
+|---|---|---|
+| нет / пусто | `643a35b` | `643a35b` |
+| `gc-mark-sweep` | `643a35b` | `643a35b-gc-mark-sweep` |
+| любое | нет git | `local` |
+
+Apps получают ту же строку через kernel service `WriteBuildId` — автоматика на одной стороне.
+
+Файлы:
+- `build-tag.txt` (новый, содержит `gc-mark-sweep` как метка текущего шага)
+- `run_build.ps1` — composition BuildId + `/p:` передача
+- `OS/OS.csproj` — Target `GenerateBuildInfo`, PropertyGroup с fallback `local`
+- `OS/src/Kernel/SystemBanner.cs` — удалён хардкод, читаем `BuildInfo.Id`
+
+---
+
+## Инвентаризация оставшегося неуправляемого кода
+
+После фазы 4 прошли по всему репо. Осталось ровно 4 неуправляемых куска, все абсолютно необходимые:
+
+1. `apps/.../security_cookie.c` — 1 строка Windows /GS ABI. Попытка заменить через `ld --defsym=__security_cookie=...` упала на `R_X86_64_PLT32 relocation truncated` — ILC-generated код обращается через RIP-relative PLT, до `*ABS*` символа >2 GB не доставать.
+2. `Cr3Accessor` shellcode (4 + 7 байт) — `mov rax, cr3` и `mov cr3, rcx`. Привилегированные инструкции.
+3. `GcStackSpill` shellcode (35 байт) — push всех callee-saved регистров перед mark. Managed C# не может форсить spill.
+4. `JumpStub` shellcode (63 байта) — CR3-switch + прыжок в app-процесс. Привилегировано.
+
+Больше выпилить нечего без патчинга ILC codegen.
+
+---
+
+## Итог шага 29
+
+SUPER-2 закрыт в объёме фаз 1–4. Managed GC (mark + sweep + roots registry + conservative stack scan + register-spill trampoline) работает и в kernel, и в apps. Apps больше не используют C-аллокатор — только managed. Stress-тест на 184 объектах (дерево + half-live + rotation) прошёл без крашей, ядро продолжило загрузку и app-валидацию.
+
+Открытые задачи на будущие шаги:
+- **Фаза 3.5 (остаток)**: `GC.Collect()` public entry point + freelist reuse (сейчас bump-only, куча только растёт) + threshold-триггер.
+- **Фаза 5**: продлённые stress-тесты (длинные циклы, сотни тысяч аллокаций), интеграция `List<T>`-подобных коллекций в std.

@@ -430,10 +430,28 @@ $env:DOTNET_CLI_HOME = Join-Path $repoRoot ".dotnet-home"
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1"
 New-Item -ItemType Directory -Force -Path $env:DOTNET_CLI_HOME | Out-Null
 
-Write-Host "Building OS ($Configuration)..."
+# Compose BuildId: <git-short-sha>[-<tag-from-build-tag.txt>]
+# Tag is a free-form label the user can put in build-tag.txt (in repo root);
+# leave the file empty to show only the SHA. If git is unavailable, fall back
+# to "local". The resulting value is passed into dotnet publish as
+# /p:BuildId=..., which OS.csproj turns into a generated BuildInfo.g.cs.
+$buildId = "local"
+$gitSha = (& git -C $repoRoot rev-parse --short HEAD 2>$null)
+if ($LASTEXITCODE -eq 0 -and $gitSha) {
+    $buildId = $gitSha.Trim()
+}
+$tagFile = Join-Path $repoRoot "build-tag.txt"
+if (Test-Path -LiteralPath $tagFile) {
+    $tag = (Get-Content -LiteralPath $tagFile -Raw).Trim()
+    if ($tag) {
+        $buildId = "$buildId-$tag"
+    }
+}
+
+Write-Host "Building OS ($Configuration, BuildId=$buildId)..."
 Push-Location $efiProjectDir
 try {
-    & dotnet publish $projectFile -c $Configuration -r win-x64
+    & dotnet publish $projectFile -c $Configuration -r win-x64 "/p:BuildId=$buildId"
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE"
     }

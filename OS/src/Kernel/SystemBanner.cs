@@ -5,7 +5,9 @@ namespace OS.Kernel
 {
     internal static unsafe class SystemBanner
     {
-        internal const string BuildId = "cr3-stack-v5";
+        // Generated per build by OS.csproj's GenerateBuildInfo target.
+        // Format: <git-short-sha>[-<tag-from-build-tag.txt>]. See run_build.ps1.
+        internal static string BuildId => BuildInfo.Id;
 
         public static void Print(BootInfo bootInfo)
         {

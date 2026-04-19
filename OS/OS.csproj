@@ -63,6 +63,25 @@ detach vdisk
     <Message Text="Created VHDX at $(VHDFilePath)." Importance="High" />
   </Target>
 
+  <!-- Build id: surfaced in SystemBanner / WriteBuildId service. Passed in by
+       run_build.ps1 as /p:BuildId=<git-short-sha>[-tag]. Falls back to "local"
+       if the property isn't set. Generated .cs is compiled into the kernel. -->
+  <PropertyGroup>
+    <BuildId Condition="'$(BuildId)' == ''">local</BuildId>
+    <BuildInfoGeneratedFile>$(IntermediateOutputPath)BuildInfo.g.cs</BuildInfoGeneratedFile>
+  </PropertyGroup>
+
+  <Target Name="GenerateBuildInfo" BeforeTargets="BeforeCompile">
+    <PropertyGroup>
+      <BuildInfoFileContents>namespace OS.Kernel%0A{%0A    internal static class BuildInfo%0A    {%0A        internal const string Id = "$(BuildId)"%3B%0A    }%0A}%0A</BuildInfoFileContents>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(BuildInfoGeneratedFile)" Lines="$(BuildInfoFileContents)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(BuildInfoGeneratedFile)" />
+      <FileWrites Include="$(BuildInfoGeneratedFile)" />
+    </ItemGroup>
+  </Target>
+
   <!-- The project file pretends this is .NET, but it's not .NET. Remove all assembly references the .NET SDK added. -->
   <Target Name="CustomizeReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
     <ItemGroup>

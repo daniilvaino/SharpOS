@@ -36,6 +36,45 @@ namespace System
             return SharpOS.Std.NoRuntime.StringAlgorithms.Concat(str0, str1);
         }
 
+        // Decode a raw ASCII buffer into a managed string. Non-ASCII bytes
+        // (> 0x7F) are mapped to '?'. Useful at ABI boundaries that hand us
+        // C-style byte buffers (filenames from the app-service table, etc).
+        public static string FromAscii(byte* source, int length)
+        {
+            if (source == null || length <= 0)
+                return Empty;
+
+            string result = new string('\0', length);
+            fixed (char* destination = result)
+            {
+                for (int i = 0; i < length; i++)
+                {
+                    byte b = source[i];
+                    destination[i] = b <= 0x7F ? (char)b : '?';
+                }
+            }
+            return result;
+        }
+
+        // uint overload — ABI buffers usually carry unsigned lengths.
+        public static string FromAscii(byte* source, uint length)
+        {
+            return FromAscii(source, (int)length);
+        }
+
+        // NUL-terminated variant — scans until 0x00, then delegates.
+        public static string FromAsciiZ(byte* source)
+        {
+            if (source == null)
+                return Empty;
+
+            int length = 0;
+            while (source[length] != 0)
+                length++;
+
+            return FromAscii(source, length);
+        }
+
         public string PadLeft(int totalWidth)
         {
             return SharpOS.Std.NoRuntime.StringAlgorithms.PadLeft(this, totalWidth, ' ');

@@ -164,7 +164,7 @@ namespace HelloSharpFs
                     continue;
                 }
 
-                string selectedName = AppString.FromAscii(selectedNameBuffer, selectedNameLength);
+                string selectedName = string.FromAscii(selectedNameBuffer, selectedNameLength);
                 WriteResultBlock(selectedName, runStatus, childExitCode);
                 needsRedraw = true;
             }
@@ -189,7 +189,7 @@ namespace HelloSharpFs
                 if (!IsVisibleLauncherEntry(entryName, fileEntry.NameLength, fileEntry.IsDirectory))
                     continue;
 
-                string fileName = AppString.FromAscii(entryName, fileEntry.NameLength);
+                string fileName = string.FromAscii(entryName, fileEntry.NameLength);
                 AppHost.WriteString(visibleCount == selectedIndex ? "> " : "  ");
                 AppHost.WriteString(fileName);
                 AppHost.WriteString(NewLine);
@@ -241,13 +241,13 @@ namespace HelloSharpFs
                     if (fileEntry.NameLength + 1 > selectedNameBufferCapacity)
                         return false;
 
-                    for (uint j = 0; j < fileEntry.NameLength; j++)
-                        selectedNameBuffer[j] = entryName[j];
+                    SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy(
+                        (void*)selectedNameBuffer, (void*)entryName, (ulong)fileEntry.NameLength);
 
                     selectedNameBuffer[fileEntry.NameLength] = 0;
                     selectedNameLength = fileEntry.NameLength;
 
-                    string selectedName = AppString.FromAscii(selectedNameBuffer, selectedNameLength);
+                    string selectedName = string.FromAscii(selectedNameBuffer, selectedNameLength);
                     string path = StringAlgorithms.Concat(BootDirectory, @"\");
                     path = StringAlgorithms.Concat(path, selectedName);
                     runStatus = AppHost.TryRunApp(path, out exitCode);
@@ -343,37 +343,5 @@ namespace HelloSharpFs
             }
         }
 
-        internal static unsafe class AppString
-        {
-            public static string FromAscii(byte* src, uint len)
-            {
-                if (src == null || len == 0)
-                    return string.Empty;
-
-                string s = new string('\0', (int)len);
-                fixed (char* dst = s)
-                {
-                    for (uint i = 0; i < len; i++)
-                    {
-                        byte b = src[i];
-                        dst[i] = b <= 0x7F ? (char)b : '?';
-                    }
-                }
-
-                return s;
-            }
-
-            public static string FromAsciiZ(byte* src)
-            {
-                if (src == null)
-                    return string.Empty;
-
-                uint len = 0;
-                while (src[len] != 0)
-                    len++;
-
-                return FromAscii(src, len);
-            }
-        }
     }
 }
