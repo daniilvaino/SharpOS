@@ -120,10 +120,8 @@ $publishCommand = "set -euo pipefail; cd '{0}'; dotnet publish '{1}' -c '{2}' -r
 $linkCommandTemplate = @'
 set -euo pipefail; cd '{0}'; mkdir -p './obj/{4}/freestanding'; if [ ! -f '{1}/{2}.a' ]; then echo '__ERR_NO_STATIC_LIB__' >&2; exit 2; fi;
 printf 'unsigned long long __security_cookie = 0x2B992DDFA232ULL;\n' > './obj/{4}/freestanding/security_cookie.c';
-printf '#include <stdint.h>\nstatic unsigned char g_sharp_heap[1024 * 1024];\nstatic uint64_t g_sharp_heap_offset = 0;\nstatic void* sharp_alloc(uint64_t size){{ uint64_t aligned = (size + 15ULL) & ~15ULL; if (g_sharp_heap_offset + aligned > (uint64_t)sizeof(g_sharp_heap)) return (void*)0; void* p = (void*)(g_sharp_heap + g_sharp_heap_offset); g_sharp_heap_offset += aligned; return p; }}\nvoid* RhNewString(void* pEEType, int length){{ if (length < 0) return (void*)0; uint64_t chars = ((uint64_t)length + 1ULL) * 2ULL; uint64_t bytes = 8ULL + 4ULL + chars; unsigned char* obj = (unsigned char*)sharp_alloc(bytes); if (!obj) return (void*)0; *((void**)obj) = pEEType; *((int*)(obj + 8)) = length; unsigned short* data = (unsigned short*)(obj + 12); for (int i = 0; i <= length; i++) data[i] = 0; return (void*)obj; }}\n' > './obj/{4}/freestanding/runtime_stubs.c';
 gcc -c './obj/{4}/freestanding/security_cookie.c' -o './obj/{4}/freestanding/security_cookie.o';
-gcc -c './obj/{4}/freestanding/runtime_stubs.c' -o './obj/{4}/freestanding/runtime_stubs.o';
-ld -o '{1}/{3}' -e SharpAppBootstrap -u SharpAppBootstrap '{1}/{2}.a' './obj/{4}/freestanding/runtime_stubs.o' './obj/{4}/freestanding/security_cookie.o';
+ld -o '{1}/{3}' -e SharpAppBootstrap -u SharpAppBootstrap '{1}/{2}.a' './obj/{4}/freestanding/security_cookie.o';
 readelf -h '{1}/{3}' | grep -q 'Type:.*EXEC' || (echo '__ERR_NOT_ET_EXEC__' >&2; exit 3);
 if readelf -l '{1}/{3}' | grep -Eq 'INTERP|DYNAMIC'; then echo '__ERR_DYNAMIC_HEADERS__' >&2; exit 4; fi;
 realpath '{1}/{3}'

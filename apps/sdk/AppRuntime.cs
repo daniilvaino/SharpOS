@@ -15,6 +15,11 @@ namespace SharpOS.AppSdk
             }
 
             s_services = (AppServiceTable*)startup->ServiceTableAddress;
+
+            // Bring up the managed GC heap before any `new string` or `new object()`
+            // hits its RhNewString / RhpNewFast export. GcMemorySource backing is
+            // GcAppPool (1 MB in .bss), provided via GcMemorySource.AppStatic.cs.
+            SharpOS.Std.NoRuntime.GcHeap.Init();
         }
 
         public static AppStartupBlock* Startup => s_startup;

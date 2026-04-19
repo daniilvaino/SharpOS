@@ -163,3 +163,47 @@ rot allocs=20 marked=164 kept=164 swept=116
 Файлы:
 - `OS/src/Kernel/Diagnostics/GcStressTest.cs` (новый)
 - `OS/src/Kernel/Kernel.cs` — вызов `GcStressTest.Run()` после smoke-теста
+
+---
+
+## Фаза 4: миграция apps с C-стаба на managed GC
+
+Что было: apps (FetchApp, HelloSharpFs, AbiInfo, Marker, Hello) линковались с C-файлом `runtime_stubs.c`, который генерировался прямо в build-скриптах (`build_launcher_wsl.ps1`, `build_fetch_wsl.ps1`) и содержал:
+- Статический буфер `unsigned char g_sharp_heap[1024 * 1024]` (1 MB в .bss)
+- Bump-аллокатор `sharp_alloc(uint64_t size)` с 16-байтным выравниванием
+- `RhNewString(pEEType, length)` — единственный экспортируемый символ, linker-вход для `new string()` в managed коде
+
+Это был параллельный аллокатор, не связанный с managed GC — строки просто росли в этом буфере и никогда не освобождались.
+
+### Что сделано
+
+1. **Подключили managed runtime-экспорты в apps.** В `apps/FetchApp/FetchApp.csproj` и `apps/HelloSharpFs/HelloSharpFs.csproj` добавлен `<Compile Include="...\GC\GcRuntimeExports.cs" />`. Теперь apps получают managed `RhpNewFast`/`RhpNewArray`/`RhNewString`/`RhpAssignRef`/`RhpCheckedAssignRef`/`RhpStelemRef` — все идут через `GcHeap.AllocateRaw` → `GcMemorySource.AllocateBlock` (1 MB пула в `.bss` apps, через `GcAppPool` struct).
+
+2. **Инициализация GC в AppRuntime.** В `apps/sdk/AppRuntime.cs` метод `Initialize(startup)` теперь вызывает `SharpOS.Std.NoRuntime.GcHeap.Init()` сразу после того как service table расшифрован. Без этого первый `new string()` упал бы — `AllocateRaw` возвращал null при неинициализированной куче.
+
+3. **Убрали C-стаб из build-скриптов.** В `build_launcher_wsl.ps1` и `build_fetch_wsl.ps1` вырезан блок:
+   - `printf '...runtime_stubs.c...'` — генерация C-файла
+   - `gcc -c runtime_stubs.c -o runtime_stubs.o` — компиляция
+   - Упоминание `runtime_stubs.o` в ld-команде
+   
+   Итоговая линковка теперь только `ld ... '{app}.a' security_cookie.o` — не трогает GC.
+
+4. **Удалён исходник** `apps/HelloSharpFs/runtime_stubs.c` (висел как referenced source).
+
+### Попытка убрать security_cookie.c
+
+Попробовали и его — через `ld --defsym=__security_cookie=0x2B992DDFA232`. Не получилось: ILC-generated код обращается к символу через `R_X86_64_PLT32` (RIP-relative PLT), а `--defsym` создаёт абсолютный `*ABS*` символ, до которого из `.text` не достать через 32-битное смещение (`relocation truncated to fit`). Для real data-символа нужно место в `.data` возле кода — значит остаётся внешний .c или .s файл.
+
+Решение: оставить `security_cookie.c` (одна строка `unsigned long long __security_cookie = 0x2B992DDFA232ULL;`) — это Windows /GS ABI-контракт, к GC никакого отношения не имеет. Выпиливание требует патчинга ILC codegen — отложено.
+
+### Результат
+
+Прогон на QEMU: все 4 app (HELLO, ABIINFO, HELLOCS/LAUNCHER, FETCH) запускаются, exit-коды 10/11/21/0 — как раньше. **FetchApp** при старте рендерит полный neofetch-баннер и прогоняет std-demo (`Trim`, `Upper`, `Lower`, `Sub`, `Replace`, `IndexOf`, `Contains`, `StartsWith`) — все `new string` теперь проходят через managed `RhNewString` → `RhpNewArray` → `GcHeap.AllocateRaw` → `GcMemorySource.AllocateBlock` (1 MB `.bss` пул в самом app-е).
+
+Это освобождает путь к SUPER-6: когда начнём эмбедить Roslyn / dotnet / interpreters в managed-код, у apps уже есть полноценный GC-heap по тому же API что и в kernel. Mark/Sweep/Roots infrastructure одинаковая.
+
+Файлы:
+- `apps/FetchApp/FetchApp.csproj`, `apps/HelloSharpFs/HelloSharpFs.csproj` — подключение `GcRuntimeExports.cs`
+- `apps/sdk/AppRuntime.cs` — `GcHeap.Init()` в `Initialize`
+- `build_launcher_wsl.ps1`, `build_fetch_wsl.ps1` — удалён блок генерации/компиляции/линковки `runtime_stubs.c`
+- `apps/HelloSharpFs/runtime_stubs.c` — удалён
