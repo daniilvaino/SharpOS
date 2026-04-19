@@ -68,7 +68,11 @@ namespace System
         }
     }
 
-    public abstract class Array { }
+    [StructLayout(LayoutKind.Sequential)]
+    public abstract class Array
+    {
+        public readonly int Length;
+    }
     public abstract class Delegate { }
     public abstract class MulticastDelegate : Delegate { }
 

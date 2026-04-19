@@ -85,3 +85,35 @@ Test 1 тоже корректно показал 1 reuse — это тот са
 - `OS/src/Kernel/Memory/KernelGC.cs` — новый, wrapper через trampoline
 - `OS/src/Kernel/Kernel.cs`, `OS/src/Kernel/Diagnostics/GcStressTest.cs` — переведены на `KernelGC.Collect`
 - `OS/OS.csproj`, `apps/FetchApp/FetchApp.csproj`, `apps/HelloSharpFs/HelloSharpFs.csproj` — подключение `GC.cs`
+
+---
+
+## Инвентаризация managed-фич NativeAOT + NoStdLib
+
+После того как GC поднялся, непонятно было что ещё из managed C# работает "из коробки" без нашего допила. Написали `OS/src/Kernel/Diagnostics/NativeAotProbe.cs` — 10 маленьких тестов, каждый проверяет одну фичу: компилируется, отрабатывает на kernel-старте, результат сравнивается с ожидаемым.
+
+Первый прогон дал два data point-а:
+1. `int[].Length` не компилировался — наш базовый `public abstract class Array { }` был пустой. Добавили `public readonly int Length` по образцу `String.Length` (RhpNewArray уже пишет длину в offset 8 после MT*) — заработало.
+2. Любой managed `delegate T F(...)` (даже плоский `IntFn f = x => x * 3`) роняет ILC: *"Expected method 'InitializeClosedInstance' not found on type 'System.Delegate'"*. Требует stub-а с полями `_target` + `_functionPointer` + методом `InitializeClosedInstance(object, IntPtr)` + Invoke-машинерии. Отложено — у нас везде `delegate* unmanaged<T>` (IL function pointers), им Delegate не нужен.
+
+Итог пробы:
+
+| фича | статус |
+|---|---|
+| Virtual dispatch (abstract + override) | ✅ |
+| Interfaces | ✅ |
+| Generic methods | ✅ |
+| Generic classes (с type parameter в поле) | ✅ |
+| Static constructors | ✅ |
+| Boxing / unboxing | ✅ |
+| `is` / `as` | ✅ |
+| `Array.Length` + индекс-walk | ✅ (после фикса `Array`) |
+| Enum + bit-flags | ✅ |
+| Managed delegates / lambdas | ❌ (нужна Delegate infra) |
+
+**Практический вывод:** для следующих задач (коллекции `List<T>`, `Dictionary<K,V>`, `IEnumerable<T>` через ручной state machine) у нас есть весь нужный C#-инструментарий. Делегаты понадобятся когда дойдём до events / LINQ — тогда допишем Delegate.
+
+Файлы:
+- `OS/src/Kernel/Diagnostics/NativeAotProbe.cs` (новый)
+- `OS/src/Kernel/Kernel.cs` — вызов `NativeAotProbe.Run()` после stress-теста
+- `OS/src/Boot/MinimalRuntime.cs`, `apps/sdk/MinimalRuntime.cs` — `Array.Length` (readonly int field)

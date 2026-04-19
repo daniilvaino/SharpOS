@@ -44,7 +44,14 @@ namespace System
     public abstract class Type { }
     public class RuntimeType : Type { }
 
-    public abstract class Array { }
+    // Base class for all arrays. Length is stored at offset 8 (after the
+    // MethodTable pointer) by RhpNewArray and read here via managed field
+    // access. Layout matches NativeAOT's convention; same pattern as String.
+    [StructLayout(LayoutKind.Sequential)]
+    public abstract class Array
+    {
+        public readonly int Length;
+    }
     public abstract class Delegate { }
     public abstract class MulticastDelegate : Delegate { }
 

@@ -49,6 +49,7 @@ namespace OS.Kernel
 
                 RunGcHeapNoNewTest();
                 GcStressTest.Run();
+                NativeAotProbe.Run();
                 InitializePager();
                 RunPagerValidation();
                 RunElfValidation(bootInfo);
