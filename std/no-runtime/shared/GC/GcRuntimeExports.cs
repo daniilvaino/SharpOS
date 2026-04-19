@@ -85,6 +85,45 @@ namespace SharpOS.Std.NoRuntime
             *dst = src;
         }
 
+        // Box a value type into a fresh object. ILC emits a call to RhBox for
+        // implicit `object o = valueType` and for constrained virtual dispatch
+        // on a value type where the target method is inherited from Object
+        // (e.g., x.Equals(y) inside a generic `where T : anything`).
+        //
+        // Real NativeAOT RhBox handles Nullable<T> unwrapping, GC write barriers,
+        // and RequiresAlign8 misaligned alloc. We skip all of that — our GC is
+        // non-generational (no barrier) and Nullable<T> is a stub empty struct.
+        //
+        // Copy size: real runtime uses mt->ValueTypeSize; we don't have that
+        // field on GcMethodTable, so we use mt->BaseSize - 8 (BaseSize includes
+        // the MT* header plus padding). That may copy a few bytes of padding
+        // slack, harmless because readers only look at the declared value bytes.
+        [RuntimeExport("RhBox")]
+        public static object RhBox(Internal.Runtime.MethodTable* mt, ref byte data)
+        {
+            if (mt == null) return null;
+
+            // Our GcMethodTable shares layout with Internal.Runtime.MethodTable;
+            // cast via nint/pointer-reinterpret to read BaseSize.
+            GcMethodTable* gcMt = (GcMethodTable*)mt;
+            void* obj = GcHeap.AllocateRaw(gcMt->BaseSize);
+            if (obj == null) return null;
+
+            *(Internal.Runtime.MethodTable**)obj = mt;
+
+            uint payload = gcMt->BaseSize - 8;
+            byte* dst = (byte*)obj + 8;
+            fixed (byte* pData = &data)
+            {
+                for (uint i = 0; i < payload; i++)
+                    dst[i] = pData[i];
+            }
+
+            object result = null;
+            *(void**)&result = obj;
+            return result;
+        }
+
         // Reference-array element store (ILC generates a call to this for
         // `arr[i] = obj` where arr is object[] or any other reference-type
         // array). Signature MUST match the NativeAOT contract exactly

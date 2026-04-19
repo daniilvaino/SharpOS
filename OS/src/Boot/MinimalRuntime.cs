@@ -9,12 +9,36 @@ namespace Internal.Runtime
 
 namespace System
 {
-    public class Object
+    public unsafe class Object
     {
 #pragma warning disable 169
         // The layout of object is a contract with the compiler.
         private IntPtr m_pMethodTable;
 #pragma warning restore 169
+
+        // Reference-equality default. Value types override with value comparison;
+        // reference types where object-identity is the right semantic use as is.
+        public virtual bool Equals(object obj) => ReferenceEquals(this, obj);
+
+        // Address-derived hash. Stable because our GC is non-moving. Not cryptographic,
+        // good enough for bucket selection. Value types override with value hashing.
+        public virtual int GetHashCode()
+        {
+            object self = this;
+            nint addr = *(nint*)&self;
+            return (int)addr ^ (int)((long)addr >> 32);
+        }
+
+        public virtual string ToString() => null;
+
+        public static bool Equals(object objA, object objB)
+        {
+            if (ReferenceEquals(objA, objB)) return true;
+            if (objA == null || objB == null) return false;
+            return objA.Equals(objB);
+        }
+
+        public static bool ReferenceEquals(object objA, object objB) => objA == objB;
     }
 
     public struct Void { }

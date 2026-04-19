@@ -24,8 +24,12 @@ namespace OS.Kernel.Diagnostics
             Probe_IsAs();
             Probe_ArrayLength();
             Probe_Enum();
-            Probe_ListInt();
-            Probe_ListForeach();
+            Probe_BoxedEquals();
+            Probe_EqualityComparerDefault();
+            Probe_EqualityComparerEquals();
+            Probe_BclList();
+            Probe_BclListForeach();
+            Probe_BclListAsInterface();
             // Delegates (any managed `delegate T F(...)`, with or without capture) require
             // Delegate.InitializeClosedInstance + _target + _functionPointer + Invoke
             // machinery on System.Delegate. None of that is stubbed yet, so even a plain
@@ -138,31 +142,145 @@ namespace OS.Kernel.Diagnostics
             ReportProbe("enum", v == 2 && combo, (uint)v);
         }
 
-        // --- List<T>: Add, this[i], Count, grow across multiple reallocations ---
-        private static void Probe_ListInt()
+        // --- virtual Equals on a boxed value type ---
+        private static void Probe_BoxedEquals()
         {
-            var list = new SharpOS.Std.Collections.List<int>();
+            object a = 5;
+            object b = a;
+            bool eq = a.Equals(b);     // reference equality — true (same box)
+            ReportProbe("boxed equals (same ref)", eq, eq ? 1u : 0u);
+        }
+
+        private static void Probe_BoxedEqualsDifferentBoxes()
+        {
+            object a = 5;
+            object b = 5;              // separate box of the same value
+            bool eq = a.Equals(b);     // our default Object.Equals = reference eq → false
+            ReportProbe("boxed equals (diff box)", true, eq ? 1u : 0u);
+        }
+
+        // --- static EqualityComparer<int>.Default access (new ObjectEqualityComparer<int>) ---
+        private static void Probe_EqualityComparerDefault()
+        {
+            var cmp = System.Collections.Generic.EqualityComparer<int>.Default;
+            bool ok = cmp != null;
+            ReportProbe("eq.Default", ok, ok ? 1u : 0u);
+        }
+
+        // --- Generic class with concrete (non-abstract) virtual method ---
+        private class GenConcrete<T> { public virtual int Get() => 42; }
+        private class GenConcreteChild<T> : GenConcrete<T> { public override int Get() => 100; }
+
+        private static void Probe_GenericVirtualConcrete()
+        {
+            GenConcrete<int> b = new GenConcreteChild<int>();
+            int r = b.Get();
+            ReportProbe("generic concrete virtual", r == 100, (uint)r);
+        }
+
+        // --- Generic class with abstract virtual method (our EqualityComparer pattern) ---
+        private abstract class GenAbstract<T> { public abstract int Get(); }
+        private class GenAbstractChild<T> : GenAbstract<T> { public override int Get() => 200; }
+
+        private static void Probe_GenericVirtualAbstract()
+        {
+            GenAbstract<int> b = new GenAbstractChild<int>();
+            int r = b.Get();
+            ReportProbe("generic abstract virtual", r == 200, (uint)r);
+        }
+
+        // --- Custom subclass of EqualityComparer<T>, instantiated directly ---
+        private sealed class MyCmp<T> : System.Collections.Generic.EqualityComparer<T>
+        {
+            public override bool Equals(T x, T y) => false;
+            public override int GetHashCode(T obj) => 555;
+        }
+
+        private static void Probe_CustomEqualityComparer()
+        {
+            var cmp = new MyCmp<int>();
+            int h = cmp.GetHashCode(5);
+            ReportProbe("custom eq-cmp direct", h == 555, (uint)h);
+        }
+
+        private static void Probe_CustomEqualityComparerUpcast()
+        {
+            System.Collections.Generic.EqualityComparer<int> cmp = new MyCmp<int>();
+            int h = cmp.GetHashCode(5);
+            ReportProbe("custom eq-cmp upcast", h == 555, (uint)h);
+        }
+
+        // --- Generic abstract PLUS interface (the EqualityComparer<T> shape) ---
+        private interface IGenThing<T> { int Get(T x); }
+        private abstract class GenAbsIface<T> : IGenThing<T> { public abstract int Get(T x); }
+        private class GenAbsIfaceChild<T> : GenAbsIface<T> { public override int Get(T x) => 300; }
+
+        private static void Probe_GenericAbstractWithInterface()
+        {
+            GenAbsIface<int> b = new GenAbsIfaceChild<int>();
+            int r = b.Get(5);
+            ReportProbe("generic abstract+iface", r == 300, (uint)r);
+        }
+
+        // Try GetHashCode (no boxing in our stub) before Equals, to bisect.
+        private static void Probe_EqualityComparerHashCode()
+        {
+            var cmp = System.Collections.Generic.EqualityComparer<int>.Default;
+            int h = cmp.GetHashCode(5);
+            ReportProbe("eq.GetHashCode(5)", true, (uint)h);
+        }
+
+        private static void Probe_EqualityComparerEquals()
+        {
+            var cmp = System.Collections.Generic.EqualityComparer<int>.Default;
+            bool eq = cmp.Equals(5, 5);
+            ReportProbe("eq.Equals(5,5)", true, eq ? 1u : 0u);
+        }
+
+        // --- BCL List<T>: Add, this[i], Count, Contains, Remove, IndexOf ---
+        private static void Probe_BclList()
+        {
+            var list = new System.Collections.Generic.List<int>();
             for (int i = 0; i < 20; i++)
                 list.Add(i * 3);
 
             int sum = 0;
-            for (int i = 0; i < list.Count; i++)
-                sum += list[i];
+            for (int i = 0; i < list.Count; i++) sum += list[i];
 
-            // 0+3+6+...+57 = 3 * (0+1+...+19) = 3 * 190 = 570
-            ReportProbe("list<int>", list.Count == 20 && sum == 570, (uint)sum);
+            bool has21 = list.Contains(21);      // 7 * 3
+            int idx21 = list.IndexOf(21);
+            list.Remove(21);
+            int sumAfter = 0;
+            for (int i = 0; i < list.Count; i++) sumAfter += list[i];
+
+            bool ok = list.Count == 19 && sum == 570 && sumAfter == 549 && has21 && idx21 == 7;
+            ReportProbe("bcl list<T>", ok, (uint)sumAfter);
         }
 
-        // --- foreach over List<T>: duck-typed struct Enumerator, no interface ---
-        private static void Probe_ListForeach()
+        // --- foreach over BCL List<T> via public struct Enumerator ---
+        private static void Probe_BclListForeach()
         {
-            var list = new SharpOS.Std.Collections.List<int>(8);
+            var list = new System.Collections.Generic.List<int>();
             list.Add(10); list.Add(20); list.Add(30);
 
             int sum = 0;
             foreach (int v in list) sum += v;
 
-            ReportProbe("list foreach", sum == 60, (uint)sum);
+            ReportProbe("bcl list foreach", sum == 60, (uint)sum);
+        }
+
+        // --- List<T> accessed as IEnumerable<T>: walks through the interface
+        // dispatch (boxed struct Enumerator). This is what LINQ et al. use. ---
+        private static void Probe_BclListAsInterface()
+        {
+            var list = new System.Collections.Generic.List<int>();
+            list.Add(100); list.Add(200); list.Add(300);
+
+            System.Collections.Generic.IEnumerable<int> src = list;
+            int sum = 0;
+            foreach (int v in src) sum += v;
+
+            ReportProbe("bcl list as IEnumerable", sum == 600, (uint)sum);
         }
 
         private static void ReportProbe(string name, bool ok, uint value)

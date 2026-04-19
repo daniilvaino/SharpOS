@@ -9,11 +9,31 @@ namespace Internal.Runtime
 
 namespace System
 {
-    public class Object
+    public unsafe class Object
     {
 #pragma warning disable 169
         private IntPtr m_pMethodTable;
 #pragma warning restore 169
+
+        public virtual bool Equals(object obj) => ReferenceEquals(this, obj);
+
+        public virtual int GetHashCode()
+        {
+            object self = this;
+            nint addr = *(nint*)&self;
+            return (int)addr ^ (int)((long)addr >> 32);
+        }
+
+        public virtual string ToString() => null;
+
+        public static bool Equals(object objA, object objB)
+        {
+            if (ReferenceEquals(objA, objB)) return true;
+            if (objA == null || objB == null) return false;
+            return objA.Equals(objB);
+        }
+
+        public static bool ReferenceEquals(object objA, object objB) => objA == objB;
     }
 
     public struct Void { }
