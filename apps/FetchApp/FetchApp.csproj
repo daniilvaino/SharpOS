@@ -45,6 +45,7 @@
     <Compile Include="..\..\std\no-runtime\shared\GC\GcSweep.cs" Link="std\GC\GcSweep.cs" />
     <Compile Include="..\..\std\no-runtime\shared\GC\GcRoots.cs" Link="std\GC\GcRoots.cs" />
     <Compile Include="..\..\std\no-runtime\shared\GC\GC.cs" Link="std\GC\GC.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\Collections\List.cs" Link="std\Collections\List.cs" />
     <Compile Include="..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
   </ItemGroup>
 

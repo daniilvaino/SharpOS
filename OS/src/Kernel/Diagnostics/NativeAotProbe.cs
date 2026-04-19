@@ -24,6 +24,8 @@ namespace OS.Kernel.Diagnostics
             Probe_IsAs();
             Probe_ArrayLength();
             Probe_Enum();
+            Probe_ListInt();
+            Probe_ListForeach();
             // Delegates (any managed `delegate T F(...)`, with or without capture) require
             // Delegate.InitializeClosedInstance + _target + _functionPointer + Invoke
             // machinery on System.Delegate. None of that is stubbed yet, so even a plain
@@ -134,6 +136,33 @@ namespace OS.Kernel.Diagnostics
             int v = (int)k;
             bool combo = ((Kind.A | Kind.C) & Kind.A) == Kind.A;
             ReportProbe("enum", v == 2 && combo, (uint)v);
+        }
+
+        // --- List<T>: Add, this[i], Count, grow across multiple reallocations ---
+        private static void Probe_ListInt()
+        {
+            var list = new SharpOS.Std.Collections.List<int>();
+            for (int i = 0; i < 20; i++)
+                list.Add(i * 3);
+
+            int sum = 0;
+            for (int i = 0; i < list.Count; i++)
+                sum += list[i];
+
+            // 0+3+6+...+57 = 3 * (0+1+...+19) = 3 * 190 = 570
+            ReportProbe("list<int>", list.Count == 20 && sum == 570, (uint)sum);
+        }
+
+        // --- foreach over List<T>: duck-typed struct Enumerator, no interface ---
+        private static void Probe_ListForeach()
+        {
+            var list = new SharpOS.Std.Collections.List<int>(8);
+            list.Add(10); list.Add(20); list.Add(30);
+
+            int sum = 0;
+            foreach (int v in list) sum += v;
+
+            ReportProbe("list foreach", sum == 60, (uint)sum);
         }
 
         private static void ReportProbe(string name, bool ok, uint value)
