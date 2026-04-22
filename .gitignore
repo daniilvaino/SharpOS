@@ -70,3 +70,5 @@ old SharpOS/
 
 # GC research — external reference projects, not part of the tree
 gc-experiment/
+# ILC --map outputs
+**/map.txt
