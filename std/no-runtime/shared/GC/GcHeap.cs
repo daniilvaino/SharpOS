@@ -66,8 +66,12 @@ namespace SharpOS.Std.NoRuntime
             return true;
         }
 
-        // Raw allocation: freelist first-fit → bump → grow. Caller writes the
-        // MethodTable / length / payload into the returned region.
+        // Raw allocation: freelist first-fit → bump → grow. Returned region is
+        // zeroed — callers (RhpNewFast, RhpNewArray, etc.) then write the
+        // MethodTable / length over the leading bytes. Zero-init is required
+        // so that `new int[n]` / `new T[n]` behave per-spec (default(T)
+        // elements) and so freelist-reused blocks don't leak stale references
+        // that would fool the conservative scanner.
         public static void* AllocateRaw(uint size)
         {
             if (!s_initialized)
@@ -77,44 +81,54 @@ namespace SharpOS.Std.NoRuntime
 
             uint aligned = (size + (ObjectAlignment - 1)) & ~(ObjectAlignment - 1);
 
+            void* result;
+
             // 1. Freelist first-fit.
-            void* reused = TryAllocateFromFreelist(aligned);
-            if (reused != null)
-                return reused;
-
-            // 2. Bump within current segment.
-            GcSegmentHeader* seg = s_currentSegment;
-            if (seg == null)
-                return null;
-
-            nint available = seg->End - seg->Current;
-            if ((ulong)available >= aligned)
+            result = TryAllocateFromFreelist(aligned);
+            if (result == null)
             {
-                void* result = (void*)seg->Current;
-                seg->Current += (nint)aligned;
-                s_allocCount++;
-                s_allocBytes += aligned;
-                return result;
+                // 2. Bump within current segment.
+                GcSegmentHeader* seg = s_currentSegment;
+                if (seg == null)
+                    return null;
+
+                nint available = seg->End - seg->Current;
+                if ((ulong)available >= aligned)
+                {
+                    result = (void*)seg->Current;
+                    seg->Current += (nint)aligned;
+                    s_allocCount++;
+                    s_allocBytes += aligned;
+                }
+                else
+                {
+                    // 3. Grow: need a new segment.
+                    uint segSize = DefaultSegmentSize;
+                    while (segSize < aligned + (uint)sizeof(GcSegmentHeader))
+                        segSize *= 2;
+
+                    GcSegmentHeader* fresh = AllocateSegment(segSize);
+                    if (fresh == null)
+                        return null;
+
+                    s_currentSegment->Next = fresh;
+                    s_currentSegment = fresh;
+                    s_segmentCount++;
+
+                    result = (void*)fresh->Current;
+                    fresh->Current += (nint)aligned;
+                    s_allocCount++;
+                    s_allocBytes += aligned;
+                }
             }
 
-            // 3. Grow: need a new segment.
-            uint segSize = DefaultSegmentSize;
-            while (segSize < aligned + (uint)sizeof(GcSegmentHeader))
-                segSize *= 2;
+            // Zero the region in 8-byte chunks (aligned is always 16-multiple).
+            ulong* p = (ulong*)result;
+            uint qwords = aligned >> 3;
+            for (uint i = 0; i < qwords; i++)
+                p[i] = 0;
 
-            GcSegmentHeader* fresh = AllocateSegment(segSize);
-            if (fresh == null)
-                return null;
-
-            s_currentSegment->Next = fresh;
-            s_currentSegment = fresh;
-            s_segmentCount++;
-
-            void* res = (void*)fresh->Current;
-            fresh->Current += (nint)aligned;
-            s_allocCount++;
-            s_allocBytes += aligned;
-            return res;
+            return result;
         }
 
         // First-fit walk: remove the first block whose aligned size >= needed.

@@ -26,6 +26,12 @@ namespace OS.Kernel.Diagnostics
             Probe_Enum();
             Probe_BoxedEquals();
             Probe_StaticAssignRead();
+            Probe_ExplicitCctor();
+            // Probe_GenericNewConstraint — compile error: needs System.Activator.CreateInstance
+            Probe_ThrowFromIndexOutOfRange();
+            // Probe_MultiDimArray — ILC codegen fails (RhpNewMultiDimArray not wired)
+            // Probe_NullableT — compile error: Nullable<T>.HasValue / .Value not defined on our stub
+            Probe_CheckedArithmetic();
             // Probe_LazyStaticNonGeneric — any reference-typed static with a
             // `if (s == null) s = new ...;` getter triggers ILC's cctor
             // machinery (CheckStaticClassConstructionReturnGCStaticBase) that
@@ -188,6 +194,40 @@ namespace OS.Kernel.Diagnostics
         // runner (probably looks for it in a specific BCL assembly or
         // by name in a different module).
         // private static L1 s_l1b = new L1Child();
+
+        // --- Explicit static cctor: removes beforefieldinit, eager init ---
+        private static class ExplicitCctorHolder
+        {
+            public static readonly int X;
+            static ExplicitCctorHolder() { X = 77; }
+        }
+
+        private static void Probe_ExplicitCctor()
+        {
+            int v = ExplicitCctorHolder.X;
+            ReportProbe("explicit cctor (int)", v == 77, (uint)v);
+        }
+
+        // --- Direct throw: expect halt via ThrowHelpers stub, not crash ---
+        // We can't actually throw-and-recover (no try/catch runtime). The test
+        // is just whether ILC emits a call that compiles. We won't execute
+        // the throw branch — dead path behind false condition.
+        private static void Probe_ThrowFromIndexOutOfRange()
+        {
+            int[] a = new int[3];
+            int sum = 0;
+            for (int i = 0; i < 3; i++) sum += a[i];   // no OOB — just codegen
+            ReportProbe("bounds-checked loop", sum == 0, (uint)sum);
+        }
+
+        // --- checked arithmetic (no overflow in this path) ---
+        private static void Probe_CheckedArithmetic()
+        {
+            int a = 100;
+            int b = 50;
+            int c = checked(a + b);
+            ReportProbe("checked add (no overflow)", c == 150, (uint)c);
+        }
 
         // c) Classic lazy — null-check then allocate.
         private static L1 s_l1c;
