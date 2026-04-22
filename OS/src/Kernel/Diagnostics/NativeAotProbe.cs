@@ -1,3 +1,4 @@
+using System;
 using OS.Hal;
 
 namespace OS.Kernel.Diagnostics
@@ -45,6 +46,8 @@ namespace OS.Kernel.Diagnostics
             Probe_BclList();
             Probe_BclListForeach();
             Probe_BclListAsInterface();
+            Probe_DictionaryBasic();
+            Probe_DictionaryForeach();
             // Delegates (any managed `delegate T F(...)`, with or without capture) require
             // Delegate.InitializeClosedInstance + _target + _functionPointer + Invoke
             // machinery on System.Delegate. None of that is stubbed yet, so even a plain
@@ -408,6 +411,49 @@ namespace OS.Kernel.Diagnostics
             foreach (int v in src) sum += v;
 
             ReportProbe("bcl list as IEnumerable", sum == 600, (uint)sum);
+        }
+
+        // --- Dictionary<K, V>: user passes IEqualityComparer for value-equality ---
+        private sealed class MyKey
+        {
+            public readonly int Id;
+            public MyKey(int id) { Id = id; }
+            public override bool Equals(object obj) => obj is MyKey k && k.Id == Id;
+            public override int GetHashCode() => Id;
+        }
+
+        private static void Probe_DictionaryBasic()
+        {
+            // MyKey overrides Equals(object) + GetHashCode — Dictionary uses
+            // object.Equals + key.GetHashCode (both virtual on Object), so no
+            // IEqualityComparer needed for reference types that override.
+            var dict = new System.Collections.Generic.Dictionary<MyKey, int>();
+            ReportProbe("dict ctor", true, (uint)dict.Count);
+
+            dict.Add(new MyKey(1), 100);
+            ReportProbe("dict add", dict.Count == 1, (uint)dict.Count);
+
+            bool has = dict.ContainsKey(new MyKey(1));
+            ReportProbe("dict contains", has, has ? 1u : 0u);
+
+            bool got = dict.TryGetValue(new MyKey(1), out int v);
+            ReportProbe("dict tryget", got && v == 100, (uint)v);
+        }
+
+        private static void Probe_DictionaryForeach()
+        {
+            var dict = new System.Collections.Generic.Dictionary<MyKey, int>();
+            dict.Add(new MyKey(10), 100);
+            dict.Add(new MyKey(20), 200);
+            dict.Add(new MyKey(30), 300);
+
+            int keySum = 0, valSum = 0;
+            foreach (var kv in dict)
+            {
+                keySum += kv.Key.Id;
+                valSum += kv.Value;
+            }
+            ReportProbe("dict foreach", keySum == 60 && valSum == 600, (uint)valSum);
         }
 
         private static void ReportProbe(string name, bool ok, uint value)

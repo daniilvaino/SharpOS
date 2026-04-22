@@ -49,6 +49,7 @@
     <Compile Include="..\..\std\no-runtime\shared\Bcl\Interfaces.cs" Link="std\Bcl\Interfaces.cs" />
     <Compile Include="..\..\std\no-runtime\shared\Bcl\EqualityComparer.cs" Link="std\Bcl\EqualityComparer.cs" />
     <Compile Include="..\..\std\no-runtime\shared\Bcl\List.cs" Link="std\Bcl\List.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\Bcl\Dictionary.cs" Link="std\Bcl\Dictionary.cs" />
     <Compile Include="..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
   </ItemGroup>
 

@@ -5,9 +5,11 @@
 Все пункты проверены на практике через `OS/src/Kernel/Diagnostics/NativeAotProbe.cs` — там живут минимальные repro-ы. Если что-то из этого списка понадобится для конкретной задачи — сначала убеждаемся что работаем через workaround, потом принимаем решение: либо оставить ограничение, либо дописать недостающий helper.
 
 **Конвенция:**
-- ❌ **Не работает** — компилируется или нет, но даёт `#GP` либо silent corruption.
+- ❌ **Не работает** — компилируется или нет, но даёт `#GP`, halt-через-stub, либо silent corruption.
 - ⚠️ **Работает через обход** — есть идиома которая даёт эквивалентное поведение.
 - 🔧 **Не компилируется** — ILC/компилятор C# отвергает код без доп. заглушек.
+
+**Важная терминология.** Когда пишем «halt», «уходит в стаб» — имеем в виду что наш `RhpInitialDynamicInterfaceDispatch` / `RhpFallbackFailFast` / `ThrowHelpers.Throw*` — это `while(true);`. В настоящем runtime там полноценная логика (asm-trampoline для dispatch, managed-exception throw для throws). У нас пока заглушка → код, которому не хватает логики, «зацикливается» ровно в этом `while`. Это **не баг нашей логики**, это **ненаполненный контракт с ILC**. Полный fix для каждого такого случая — портировать соответствующий asm/runtime helper (пример: `GcStackSpill` shellcode в kernel/Memory/, успешный пример реализации).
 
 ---
 
@@ -92,9 +94,25 @@ static T MakeNew<T>() where T : new() => new T();
 
 Предполагаем что тоже требует specific helpers (`RhpGenericVirtualCall` и родня). Если понадобится — добавить probe отдельно.
 
-### ✅ Generic method + generic class + virtual override в generic abstract — работают
+### ✅ Generic method + generic class + virtual override в generic abstract — работают (с оговорками)
 
-Подтверждено отдельными probe. Ограничение именно на GVM (virtual generic method), не на generic классы.
+Подтверждено probe для value-type параметра (`GenAbsIface<int>`, `EqualityComparer<int>`). Но:
+
+### ❌ Virtual call на generic abstract class через reference-type параметр — halt-ит (уходит в наш `while(true)`-стаб вместо real dispatch)
+
+Пример: `EqualityComparer<MyKey>.Equals(x, y)` где `MyKey` — class. Зависает (halt loop) внутри interface/shared-generic dispatch. Для value-типа `EqualityComparer<int>` работает.
+
+**Причина:** ILC для generic с reference-типом параметром использует **shared generic code через `System.__Canon`**. Virtual dispatch через __Canon vtable нуждается в runtime dictionary lookup helper (что-то типа `RhpGenericLookupFromType`/`RhpUniversalTransition`), которого у нас нет. Та же категория ошибок что `RhpInitialDynamicInterfaceDispatch` (interface-first-call).
+
+**⚠️ Workaround для Dictionary-like коллекций:** не пользоваться `IEqualityComparer<TKey>` параметром внутри, вместо этого — `object.Equals(x, y)` + `key.GetHashCode()` (virtual на Object-vtable, non-generic, работает). Цена: consumer должен override `Object.Equals(object)` + `GetHashCode()` на своём ключе вместо передачи comparer-а. Это всё равно BCL-идиома для reference-ключей.
+
+Поле `_comparer` в коллекциях храним для будущего (API-compat с BCL), но не используем.
+
+### ❌ Generic constraint `where T : IEquatable<T>`
+
+`key.Equals(other)` под этим constraint → `constrained.callvirt IEquatable<T>::Equals` → interface-first-call dispatch → halt (наш `RhpInitialDynamicInterfaceDispatch` stub).
+
+**⚠️ Workaround:** убрать constraint, использовать `object.Equals(a, b)`.
 
 ---
 

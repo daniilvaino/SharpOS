@@ -138,6 +138,16 @@ namespace SharpOS.Std.NoRuntime
         //   +0:  MethodTable*
         //   +8:  Length (int32 + 4-byte pad)
         //   +16: element[0], element[1], ...   (8 bytes each for refs)
+        // Interface dispatch — the "first call" trampoline that the real
+        // runtime installs into each interface-dispatch cell. In the BCL this
+        // is hand-written asm (StubDispatch.asm) that resolves the concrete
+        // target the first time an interface method is called, caches it,
+        // and tail-calls. portable.cpp's C++ fallback is `ASSERT_UNCONDITIONALLY("NYI")`
+        // — so we mirror that with an infinite loop. Linker requires the
+        // symbol to exist even for methods that never dispatch through it.
+        [RuntimeExport("RhpInitialDynamicInterfaceDispatch")]
+        private static void RhpInitialDynamicInterfaceDispatch() { while (true) ; }
+
         [RuntimeExport("RhpStelemRef")]
         public static unsafe void RhpStelemRef(System.Array array, nint index, object value)
         {
