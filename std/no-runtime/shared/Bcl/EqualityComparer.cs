@@ -16,10 +16,18 @@ namespace System.Collections.Generic
 {
     public abstract class EqualityComparer<T> : IEqualityComparer<T>
     {
-        // Factory without static caching. Making this a static lazy field-
-        // backed property produces a crashing vtable slot (RAX non-canonical
-        // at virtual dispatch site). Root cause TBD — for now the factory
-        // version is the workaround, costs one alloc per Default read.
+        // Factory without static caching. The proper BCL-compat form is a
+        // lazy static field (`if (s_default == null) s_default = new ...;
+        // return s_default;`). Under our minimal ILC setup ANY
+        // reference-typed static field with a lazy-init path tries to
+        // invoke System.Runtime.CompilerServices.ClassConstructorRunner's
+        // CheckStaticClassConstruction* helpers — and even though we
+        // provide a matching type/methods, ILC doesn't link them in
+        // (--resilient mode, probably wrong module/signature match).
+        // RAX at the crash site is 0x08FFFFFFFFFFFFFF which looks like the
+        // "unresolved helper" sentinel. Revisit when we understand the ILC
+        // resolution path or move to a newer SDK; one alloc per read is
+        // acceptable for now.
         public static EqualityComparer<T> Default => new DefaultComparer<T>();
 
         public abstract bool Equals(T x, T y);

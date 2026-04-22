@@ -25,6 +25,15 @@ namespace OS.Kernel.Diagnostics
             Probe_ArrayLength();
             Probe_Enum();
             Probe_BoxedEquals();
+            Probe_StaticAssignRead();
+            // Probe_LazyStaticNonGeneric — any reference-typed static with a
+            // `if (s == null) s = new ...;` getter triggers ILC's cctor
+            // machinery (CheckStaticClassConstructionReturnGCStaticBase) that
+            // we can't satisfy yet. Workaround across the codebase: never
+            // use lazy-initialized static reference fields; use a factory
+            // property instead (pays one alloc per read).
+            // Probe_LazyStaticGeneric();
+            // Probe_LazyStaticGenericAbstract();
             Probe_EqualityComparerDefault();
             Probe_EqualityComparerEquals();
             Probe_BclList();
@@ -157,6 +166,84 @@ namespace OS.Kernel.Diagnostics
             object b = 5;              // separate box of the same value
             bool eq = a.Equals(b);     // our default Object.Equals = reference eq → false
             ReportProbe("boxed equals (diff box)", true, eq ? 1u : 0u);
+        }
+
+        // --- Non-generic base + child for a matrix of init patterns ---
+        private class L1 { public virtual int Get() => 42; }
+        private class L1Child : L1 { public override int Get() => 101; }
+
+        // a) Write once, read, call — no null check anywhere.
+        private static L1 s_l1a;
+        private static void Probe_StaticAssignRead()
+        {
+            s_l1a = new L1Child();
+            L1 v = s_l1a;
+            int r = v.Get();
+            ReportProbe("static assign+read+call", r == 101, (uint)r);
+        }
+
+        // b) Eager field initializer DISABLED again — even with our
+        // ClassConstructorRunner stub, `static L1 s_l1b = new L1Child()`
+        // still crashes. ILC likely doesn't route to our copy of the
+        // runner (probably looks for it in a specific BCL assembly or
+        // by name in a different module).
+        // private static L1 s_l1b = new L1Child();
+
+        // c) Classic lazy — null-check then allocate.
+        private static L1 s_l1c;
+        private static L1 LazyGet()
+        {
+            if (s_l1c == null) s_l1c = new L1Child();
+            return s_l1c;
+        }
+        private static void Probe_LazyStaticNonGeneric()
+        {
+            L1 v = LazyGet();
+            int r = v.Get();
+            ReportProbe("lazy static non-generic", r == 101, (uint)r);
+        }
+
+        // --- Lazy static field: generic concrete base ---
+        private class L2<T> { public virtual int Get() => 42; }
+        private class L2Child<T> : L2<T> { public override int Get() => 202; }
+        private static class L2Holder<T>
+        {
+            private static L2<T> s_inst;
+            public static L2<T> Get()
+            {
+                if (s_inst == null) s_inst = new L2Child<T>();
+                return s_inst;
+            }
+        }
+
+        private static void Probe_LazyStaticGeneric()
+        {
+            var v = L2Holder<int>.Get();
+            int r = v.Get();
+            ReportProbe("lazy static generic", r == 202, (uint)r);
+        }
+
+        // --- Lazy static field: ABSTRACT generic base (our EqualityComparer shape) ---
+        private abstract class L3<T> { public abstract int Get(); }
+        private class L3Child<T> : L3<T> { public override int Get() => 303; }
+        private abstract class L3Holder<T>
+        {
+            private static L3<T> s_inst;
+            public static L3<T> Default
+            {
+                get
+                {
+                    if (s_inst == null) s_inst = new L3Child<T>();
+                    return s_inst;
+                }
+            }
+        }
+
+        private static void Probe_LazyStaticGenericAbstract()
+        {
+            var v = L3Holder<int>.Default;
+            int r = v.Get();
+            ReportProbe("lazy static gen abstract", r == 303, (uint)r);
         }
 
         // --- static EqualityComparer<int>.Default access (new ObjectEqualityComparer<int>) ---
