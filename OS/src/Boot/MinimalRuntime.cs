@@ -55,84 +55,104 @@ namespace System
     // our collection framework has the backing field + interface wired; the
     // rest stay shapeless until a caller needs them.
 
-    public struct Boolean : IEquatable<bool>
+    public struct Boolean : IEquatable<bool>, IComparable<bool>, IComparable
     {
         private bool _value;
         public bool Equals(bool other) => _value == other;
         public override bool Equals(object obj) => obj is bool b && _value == b;
         public override int GetHashCode() => _value ? 1 : 0;
+        public int CompareTo(bool other) => _value == other ? 0 : (!_value ? -1 : 1);
+        public int CompareTo(object obj) => obj is bool b ? CompareTo(b) : 1;
     }
 
-    public struct Char : IEquatable<char>
+    public struct Char : IEquatable<char>, IComparable<char>, IComparable
     {
         private char _value;
         public bool Equals(char other) => _value == other;
         public override bool Equals(object obj) => obj is char c && _value == c;
         public override int GetHashCode() => _value;
+        public int CompareTo(char other) => _value - other;
+        public int CompareTo(object obj) => obj is char c ? CompareTo(c) : 1;
     }
 
-    public struct SByte : IEquatable<sbyte>
+    public struct SByte : IEquatable<sbyte>, IComparable<sbyte>, IComparable
     {
         private sbyte _value;
         public bool Equals(sbyte other) => _value == other;
         public override bool Equals(object obj) => obj is sbyte v && _value == v;
         public override int GetHashCode() => _value;
+        public int CompareTo(sbyte other) => _value - other;
+        public int CompareTo(object obj) => obj is sbyte v ? CompareTo(v) : 1;
     }
 
-    public struct Byte : IEquatable<byte>
+    public struct Byte : IEquatable<byte>, IComparable<byte>, IComparable
     {
         private byte _value;
         public bool Equals(byte other) => _value == other;
         public override bool Equals(object obj) => obj is byte v && _value == v;
         public override int GetHashCode() => _value;
+        public int CompareTo(byte other) => _value - other;
+        public int CompareTo(object obj) => obj is byte v ? CompareTo(v) : 1;
     }
 
-    public struct Int16 : IEquatable<short>
+    public struct Int16 : IEquatable<short>, IComparable<short>, IComparable
     {
         private short _value;
         public bool Equals(short other) => _value == other;
         public override bool Equals(object obj) => obj is short v && _value == v;
         public override int GetHashCode() => _value;
+        public int CompareTo(short other) => _value - other;
+        public int CompareTo(object obj) => obj is short v ? CompareTo(v) : 1;
     }
 
-    public struct UInt16 : IEquatable<ushort>
+    public struct UInt16 : IEquatable<ushort>, IComparable<ushort>, IComparable
     {
         private ushort _value;
         public bool Equals(ushort other) => _value == other;
         public override bool Equals(object obj) => obj is ushort v && _value == v;
         public override int GetHashCode() => _value;
+        public int CompareTo(ushort other) => _value - other;
+        public int CompareTo(object obj) => obj is ushort v ? CompareTo(v) : 1;
     }
 
-    public struct Int32 : IEquatable<int>
+    public struct Int32 : IEquatable<int>, IComparable<int>, IComparable
     {
         private int _value;
         public bool Equals(int other) => _value == other;
         public override bool Equals(object obj) => obj is int v && _value == v;
         public override int GetHashCode() => _value;
+        public int CompareTo(int other) => _value < other ? -1 : (_value > other ? 1 : 0);
+        public int CompareTo(object obj) => obj is int v ? CompareTo(v) : 1;
     }
 
-    public struct UInt32 : IEquatable<uint>
+    public struct UInt32 : IEquatable<uint>, IComparable<uint>, IComparable
     {
         private uint _value;
         public bool Equals(uint other) => _value == other;
         public override bool Equals(object obj) => obj is uint v && _value == v;
         public override int GetHashCode() => (int)_value;
+        public int CompareTo(uint other) => _value < other ? -1 : (_value > other ? 1 : 0);
+        public int CompareTo(object obj) => obj is uint v ? CompareTo(v) : 1;
     }
 
-    public struct Int64 : IEquatable<long>
+    public struct Int64 : IEquatable<long>, IComparable<long>, IComparable
     {
         private long _value;
         public bool Equals(long other) => _value == other;
         public override bool Equals(object obj) => obj is long v && _value == v;
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
+        public int CompareTo(long other) => _value < other ? -1 : (_value > other ? 1 : 0);
+        public int CompareTo(object obj) => obj is long v ? CompareTo(v) : 1;
     }
 
-    public struct UInt64 : IEquatable<ulong>
+    public struct UInt64 : IEquatable<ulong>, IComparable<ulong>, IComparable
     {
         private ulong _value;
         public bool Equals(ulong other) => _value == other;
         public override bool Equals(object obj) => obj is ulong v && _value == v;
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
+        public int CompareTo(ulong other) => _value < other ? -1 : (_value > other ? 1 : 0);
+        public int CompareTo(object obj) => obj is ulong v ? CompareTo(v) : 1;
     }
 
     public struct IntPtr { }

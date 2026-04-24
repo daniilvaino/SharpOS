@@ -52,6 +52,15 @@ namespace OS.Kernel.Diagnostics
             Probe_DictionaryForeach();
             Probe_DictionaryIntKey();
             Probe_DictionaryCustomComparer();
+            Probe_Stack();
+            Probe_Queue();
+            Probe_HashSet();
+            Probe_LinkedList();
+            Probe_ReadOnlyCollection();
+            Probe_ReadOnlyDictionary();
+            Probe_ArraySegment();
+            Probe_SortedList();
+            Probe_Yield();
             // MUST BE LAST: halts the probe run with a diagnostic dump until
             // the full DispatchResolve port lands. Everything above runs via
             // the shellcode fast path (pre-baked cache) or plain virtual
@@ -560,6 +569,165 @@ namespace OS.Kernel.Diagnostics
             ReportProbe("dict custom comparer",
                 has5 && has15 && found25 && v25 == "five",
                 (uint)(dict.Count));
+        }
+
+        private static void Probe_Stack()
+        {
+            var s = new System.Collections.Generic.Stack<int>();
+            s.Push(10); s.Push(20); s.Push(30);
+            int peek = s.Peek();
+            int pop1 = s.Pop();
+            int pop2 = s.Pop();
+            // Enumeration is LIFO — remaining one element is 10.
+            int sumE = 0;
+            foreach (int v in s) sumE += v;
+            bool contains10 = s.Contains(10);
+            ReportProbe("stack<int>",
+                peek == 30 && pop1 == 30 && pop2 == 20 && s.Count == 1 && sumE == 10 && contains10,
+                (uint)sumE);
+        }
+
+        private static void Probe_Queue()
+        {
+            var q = new System.Collections.Generic.Queue<int>(2);   // small capacity → forces Grow
+            q.Enqueue(1); q.Enqueue(2); q.Enqueue(3); q.Enqueue(4);   // wraps + regrows
+            int d1 = q.Dequeue();
+            int d2 = q.Dequeue();
+            q.Enqueue(5); q.Enqueue(6);
+            // Remaining FIFO order: 3, 4, 5, 6.
+            int sumE = 0;
+            foreach (int v in q) sumE += v;
+            int peek = q.Peek();
+            ReportProbe("queue<int>",
+                d1 == 1 && d2 == 2 && peek == 3 && q.Count == 4 && sumE == 18,
+                (uint)sumE);
+        }
+
+        private static void Probe_HashSet()
+        {
+            var set = new System.Collections.Generic.HashSet<int>();
+            bool added1 = set.Add(5);
+            bool added2 = set.Add(10);
+            bool dup = set.Add(5);                  // expect false
+            bool has10 = set.Contains(10);
+            bool removedMissing = set.Remove(42);   // expect false
+            bool removedReal = set.Remove(10);      // expect true
+            int sumE = 0;
+            foreach (int v in set) sumE += v;
+            ReportProbe("hashset<int>",
+                added1 && added2 && !dup && has10 && !removedMissing && removedReal
+                    && set.Count == 1 && sumE == 5,
+                (uint)sumE);
+        }
+
+        private static void Probe_LinkedList()
+        {
+            var ll = new System.Collections.Generic.LinkedList<int>();
+            var n2 = ll.AddLast(2);
+            ll.AddFirst(1);
+            ll.AddLast(4);
+            ll.AddAfter(n2, 3);       // 1,2,3,4
+            int sumE = 0;
+            foreach (int v in ll) sumE += v;
+            int first = ll.First.Value;
+            int last = ll.Last.Value;
+            bool removed3 = ll.Remove(3);
+            ll.RemoveFirst();         // removes 1
+            // After: 2,4
+            int sumAfter = 0;
+            foreach (int v in ll) sumAfter += v;
+            ReportProbe("linkedlist<int>",
+                first == 1 && last == 4 && sumE == 10 && removed3 && ll.Count == 2 && sumAfter == 6,
+                (uint)sumAfter);
+        }
+
+        private static void Probe_ReadOnlyCollection()
+        {
+            var list = new System.Collections.Generic.List<int>();
+            list.Add(7); list.Add(11); list.Add(13);
+            var ro = new System.Collections.ObjectModel.ReadOnlyCollection<int>(list);
+            bool idx = ro[1] == 11;
+            bool has13 = ro.Contains(13);
+            int sumE = 0;
+            foreach (int v in ro) sumE += v;
+            ReportProbe("readonly collection",
+                idx && has13 && ro.Count == 3 && sumE == 31,
+                (uint)sumE);
+        }
+
+        private static void Probe_ReadOnlyDictionary()
+        {
+            var dict = new System.Collections.Generic.Dictionary<int, int>();
+            dict.Add(1, 100);
+            dict.Add(2, 200);
+            var ro = new System.Collections.ObjectModel.ReadOnlyDictionary<int, int>(dict);
+            bool hasKey = ro.ContainsKey(1);
+            bool got = ro.TryGetValue(2, out int v2);
+            int keysCount = ro.Keys.Count;
+            ReportProbe("readonly dict",
+                hasKey && got && v2 == 200 && ro.Count == 2 && keysCount == 2,
+                (uint)v2);
+        }
+
+        private static void Probe_ArraySegment()
+        {
+            int[] arr = new int[] { 10, 20, 30, 40, 50 };
+            var seg = new System.ArraySegment<int>(arr, 1, 3);   // { 20, 30, 40 }
+            int sum = 0;
+            for (int i = 0; i < seg.Count; i++) sum += seg[i];
+            int sumE = 0;
+            foreach (int v in seg) sumE += v;
+            var slice = seg.Slice(1, 2);                           // { 30, 40 }
+            int sliceSum = 0;
+            for (int i = 0; i < slice.Count; i++) sliceSum += slice[i];
+            ReportProbe("arraysegment<int>",
+                sum == 90 && sumE == 90 && slice.Count == 2 && sliceSum == 70,
+                (uint)sliceSum);
+        }
+
+        private static void Probe_SortedList()
+        {
+            var sl = new System.Collections.Generic.SortedList<int, string>();
+            // Insert unordered; internal binsearch should keep them sorted.
+            sl.Add(30, "thirty");
+            sl.Add(10, "ten");
+            sl.Add(20, "twenty");
+
+            bool firstKey = sl.GetKeyAtIndex(0) == 10;
+            bool midKey = sl.GetKeyAtIndex(1) == 20;
+            bool lastKey = sl.GetKeyAtIndex(2) == 30;
+
+            bool has20 = sl.ContainsKey(20);
+            bool got = sl.TryGetValue(30, out string v30);
+            int keySum = 0;
+            foreach (var kv in sl) keySum += kv.Key;
+
+            bool removed = sl.Remove(20);
+            int afterSum = 0;
+            foreach (var kv in sl) afterSum += kv.Key;
+
+            ReportProbe("sortedlist<int,string>",
+                firstKey && midKey && lastKey && has20 && got && v30 == "thirty"
+                    && keySum == 60 && removed && sl.Count == 2 && afterSum == 40,
+                (uint)afterSum);
+        }
+
+        // Compiler-synthesised iterator state machine. Requires
+        // Interlocked.CompareExchange + Environment.CurrentManagedThreadId
+        // + InvalidOperationException to be codegen-visible. Added in
+        // step 33.
+        private static System.Collections.Generic.IEnumerable<int> YieldOneTwoThree()
+        {
+            yield return 1;
+            yield return 2;
+            yield return 3;
+        }
+
+        private static void Probe_Yield()
+        {
+            int sum = 0;
+            foreach (int v in YieldOneTwoThree()) sum += v;
+            ReportProbe("yield return", sum == 6, (uint)sum);
         }
 
         private static void ReportProbe(string name, bool ok, uint value)

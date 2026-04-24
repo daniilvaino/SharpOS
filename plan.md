@@ -6,6 +6,32 @@
 
 ---
 
+## Архитектурные инварианты
+
+Жёсткие правила проекта. Любая новая супер-задача или подзадача должна быть сформулирована и решена в их рамках. Если задача кажется нерешаемой — переформулируй.
+
+### Инвариант 1 — C# is the only source language
+
+В дереве исходников **не появляется** ни одного `.c`, `.cpp`, `.h`, `.asm`, `.s` файла. Каждая новая low-level задача решается одним из трёх механизмов:
+
+1. **C# intrinsics** — `[RuntimeExport]`, `[UnmanagedCallersOnly]`, `delegate* unmanaged`, `fixed`, unsafe pointer math, `Internal.Runtime.CompilerHelpers`-стиль экспортов.
+2. **Byte-array shellcode** — байтовый emitter на C# пишет инструкции в exec-stub buffer (EfiLoaderCode allocation от UEFI). Примеры: `InterfaceDispatchBridge`, `GcStackSpill`, `Cr3Accessor`, `JumpStub`, `ByRefAssignRefPatcher`.
+3. **Build-time codegen в PowerShell build scripts** — если MSVC-линкер требует C-ABI символа (например `__security_cookie`), генерим `.c` ephemerally внутри `build_*.ps1`, компилим, подхватываем, коммитим НЕ в репо.
+
+Если проблема кажется требующей asm/C файла — значит либо выбран не тот механизм из трёх, либо задача сформулирована так, что её невозможно решить правильно. Обе ситуации решаются пересмотром подхода, а не добавлением нового файла.
+
+### Инвариант 2 — Naming discipline
+
+SharpOS не переиспользует канонические .NET namespaces / type names **если реализация не полностью совместима с публичным контрактом** (modulo задокументированные ограничения в `docs/nativeaot-nostdlib-limits.md`).
+
+Правило:
+- `System.*`, `System.Collections.Generic.*`, `System.Collections.ObjectModel.*` и прочие канонические namespace — **только для BCL-compat реализаций** с совпадающей сигнатурой, поведением и (где разумно) внутренней структурой.
+- Частичные / экспериментальные / platform-specific типы — в `SharpOS.Std.*`, `OS.Kernel.*`, `OS.Boot.*`, `OS.Hal.*`.
+
+Цель: LINQ / System.Text.Json / System.Xml / прочий BCL-код должен собираться поверх нашего std **без source-level правок**. Каждый раз когда добавляем тип в `System.*`, отвечаем на вопрос: "можно ли реально взять BCL-код который этот тип использует и собрать его у нас?".
+
+---
+
 ## Горизонт 1: Foundational managed runtime (must-have)
 
 Без этих супер-задач managed runtime не работает как таковой. Это sequential-зависимости — нельзя перепрыгнуть.

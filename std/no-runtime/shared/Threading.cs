@@ -1,0 +1,121 @@
+// Minimal stubs for threading / environment primitives that Roslyn's
+// iterator-state-machine rewriter emits against. We don't support real
+// multithreading in the kernel — all boot code is single-threaded — so
+// Interlocked.CompareExchange degenerates into a plain read-compare-
+// write, and CurrentManagedThreadId is a constant.
+//
+// Added in step 33 to unblock `yield return`: Roslyn injects:
+//   if (Interlocked.CompareExchange(ref _state, ..., ...) == initial
+//       && _initialThreadId == Environment.CurrentManagedThreadId)
+//       return this;                     // reuse
+//   else return new StateMachine(...);   // clone
+//
+// plus `throw new InvalidOperationException(...)` on bad-state paths.
+// The throw compiles but can't actually run in our env (no EH) —
+// it'd halt via ThrowHelpers. Iterator's good paths don't hit it.
+//
+// All of this is explicitly labelled "added to unblock yield" — if we
+// ever get real threading, these stubs must be replaced with proper
+// atomics (our GC's mark phase already needs this when we multithread).
+
+namespace System.Threading
+{
+    public static class Interlocked
+    {
+        public static int CompareExchange(ref int location1, int value, int comparand)
+        {
+            int original = location1;
+            if (original == comparand) location1 = value;
+            return original;
+        }
+
+        public static long CompareExchange(ref long location1, long value, long comparand)
+        {
+            long original = location1;
+            if (original == comparand) location1 = value;
+            return original;
+        }
+
+        public static T CompareExchange<T>(ref T location1, T value, T comparand) where T : class
+        {
+            T original = location1;
+            if (ReferenceEquals(original, comparand)) location1 = value;
+            return original;
+        }
+
+        public static object CompareExchange(ref object location1, object value, object comparand)
+        {
+            object original = location1;
+            if (ReferenceEquals(original, comparand)) location1 = value;
+            return original;
+        }
+
+        public static int Exchange(ref int location1, int value)
+        {
+            int original = location1;
+            location1 = value;
+            return original;
+        }
+    }
+}
+
+namespace System
+{
+    public static class Environment
+    {
+        // Single-threaded kernel — everyone is thread 1. Iterator
+        // state-machine uses this to decide whether to reuse `this` in
+        // GetEnumerator when it returns to the same thread.
+        public static int CurrentManagedThreadId => 1;
+    }
+
+    // Compile-time-only stubs. Throwing in our env halts via
+    // ThrowHelpers.* (no unwinder, no catch), but Roslyn needs these
+    // types to exist so it can emit `new InvalidOperationException(...)`
+    // in generated iterator state machines and similar synthesised code.
+    public class Exception
+    {
+        private readonly string _message;
+
+        public Exception() { _message = null; }
+        public Exception(string message) { _message = message; }
+        public Exception(string message, Exception innerException) { _message = message; }
+
+        public virtual string Message => _message;
+        public Exception InnerException => null;
+        public virtual string StackTrace => null;
+    }
+
+    public class InvalidOperationException : Exception
+    {
+        public InvalidOperationException() { }
+        public InvalidOperationException(string message) : base(message) { }
+        public InvalidOperationException(string message, Exception innerException) : base(message, innerException) { }
+    }
+
+    public class NotSupportedException : Exception
+    {
+        public NotSupportedException() { }
+        public NotSupportedException(string message) : base(message) { }
+    }
+
+    public class ArgumentException : Exception
+    {
+        public ArgumentException() { }
+        public ArgumentException(string message) : base(message) { }
+        public ArgumentException(string message, string paramName) : base(message) { }
+    }
+
+    public class ArgumentNullException : ArgumentException
+    {
+        public ArgumentNullException() { }
+        public ArgumentNullException(string paramName) : base(null, paramName) { }
+    }
+
+    public class ArgumentOutOfRangeException : ArgumentException
+    {
+        public ArgumentOutOfRangeException() { }
+        public ArgumentOutOfRangeException(string paramName) : base(null, paramName) { }
+        public ArgumentOutOfRangeException(string paramName, string message) : base(message, paramName) { }
+    }
+}

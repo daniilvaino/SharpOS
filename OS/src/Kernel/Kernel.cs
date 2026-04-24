@@ -45,6 +45,7 @@ namespace OS.Kernel
                         Log.Write(LogLevel.Warn, "gc spill trampoline unavailable");
 
                     InstallInterfaceDispatchBridge(bootInfo);
+                    InstallByRefAssignRefShellcode();
                 }
                 if (bootInfo.JumpStubExecBuffer != null)
                     X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
@@ -223,6 +224,13 @@ namespace OS.Kernel
 
             Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
                 ok ? "iface dispatch bridge installed" : "iface dispatch bridge install failed");
+        }
+
+        private static void InstallByRefAssignRefShellcode()
+        {
+            bool ok = ByRefAssignRefPatcher.TryInstall();
+            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
+                ok ? "byref-assign shellcode installed" : "byref-assign shellcode install failed");
         }
 
         private static void InitializePager()
