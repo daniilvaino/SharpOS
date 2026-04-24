@@ -11,8 +11,6 @@
 
 - `no-runtime/`
   - общий код для freestanding профиля (`NoStdLib`) и отсутствующих стандартных примитивов.
-- `string-experiments/`
-  - тестовые матрицы по `string`, инвариантам layout/pinning/allocation и runtime-логам.
 
 ## Правило
 

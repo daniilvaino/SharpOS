@@ -7,12 +7,62 @@ namespace System
     {
         public static readonly string Empty = "";
         public readonly int Length;
-        private char _firstChar;
+        // Accessible to other types in the same assembly (StringBuilder,
+        // MemoryExtensions.AsSpan via StringHelpers.GetFirstCharRef).
+        // `ref _firstChar` + pointer arithmetic is the canonical way BCL
+        // code walks a string's character storage.
+        internal char _firstChar;
 
         public String(char c, int count)
         {
             Length = count;
             _firstChar = c;
+        }
+
+        public String(char[] value)
+        {
+            if (value == null || value.Length == 0)
+            {
+                Length = 0;
+                return;
+            }
+            Length = value.Length;
+            fixed (char* dest = &_firstChar)
+                for (int i = 0; i < value.Length; i++) dest[i] = value[i];
+        }
+
+        public String(char[] value, int startIndex, int length)
+        {
+            if (value == null || length <= 0)
+            {
+                Length = 0;
+                return;
+            }
+            Length = length;
+            fixed (char* dest = &_firstChar)
+                for (int i = 0; i < length; i++) dest[i] = value[startIndex + i];
+        }
+
+        public String(ReadOnlySpan<char> value)
+        {
+            int n = value.Length;
+            if (n == 0)
+            {
+                Length = 0;
+                return;
+            }
+            Length = n;
+            fixed (char* dest = &_firstChar)
+                for (int i = 0; i < n; i++) dest[i] = value[i];
+        }
+
+        // Internal allocation helper. Mirrors BCL's internal
+        // `string.FastAllocateString(int)` — returns a fresh string with
+        // the requested length; contents zero. Callers use
+        // `fixed (char* p = result)` to write the character data.
+        internal static string FastAllocateString(int length)
+        {
+            return SharpOS.Std.NoRuntime.StringRuntime.FastAllocateString(length);
         }
 
         public char this[int index]

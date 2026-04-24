@@ -155,8 +155,64 @@ namespace System
         public int CompareTo(object obj) => obj is ulong v ? CompareTo(v) : 1;
     }
 
-    public struct IntPtr { }
-    public struct UIntPtr { }
+    // IntPtr / UIntPtr = native-sized integer (8 bytes on x64, 4 on x86).
+    // BCL defines explicit conversion operators (to/from int, long, void*)
+    // which the C# compiler emits calls to whenever you cast. We give the
+    // same operator surface so verbatim BCL code (Unsafe, Span, etc.) that
+    // does `(IntPtr)someLong` or `(IntPtr)somePtr` compiles. The underlying
+    // storage is a recursive `nint` — ILC special-cases primitives by
+    // namespace+name, same trick as Int32._value.
+    public readonly struct IntPtr
+    {
+        private readonly nint _value;
+
+        public IntPtr(int value) { _value = (nint)value; }
+        public IntPtr(long value) { _value = (nint)value; }
+        public unsafe IntPtr(void* value) { _value = (nint)value; }
+
+        public static readonly IntPtr Zero;
+
+        public static unsafe int Size => sizeof(nint);
+
+        public static explicit operator IntPtr(int value) => new IntPtr(value);
+        public static explicit operator IntPtr(long value) => new IntPtr(value);
+        public static unsafe explicit operator IntPtr(void* value) => new IntPtr(value);
+        public static explicit operator int(IntPtr value) => (int)value._value;
+        public static explicit operator long(IntPtr value) => (long)value._value;
+        public static unsafe explicit operator void*(IntPtr value) => (void*)value._value;
+
+        public static bool operator ==(IntPtr value1, IntPtr value2) => value1._value == value2._value;
+        public static bool operator !=(IntPtr value1, IntPtr value2) => value1._value != value2._value;
+
+        public override bool Equals(object obj) => obj is IntPtr p && p._value == _value;
+        public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
+    }
+
+    public readonly struct UIntPtr
+    {
+        private readonly nuint _value;
+
+        public UIntPtr(uint value) { _value = (nuint)value; }
+        public UIntPtr(ulong value) { _value = (nuint)value; }
+        public unsafe UIntPtr(void* value) { _value = (nuint)value; }
+
+        public static readonly UIntPtr Zero;
+
+        public static unsafe int Size => sizeof(nuint);
+
+        public static explicit operator UIntPtr(uint value) => new UIntPtr(value);
+        public static explicit operator UIntPtr(ulong value) => new UIntPtr(value);
+        public static unsafe explicit operator UIntPtr(void* value) => new UIntPtr(value);
+        public static explicit operator uint(UIntPtr value) => (uint)value._value;
+        public static explicit operator ulong(UIntPtr value) => (ulong)value._value;
+        public static unsafe explicit operator void*(UIntPtr value) => (void*)value._value;
+
+        public static bool operator ==(UIntPtr value1, UIntPtr value2) => value1._value == value2._value;
+        public static bool operator !=(UIntPtr value1, UIntPtr value2) => value1._value != value2._value;
+
+        public override bool Equals(object obj) => obj is UIntPtr p && p._value == _value;
+        public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
+    }
     public struct Single { }
     public struct Double { }
 
@@ -185,11 +241,37 @@ namespace System
 
     public class Attribute { }
 
+    [Flags]
     public enum AttributeTargets
     {
-        Field = 0x100,
+        Assembly = 1,
+        Module = 2,
+        Class = 4,
+        Struct = 8,
+        Enum = 16,
         Constructor = 0x20,
         Method = 0x40,
+        Property = 128,
+        Field = 0x100,
+        Event = 512,
+        Interface = 1024,
+        Parameter = 2048,
+        Delegate = 4096,
+        ReturnValue = 8192,
+        GenericParameter = 16384,
+        All = 32767,
+    }
+
+    [AttributeUsage(AttributeTargets.Enum, Inherited = false)]
+    public sealed class FlagsAttribute : Attribute
+    {
+        public FlagsAttribute() { }
+    }
+
+    [AttributeUsage(AttributeTargets.Parameter, Inherited = true)]
+    public sealed class ParamArrayAttribute : Attribute
+    {
+        public ParamArrayAttribute() { }
     }
 
     public unsafe struct EETypePtr
@@ -236,6 +318,10 @@ namespace System
         public static class RuntimeFeature
         {
             public const string UnmanagedSignatureCallingConvention = nameof(UnmanagedSignatureCallingConvention);
+            // Tells the C# compiler the runtime supports `ref T` fields in
+            // ref structs (C#11 feature, used by Span<T>'s ByReference<T>
+            // storage). Without this const the compiler emits CS9064.
+            public const string ByRefFields = nameof(ByRefFields);
         }
 
         public enum MethodImplOptions

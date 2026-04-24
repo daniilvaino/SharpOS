@@ -128,6 +128,16 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\StringTransforms.cs" Link="src\Std\StringTransforms.cs" />
     <Compile Include="..\std\no-runtime\shared\NumberFormatting.cs" Link="src\Std\NumberFormatting.cs" />
     <Compile Include="..\std\no-runtime\shared\Threading.cs" Link="src\Std\Threading.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\RuntimeAttributes.cs" Link="src\Std\Runtime\RuntimeAttributes.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\CodeAnalysisAttributes.cs" Link="src\Std\Runtime\CodeAnalysisAttributes.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\ByReference.cs" Link="src\Std\Runtime\ByReference.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\Unsafe.cs" Link="src\Std\Runtime\Unsafe.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\Span.cs" Link="src\Std\Runtime\Span.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\ReadOnlySpan.cs" Link="src\Std\Runtime\ReadOnlySpan.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\MemoryExtensions.cs" Link="src\Std\Runtime\MemoryExtensions.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\Math.cs" Link="src\Std\Runtime\Math.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\Buffer.cs" Link="src\Std\Runtime\Buffer.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\GC.cs" Link="src\Std\Runtime\GC.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\NativeFormatDecoder.cs" Link="src\Std\GC\NativeFormatDecoder.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="src\Std\GC\OptionalFieldsReader.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\MethodTable.cs" Link="src\Std\GC\MethodTable.cs" />

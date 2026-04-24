@@ -61,6 +61,7 @@ namespace OS.Kernel.Diagnostics
             Probe_ArraySegment();
             Probe_SortedList();
             Probe_Yield();
+            Probe_Span();
             // MUST BE LAST: halts the probe run with a diagnostic dump until
             // the full DispatchResolve port lands. Everything above runs via
             // the shellcode fast path (pre-baked cache) or plain virtual
@@ -728,6 +729,37 @@ namespace OS.Kernel.Diagnostics
             int sum = 0;
             foreach (int v in YieldOneTwoThree()) sum += v;
             ReportProbe("yield return", sum == 6, (uint)sum);
+        }
+
+        // Exercises Span<T> end-to-end: ctor from array, indexer set/get,
+        // Slice, CopyTo into another Span. If any Unsafe intrinsic fails
+        // to resolve at ILC time the first indexer call halts.
+        private static void Probe_Span()
+        {
+            int[] arr = new int[] { 10, 20, 30, 40, 50 };
+            var span = new System.Span<int>(arr);
+
+            int sumIndexer = 0;
+            for (int i = 0; i < span.Length; i++) sumIndexer += span[i];    // 150
+
+            span[0] = 100;                                                   // write
+            int firstAfterWrite = arr[0];                                    // 100 (span backs array)
+
+            var slice = span.Slice(1, 3);                                    // { 20, 30, 40 }
+            int sliceSum = 0;
+            for (int i = 0; i < slice.Length; i++) sliceSum += slice[i];     // 90
+
+            int[] dest = new int[3];
+            slice.CopyTo(dest);
+            int destSum = dest[0] + dest[1] + dest[2];                       // 90
+
+            int foreachSum = 0;
+            foreach (int v in slice) foreachSum += v;                        // 90
+
+            ReportProbe("span<int>",
+                sumIndexer == 150 && firstAfterWrite == 100 &&
+                    sliceSum == 90 && destSum == 90 && foreachSum == 90,
+                (uint)(sumIndexer + sliceSum));
         }
 
         private static void ReportProbe(string name, bool ok, uint value)

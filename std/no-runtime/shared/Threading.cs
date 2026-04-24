@@ -67,6 +67,11 @@ namespace System
         // state-machine uses this to decide whether to reuse `this` in
         // GetEnumerator when it returns to the same thread.
         public static int CurrentManagedThreadId => 1;
+
+        // BCL reports "\r\n" on Windows, "\n" on Unix. We target UEFI
+        // which generally prefers CRLF (same as Windows). Stringbuilder's
+        // AppendLine() and similar paths read this.
+        public static string NewLine => "\r\n";
     }
 
     // Compile-time-only stubs. Throwing in our env halts via
@@ -97,6 +102,7 @@ namespace System
     {
         public NotSupportedException() { }
         public NotSupportedException(string message) : base(message) { }
+        public NotSupportedException(string message, Exception innerException) : base(message, innerException) { }
     }
 
     public class ArgumentException : Exception
