@@ -38,9 +38,11 @@ namespace OS.Boot
             if (systemTable->BootServices != null)
             {
                 // Shared exec-stub buffer, layout:
-                //   0..63   Cr3Accessor (read stub @0, write stub @32)
-                //   64..127 GcStackSpill (callee-saved register push/pop trampoline)
-                const uint ExecStubSize = 128;
+                //   0..63     Cr3Accessor (read stub @0, write stub @32)
+                //   64..127   GcStackSpill (callee-saved register push/pop trampoline)
+                //   128..511  InterfaceDispatch bridge shellcode
+                //             (null check + single-slot cache fast path + spill/resolve/restore/jmp)
+                const uint ExecStubSize = 512;
                 void* cr3StubAlloc = null;
                 ulong cr3Status = systemTable->BootServices->AllocatePool(
                     EFI_MEMORY_TYPE.EfiLoaderCode, ExecStubSize, &cr3StubAlloc);

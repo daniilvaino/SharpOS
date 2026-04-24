@@ -35,7 +35,6 @@ namespace OS.Kernel.Diagnostics
             Probe_CheckedArithmetic();
             Probe_AbstractGenericRefT();
             Probe_InterfaceCallGenericRefT();
-            Probe_InterfaceCallFromSharedGeneric();
             // Probe_LazyStaticNonGeneric — any reference-typed static with a
             // `if (s == null) s = new ...;` getter triggers ILC's cctor
             // machinery (CheckStaticClassConstructionReturnGCStaticBase) that
@@ -51,6 +50,13 @@ namespace OS.Kernel.Diagnostics
             Probe_BclListAsInterface();
             Probe_DictionaryBasic();
             Probe_DictionaryForeach();
+            Probe_DictionaryIntKey();
+            Probe_DictionaryCustomComparer();
+            // MUST BE LAST: halts the probe run with a diagnostic dump until
+            // the full DispatchResolve port lands. Everything above runs via
+            // the shellcode fast path (pre-baked cache) or plain virtual
+            // dispatch and should succeed.
+            Probe_InterfaceCallFromSharedGeneric();
             // Delegates (any managed `delegate T F(...)`, with or without capture) require
             // Delegate.InitializeClosedInstance + _target + _functionPointer + Invoke
             // machinery on System.Delegate. None of that is stubbed yet, so even a plain
@@ -514,6 +520,46 @@ namespace OS.Kernel.Diagnostics
                 valSum += kv.Value;
             }
             ReportProbe("dict foreach", keySum == 60 && valSum == 600, (uint)valSum);
+        }
+
+        // Dictionary<int, int>: exercise EqualityComparer<int>.Default end-to-end.
+        // Relies on Int32 implementing IEquatable<int> + DefaultComparer.Equals
+        // preferring the interface path (no boxing of both operands).
+        private static void Probe_DictionaryIntKey()
+        {
+            var dict = new System.Collections.Generic.Dictionary<int, int>();
+            dict.Add(1, 100);
+            dict.Add(2, 200);
+            dict.Add(3, 300);
+            bool has2 = dict.ContainsKey(2);
+            bool got = dict.TryGetValue(3, out int v);
+            ReportProbe("dict<int,int>", has2 && got && v == 300 && dict.Count == 3, (uint)v);
+        }
+
+        // Dictionary with a user-supplied IEqualityComparer. Forces ILC to
+        // emit a dispatch cell for IEqualityComparer<__Canon>.Equals and
+        // IEqualityComparer<__Canon>.GetHashCode from Dictionary's shared-
+        // generic body. Routes through the shared-generic resolver.
+        private sealed class ModNComparer : System.Collections.Generic.IEqualityComparer<int>
+        {
+            public readonly int N;
+            public ModNComparer(int n) { N = n; }
+            public bool Equals(int x, int y) => (x % N) == (y % N);
+            public int GetHashCode(int obj) => obj % N;
+        }
+
+        private static void Probe_DictionaryCustomComparer()
+        {
+            var dict = new System.Collections.Generic.Dictionary<int, string>(new ModNComparer(10));
+            dict.Add(5, "five");
+            dict.Add(12, "twelve");
+            // 15 ≡ 5 (mod 10) — should map to same bucket, collide on key.
+            bool has5 = dict.ContainsKey(5);
+            bool has15 = dict.ContainsKey(15);   // expect true via mod-10 equality
+            bool found25 = dict.TryGetValue(25, out string v25);  // 25 ≡ 5 → "five"
+            ReportProbe("dict custom comparer",
+                has5 && has15 && found25 && v25 == "five",
+                (uint)(dict.Count));
         }
 
         private static void ReportProbe(string name, bool ok, uint value)

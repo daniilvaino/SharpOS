@@ -160,5 +160,36 @@ namespace SharpOS.Std.NoRuntime
             byte* slot = (byte*)arrayAddr + 16 + ((long)index * 8);
             *(nint*)slot = valueAddr;
         }
+
+        // Emitted by ILC for `obj is SomeInterface` and the `is`-pattern
+        // variant. BCL's version in Runtime.Base/TypeCast.cs walks the
+        // cast cache + handles variance + IDynamicInterfaceCastable — all
+        // of which we skip. The MVP: simple InterfaceMap lookup.
+        //
+        // Parameter order matches the BCL export: pTargetType first, obj
+        // second. Returns obj on match, null otherwise.
+        [RuntimeExport("RhTypeCast_IsInstanceOfInterface")]
+        public static unsafe object RhTypeCast_IsInstanceOfInterface(GcMethodTable* pTargetType, object obj)
+        {
+            if (obj == null) return null;
+
+            // `obj` is a managed ref — its in-memory representation is a
+            // pointer to the object; the first 8 bytes of the object are
+            // the MethodTable pointer.
+            nint objAddr = *(nint*)&obj;
+            GcMethodTable* pObjType = *(GcMethodTable**)objAddr;
+
+            int count = pObjType->NumInterfaces;
+            if (count == 0) return null;
+
+            EEInterfaceInfo* map = pObjType->GetInterfaceMap();
+            for (int i = 0; i < count; i++)
+            {
+                if (map[i].GetInterfaceEEType() == pTargetType)
+                    return obj;
+            }
+
+            return null;
+        }
     }
 }

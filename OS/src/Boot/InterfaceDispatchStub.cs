@@ -1,28 +1,37 @@
 using System.Runtime;
+using System.Runtime.InteropServices;
 
 namespace OS.Boot
 {
-    // Kernel-only stub for interface-dispatch helpers emitted by ILC.
-    // In the real runtime this is a hand-written asm trampoline from
-    // src/coreclr/nativeaot/Runtime/amd64/StubDispatch.asm that does
-    //   cmp  byte ptr [rcx], 0          ; null-check `this`
-    //   jmp  RhpInterfaceDispatchSlow   ; → RhpCidResolve → UniversalTransition
-    // and resolves the interface target by walking the object's MethodTable.
+    // Managed entry-point for interface dispatch. ILC writes the address of
+    // this method into every interface-dispatch cell's m_pStub field in the
+    // image. On first call for each cell, control jumps here.
     //
-    // We have none of that machinery yet (no cache, no cid-resolve, no
-    // universal transition). So this stub just panics with a clear tag —
-    // way better than the old `while(true)` silent halt. When/if ILC emits
-    // a call here, we want to know about it loudly.
+    // Strategy: the first 5 bytes of this method body are OVERWRITTEN at
+    // kernel boot by a `jmp rel32` to a hand-crafted x64 shellcode living
+    // in the exec stub buffer. That shellcode reads r10 (indirection cell),
+    // spills args, calls a managed resolver, restores args, and tail-jmps
+    // to the resolved target. We can't do that from a managed wrapper
+    // directly because its prolog scratches r10 before our body runs.
     //
-    // Apps don't currently need this symbol (their generated code never
-    // goes through shared-generic interface dispatch); keeping the stub
-    // kernel-only avoids forcing a second copy into the apps build.
+    // While still un-patched (or if patching failed), this body serves as a
+    // noisy fallback: Panic.Fail with a tag, orderly shutdown. The body has
+    // to be at least 5 bytes so the JMP fits — Panic.Fail(string) is
+    // plenty. Kernel-only; apps don't hit this path yet.
     internal static class InterfaceDispatchStub
     {
         [RuntimeExport("RhpInitialDynamicInterfaceDispatch")]
+        [UnmanagedCallersOnly(EntryPoint = "RhpInitialDynamicInterfaceDispatch")]
         private static void RhpInitialDynamicInterfaceDispatch()
         {
-            OS.Kernel.Panic.Fail("RhpInitialDynamicInterfaceDispatch (shared-generic interface dispatch not implemented)");
+            OS.Kernel.Panic.Fail("RhpInitialDynamicInterfaceDispatch (stub not patched / patch failed)");
+        }
+
+        // Exposed for the boot-time patcher to know where to write the JMP.
+        public static unsafe void* GetMethodAddress()
+        {
+            delegate* unmanaged<void> fn = &RhpInitialDynamicInterfaceDispatch;
+            return (void*)fn;
         }
     }
 }

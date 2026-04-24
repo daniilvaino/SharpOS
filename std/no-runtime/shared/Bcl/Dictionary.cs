@@ -21,24 +21,14 @@
 //     `ICollection<KeyValuePair<TKey, TValue>>` interface implementations
 //     (mostly boilerplate over the core Find/UncheckedAdd)
 //
-// Key comparisons go through `object.Equals(a, b)` + `key.GetHashCode()` —
-// both virtual on System.Object's non-generic vtable. Works because Object's
-// vtable is resolved at compile time per concrete type, no generic/interface
-// dispatch helper needed at runtime.
-//
-// The BCL `where TKey : IEquatable<TKey>` route ends up in ILC-emitted
-// `constrained.callvirt IEquatable<TKey>::Equals` which routes to
-// RhpInitialDynamicInterfaceDispatch — currently a `while(true)` stub in
-// our runtime, so that path halts. Same issue for virtual calls on a
-// generic abstract class parameterised by a reference type (e.g.
-// `EqualityComparer<MyKey>`) — goes through __Canon shared-generic
-// dispatch that also wants a helper we don't have.
-//
-// Practical contract: for value-equality on reference-typed keys, override
-// Object.Equals(object) + GetHashCode() on the key type (standard C#
-// convention anyway). BCL's IEqualityComparer<TKey> ctor overloads are
-// intentionally absent here until the missing dispatch helpers are ported
-// — see docs/nativeaot-nostdlib-limits.md for the full writeup.
+// Key comparisons route through an IEqualityComparer<TKey> field. The
+// comparer is whatever the caller passes to the ctor (BCL-compat); falls
+// back to EqualityComparer<TKey>.Default — which prefers IEquatable<T>
+// when T implements it (primitives, custom types) and otherwise delegates
+// to Object.Equals. Both dispatch paths are shared-generic interface
+// calls; the resolver backing them lives in
+// OS/src/Kernel/Memory/InterfaceDispatchResolver.cs and was enabled in
+// step 32.
 
 namespace System.Collections.Generic
 {
@@ -49,20 +39,19 @@ namespace System.Collections.Generic
     {
         private const int DefaultSize = 17;
 
-        public Dictionary() : this(DefaultSize) { }
+        public Dictionary() : this(DefaultSize, null) { }
 
-        public Dictionary(int capacity)
+        public Dictionary(int capacity) : this(capacity, null) { }
+
+        public Dictionary(IEqualityComparer<TKey> comparer) : this(DefaultSize, comparer) { }
+
+        public Dictionary(int capacity, IEqualityComparer<TKey> comparer)
         {
+            _comparer = comparer ?? EqualityComparer<TKey>.Default;
             Clear(capacity);
         }
 
-        // IEqualityComparer<TKey> constructors present in BCL are absent here
-        // on purpose — see docs/nativeaot-nostdlib-limits.md. Virtual dispatch
-        // on a generic reference-typed abstract base (EqualityComparer<TKey>
-        // for a class TKey) goes through shared-generic helpers we don't have.
-        // For value-equality on reference keys, override Object.Equals +
-        // GetHashCode on the key type — Dictionary below routes through those.
-        // We'll reinstate the comparer ctors when the missing helpers land.
+        public IEqualityComparer<TKey> Comparer => _comparer;
 
         public int Count => _numEntries;
 
@@ -134,7 +123,7 @@ namespace System.Collections.Generic
             Entry entry = _buckets[bucket];
             while (entry != null)
             {
-                if (object.Equals(key, entry.m_key))
+                if (_comparer.Equals(key, entry.m_key))
                 {
                     if (prev == null)
                         _buckets[bucket] = entry.m_next;
@@ -164,7 +153,7 @@ namespace System.Collections.Generic
             Entry entry = _buckets[bucket];
             while (entry != null)
             {
-                if (object.Equals(key, entry.m_key))
+                if (_comparer.Equals(key, entry.m_key))
                     return entry;
                 entry = entry.m_next;
             }
@@ -209,8 +198,10 @@ namespace System.Collections.Generic
 
         private int GetBucket(TKey key, int numBuckets = 0)
         {
-            // Goes through Object.GetHashCode virtual (kernel verified).
-            int h = key.GetHashCode();
+            // Interface call through the configured comparer. For primitive
+            // TKey the default comparer routes to IEquatable<T>.GetHashCode
+            // via the primitive's own body (no boxing).
+            int h = _comparer.GetHashCode(key);
             h &= 0x7fffffff;
             return (h % (numBuckets == 0 ? _buckets.Length : numBuckets));
         }
@@ -229,6 +220,7 @@ namespace System.Collections.Generic
         private Entry[] _buckets;
         private int _numEntries;
         private int _version;
+        private IEqualityComparer<TKey> _comparer;
 
         // ---- ICollection<KeyValuePair<TKey, TValue>> boilerplate ----
 

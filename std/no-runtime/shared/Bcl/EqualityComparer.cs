@@ -42,12 +42,19 @@ namespace System.Collections.Generic
     // avoids the ILC special-case and dispatch works normally.
     internal sealed class DefaultComparer<T> : EqualityComparer<T>
     {
+        // Prefer IEquatable<T>.Equals(T) so value types compare via their
+        // own primitive/override body without boxing both operands. The
+        // interface dispatch path is backed by our shared-generic resolver
+        // (OS/src/Kernel/Memory/InterfaceDispatchResolver.cs) and works end-
+        // to-end for shared-generic bodies as of step 31. For types that do
+        // not implement IEquatable<T>, fall through to Object.Equals (the
+        // virtual on the non-generic Object vtable — cheap path that always
+        // works).
         public override bool Equals(T x, T y)
         {
-            if (x == null)
-                return y == null;
-            if (y == null)
-                return false;
+            if (x is IEquatable<T> eq) return eq.Equals(y);
+            if (x == null) return y == null;
+            if (y == null) return false;
             return x.Equals(y);
         }
 

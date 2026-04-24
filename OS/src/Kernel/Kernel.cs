@@ -43,6 +43,8 @@ namespace OS.Kernel
                     X64PageTable.SetExecBuffer(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize);
                     if (!GcStackSpill.TryInitialize(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize))
                         Log.Write(LogLevel.Warn, "gc spill trampoline unavailable");
+
+                    InstallInterfaceDispatchBridge(bootInfo);
                 }
                 if (bootInfo.JumpStubExecBuffer != null)
                     X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
@@ -209,6 +211,18 @@ namespace OS.Kernel
             // The local `obj` is a managed reference (pointer to object).
             // Read its value via address-of-local cast.
             return *(nint*)&obj;
+        }
+
+        private static void InstallInterfaceDispatchBridge(BootInfo bootInfo)
+        {
+            bool ok = InterfaceDispatchPatcher.TryInstall(
+                bootInfo.ExecStubBuffer,
+                bootInfo.ExecStubBufferSize,
+                &InterfaceDispatchResolver.Resolve,
+                &InterfaceDispatchResolver.Fail);
+
+            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
+                ok ? "iface dispatch bridge installed" : "iface dispatch bridge install failed");
         }
 
         private static void InitializePager()

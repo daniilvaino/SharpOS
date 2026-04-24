@@ -43,18 +43,98 @@ namespace System
 
     public struct Void { }
 
-    // The layout of primitive types is special cased because it would be recursive.
-    // These really don't need any fields to work.
-    public struct Boolean { }
-    public struct Char { }
-    public struct SByte { }
-    public struct Byte { }
-    public struct Int16 { }
-    public struct UInt16 { }
-    public struct Int32 { }
-    public struct UInt32 { }
-    public struct Int64 { }
-    public struct UInt64 { }
+    // Primitive types. The recursive `<primitive> _value;` field is the BCL
+    // convention — the compiler special-cases these types (their namespace
+    // + name triggers intrinsic element-type flags in the MT) so the nested
+    // self-reference is legal and gets laid out as the primitive's natural
+    // size. The field lets us define `Equals(T)` / `GetHashCode()` bodies
+    // that compare the raw value without going through Object.Equals
+    // reference-equality on boxes.
+    //
+    // Only the subset that participates in IEquatable<T> dispatch through
+    // our collection framework has the backing field + interface wired; the
+    // rest stay shapeless until a caller needs them.
+
+    public struct Boolean : IEquatable<bool>
+    {
+        private bool _value;
+        public bool Equals(bool other) => _value == other;
+        public override bool Equals(object obj) => obj is bool b && _value == b;
+        public override int GetHashCode() => _value ? 1 : 0;
+    }
+
+    public struct Char : IEquatable<char>
+    {
+        private char _value;
+        public bool Equals(char other) => _value == other;
+        public override bool Equals(object obj) => obj is char c && _value == c;
+        public override int GetHashCode() => _value;
+    }
+
+    public struct SByte : IEquatable<sbyte>
+    {
+        private sbyte _value;
+        public bool Equals(sbyte other) => _value == other;
+        public override bool Equals(object obj) => obj is sbyte v && _value == v;
+        public override int GetHashCode() => _value;
+    }
+
+    public struct Byte : IEquatable<byte>
+    {
+        private byte _value;
+        public bool Equals(byte other) => _value == other;
+        public override bool Equals(object obj) => obj is byte v && _value == v;
+        public override int GetHashCode() => _value;
+    }
+
+    public struct Int16 : IEquatable<short>
+    {
+        private short _value;
+        public bool Equals(short other) => _value == other;
+        public override bool Equals(object obj) => obj is short v && _value == v;
+        public override int GetHashCode() => _value;
+    }
+
+    public struct UInt16 : IEquatable<ushort>
+    {
+        private ushort _value;
+        public bool Equals(ushort other) => _value == other;
+        public override bool Equals(object obj) => obj is ushort v && _value == v;
+        public override int GetHashCode() => _value;
+    }
+
+    public struct Int32 : IEquatable<int>
+    {
+        private int _value;
+        public bool Equals(int other) => _value == other;
+        public override bool Equals(object obj) => obj is int v && _value == v;
+        public override int GetHashCode() => _value;
+    }
+
+    public struct UInt32 : IEquatable<uint>
+    {
+        private uint _value;
+        public bool Equals(uint other) => _value == other;
+        public override bool Equals(object obj) => obj is uint v && _value == v;
+        public override int GetHashCode() => (int)_value;
+    }
+
+    public struct Int64 : IEquatable<long>
+    {
+        private long _value;
+        public bool Equals(long other) => _value == other;
+        public override bool Equals(object obj) => obj is long v && _value == v;
+        public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
+    }
+
+    public struct UInt64 : IEquatable<ulong>
+    {
+        private ulong _value;
+        public bool Equals(ulong other) => _value == other;
+        public override bool Equals(object obj) => obj is ulong v && _value == v;
+        public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
+    }
+
     public struct IntPtr { }
     public struct UIntPtr { }
     public struct Single { }
