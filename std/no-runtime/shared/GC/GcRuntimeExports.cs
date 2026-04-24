@@ -145,12 +145,11 @@ namespace SharpOS.Std.NoRuntime
         // and tail-calls. portable.cpp's C++ fallback is `ASSERT_UNCONDITIONALLY("NYI")`
         // — so we mirror that with an infinite loop. Linker requires the
         // symbol to exist even for methods that never dispatch through it.
-        // NOTE: lives in std/ (shared with apps), so can't call Panic.Fail
-        // directly (apps don't have it). When/if a caller hits this path the
-        // symptom is a silent halt. The kernel's OS/src/Boot/ThrowHelpers.cs
-        // uses Panic.Fail for its throws — this one stays halt for now.
-        [RuntimeExport("RhpInitialDynamicInterfaceDispatch")]
-        private static void RhpInitialDynamicInterfaceDispatch() { while (true) ; }
+        // Interface dispatch — the "first call" trampoline. Moved into
+        // OS/src/Boot/InterfaceDispatchStub.cs so the kernel variant can
+        // Panic.Fail with a descriptive message instead of spinning silently.
+        // Apps don't currently hit this path; if they do, add a halt stub
+        // in apps/sdk/ the same way.
 
         [RuntimeExport("RhpStelemRef")]
         public static unsafe void RhpStelemRef(System.Array array, nint index, object value)

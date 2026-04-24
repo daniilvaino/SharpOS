@@ -33,6 +33,9 @@ namespace OS.Kernel.Diagnostics
             // Probe_MultiDimArray — ILC codegen fails (RhpNewMultiDimArray not wired)
             // Probe_NullableT — compile error: Nullable<T>.HasValue / .Value not defined on our stub
             Probe_CheckedArithmetic();
+            Probe_AbstractGenericRefT();
+            Probe_InterfaceCallGenericRefT();
+            Probe_InterfaceCallFromSharedGeneric();
             // Probe_LazyStaticNonGeneric — any reference-typed static with a
             // `if (s == null) s = new ...;` getter triggers ILC's cctor
             // machinery (CheckStaticClassConstructionReturnGCStaticBase) that
@@ -175,6 +178,63 @@ namespace OS.Kernel.Diagnostics
             object b = 5;              // separate box of the same value
             bool eq = a.Equals(b);     // our default Object.Equals = reference eq → false
             ReportProbe("boxed equals (diff box)", true, eq ? 1u : 0u);
+        }
+
+        // --- Virtual call on abstract-generic base with REFERENCE type T ---
+        // Probe_GenericVirtualAbstract (earlier) uses T=int (value type) and works.
+        // This one uses T=class — tests whether ILC's shared-generic code path
+        // (__Canon) is what halted EqualityComparer<MyKey>.Equals, or whether
+        // that was something else.
+        private sealed class RefMarker { public int Value = 7; }
+        private abstract class AbsGenRef<T> { public abstract int Pick(T x); }
+        private class AbsGenRefImpl<T> : AbsGenRef<T>
+        {
+            public override int Pick(T x) => 404;
+        }
+
+        private static void Probe_AbstractGenericRefT()
+        {
+            AbsGenRef<RefMarker> b = new AbsGenRefImpl<RefMarker>();
+            int r = b.Pick(new RefMarker());
+            ReportProbe("abs-gen<RefT> virtual", r == 404, (uint)r);
+        }
+
+        // --- Interface dispatch through generic interface, TArg = reference ---
+        // This is the exact shape that halted Dictionary: field of type
+        // IEqualityComparer<TKey> (interface), called through the interface
+        // static type. Our RhpInitialDynamicInterfaceDispatch is a halt stub
+        // so first dispatch through a generic interface cell should spin.
+        private interface IGenericPickerRef<T> { int Pick(T x); }
+        private sealed class GenericPickerRefImpl<T> : IGenericPickerRef<T>
+        {
+            public int Pick(T x) => 808;
+        }
+
+        private static void Probe_InterfaceCallGenericRefT()
+        {
+            IGenericPickerRef<RefMarker> iface = new GenericPickerRefImpl<RefMarker>();
+            int r = iface.Pick(new RefMarker());
+            ReportProbe("iface<RefT> dispatch", r == 808, (uint)r);
+        }
+
+        // --- Interface dispatch INSIDE a generic class (shared-generic body). ---
+        // This is the exact shape that halted Dictionary<TKey,TValue>: a field
+        // typed as a generic interface over the enclosing class's type
+        // parameter, dispatched through the interface. Shared-generic code
+        // for reference TKey may route this through a different helper than
+        // the direct local-variable case above.
+        private sealed class GenericContainer<T>
+        {
+            private readonly IGenericPickerRef<T> _thing;
+            public GenericContainer(IGenericPickerRef<T> t) { _thing = t; }
+            public int Call(T x) => _thing.Pick(x);
+        }
+
+        private static void Probe_InterfaceCallFromSharedGeneric()
+        {
+            var c = new GenericContainer<RefMarker>(new GenericPickerRefImpl<RefMarker>());
+            int r = c.Call(new RefMarker());
+            ReportProbe("shared-gen iface call", r == 808, (uint)r);
         }
 
         // --- Non-generic base + child for a matrix of init patterns ---

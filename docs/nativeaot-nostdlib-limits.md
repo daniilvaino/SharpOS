@@ -98,19 +98,51 @@ static T MakeNew<T>() where T : new() => new T();
 
 Подтверждено probe для value-type параметра (`GenAbsIface<int>`, `EqualityComparer<int>`). Но:
 
-### ❌ Virtual call на generic abstract class через reference-type параметр — halt-ит (уходит в наш `while(true)`-стаб вместо real dispatch)
+### ✅ Virtual call на abstract generic base class — работает
 
-Пример: `EqualityComparer<MyKey>.Equals(x, y)` где `MyKey` — class. Зависает (halt loop) внутри interface/shared-generic dispatch. Для value-типа `EqualityComparer<int>` работает.
+Подтверждено probe `abs-gen<RefT> virtual` для T=class. Это была первоначальная гипотеза о причине halt в Dictionary, но она неверна — virtual через abstract class работает нормально и для value, и для reference T.
 
-**Причина:** ILC для generic с reference-типом параметром использует **shared generic code через `System.__Canon`**. Virtual dispatch через __Canon vtable нуждается в runtime dictionary lookup helper (что-то типа `RhpGenericLookupFromType`/`RhpUniversalTransition`), которого у нас нет. Та же категория ошибок что `RhpInitialDynamicInterfaceDispatch` (interface-first-call).
+### ✅ Interface dispatch через generic interface со specialized T — работает
 
-**⚠️ Workaround для Dictionary-like коллекций:** не пользоваться `IEqualityComparer<TKey>` параметром внутри, вместо этого — `object.Equals(x, y)` + `key.GetHashCode()` (virtual на Object-vtable, non-generic, работает). Цена: consumer должен override `Object.Equals(object)` + `GetHashCode()` на своём ключе вместо передачи comparer-а. Это всё равно BCL-идиома для reference-ключей.
+Probe `iface<RefT> dispatch`: `IGenericPickerRef<RefMarker> iface = new ...; iface.Pick(obj)` — работает. ILC specializes dispatch cell для конкретного `RefMarker`.
 
-Поле `_comparer` в коллекциях храним для будущего (API-compat с BCL), но не используем.
+### ❌ Interface dispatch ВНУТРИ generic class (shared-generic, __Canon) — halt
+
+Пример:
+```csharp
+class GenericContainer<T> {
+    IGenericPickerRef<T> _thing;
+    int Call(T x) => _thing.Pick(x);   // halt тут при T=reference
+}
+```
+
+Probe `shared-gen iface call` подтверждает — panic на `RhpInitialDynamicInterfaceDispatch`. **Это и есть то, что halt-ит Dictionary с полем типа `IEqualityComparer<TKey>`** (generic class + generic interface typed field + method call через interface).
+
+**Причина:** ILC для `<T>` где T — reference type делит один canonical код между всеми T через `System.__Canon`. Interface dispatch cell при таком canonical коде не имеет pre-resolved target — первый вызов идёт через:
+
+```asm
+RhpInitialDynamicInterfaceDispatch  →  RhpInterfaceDispatchSlow
+    → RhpUniversalTransition_DebugStepTailCall
+        → RhpCidResolve  (C++, walks MethodTable interface map, updates cache)
+        → tail-jump to resolved target
+```
+
+Вся эта цепочка живёт в `src/coreclr/nativeaot/Runtime/amd64/StubDispatch.asm` + `CachedInterfaceDispatch.cpp` в dotnet/runtime, и требует ~200 строк asm + ~100 строк C++ для порта (+ расширения `MethodTable` под interface map).
+
+**⚠️ Workaround для коллекций:** не держать поле типа `IEqualityComparer<TKey>` внутри generic коллекции. Использовать `object.Equals(a, b)` + `key.GetHashCode()` (virtual на Object-vtable, non-generic) — что и делает наш `Dictionary<K,V>`. Consumer override-ит `Equals(object)` + `GetHashCode()` на ключе-классе. Это BCL-идиома по умолчанию, просто мы ещё и `IEqualityComparer<TKey>` ctor не предлагаем.
+
+**Фикс:** портировать взахрон:
+1. InterfaceDispatchCell/Cache структуры
+2. `RhpInitialDynamicInterfaceDispatch` shellcode
+3. `UniversalTransition` shellcode
+4. `RhpCidResolve` managed impl
+5. GcMethodTable → InterfaceMap fields
+
+Оценка — неделя, строго без самописи (asm цитируется байт-в-байт из оригинала).
 
 ### ❌ Generic constraint `where T : IEquatable<T>`
 
-`key.Equals(other)` под этим constraint → `constrained.callvirt IEquatable<T>::Equals` → interface-first-call dispatch → halt (наш `RhpInitialDynamicInterfaceDispatch` stub).
+`key.Equals(other)` под этим constraint → `constrained.callvirt IEquatable<T>::Equals` → та же цепочка shared-generic interface dispatch → halt на `RhpInitialDynamicInterfaceDispatch`.
 
 **⚠️ Workaround:** убрать constraint, использовать `object.Equals(a, b)`.
 
