@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace System
 {
     [StructLayout(LayoutKind.Sequential)]
-    public sealed unsafe class String
+    public sealed unsafe partial class String
     {
         public static readonly string Empty = "";
         public readonly int Length;
@@ -81,6 +81,12 @@ namespace System
             return ref _firstChar;
         }
 
+        // BCL-internal helper used by StringBuilder / String operations —
+        // direct `ref` to the first character of the string's backing
+        // store. Equivalent to GetPinnableReference but the name matches
+        // the BCL callsite (`string.GetRawStringData()`).
+        internal ref char GetRawStringData() => ref _firstChar;
+
         public static string Concat(string str0, string str1)
         {
             return SharpOS.Std.NoRuntime.StringAlgorithms.Concat(str0, str1);
@@ -92,7 +98,7 @@ namespace System
         public static string FromAscii(byte* source, int length)
         {
             if (source == null || length <= 0)
-                return Empty;
+                return "";
 
             string result = new string('\0', length);
             fixed (char* destination = result)
@@ -116,13 +122,44 @@ namespace System
         public static string FromAsciiZ(byte* source)
         {
             if (source == null)
-                return Empty;
+                return "";
 
             int length = 0;
             while (source[length] != 0)
                 length++;
 
             return FromAscii(source, length);
+        }
+
+        // Decode a UTF-16 buffer of known length into a managed string.
+        // Used at ABI boundaries that hand us raw `char*` (UEFI firmware
+        // vendor strings, directory entry names, etc).
+        public static string FromUtf16(char* source, int length)
+        {
+            if (source == null || length <= 0)
+                return "";
+
+            string result = FastAllocateString(length);
+            fixed (char* destination = result)
+            {
+                for (int i = 0; i < length; i++)
+                    destination[i] = source[i];
+            }
+            return result;
+        }
+
+        // NUL-terminated UTF-16 variant. maxLen bounds the scan to survive
+        // unterminated buffers; callers pass the allocated capacity.
+        public static string FromUtf16Z(char* source, int maxLen)
+        {
+            if (source == null || maxLen <= 0)
+                return "";
+
+            int length = 0;
+            while (length < maxLen && source[length] != '\0')
+                length++;
+
+            return FromUtf16(source, length);
         }
 
         public string PadLeft(int totalWidth)
@@ -283,11 +320,11 @@ namespace System
         private static string Ctor(char c, int count)
         {
             if (count <= 0)
-                return Empty;
+                return "";
 
             string result = SharpOS.Std.NoRuntime.StringRuntime.FastAllocateString(count);
             if (result.Length != count)
-                return Empty;
+                return "";
 
             fixed (char* dst = &result.GetPinnableReference())
             {

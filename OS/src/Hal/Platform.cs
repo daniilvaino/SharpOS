@@ -41,11 +41,8 @@ namespace OS.Hal
             if (!s_initialized)
                 return;
 
-            fixed (char* p = text)
-            {
-                for (int i = 0; i < text.Length; i++)
-                    WriteChar(p[i]);
-            }
+            for (int i = 0; i < text.Length; i++)
+                WriteChar(text[i]);
         }
 
         public static void WriteLine(string text)

@@ -117,6 +117,9 @@ namespace System
 
     public struct Int32 : IEquatable<int>, IComparable<int>, IComparable
     {
+        public const int MaxValue = 0x7FFFFFFF;
+        public const int MinValue = unchecked((int)0x80000000);
+
         private int _value;
         public bool Equals(int other) => _value == other;
         public override bool Equals(object obj) => obj is int v && _value == v;
@@ -127,6 +130,9 @@ namespace System
 
     public struct UInt32 : IEquatable<uint>, IComparable<uint>, IComparable
     {
+        public const uint MaxValue = 0xFFFFFFFFu;
+        public const uint MinValue = 0u;
+
         private uint _value;
         public bool Equals(uint other) => _value == other;
         public override bool Equals(object obj) => obj is uint v && _value == v;
@@ -137,6 +143,9 @@ namespace System
 
     public struct Int64 : IEquatable<long>, IComparable<long>, IComparable
     {
+        public const long MaxValue = 0x7FFFFFFFFFFFFFFFL;
+        public const long MinValue = unchecked((long)0x8000000000000000L);
+
         private long _value;
         public bool Equals(long other) => _value == other;
         public override bool Equals(object obj) => obj is long v && _value == v;
@@ -147,6 +156,9 @@ namespace System
 
     public struct UInt64 : IEquatable<ulong>, IComparable<ulong>, IComparable
     {
+        public const ulong MaxValue = 0xFFFFFFFFFFFFFFFFuL;
+        public const ulong MinValue = 0uL;
+
         private ulong _value;
         public bool Equals(ulong other) => _value == other;
         public override bool Equals(object obj) => obj is ulong v && _value == v;
@@ -227,8 +239,11 @@ namespace System
     // Base class for all arrays. Length is stored at offset 8 (after the
     // MethodTable pointer) by RhpNewArray and read here via managed field
     // access. Layout matches NativeAOT's convention; same pattern as String.
+    //
+    // `partial` so std/no-runtime/shared/Runtime/Array.cs can add Copy,
+    // Empty<T>() and other BCL-compat statics without editing this file.
     [StructLayout(LayoutKind.Sequential)]
-    public abstract class Array
+    public abstract partial class Array
     {
         public readonly int Length;
     }

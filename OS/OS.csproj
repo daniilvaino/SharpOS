@@ -122,6 +122,7 @@ detach vdisk
          the std/no-runtime/shared/ThrowHelpers.cs halt-only version is for apps. -->
     <Compile Include="..\std\no-runtime\shared\DefaultMemberAttribute.cs" Link="src\Std\DefaultMemberAttribute.cs" />
     <Compile Include="..\std\no-runtime\shared\SystemString.cs" Link="src\Std\SystemString.cs" />
+    <Compile Include="..\std\no-runtime\shared\StringManipulation.cs" Link="src\Std\StringManipulation.cs" />
     <Compile Include="..\std\no-runtime\shared\StringAlgorithms.cs" Link="src\Std\StringAlgorithms.cs" />
     <Compile Include="..\std\no-runtime\shared\CharHelpers.cs" Link="src\Std\CharHelpers.cs" />
     <Compile Include="..\std\no-runtime\shared\StringQueries.cs" Link="src\Std\StringQueries.cs" />
@@ -138,6 +139,10 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Runtime\Math.cs" Link="src\Std\Runtime\Math.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Buffer.cs" Link="src\Std\Runtime\Buffer.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\GC.cs" Link="src\Std\Runtime\GC.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\Array.cs" Link="src\Std\Runtime\Array.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\MemoryMarshal.cs" Link="src\Std\Runtime\MemoryMarshal.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\Diagnostics.cs" Link="src\Std\Runtime\Diagnostics.cs" />
+    <Compile Include="..\std\no-runtime\shared\Text\StringBuilder.cs" Link="src\Std\Text\StringBuilder.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\NativeFormatDecoder.cs" Link="src\Std\GC\NativeFormatDecoder.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="src\Std\GC\OptionalFieldsReader.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\MethodTable.cs" Link="src\Std\GC\MethodTable.cs" />

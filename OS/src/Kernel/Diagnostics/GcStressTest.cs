@@ -48,7 +48,7 @@ namespace OS.Kernel.Diagnostics
 
             Log.Begin(LogLevel.Info);
             Console.Write("stress total new allocs=");
-            Console.WriteULongRaw(GcHeap.AllocCount - allocBefore);
+            Console.WriteULong(GcHeap.AllocCount - allocBefore);
             Log.EndLine();
 
             Log.Write(LogLevel.Info, "---- gc stress test end ----");
@@ -147,17 +147,17 @@ namespace OS.Kernel.Diagnostics
             Log.Begin(LogLevel.Info);
             Console.Write(label);
             Console.Write(" allocs=");
-            Console.WriteULongRaw(allocs);
+            Console.WriteULong(allocs);
             Console.Write(" marked=");
-            Console.WriteUIntRaw(GcMark.LastMarkedCount);
+            Console.WriteUInt(GcMark.LastMarkedCount);
             Console.Write(" kept=");
-            Console.WriteUIntRaw(GcSweep.LastKeptCount);
+            Console.WriteUInt(GcSweep.LastKeptCount);
             Console.Write(" swept=");
-            Console.WriteUIntRaw(GcSweep.LastSweptCount);
+            Console.WriteUInt(GcSweep.LastSweptCount);
             Console.Write(" freelist=");
-            Console.WriteUIntRaw(GcHeap.FreelistNodes);
+            Console.WriteUInt(GcHeap.FreelistNodes);
             Console.Write(" reuse=");
-            Console.WriteULongRaw(GcHeap.FreelistReuseCount);
+            Console.WriteULong(GcHeap.FreelistReuseCount);
             Log.EndLine();
         }
     }

@@ -116,6 +116,23 @@ namespace System
     {
         public ArgumentNullException() { }
         public ArgumentNullException(string paramName) : base(null, paramName) { }
+        public ArgumentNullException(string paramName, string message) : base(message, paramName) { }
+
+        // BCL helper: `ArgumentNullException.ThrowIfNull(arg)` is a common
+        // pattern in verbatim-ported BCL code. Halts via the exception
+        // throw — which itself halts since we have no unwinder.
+        public static void ThrowIfNull(object argument)
+        {
+            if (argument == null) Throw();
+        }
+
+        public static void ThrowIfNull(object argument, string paramName)
+        {
+            if (argument == null) Throw(paramName);
+        }
+
+        public static void Throw() { while (true) ; }
+        public static void Throw(string paramName) { while (true) ; }
     }
 
     public class ArgumentOutOfRangeException : ArgumentException
@@ -123,5 +140,27 @@ namespace System
         public ArgumentOutOfRangeException() { }
         public ArgumentOutOfRangeException(string paramName) : base(null, paramName) { }
         public ArgumentOutOfRangeException(string paramName, string message) : base(message, paramName) { }
+        public ArgumentOutOfRangeException(string paramName, object actualValue, string message) : base(message, paramName) { }
+    }
+
+    public class OutOfMemoryException : Exception
+    {
+        public OutOfMemoryException() { }
+        public OutOfMemoryException(string message) : base(message) { }
+        public OutOfMemoryException(string message, Exception innerException) : base(message, innerException) { }
+    }
+
+    public class IndexOutOfRangeException : Exception
+    {
+        public IndexOutOfRangeException() { }
+        public IndexOutOfRangeException(string message) : base(message) { }
+        public IndexOutOfRangeException(string message, Exception innerException) : base(message, innerException) { }
+    }
+
+    public class FormatException : Exception
+    {
+        public FormatException() { }
+        public FormatException(string message) : base(message) { }
+        public FormatException(string message, Exception innerException) : base(message, innerException) { }
     }
 }

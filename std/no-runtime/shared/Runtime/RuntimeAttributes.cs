@@ -14,6 +14,15 @@ namespace System.Runtime.CompilerServices
     {
         public ExtensionAttribute() { }
     }
+
+    // Tells the compiler what name to use for an indexer property in
+    // metadata (default is "Item"; StringBuilder uses "Chars"). Purely a
+    // reflection-level hint — no runtime behavior.
+    [AttributeUsage(AttributeTargets.Property, Inherited = true)]
+    public sealed class IndexerNameAttribute : Attribute
+    {
+        public IndexerNameAttribute(string indexerName) { }
+    }
 }
 
 namespace System.Runtime.InteropServices

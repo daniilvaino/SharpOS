@@ -3,6 +3,9 @@ using OS.Hal;
 
 namespace OS.Kernel.File
 {
+    // ABI-boundary: `char* nameBuffer` is written by UEFI firmware
+    // during DirectoryReadEntry. `stackalloc` is the correct tool —
+    // see AppServiceBuilder for the same pattern.
     internal static unsafe class FileSystem
     {
         private const uint MaxEntryNameChars = FileInfoLite.MaxNameChars;

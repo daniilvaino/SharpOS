@@ -62,6 +62,10 @@ namespace OS.Kernel.Diagnostics
             Probe_SortedList();
             Probe_Yield();
             Probe_Span();
+            Probe_StringBuilder();
+            Probe_StringConcat();
+            Probe_StringSplit();
+            Probe_StringJoin();
             // MUST BE LAST: halts the probe run with a diagnostic dump until
             // the full DispatchResolve port lands. Everything above runs via
             // the shellcode fast path (pre-baked cache) or plain virtual
@@ -734,6 +738,98 @@ namespace OS.Kernel.Diagnostics
         // Exercises Span<T> end-to-end: ctor from array, indexer set/get,
         // Slice, CopyTo into another Span. If any Unsafe intrinsic fails
         // to resolve at ILC time the first indexer call halts.
+        private static void Probe_StringConcat()
+        {
+            string a = string.Concat("foo", "bar");
+            string b = string.Concat("a", "b", "c");
+            string c = string.Concat("1", "2", "3", "4");
+            string d = string.Concat(new[] { "x", "y", "z" });
+            bool ok = a == "foobar" && b == "abc" && c == "1234" && d == "xyz";
+            ReportProbe("string.concat",
+                ok,
+                (uint)(a.Length + b.Length + c.Length + d.Length));
+        }
+
+        private static void Probe_StringSplit()
+        {
+            string src = "a,b,c,d";
+            string[] parts = src.Split(',');
+            int partsCount = parts.Length;
+            string first = parts[0];
+            string last = parts[3];
+
+            string src2 = "one two three";
+            string[] parts2 = src2.Split(' ');
+
+            string src3 = "line1\r\nline2\r\nline3";
+            string[] parts3 = src3.Split("\r\n");
+
+            bool ok = partsCount == 4 && first == "a" && last == "d"
+                && parts2.Length == 3 && parts2[1] == "two"
+                && parts3.Length == 3 && parts3[2] == "line3";
+
+            ReportProbe("string.split", ok, (uint)partsCount);
+        }
+
+        private static void Probe_StringJoin()
+        {
+            string[] words = new[] { "red", "green", "blue" };
+            string s1 = string.Join(", ", words);
+            string s2 = string.Join('/', words);
+            string[] empty = new string[0];
+            string s3 = string.Join(",", empty);
+            bool ok = s1 == "red, green, blue" && s2 == "red/green/blue" && s3 == "";
+            ReportProbe("string.join", ok, (uint)(s1.Length + s2.Length));
+        }
+
+        // Exercises StringBuilder through its core paths: Append overloads
+        // (string/char/int), Length getter, indexer, ToString, Clear,
+        // AppendLine, Insert, Remove, Replace. Chunk-growth path is hit
+        // by constructing with a small capacity and appending enough to
+        // trip into a second chunk.
+        private static void Probe_StringBuilder()
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append("hello");
+            sb.Append(' ');
+            sb.Append(42);
+            sb.AppendLine();
+            sb.Append("more");
+            // Expected: "hello 42\r\nmore" — length 14.
+            int lenAfterAppend = sb.Length;
+            char ch = sb[6];   // should be '4'
+            string s = sb.ToString();
+
+            sb.Clear();
+            int lenAfterClear = sb.Length;
+
+            // Force chunk expansion with small capacity ctor.
+            var sb2 = new System.Text.StringBuilder(4);
+            sb2.Append("abcdefghij");   // 10 chars, grows past initial 4
+            int sb2Len = sb2.Length;
+            string sb2Out = sb2.ToString();
+            bool sb2Ok = sb2Out != null && sb2Out.Length == 10
+                && sb2Out[0] == 'a' && sb2Out[9] == 'j';
+
+            // Insert + Remove + Replace.
+            var sb3 = new System.Text.StringBuilder("hello");
+            sb3.Insert(5, " world");
+            sb3.Remove(0, 6);           // "world"
+            sb3.Replace('w', 'W');
+            string sb3Out = sb3.ToString();
+            bool sb3Ok = sb3Out != null && sb3Out.Length == 5
+                && sb3Out[0] == 'W' && sb3Out[4] == 'd';
+
+            bool ok = lenAfterAppend == 14
+                && ch == '4'
+                && s != null && s.Length == 14
+                && lenAfterClear == 0
+                && sb2Ok
+                && sb3Ok;
+
+            ReportProbe("stringbuilder", ok, (uint)(lenAfterAppend + sb2Len));
+        }
+
         private static void Probe_Span()
         {
             int[] arr = new int[] { 10, 20, 30, 40, 50 };
@@ -769,7 +865,7 @@ namespace OS.Kernel.Diagnostics
             Console.Write(": ");
             Console.Write(ok ? "ok" : "FAIL");
             Console.Write(" val=");
-            Console.WriteUIntRaw(value);
+            Console.WriteUInt(value);
             Log.EndLine();
         }
     }

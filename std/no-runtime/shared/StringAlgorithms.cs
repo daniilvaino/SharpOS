@@ -5,7 +5,7 @@ namespace SharpOS.Std.NoRuntime
         internal static string PadLeft(string str, int totalWidth, char paddingChar)
         {
             if (str == null)
-                str = string.Empty;
+                str = "";
 
             int len = str.Length;
             if (totalWidth <= len)
@@ -31,7 +31,7 @@ namespace SharpOS.Std.NoRuntime
         internal static string PadRight(string str, int totalWidth, char paddingChar)
         {
             if (str == null)
-                str = string.Empty;
+                str = "";
 
             int len = str.Length;
             if (totalWidth <= len)
@@ -57,20 +57,20 @@ namespace SharpOS.Std.NoRuntime
         internal static string Concat(string str0, string str1)
         {
             if (str0 == null)
-                str0 = string.Empty;
+                str0 = "";
 
             if (str1 == null)
-                str1 = string.Empty;
+                str1 = "";
 
             int len0 = str0.Length;
             int len1 = str1.Length;
             int total = len0 + len1;
             if (total <= 0)
-                return string.Empty;
+                return "";
 
             string result = StringRuntime.FastAllocateString(total);
             if (result.Length != total)
-                return string.Empty;
+                return "";
 
             fixed (char* dst = result)
             {

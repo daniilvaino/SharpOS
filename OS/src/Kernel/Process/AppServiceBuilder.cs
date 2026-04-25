@@ -8,6 +8,13 @@ using OS.Kernel.Util;
 
 namespace OS.Kernel.Process
 {
+    // ABI-boundary code: all char*/byte* buffers passed into
+    // BootInfo.File* callbacks go straight to UEFI firmware, which
+    // expects stable unmanaged pointers during the call. `stackalloc`
+    // is the correct tool here — managed arrays would require pinning
+    // + marshalling with no readability gain. Path composition that
+    // stays on our side (TryBuildAbiManifestPath) uses managed
+    // string.Concat; the copy-back loop at the ABI edge is unavoidable.
     internal static unsafe class AppServiceBuilder
     {
         private const int MaxWriteStringBytes = 512;
@@ -17,10 +24,7 @@ namespace OS.Kernel.Process
         private const ulong PageSize = X64PageTable.PageSize;
         private const uint AbiManifestBufferSize = 64;
         private const uint AbiManifestByteSize = 16;
-        private const char AbiManifestSuffixDot = '.';
-        private const char AbiManifestSuffixA = 'a';
-        private const char AbiManifestSuffixB = 'b';
-        private const char AbiManifestSuffixI = 'i';
+        private const string AbiManifestSuffix = ".abi";
 
         private const uint ServiceThunkPageSize = 4096;
         private const uint ServiceThunkSlotSize = 64;
@@ -799,30 +803,17 @@ namespace OS.Kernel.Process
             if (path == null || destination == null || destinationChars < 6)
                 return false;
 
-            uint index = 0;
-            while (index < destinationChars - 1 && path[index] != '\0')
+            string basePath = string.FromUtf16Z(path, (int)destinationChars);
+            if (basePath.Length == 0 || basePath.Length + AbiManifestSuffix.Length + 1 > destinationChars)
             {
-                destination[index] = path[index];
-                index++;
-            }
-
-            if (index == destinationChars - 1)
-            {
-                destination[index] = '\0';
+                destination[0] = '\0';
                 return false;
             }
 
-            if ((index + 4 + 1) > destinationChars)
-            {
-                destination[index] = '\0';
-                return false;
-            }
-
-            destination[index + 0] = AbiManifestSuffixDot;
-            destination[index + 1] = AbiManifestSuffixA;
-            destination[index + 2] = AbiManifestSuffixB;
-            destination[index + 3] = AbiManifestSuffixI;
-            destination[index + 4] = '\0';
+            string manifestPath = string.Concat(basePath, AbiManifestSuffix);
+            for (int i = 0; i < manifestPath.Length; i++)
+                destination[i] = manifestPath[i];
+            destination[manifestPath.Length] = '\0';
             return true;
         }
 

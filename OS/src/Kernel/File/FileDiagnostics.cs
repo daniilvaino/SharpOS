@@ -37,8 +37,7 @@ namespace OS.Kernel.File
 
         private static void WriteName(char* name, uint nameLength)
         {
-            for (uint i = 0; i < nameLength; i++)
-                UiText.WriteChar(name[i]);
+            UiText.Write(string.FromUtf16(name, (int)nameLength));
         }
     }
 }

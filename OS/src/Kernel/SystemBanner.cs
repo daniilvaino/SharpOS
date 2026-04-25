@@ -53,15 +53,14 @@ namespace OS.Kernel
                 return;
             }
 
-            int i = 0;
-            while (i < 63 && bootInfo.FirmwareVendor[i] != '\0')
+            string vendor = string.FromUtf16Z(bootInfo.FirmwareVendor, 63);
+            if (vendor.Length == 0)
             {
-                Console.WriteChar(bootInfo.FirmwareVendor[i]);
-                i++;
+                Console.Write("unknown");
+                return;
             }
 
-            if (i == 0)
-                Console.Write("unknown");
+            Console.Write(vendor);
         }
 
         private static void WriteCapabilities(PlatformCapabilities capabilities)

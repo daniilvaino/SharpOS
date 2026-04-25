@@ -25,16 +25,16 @@ namespace SharpOS.Std.NoRuntime
         internal static string FastAllocateString(int length)
         {
             if (length <= 0)
-                return string.Empty;
+                return "";
 
             if (!OS.Kernel.Memory.KernelHeap.IsInitialized)
-                return string.Empty;
+                return "";
 
             uint bytes = (uint)(HeaderSize + (length + 1) * 2);
 
             void* raw = OS.Kernel.Memory.KernelHeap.Alloc(bytes);
             if (raw == null)
-                return string.Empty;
+                return "";
 
             // NativeAOT intrinsic — reliable for all types including string.
             // Confirmed in kernel context during SUPER-2 phase 0 recon.

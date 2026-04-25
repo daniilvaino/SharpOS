@@ -9,7 +9,7 @@ namespace SharpOS.Std.NoRuntime
         public static string Substring(string str, int startIndex)
         {
             if (str == null || startIndex < 0 || startIndex > str.Length)
-                return string.Empty;
+                return "";
 
             return Substring(str, startIndex, str.Length - startIndex);
         }
@@ -17,10 +17,10 @@ namespace SharpOS.Std.NoRuntime
         public static string Substring(string str, int startIndex, int length)
         {
             if (str == null || startIndex < 0 || length < 0 || startIndex + length > str.Length)
-                return string.Empty;
+                return "";
 
             if (length == 0)
-                return string.Empty;
+                return "";
 
             if (startIndex == 0 && length == str.Length)
                 return str;
@@ -41,7 +41,7 @@ namespace SharpOS.Std.NoRuntime
         public static string Trim(string str)
         {
             if (str == null)
-                return string.Empty;
+                return "";
 
             int len = str.Length;
             int start = 0;
@@ -62,7 +62,7 @@ namespace SharpOS.Std.NoRuntime
         public static string TrimStart(string str)
         {
             if (str == null)
-                return string.Empty;
+                return "";
 
             int len = str.Length;
             int start = 0;
@@ -78,7 +78,7 @@ namespace SharpOS.Std.NoRuntime
         public static string TrimEnd(string str)
         {
             if (str == null)
-                return string.Empty;
+                return "";
 
             int len = str.Length;
             int end = len - 1;
@@ -95,7 +95,7 @@ namespace SharpOS.Std.NoRuntime
         public static string Replace(string str, char oldChar, char newChar)
         {
             if (str == null)
-                return string.Empty;
+                return "";
 
             int len = str.Length;
             if (len == 0 || oldChar == newChar)
@@ -133,10 +133,10 @@ namespace SharpOS.Std.NoRuntime
         public static string Replace(string str, string oldValue, string newValue)
         {
             if (str == null || oldValue == null || oldValue.Length == 0)
-                return str == null ? string.Empty : str;
+                return str == null ? "" : str;
 
             if (newValue == null)
-                newValue = string.Empty;
+                newValue = "";
 
             int strLen = str.Length;
             int oldLen = oldValue.Length;
@@ -172,10 +172,10 @@ namespace SharpOS.Std.NoRuntime
 
             int resultLen = strLen + occurrences * (newLen - oldLen);
             if (resultLen < 0)
-                return string.Empty;
+                return "";
 
             if (resultLen == 0)
-                return string.Empty;
+                return "";
 
             string result = StringRuntime.FastAllocateString(resultLen);
             if (result.Length != resultLen)
@@ -220,7 +220,7 @@ namespace SharpOS.Std.NoRuntime
         public static string ToUpperInvariant(string str)
         {
             if (str == null)
-                return string.Empty;
+                return "";
 
             int len = str.Length;
             if (len == 0)
@@ -242,7 +242,7 @@ namespace SharpOS.Std.NoRuntime
         public static string ToLowerInvariant(string str)
         {
             if (str == null)
-                return string.Empty;
+                return "";
 
             int len = str.Length;
             if (len == 0)

@@ -51,13 +51,8 @@ namespace OS.Boot
                 return;
             }
 
-            fixed (char* p = text)
-            {
-                for (int i = 0; i < text.Length; i++)
-                {
-                    WriteChar(systemTable, p[i]);
-                }
-            }
+            for (int i = 0; i < text.Length; i++)
+                WriteChar(systemTable, text[i]);
         }
 
         public static void WriteChar(EFI_SYSTEM_TABLE* systemTable, char value)

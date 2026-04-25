@@ -5,9 +5,9 @@ namespace SharpOS.Std.NoRuntime
         internal static string FastAllocateString(int length)
         {
             if (length <= 0)
-                return string.Empty;
+                return "";
 
-            return string.Empty;
+            return "";
         }
     }
 }
