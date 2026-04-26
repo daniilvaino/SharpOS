@@ -72,3 +72,4 @@ old SharpOS/
 gc-experiment/
 # ILC --map outputs
 **/map.txt
+.claude/settings.local.json
