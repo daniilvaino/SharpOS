@@ -186,6 +186,13 @@ namespace System
 
         public static unsafe int Size => sizeof(nint);
 
+        public static IntPtr MaxValue => (IntPtr)long.MaxValue;
+        public static IntPtr MinValue => (IntPtr)long.MinValue;
+
+        public int ToInt32() => (int)_value;
+        public long ToInt64() => (long)_value;
+        public unsafe void* ToPointer() => (void*)_value;
+
         public static explicit operator IntPtr(int value) => new IntPtr(value);
         public static explicit operator IntPtr(long value) => new IntPtr(value);
         public static unsafe explicit operator IntPtr(void* value) => new IntPtr(value);
@@ -196,8 +203,14 @@ namespace System
         public static bool operator ==(IntPtr value1, IntPtr value2) => value1._value == value2._value;
         public static bool operator !=(IntPtr value1, IntPtr value2) => value1._value != value2._value;
 
+        public static IntPtr operator +(IntPtr pointer, int offset) => new IntPtr((long)(pointer._value + offset));
+        public static IntPtr operator -(IntPtr pointer, int offset) => new IntPtr((long)(pointer._value - offset));
+        public static IntPtr Add(IntPtr pointer, int offset) => pointer + offset;
+        public static IntPtr Subtract(IntPtr pointer, int offset) => pointer - offset;
+
         public override bool Equals(object obj) => obj is IntPtr p && p._value == _value;
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.LongToString((long)_value);
     }
 
     public readonly struct UIntPtr
@@ -212,6 +225,13 @@ namespace System
 
         public static unsafe int Size => sizeof(nuint);
 
+        public static UIntPtr MaxValue => (UIntPtr)ulong.MaxValue;
+        public static UIntPtr MinValue => (UIntPtr)0UL;
+
+        public uint ToUInt32() => (uint)_value;
+        public ulong ToUInt64() => (ulong)_value;
+        public unsafe void* ToPointer() => (void*)_value;
+
         public static explicit operator UIntPtr(uint value) => new UIntPtr(value);
         public static explicit operator UIntPtr(ulong value) => new UIntPtr(value);
         public static unsafe explicit operator UIntPtr(void* value) => new UIntPtr(value);
@@ -222,8 +242,14 @@ namespace System
         public static bool operator ==(UIntPtr value1, UIntPtr value2) => value1._value == value2._value;
         public static bool operator !=(UIntPtr value1, UIntPtr value2) => value1._value != value2._value;
 
+        public static UIntPtr operator +(UIntPtr pointer, int offset) => new UIntPtr((ulong)(pointer._value + (nuint)offset));
+        public static UIntPtr operator -(UIntPtr pointer, int offset) => new UIntPtr((ulong)(pointer._value - (nuint)offset));
+        public static UIntPtr Add(UIntPtr pointer, int offset) => pointer + offset;
+        public static UIntPtr Subtract(UIntPtr pointer, int offset) => pointer - offset;
+
         public override bool Equals(object obj) => obj is UIntPtr p && p._value == _value;
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.ULongToString((ulong)_value);
     }
     public struct Single { }
     public struct Double { }

@@ -198,6 +198,16 @@ namespace System
             return SplitInternal(separator, count);
         }
 
+        public string[] Split(char separator, StringSplitOptions options)
+            => ApplySplitOptions(SplitInternal(separator, int.MaxValue), options);
+
+        public string[] Split(char separator, int count, StringSplitOptions options)
+        {
+            if (count < 0) { Halt(); return null; }
+            if (count == 0 || Length == 0) return new string[0];
+            return ApplySplitOptions(SplitInternal(separator, count), options);
+        }
+
         public string[] Split(params char[] separator)
         {
             if (separator == null || separator.Length == 0)
@@ -214,11 +224,75 @@ namespace System
             return SplitInternalMulti(separator, count);
         }
 
+        public string[] Split(char[] separator, StringSplitOptions options)
+        {
+            if (separator == null || separator.Length == 0)
+                return ApplySplitOptions(new string[] { this }, options);
+            return ApplySplitOptions(SplitInternalMulti(separator, int.MaxValue), options);
+        }
+
+        public string[] Split(char[] separator, int count, StringSplitOptions options)
+        {
+            if (count < 0) { Halt(); return null; }
+            if (count == 0 || Length == 0) return new string[0];
+            if (separator == null || separator.Length == 0)
+                return ApplySplitOptions(new string[] { this }, options);
+            return ApplySplitOptions(SplitInternalMulti(separator, count), options);
+        }
+
         public string[] Split(string separator)
         {
             if (separator == null || separator.Length == 0)
                 return new string[] { this };
             return SplitInternalString(separator, int.MaxValue);
+        }
+
+        public string[] Split(string separator, StringSplitOptions options)
+        {
+            if (separator == null || separator.Length == 0)
+                return ApplySplitOptions(new string[] { this }, options);
+            return ApplySplitOptions(SplitInternalString(separator, int.MaxValue), options);
+        }
+
+        public string[] Split(string separator, int count, StringSplitOptions options)
+        {
+            if (count < 0) { Halt(); return null; }
+            if (count == 0 || Length == 0) return new string[0];
+            if (separator == null || separator.Length == 0)
+                return ApplySplitOptions(new string[] { this }, options);
+            return ApplySplitOptions(SplitInternalString(separator, count), options);
+        }
+
+        // Apply TrimEntries / RemoveEmptyEntries post-process. Single pass:
+        // walk parts, optionally Trim, optionally skip empty, write into a
+        // fresh array sized exactly to the output count.
+        private static string[] ApplySplitOptions(string[] parts, StringSplitOptions options)
+        {
+            if (options == StringSplitOptions.None) return parts;
+
+            bool trim = (options & StringSplitOptions.TrimEntries) != 0;
+            bool removeEmpty = (options & StringSplitOptions.RemoveEmptyEntries) != 0;
+
+            int outCount = 0;
+            // First pass: count survivors.
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string s = parts[i];
+                if (trim && s != null) s = s.Trim();
+                if (removeEmpty && (s == null || s.Length == 0)) continue;
+                outCount++;
+            }
+
+            string[] result = new string[outCount];
+            int outIdx = 0;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string s = parts[i];
+                if (trim && s != null) s = s.Trim();
+                if (removeEmpty && (s == null || s.Length == 0)) continue;
+                result[outIdx++] = s;
+            }
+            return result;
         }
 
         // ---- Split internals ----
