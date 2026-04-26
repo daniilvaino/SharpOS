@@ -66,6 +66,12 @@ namespace OS.Kernel.Diagnostics
             Probe_StringConcat();
             Probe_StringSplit();
             Probe_StringJoin();
+            Probe_SpanIndexOf();
+            Probe_SpanSequenceEqual();
+            Probe_ArrayIndexOf();
+            Probe_ArrayReverse();
+            Probe_StringCompareOrdinal();
+            Probe_StringSplitOptions();
             // MUST BE LAST: halts the probe run with a diagnostic dump until
             // the full DispatchResolve port lands. Everything above runs via
             // the shellcode fast path (pre-baked cache) or plain virtual
@@ -780,6 +786,93 @@ namespace OS.Kernel.Diagnostics
             string s3 = string.Join(",", empty);
             bool ok = s1 == "red, green, blue" && s2 == "red/green/blue" && s3 == "";
             ReportProbe("string.join", ok, (uint)(s1.Length + s2.Length));
+        }
+
+        // Step 36 BCL base extension probes — exercise paths that go through
+        // shared-generic IEquatable<T> interface dispatch (step 32) plus the
+        // new Compare/Split surface. Build pass != correctness for these,
+        // since dispatch resolution happens at runtime.
+
+        private static void Probe_SpanIndexOf()
+        {
+            int[] arr = new int[] { 10, 20, 30, 40, 50 };
+            var span = new System.Span<int>(arr);
+            int idx = span.IndexOf(30);
+            int idxLast = span.LastIndexOf(50);
+            bool contains = span.Contains(20);
+            bool missing = span.Contains(99);
+            bool ok = idx == 2 && idxLast == 4 && contains && !missing;
+            ReportProbe("span.indexof", ok, (uint)(idx + idxLast));
+        }
+
+        private static void Probe_SpanSequenceEqual()
+        {
+            int[] a = new int[] { 1, 2, 3, 4 };
+            int[] b = new int[] { 1, 2, 3, 4 };
+            int[] c = new int[] { 1, 2, 3, 5 };
+            int[] d = new int[] { 1, 2, 3 };
+            var sa = new System.ReadOnlySpan<int>(a);
+            var sb = new System.ReadOnlySpan<int>(b);
+            var sc = new System.ReadOnlySpan<int>(c);
+            var sd = new System.ReadOnlySpan<int>(d);
+            bool eq = sa.SequenceEqual(sb);
+            bool neqValue = sa.SequenceEqual(sc);
+            bool neqLength = sa.SequenceEqual(sd);
+            bool ok = eq && !neqValue && !neqLength;
+            ReportProbe("span.sequenceequal", ok, (uint)(eq ? 1 : 0));
+        }
+
+        private static void Probe_ArrayIndexOf()
+        {
+            int[] arr = new int[] { 100, 200, 300, 200, 400 };
+            int first = System.Array.IndexOf(arr, 200);
+            int last = System.Array.LastIndexOf(arr, 200);
+            int missing = System.Array.IndexOf(arr, 999);
+            bool ok = first == 1 && last == 3 && missing == -1;
+            ReportProbe("array.indexof", ok, (uint)(first + last));
+        }
+
+        private static void Probe_ArrayReverse()
+        {
+            int[] arr = new int[] { 1, 2, 3, 4, 5 };
+            System.Array.Reverse(arr);
+            bool ok = arr[0] == 5 && arr[1] == 4 && arr[2] == 3 && arr[3] == 2 && arr[4] == 1;
+            ReportProbe("array.reverse", ok, (uint)arr[0]);
+        }
+
+        private static void Probe_StringCompareOrdinal()
+        {
+            int eq = string.CompareOrdinal("hello", "hello");
+            int less = string.CompareOrdinal("apple", "banana");
+            int more = string.CompareOrdinal("zebra", "apple");
+            int diffLen = string.CompareOrdinal("foo", "foobar");
+            bool ok = eq == 0 && less < 0 && more > 0 && diffLen < 0;
+            ReportProbe("string.compareordinal", ok, (uint)(eq + (less < 0 ? 1 : 0) + (more > 0 ? 1 : 0)));
+        }
+
+        private static void Probe_StringSplitOptions()
+        {
+            // " a , , b ,  ,c " → split on ',':
+            //   None: ["", " a ", " ", " b ", "  ", "c "]   (or with trim variations)
+            //   None: 6 entries: " a ", " ", " b ", "  ", "c " (5 actually... let me recount)
+            // Actually: " a , , b ,  ,c " (leading space, trailing space) split by ',':
+            //   " a "  " "  " b "  "  "  "c "      (5 entries)
+            // After Trim: "a", "", "b", "", "c"
+            // After RemoveEmpty: "a", "b", "c" (3 entries)
+            string src = " a , , b ,  ,c ";
+            string[] parts = src.Split(',');
+            int countNone = parts.Length;
+
+            string[] partsTrim = src.Split(',', StringSplitOptions.TrimEntries);
+            string[] partsRemove = src.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            string[] partsBoth = src.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+            bool ok = countNone == 5
+                && partsTrim.Length == 5 && partsTrim[0] == "a" && partsTrim[1] == ""
+                && partsRemove.Length == 5 && partsRemove[0] == " a "  // RemoveEmpty alone removes only ""; here all have spaces
+                && partsBoth.Length == 3 && partsBoth[0] == "a" && partsBoth[1] == "b" && partsBoth[2] == "c";
+
+            ReportProbe("string.split.options", ok, (uint)(partsBoth.Length * 100 + partsTrim.Length * 10 + countNone));
         }
 
         // Exercises StringBuilder through its core paths: Append overloads

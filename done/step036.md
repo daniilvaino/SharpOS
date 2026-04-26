@@ -138,9 +138,20 @@ BCL версия — 3200+ строк с SIMD/Vector/SearchValues optimization. 
 
 ## Верификация
 
-Build pass: должен скомпилироваться без новых ошибок. Warnings CS0660/CS0661 на operator== должны исчезнуть (override Equals/GetHashCode добавлены).
+Build pass: компилируется без новых ошибок. Warnings CS0660/CS0661 на operator== исчезли (override Equals/GetHashCode добавлены).
 
-Runtime: все 52 probes должны остаться зелёными — мы не меняли existing path'ов, только расширяли surface. Никакие probe не дёргают новые методы напрямую (можно добавить в следующих шагах если понадобится).
+Существующие 52 probes — все зелёные, никаких регрессий existing path'ов.
+
+**Новые 6 probes для step 36 surface** (тривиальные wrapper'ы IntPtr/Math/Debug проб не нуждаются — build pass = correctness; нетривиальные пути пробуем):
+
+- `span.indexof` — Span<int>.IndexOf/LastIndexOf/Contains через shared-generic IEquatable<int> dispatch.
+- `span.sequenceequal` — ROSpan<int>.SequenceEqual для equal/value-diff/length-diff cases.
+- `array.indexof` — Array.IndexOf<int>/LastIndexOf<int>, поиск в массиве с дубликатом.
+- `array.reverse` — Array.Reverse<int>, проверка in-place мутации.
+- `string.compareordinal` — equal / less / greater / different-length cases.
+- `string.split.options` — TrimEntries / RemoveEmptyEntries / Both комбинации на ` a , , b ,  ,c ` строке.
+
+Эти пробы покрывают самые рисковые новые paths — те что зависят от runtime-резолюции shared-generic interface dispatch. Build pass для них недостаточная гарантия.
 
 Launcher (HelloSharpFs) — unaffected. Apps не включают новые файлы (все additive за пределами того что они уже используют).
 
