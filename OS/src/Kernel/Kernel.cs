@@ -65,6 +65,7 @@ namespace OS.Kernel
                 InitializePager();
                 RunPagerValidation();
                 RunIdtPanicProbe();
+                RunExceptionThrowProbe();
                 RunElfValidation(bootInfo);
             }
 
@@ -78,6 +79,16 @@ namespace OS.Kernel
             if (false)
             {
                 IdtProbe.TriggerNullDeref();
+            }
+        }
+
+        private static void RunExceptionThrowProbe()
+        {
+            // Flip to `true` once per ExceptionEngine change to verify
+            // throw → readable panic. Never returns — terminal halt.
+            if (false)
+            {
+                ExceptionProbe.TriggerThrow();
             }
         }
 
