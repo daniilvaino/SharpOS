@@ -65,6 +65,19 @@ namespace OS.Boot
                     info.JumpStubExecBuffer = (void*)aligned;
                     info.JumpStubExecBufferSize = 4096;
                 }
+
+                // IDT + per-vector trampolines + LIDT helper. 8 KiB is enough
+                // for IDT (4096) + common stub (~96) + 32 vector stubs (512)
+                // + LIDT helper (4) + headroom. EfiLoaderCode for exec.
+                const uint IdtBufferSize = 8192;
+                void* idtBufferRaw = null;
+                ulong idtStatus = systemTable->BootServices->AllocatePool(
+                    EFI_MEMORY_TYPE.EfiLoaderCode, IdtBufferSize, &idtBufferRaw);
+                if (idtStatus == 0 && idtBufferRaw != null)
+                {
+                    info.IdtExecBuffer = idtBufferRaw;
+                    info.IdtExecBufferSize = IdtBufferSize;
+                }
             }
 
             if (UefiMemoryMapBuilder.TryBuild(systemTable, out info.MemoryMap))

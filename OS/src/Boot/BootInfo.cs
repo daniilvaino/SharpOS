@@ -41,6 +41,13 @@ namespace OS.Boot
         public void* JumpStubExecBuffer;
         public uint JumpStubExecBufferSize;
 
+        // EfiLoaderCode buffer for IDT + per-vector trampolines + LIDT helper.
+        // 8 KiB allocation: IDT at 0..4095 (data, but exec memory is fine for
+        // reads), trampolines at 4096+ (need exec). Layout in
+        // OS.Hal.Idt.Idt.cs / IdtTrampolines.cs.
+        public void* IdtExecBuffer;
+        public uint IdtExecBufferSize;
+
         public ulong MemoryMapAvailable;
         public ulong GraphicsAvailable;
         public MemoryMapInfo MemoryMap;

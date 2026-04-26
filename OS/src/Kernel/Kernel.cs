@@ -1,6 +1,7 @@
 using OS.Boot;
 using OS.Kernel.Elf;
 using OS.Hal;
+using OS.Hal.Idt;
 using OS.Kernel.Diagnostics;
 using OS.Kernel.Input;
 using OS.Kernel.Memory;
@@ -15,7 +16,15 @@ namespace OS.Kernel
         {
             Panic.Mode = PanicMode.Shutdown;
 
+            // Install IDT FIRST, before any code that can fault. Until this
+            // succeeds, any #PF/#GP/#UD inside the kernel triple-faults.
+            // After this, every CPU exception lands in PanicDump with a
+            // readable register dump.
+            bool idtOk = Idt.Install(bootInfo);
+
             SystemBanner.Print(bootInfo);
+            Log.Write(idtOk ? LogLevel.Info : LogLevel.Warn,
+                idtOk ? "idt installed" : "idt install failed");
             Log.Write(LogLevel.Info, "kernel start");
             RunKeyboardDiagnostics();
 
@@ -55,10 +64,21 @@ namespace OS.Kernel
                 NativeAotProbe.Run();
                 InitializePager();
                 RunPagerValidation();
+                RunIdtPanicProbe();
                 RunElfValidation(bootInfo);
             }
 
             DemoApp.Run();
+        }
+
+        private static void RunIdtPanicProbe()
+        {
+            // Flip to `true` once per IDT change to verify panic dump.
+            // Never returns — terminal halt after PanicDump.Print.
+            if (false)
+            {
+                IdtProbe.TriggerNullDeref();
+            }
         }
 
         private static void RunKeyboardDiagnostics()
