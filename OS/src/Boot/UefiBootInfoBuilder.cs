@@ -16,6 +16,7 @@ namespace OS.Boot
             info.MemoryMapAvailable = 0;
             info.GraphicsAvailable = 0;
             info.MemoryMap = default;
+            info.SystemTable = systemTable;
             info.WriteChar = &UefiPlatformBridge.WriteChar;
             info.Shutdown = &UefiPlatformBridge.Shutdown;
             info.KeyboardTryReadKey = &UefiPlatformBridge.KeyboardTryReadKey;

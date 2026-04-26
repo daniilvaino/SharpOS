@@ -48,6 +48,11 @@ namespace OS.Boot
         public void* IdtExecBuffer;
         public uint IdtExecBufferSize;
 
+        // Pointer to the live UEFI System Table. Needed by Acpi.Init to
+        // walk EFI_CONFIGURATION_TABLE for the ACPI 2.0 RSDP. Set by
+        // UefiBootInfoBuilder; null only if firmware path isn't UEFI.
+        public EFI_SYSTEM_TABLE* SystemTable;
+
         public ulong MemoryMapAvailable;
         public ulong GraphicsAvailable;
         public MemoryMapInfo MemoryMap;

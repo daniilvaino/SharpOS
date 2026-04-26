@@ -1,6 +1,7 @@
 using OS.Boot;
 using OS.Kernel.Elf;
 using OS.Hal;
+using OS.Hal.Acpi;
 using OS.Hal.Idt;
 using OS.Kernel.Diagnostics;
 using OS.Kernel.Input;
@@ -64,12 +65,65 @@ namespace OS.Kernel
                 NativeAotProbe.Run();
                 InitializePager();
                 RunPagerValidation();
+                InitializeAcpi(bootInfo);
                 RunIdtPanicProbe();
                 RunExceptionThrowProbe();
                 RunElfValidation(bootInfo);
             }
 
             DemoApp.Run();
+        }
+
+        private static void InitializeAcpi(BootInfo bootInfo)
+        {
+            bool ok = Acpi.Init(bootInfo.SystemTable);
+            if (!ok)
+            {
+                Log.Write(LogLevel.Warn, "acpi init failed");
+                return;
+            }
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("acpi xsdt entries: ");
+            Console.WriteUInt((uint)Acpi.XsdtEntryCount);
+            Log.EndLine();
+
+            if (Madt.IsAvailable)
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("acpi madt: lapic=0x");
+                Console.WriteHex(Madt.LocalApicAddress, 8);
+                Console.Write(" cpus=");
+                Console.WriteUInt((uint)Madt.LocalApicCount);
+                Console.Write(" ioapics=");
+                Console.WriteUInt((uint)Madt.IoApicCount);
+                Log.EndLine();
+            }
+
+            if (Hpet.IsAvailable)
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("acpi hpet: base=0x");
+                Console.WriteHex(Hpet.Base, 8);
+                Log.EndLine();
+            }
+
+            if (Mcfg.IsAvailable)
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("acpi mcfg: entries=");
+                Console.WriteUInt((uint)Mcfg.EntryCount);
+                if (Mcfg.TryGetEntry(0, out ulong baseAddr, out ushort seg, out byte startBus, out byte endBus))
+                {
+                    Console.Write(" seg0: base=0x");
+                    Console.WriteHex(baseAddr, 8);
+                    Console.Write(" bus=");
+                    Console.WriteUInt(startBus);
+                    Console.Write("..");
+                    Console.WriteUInt(endBus);
+                }
+                Log.EndLine();
+            }
         }
 
         private static void RunIdtPanicProbe()

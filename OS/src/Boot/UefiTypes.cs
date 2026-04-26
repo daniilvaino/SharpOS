@@ -188,6 +188,19 @@ namespace OS.Boot
         public readonly EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL* StdErr;
         public readonly EFI_RUNTIME_SERVICES* RuntimeServices;
         public readonly EFI_BOOT_SERVICES* BootServices;
+        public readonly ulong NumberOfTableEntries;
+        public readonly EFI_CONFIGURATION_TABLE* ConfigurationTable;
+    }
+
+    // EFI Configuration Table entry. Array of these lives at
+    // EFI_SYSTEM_TABLE.ConfigurationTable, length = NumberOfTableEntries.
+    // VendorGuid identifies the table type (ACPI, SMBIOS, etc.) and
+    // VendorTable points at the actual data structure.
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe readonly struct EFI_CONFIGURATION_TABLE
+    {
+        public readonly EFI_GUID VendorGuid;
+        public readonly void* VendorTable;
     }
 
     [StructLayout(LayoutKind.Sequential)]
