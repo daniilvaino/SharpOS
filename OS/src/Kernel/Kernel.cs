@@ -8,6 +8,7 @@ using OS.Kernel.Input;
 using OS.Kernel.Memory;
 using OS.Kernel.Paging;
 using OS.TestApp;
+using HpetTimer = OS.Hal.Timer.Hpet;
 
 namespace OS.Kernel
 {
@@ -66,6 +67,7 @@ namespace OS.Kernel
                 InitializePager();
                 RunPagerValidation();
                 InitializeAcpi(bootInfo);
+                InitializeHpet();
                 RunIdtPanicProbe();
                 RunExceptionThrowProbe();
                 RunElfValidation(bootInfo);
@@ -124,6 +126,52 @@ namespace OS.Kernel
                 }
                 Log.EndLine();
             }
+        }
+
+        private static void InitializeHpet()
+        {
+            if (!HpetTimer.Init())
+            {
+                Log.Write(LogLevel.Warn, "hpet init failed");
+                return;
+            }
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("hpet: freq=");
+            Console.WriteULong(HpetTimer.FrequencyHz);
+            Console.Write(" Hz period=");
+            Console.WriteULong(HpetTimer.PeriodFemtoseconds);
+            Console.Write(" fs comparators=");
+            Console.WriteUInt((uint)HpetTimer.NumComparators);
+            Console.Write(" 64bit=");
+            Console.Write(HpetTimer.Is64BitCounter ? "yes" : "no");
+            Log.EndLine();
+
+            // Verify the counter actually increments. Read twice with a
+            // small busy-loop in between; second read must be greater.
+            ulong t0 = HpetTimer.ReadCounter();
+            for (int i = 0; i < 100_000; i++) { /* burn cycles */ }
+            ulong t1 = HpetTimer.ReadCounter();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("hpet counter delta: ");
+            Console.WriteULong(t1 - t0);
+            Console.Write(" ticks");
+            Log.EndLine();
+
+            // Stopwatch round-trip: measure ~1ms via spin then check
+            // ElapsedMilliseconds reports something in [0, 5] range.
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            ulong target = HpetTimer.ReadCounter() + HpetTimer.FrequencyHz / 1000;
+            while (HpetTimer.ReadCounter() < target) { /* busy */ }
+            sw.Stop();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("stopwatch ~1ms spin: elapsed_us=");
+            Console.WriteULong((ulong)sw.ElapsedMicroseconds);
+            Console.Write(" elapsed_ms=");
+            Console.WriteULong((ulong)sw.ElapsedMilliseconds);
+            Log.EndLine();
         }
 
         private static void RunIdtPanicProbe()
