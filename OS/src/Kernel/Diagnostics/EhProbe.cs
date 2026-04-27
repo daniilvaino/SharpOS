@@ -57,6 +57,24 @@ namespace OS.Kernel.Diagnostics
 
             if (Probes.EhFrameWalk)
                 ReportLevel("eh L7 frame walk", FrameWalk());
+
+            if (Probes.EhIngressThrow)
+            {
+                Log.Write(LogLevel.Info,
+                    "eh L8.ingress: triggering throw -> RhpThrowEx shellcode -> RhpTest_ThrowIngress (will halt)");
+                IngressThrow();   // never returns
+            }
+        }
+
+        // Step 5.1 ingress test: triggers `throw` so RhpThrowEx shellcode
+        // builds ExInfo and tail-calls RhpTest_ThrowIngress, which logs
+        // ExInfo invariants and halts. Verifies the asm thunk works
+        // before any managed dispatcher is in place.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void IngressThrow()
+        {
+            throw new System.InvalidOperationException("ingress-5.1");
         }
 
         // L4 — Phase 1 step 1 gate. Verifies that the full Exception

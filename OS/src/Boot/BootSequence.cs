@@ -121,6 +121,7 @@ namespace OS.Boot
                 InstallByRefAssignRefShellcode();
                 InstallPortIoShellcode();
                 InstallCaptureContextShellcode();
+                InstallThrowExShellcode();
             }
             if (bootInfo.JumpStubExecBuffer != null)
                 X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
@@ -265,6 +266,13 @@ namespace OS.Boot
             bool ok = OS.Boot.EH.CaptureContextPatcher.TryInstall();
             Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
                 ok ? "capture-context shellcode installed" : "capture-context shellcode install failed");
+        }
+
+        private static void InstallThrowExShellcode()
+        {
+            bool ok = OS.Boot.EH.ThrowExPatcher.TryInstall();
+            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
+                ok ? "throw-ex shellcode installed" : "throw-ex shellcode install failed");
         }
 
         private static void InitializePager()

@@ -32,15 +32,61 @@ namespace OS.Boot
     // but reachable through normal C# `throw` syntax.
     internal static class ExceptionEngine
     {
-        // Called by ILC for IL `throw <object>` instructions. The exception
-        // object lives in our managed heap; we walk its v-table to format
-        // a panic message, then halt.
-        [RuntimeExport("RhpThrowEx")]
-        public static void RhpThrowEx(object exception)
+        // RhpThrowEx moved to OS/src/Boot/EH/ThrowExStub.cs (Phase 1
+        // step 5.1). Body is patched by ThrowExPatcher with a 186-byte
+        // shellcode that builds PAL_LIMITED_CONTEXT + ExInfo on stack
+        // and tail-calls into managed RhpTest_ThrowIngress (this file).
+
+        // Phase 1 step 5.1 — managed seam where the throw shellcode
+        // lands after building ExInfo. Logs the snapshot's invariants
+        // (kind/passNumber/idxCurClause/IP/exception), confirms head
+        // chain, then halts. This is intentionally a halt — the full
+        // dispatch (DispatchEx + funclet calling) lands later in 5.6.
+        [RuntimeExport("RhpTest_ThrowIngress")]
+        [System.Runtime.InteropServices.UnmanagedCallersOnly(EntryPoint = "RhpTest_ThrowIngress")]
+        public static unsafe void RhpTest_ThrowIngress(byte* exceptionPtr, OS.Boot.EH.ExInfo* exInfo)
         {
-            Console.Write("\r\n*** UNHANDLED EXCEPTION ***\r\n");
+            // [UnmanagedCallersOnly] doesn't allow `object` parameter,
+            // so we accept the raw pointer (RCX from shellcode) and
+            // reinterpret the 8-byte slot as a managed reference.
+            object exception = null;
+            *(byte**)&exception = exceptionPtr;
+
+            Console.Write("\r\n*** RhpTest_ThrowIngress (5.1) ***\r\n");
+
+            Console.Write("  exception type: ");
             PrintExceptionInfo(exception);
-            Console.Write("*** halting ***\r\n");
+
+            Console.Write("  exInfo=0x");
+            Console.WriteHexRaw((ulong)(nuint)exInfo, 16);
+            Console.Write(" head=0x");
+            Console.WriteHexRaw((ulong)(long)OS.Boot.EH.ExInfoHead.s_head, 16);
+            Console.Write("\r\n");
+
+            Console.Write("  pass=");
+            Console.WriteUIntRaw(exInfo->PassNumber);
+            Console.Write(" kind=");
+            Console.WriteUIntRaw(exInfo->Kind);
+            Console.Write(" idxCurClause=0x");
+            Console.WriteHexRaw(exInfo->IdxCurClause, 8);
+            Console.Write("\r\n");
+
+            Console.Write("  prevExInfo=0x");
+            Console.WriteHexRaw((ulong)(nuint)exInfo->PrevExInfo, 16);
+            Console.Write(" exContext=0x");
+            Console.WriteHexRaw((ulong)(nuint)exInfo->ExContext, 16);
+            Console.Write("\r\n");
+
+            if (exInfo->ExContext != null)
+            {
+                Console.Write("  ctx.IP=0x");
+                Console.WriteHexRaw(exInfo->ExContext->IP, 16);
+                Console.Write(" ctx.Rsp=0x");
+                Console.WriteHexRaw(exInfo->ExContext->Rsp, 16);
+                Console.Write("\r\n");
+            }
+
+            Console.Write("*** halting (5.1 ingress probe) ***\r\n");
             while (true) { }
         }
 
