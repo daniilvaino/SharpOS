@@ -1,94 +1,129 @@
 # Boot order
 
-Текущая последовательность инициализации в `KernelMain.Start`. Порядок принципиален — каждый шаг зависит от готовности предыдущих, и нарушение порядка обычно даёт unresolved helpers / `#PF` / silent hang.
+Текущая структура kernel boot'а. Single-source-of-truth — `OS/src/Boot/BootSequence.cs`. Этот документ — high-level разбивка по фазам с зависимостями между подсистемами; за конкретный shape вызовов ходим в код.
 
-## Текущая последовательность
+## Фазы
 
 ```
-1.  Panic.Mode = Shutdown
-2.  Idt.Install(bootInfo)                  ← step 35: IDT + signal-dispatch
-3.  SystemBanner.Print
-4.  Memory map summary
-5.  PhysicalMemory.Init                    ← page allocator
-6.  KernelHeap.Init                        ← block allocator
-7.  Heap smoke test
-8.  X64PageTable.SetExecBuffer
-9.  GcStackSpill.TryInitialize             ← shellcode trampolines
-10. InstallInterfaceDispatchBridge
-11. InstallByRefAssignRefShellcode
-12. SetJumpStubBuffer
-13. RunGcHeapNoNewTest                     ← GcHeap.Init() inside
-14. GcStressTest.Run
-15. NativeAotProbe.Run                     ← lazy NativeAotModuleInit triggered
-                                              на первом shared-generic iface dispatch
-16. InitializePager                        ← x86_64 4-level page tables
-17. RunPagerValidation
-18. InitializeAcpi(bootInfo)               ← step 38: RSDP/XSDT/MADT/HPET/MCFG
-19. InitializeHpet                         ← step 39: counter + Stopwatch
-20. GcStaticsMaterializer.Materialize      ← step 41: walks GCStaticRegion,
-                                              materializes preinit'd refs
-21. CctorProbe.Run                         ← canonical static readonly T x = new T()
-22. RunIdtPanicProbe                       ← gated, manual flip
-23. RunExceptionThrowProbe                 ← gated, manual flip
-24. RunElfValidation                       ← FS init, ELF apps, launcher
-25. DemoApp.Run                            ← Fib + heap test
+Phase 0  Critical    panic mode + IDT (любой fault → читаемый PanicDump)
+Phase 1  Memory      PhysicalMemory.Init + KernelHeap.Init
+Phase 2  Runtime     exec stubs + GcHeap + NativeAotModuleInit + GC-statics
+Phase 3  Platform    Pager + ACPI + HPET + RTC
+Phase 4  Probes      smoke tests + diag (gated через Probes.*)
+Phase 5  Apps        ELF validation, launcher, DemoApp
 ```
 
-## Зависимости
+В коде каждая фаза имеет коммент-блок с явными `Pre:` / `Post:` условиями.
 
-### Hard prerequisites
+## Phase-by-phase
+
+### Phase 0 — Critical
+
+```
+Panic.Mode = Shutdown
+Idt.Install(bootInfo)                  ← step 35: 256 IDT entries
+SystemBanner.Print
+[gated] InputDiagnostics.Run           ← Probes.KeyboardInput
+```
+
+**Post:** любой kernel-side fault → читаемый PanicDump с RIP/CR2/registers.
+
+### Phase 1 — Memory
+
+```
+PhysicalMemory.Init                    ← page allocator из UEFI memory map
+PhysicalMemory.AllocPage × 3           ← sanity probe
+KernelHeap.Init                        ← block allocator поверх Physical
+[gated] KernelHeapSmokeTest.Run        ← Probes.KernelHeapSmoke
+```
+
+**Post:** `KernelHeap.Alloc/Free` работает. `NumberFormatting` может allocate (KernelHeap-backed string allocator).
+
+### Phase 2 — Runtime
+
+```
+X64PageTable.SetExecBuffer
+GcStackSpill.TryInitialize             ← shellcode trampoline (offset 64)
+InstallInterfaceDispatchBridge         ← shellcode (offset 128)
+InstallByRefAssignRefShellcode         ← patch own [RuntimeExport] body
+InstallPortIoShellcode                 ← step 42: patch PortIoStub.Inb/Outb
+SetJumpStubBuffer
+GcHeap.Init
+NativeAotModuleInit.TryInitialize      ← step 41: forced (вместо lazy)
+GcStaticsMaterializer.Materialize      ← step 41: canonical static readonly
+```
+
+**Post:** `new T()` / `new T[n]` / `new string(...)` работают. Shared-generic interface dispatch резолвит. Canonical `static readonly T x = new T()` возвращает реальные object refs. Port-I/O (`PortIo.In8/Out8`) работает.
+
+### Phase 3 — Platform
+
+```
+Pager.Init                             ← x86_64 4-level page tables
+PagingValidation.Run
+Acpi.Init                              ← step 38: RSDP/XSDT/MADT/HPET/MCFG
+HpetTimer.Init                         ← step 39: counter + Stopwatch
+[gated] DumpRtcSnapshot                ← step 42: CMOS wall-clock dump (Probes.RtcSnapshot)
+```
+
+**Post:** Pager готов (но CR3 пока firmware). ACPI tables разобраны. HPET counter крутится, `Stopwatch.StartNew/Elapsed*` работает. Wall-clock доступен через `Rtc.TryRead`.
+
+### Phase 4 — Probes
+
+```
+[gated] GcHeapSmokeTest.Run            ← Probes.GcHeapSmoke
+[gated] GcStaticsMaterializer.DumpMaterializedSummary  ← Probes.GcStaticsSummary
+[gated] GcStressTest.Run               ← Probes.GcStress
+[gated] NativeAotProbe.Run             ← Probes.NativeAotFeatures
+[gated] CctorProbe.Run                 ← Probes.Cctor
+[gated] IdtProbe.TriggerNullDeref      ← Probes.IdtPanic (never returns)
+[gated] ExceptionProbe.TriggerThrow    ← Probes.ExceptionThrow (never returns)
+```
+
+Все toggle'ы — `const bool` в `OS/src/Kernel/Diagnostics/Probes.cs`. Disabled probes elim'ятся ILC'ом.
+
+### Phase 5 — Apps
+
+```
+ElfValidation.Run                      ← FS init + walk \EFI\BOOT
+DemoApp.Run                            ← Fib + heap test
+```
+
+## Hard prerequisites
 
 | Что | Требует чего |
 |---|---|
-| Idt.Install | bootInfo.IdtExecBuffer (UEFI EfiLoaderCode) |
-| KernelHeap.Init | PhysicalMemory.Init |
-| GcStackSpill / shellcode patchers | bootInfo.ExecStubBuffer |
-| GcHeap.Init | KernelHeap |
-| NativeAotModuleInit (lazy) | RTR section access (any kernel MT pointer) |
-| GcStaticsMaterializer | NativeAotModuleInit (TypeManager) + GcHeap (AllocateRaw) |
+| Idt.Install | `bootInfo.IdtExecBuffer` (UEFI `EfiLoaderCode`) |
+| KernelHeap.Init | `PhysicalMemory.Init` |
+| GcStackSpill / patchers | `bootInfo.ExecStubBuffer` |
+| GcHeap.Init | KernelHeap (для backing allocations) |
+| NativeAotModuleInit | RTR section access (anchor MT pointer) |
+| GcStaticsMaterializer | NativeAotModuleInit + GcHeap |
 | Pager.Init | PhysicalMemory + KernelHeap |
-| Acpi.Init | bootInfo.SystemTable |
-| Hpet.Init | Acpi (HPET base address) |
+| Acpi.Init | `bootInfo.SystemTable` |
+| HpetTimer.Init | Acpi (HPET base address) |
+| Rtc.TryRead | PortIoPatcher.TryInstall (port I/O shellcode) |
 
-### Что использует что когда
+## Что использует что когда
 
-- **Console.Write строковых литералов** — frozen objects, работают с самого начала boot'а.
-- **Console.WriteUInt / NumberFormatting** — нужен `KernelHeap` (для allocate string'ов через FastAllocateString). Если зовётся раньше — фолбэчит на `*Raw` варианты (stackalloc only).
-- **`new SomeClass()` в managed коде** — нужен `GcHeap.Init()`. До этого ILC-emitted `RhpNewFast` зовёт нашу C# реализацию которая halt'ит если GcHeap не готов.
-- **`static readonly T x = new T()` через canonical pattern** — нужен `GcStaticsMaterializer.Materialize()`. До неё ILC's preinit'd descriptor cells содержат tagged tags, не реальные object refs — `__GetGCStaticBase_*` возвращает sentinel, любое чтение `x.field` → `#GP`.
-- **Shared-generic interface dispatch** — нужен `InstallInterfaceDispatchBridge` + `NativeAotModuleInit`. Без них halt.
-
-## Известные ограничения порядка
-
-### Materialization поздно
-
-Сейчас `GcStaticsMaterializer.Materialize()` стоит на шаге 20 — **после** ACPI/HPET. Это значит **canonical static-readonly-ref pattern недоступен в шагах 1-19**. Код там должен использовать `""` literal вместо `string.Empty` field, factory properties вместо lazy reference fields, и так далее.
-
-**План на step 42:** переместить materialization сразу после шага 13 (`GcHeap.Init`), force-инициализируя `NativeAotModuleInit` явно (вместо lazy). После этого canonical pattern доступен с шага 14 и далее → можно глобально мигрировать `""` → `string.Empty`, dropping factory properties etc.
-
-Зависимость: NativeAotModuleInit needs an "anchor MT" — любой `MethodTable*` из нашего бинаря для signature scan'а. Можно использовать `EETypePtr.EETypePtrOf<object>()` или подобный intrinsic, без ожидания первого interface dispatch'а.
-
-### IDT первым
-
-IDT install **должна** идти первой. До неё любой `#PF/#GP/#UD` (например, баг в KernelHeap.Init) даёт triple-fault → ребут OVMF → потеря контекста. После — все exceptions попадают в `PanicDump` с RIP/CR2/registers.
-
-### NativeAotModuleInit — сейчас lazy
-
-`NativeAotModuleInit` ищет ReadyToRunHeader в бинаре сканированием от anchor MT. Сейчас инициализируется при первом `RhpInitialDynamicInterfaceDispatch` call'е (то есть в `NativeAotProbe.Run` в shared-generic iface call probe). Это работает потому что materialization сейчас стоит ещё позже.
-
-После step 42 переместим NativeAotModuleInit init в early boot (сразу после KernelHeap.Init), чтобы materialization могла произойти до probes.
+- **`Console.Write` строковых литералов** — frozen objects, работают с самого начала boot'а.
+- **`Console.WriteUInt`** — нужен KernelHeap (для FastAllocateString). До этого фолбэчит на `*Raw` варианты (stackalloc only).
+- **`new SomeClass()`** — нужен `GcHeap.Init()`. До этого `RhpNewFast` halt'ит.
+- **`static readonly T x = new T()`** — нужен `GcStaticsMaterializer.Materialize()`. После Phase 2 доступно везде.
+- **Shared-generic interface dispatch** — нужен `InstallInterfaceDispatchBridge` + `NativeAotModuleInit`. После Phase 2.
+- **Port I/O (RTC, PIC, future drivers)** — нужен `PortIoPatcher.TryInstall`. После Phase 2.
 
 ## Изменение порядка
 
 При любом изменении порядка boot'а:
 
-1. **Обновить этот файл.** Серьёзно — это primary source of truth.
+1. **Обновить этот файл.** Primary source of truth для phase boundaries.
 2. **Прокачать через QEMU** — clean boot должен показать все probe'ы зелёными + launcher работает.
-3. **Проверить что нет stale-инициализаций**: code path X использует Y? Y готов когда X запускается?
-4. Особое внимание: если переносим что-то "раньше" — оно может пытаться использовать ещё-не-готовые подсистемы.
+3. Проверить что нет stale-инициализаций: code path X использует Y? Y готов когда X запускается?
+4. Особое внимание: если переносим что-то «раньше» — оно может пытаться использовать ещё-не-готовые подсистемы.
 
 ## Будущие фазы (plan.md)
 
-- **Phase 3 scheduler** — добавит APIC timer setup в boot (после Acpi). Контекст-switch infrastructure.
-- **Phase 4 ExitBootServices** — boot pipeline разделится на pre-EBS (с UEFI services) и post-EBS (со своими драйверами). Оба порядка надо документировать.
-- **Phase 6 CoreCLR fork** — добавит инициализацию hosted-tier runtime после kernel-tier ready. Скорее всего как отдельная фаза в конце boot'а.
+- **Phase 1 (продолжение)** — managed try/catch/finally (`System.Exception`, personality function, stack unwinding). Самый долгий открытый пункт.
+- **Phase 3 scheduler** — добавит APIC timer + context-switch в boot (после Acpi).
+- **Phase 4 ExitBootServices** — boot pipeline разделится на pre-EBS / post-EBS. Patcher'ам потребуется alias-map путь после EBS (W^X на real HW).
+- **Phase 6 CoreCLR fork** — добавит инициализацию hosted-tier runtime отдельной фазой в конце boot'а.

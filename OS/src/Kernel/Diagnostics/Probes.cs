@@ -21,6 +21,9 @@ namespace OS.Kernel.Diagnostics
         // Phase 2 diagnostics
         public const bool GcStaticsSummary = true;
 
+        // Phase 3
+        public const bool RtcSnapshot = true;        // dump CMOS wall-clock
+
         // Phase 4
         public const bool GcHeapSmoke = true;
         public const bool GcStress = true;

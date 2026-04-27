@@ -159,7 +159,17 @@ Recommendation: добавить one-shot diagnostic dump первого materia
 ... ELF apps run, launcher reaches LAUNCHER prompt ...
 ```
 
-Phase 1 целиком закрыт: managed exception handling, ACPI, HPET/Stopwatch, ClassConstructorRunner, GC statics materialization, canonical `static readonly T x = new T()`. Boot sequence в одном файле, smoke-тесты в `Diagnostics/`, probes управляются compile-time флагами.
+Step 41 закрыл inside-Phase-1 рефакторинг: boot sequence в одном файле, smoke-тесты в `Diagnostics/`, probes управляются compile-time флагами, materialization на правильном пути (GcHeap, не KernelHeap workaround). **Phase 1 как таковая ещё не закрыта** — её критерий готовности (try/catch ловит exception + RTC) требует двух дополнительных шагов:
+
+1. **Managed try/catch/finally** (самый дорогой пункт фазы по plan.md, "2-6 месяцев"). Step 37 закрыл только `throw → readable panic`, без catch.
+2. **RTC через CMOS** для wall-clock — несколько часов работы.
+
+Закрытое в Phase 1:
+- ✅ ClassConstructorRunner (step 40)
+- ✅ ACPI parsing (step 38)
+- ✅ HPET/Stopwatch (step 39)
+- ✅ `throw → readable panic` (step 37)
+- ✅ Canonical `static readonly T x = new T()` (steps 40-41)
 
 ## Что отложено
 
@@ -169,4 +179,9 @@ Phase 1 целиком закрыт: managed exception handling, ACPI, HPET/Stop
 
 ## Что дальше
 
-Phase 1 закрыт. Дальше — Phase 2 plan'а: PAL design + de-risk spike. См. `plan.md`.
+Phase 1 не закрыт. Открытые пункты:
+
+1. **Step 42 — RTC через CMOS** (fast-forward, ~часы): port-I/O shellcode infrastructure (`PortIoStub`/`PortIoPatcher`) + `OS.Hal.Rtc` reading CMOS registers 0x00..0x09 + 0x32 (century) с UIP wait + BCD/binary handling.
+2. **Step 43+ — managed try/catch/finally**: основной пункт. Personality function для NativeAOT/Itanium ABI, stack unwinding через `.eh_frame`/`.pdata`, `System.Exception` базовый класс с `Message`/`StackTrace`/`InnerException`. Plan.md помечает 2-6 месяцев; готовы к серьёзному заходу с двумя мудрецами.
+
+Phase 2 (PAL design + spike) начинается **только** после try/catch.

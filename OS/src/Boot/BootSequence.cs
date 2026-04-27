@@ -119,6 +119,7 @@ namespace OS.Boot
 
                 InstallInterfaceDispatchBridge(bootInfo);
                 InstallByRefAssignRefShellcode();
+                InstallPortIoShellcode();
             }
             if (bootInfo.JumpStubExecBuffer != null)
                 X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
@@ -154,6 +155,9 @@ namespace OS.Boot
             RunPagerValidation();
             InitializeAcpi(bootInfo);
             InitializeHpet();
+
+            if (Probes.RtcSnapshot)
+                DumpRtcSnapshot();
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -235,6 +239,13 @@ namespace OS.Boot
             bool ok = ByRefAssignRefPatcher.TryInstall();
             Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
                 ok ? "byref-assign shellcode installed" : "byref-assign shellcode install failed");
+        }
+
+        private static void InstallPortIoShellcode()
+        {
+            bool ok = PortIoPatcher.TryInstall();
+            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
+                ok ? "port-io shellcode installed" : "port-io shellcode install failed");
         }
 
         private static void InitializePager()
@@ -363,6 +374,40 @@ namespace OS.Boot
         // ─────────────────────────────────────────────────────────────────
         // Diagnostic output helpers.
         // ─────────────────────────────────────────────────────────────────
+
+        private static void DumpRtcSnapshot()
+        {
+            if (!Rtc.TryRead(out Rtc.Snapshot snap))
+            {
+                Log.Write(LogLevel.Warn, "rtc read failed");
+                return;
+            }
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("rtc: ");
+            Console.WriteUInt(snap.Year);
+            Console.Write("-");
+            WriteTwoDigit(snap.Month);
+            Console.Write("-");
+            WriteTwoDigit(snap.Day);
+            Console.Write(" ");
+            WriteTwoDigit(snap.Hour);
+            Console.Write(":");
+            WriteTwoDigit(snap.Minute);
+            Console.Write(":");
+            WriteTwoDigit(snap.Second);
+            Console.Write(" UTC dow=");
+            Console.WriteUInt(snap.Weekday);
+            Console.Write(" centuryReg=");
+            Console.Write(snap.CenturyValid ? "yes" : "no");
+            Log.EndLine();
+        }
+
+        private static void WriteTwoDigit(byte v)
+        {
+            if (v < 10) Console.Write("0");
+            Console.WriteUInt(v);
+        }
 
         private static void PrintMemorySummary(BootInfo bootInfo)
         {
