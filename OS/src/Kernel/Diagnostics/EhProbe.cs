@@ -51,6 +51,9 @@ namespace OS.Kernel.Diagnostics
 
             if (Probes.EhRootWalk)
                 ReportLevel("eh L5 .pdata + root walk", RootWalk());
+
+            if (Probes.EhDecode)
+                ReportLevel("eh L6 ehInfo varint decode", EhDecode());
         }
 
         // L4 — Phase 1 step 1 gate. Verifies that the full Exception
@@ -207,6 +210,99 @@ namespace OS.Kernel.Diagnostics
             Log.EndLine();
 
             return score;
+        }
+
+        // L6 — Phase 1 step 3 gate. Three test methods, each carrying
+        // exactly one EH clause of a different kind. Sum across all
+        // three: 100*filterCount + 10*finallyCount + typedCount = 111.
+        //
+        // Note: ILC encodes IL `finally` as kind=Fault in the EH info
+        // table (no separate finally kind). Step 5+ dispatcher invokes
+        // them on every unwind through their try region; normal exit
+        // paths inline the body. So `finallyCount` here counts Fault.
+        //
+        // Methods are NoInlining + call into opaque helpers so ILC
+        // can't prove the try body is throw-free and elide the EH info.
+        private static int EhDecode()
+        {
+            if (!CoffRuntimeFunctionTable.IsInitialized) return -1;
+
+            int typedCount = 0;
+            int finallyCount = 0;
+            int filterCount = 0;
+
+            delegate*<int> ptrA = &MethodA_TryFinally;
+            delegate*<int> ptrB = &MethodB_TryCatch;
+            delegate*<int> ptrC = &MethodC_TryCatchWhen;
+
+            CountClauses((byte*)ptrA, ref typedCount, ref finallyCount, ref filterCount);
+            CountClauses((byte*)ptrB, ref typedCount, ref finallyCount, ref filterCount);
+            CountClauses((byte*)ptrC, ref typedCount, ref finallyCount, ref filterCount);
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("  l6-diag: typed=");
+            Console.WriteUIntRaw((uint)typedCount);
+            Console.Write(" finally=");
+            Console.WriteUIntRaw((uint)finallyCount);
+            Console.Write(" filter=");
+            Console.WriteUIntRaw((uint)filterCount);
+            Log.EndLine();
+
+            return 100 * filterCount + 10 * finallyCount + typedCount;
+        }
+
+        private static void CountClauses(byte* methodIp,
+            ref int typed, ref int finally_, ref int filter)
+        {
+            if (!CoffEhDecoder.EhEnumInit(methodIp, out CoffEhDecoder.EHEnum state, out byte* _))
+                return;
+
+            while (CoffEhDecoder.EhEnumNext(ref state, out CoffEhDecoder.RhEHClause clause))
+            {
+                switch (clause.Kind)
+                {
+                    case CoffEhDecoder.ClauseKind.Typed:  typed++; break;
+                    case CoffEhDecoder.ClauseKind.Fault:  finally_++; break;
+                    case CoffEhDecoder.ClauseKind.Filter: filter++; break;
+                }
+            }
+        }
+
+        // Opaque helper — ILC can't prove this can't throw, so EH info
+        // for callers' try blocks is preserved.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int Opaque(int v) => v + 1;
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int MethodA_TryFinally()
+        {
+            int x = 0;
+            int y = 0;
+            try { x = Opaque(5); }
+            finally { y = Opaque(10); }
+            return x + y;
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int MethodB_TryCatch()
+        {
+            int x = 0;
+            try { x = Opaque(7); }
+            catch (System.InvalidOperationException) { x = -1; }
+            return x;
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int MethodC_TryCatchWhen()
+        {
+            int x = 0;
+            try { x = Opaque(11); }
+            catch (System.Exception ex) when (ex.Message != null) { x = -1; }
+            return x;
         }
 
         private static void ReportLevel(string label, int value)

@@ -367,6 +367,7 @@ namespace System
 
         public enum MethodImplOptions
         {
+            NoInlining = 0x0008,
             AggressiveInlining = 0x0100,
             InternalCall = 0x1000,
         }

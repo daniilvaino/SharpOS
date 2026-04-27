@@ -168,6 +168,67 @@ namespace SharpOS.Std.NoRuntime
         //
         // Parameter order matches the BCL export: pTargetType first, obj
         // second. Returns obj on match, null otherwise.
+        // Class-cast type check. ILC emits a call to this for `obj is Class`,
+        // for catch-clause type matching (`catch (InvalidOperationException)`),
+        // and for `(Class)obj` style explicit casts via CheckCastClass.
+        //
+        // Algorithm: identity check first (fast path for exact-type), then
+        // walk the class hierarchy via RawBaseType. We skip the BCL's
+        // generic-variance / cloned-type / array-to-object special cases —
+        // they don't apply to our exception hierarchy or anything in our
+        // current kernel-tier code. Will need to extend when hosted-tier
+        // (Phase 6+) ships managed apps with variance.
+        [RuntimeExport("RhTypeCast_IsInstanceOfClass")]
+        public static unsafe object RhTypeCast_IsInstanceOfClass(GcMethodTable* pTargetType, object obj)
+        {
+            if (obj == null) return null;
+
+            nint objAddr = *(nint*)&obj;
+            GcMethodTable* pObjType = *(GcMethodTable**)objAddr;
+
+            if (pObjType == pTargetType)
+                return obj;
+
+            // Walk up the class hierarchy.
+            const int MaxDepth = 32;
+            for (int i = 0; i < MaxDepth; i++)
+            {
+                pObjType = pObjType->GetBaseType();
+                if (pObjType == null)
+                    return null;
+                if (pObjType == pTargetType)
+                    return obj;
+            }
+            return null;
+        }
+
+        // Boolean variant of IsInstanceOfClass specifically for catch-clause
+        // matching. ILC's EH dispatcher (DispatchEx -> ShouldTypedClauseCatchThisException)
+        // calls this when it needs `bool` rather than `object`. Same algorithm
+        // as IsInstanceOfClass minus the object return.
+        [RuntimeExport("RhTypeCast_IsInstanceOfException")]
+        public static unsafe bool RhTypeCast_IsInstanceOfException(GcMethodTable* pTargetType, object obj)
+        {
+            if (obj == null) return false;
+
+            nint objAddr = *(nint*)&obj;
+            GcMethodTable* pObjType = *(GcMethodTable**)objAddr;
+
+            if (pObjType == pTargetType)
+                return true;
+
+            const int MaxDepth = 32;
+            for (int i = 0; i < MaxDepth; i++)
+            {
+                pObjType = pObjType->GetBaseType();
+                if (pObjType == null)
+                    return false;
+                if (pObjType == pTargetType)
+                    return true;
+            }
+            return false;
+        }
+
         [RuntimeExport("RhTypeCast_IsInstanceOfInterface")]
         public static unsafe object RhTypeCast_IsInstanceOfInterface(GcMethodTable* pTargetType, object obj)
         {

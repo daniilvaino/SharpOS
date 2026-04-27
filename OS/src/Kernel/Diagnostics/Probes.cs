@@ -39,6 +39,7 @@ namespace OS.Kernel.Diagnostics
         public const bool EhTryCatchWithThrow = false;   // ← set true to verify unwinder
         public const bool EhExceptionShape = true;       // step 1 gate: full Exception + 6 derived types
         public const bool EhRootWalk = true;              // step 2 gate: .pdata lookup + funclet->ROOT walk
+        public const bool EhDecode = true;                // step 3 gate: ehInfoRVA + varint clause decoder
 
         public const bool IdtPanic = false;          // never returns when on
         public const bool ExceptionThrow = false;    // never returns when on (legacy single-throw probe)
