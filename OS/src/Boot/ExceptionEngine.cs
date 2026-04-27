@@ -86,7 +86,51 @@ namespace OS.Boot
                 Console.Write("\r\n");
             }
 
-            Console.Write("*** halting (5.1 ingress probe) ***\r\n");
+            // Phase 1 step 5.2 — initialise the embedded StackFrameIterator
+            // from the captured PAL_LIMITED_CONTEXT and log its
+            // invariants. Stock NativeAOT does this from DispatchEx
+            // (managed) before walking — we do it inline here for the
+            // intermediate ingress probe.
+            if (exInfo->ExContext != null)
+            {
+                Console.Write("\r\n*** RhpTest_SfiInit (5.2) ***\r\n");
+
+                OS.Boot.EH.StackFrameIteratorOps.Init(
+                    &exInfo->FrameIter, exInfo->ExContext);
+
+                Console.Write("  sfi.controlPC=0x");
+                Console.WriteHexRaw(exInfo->FrameIter.ControlPC, 16);
+                Console.Write(" sfi.originalPC=0x");
+                Console.WriteHexRaw(exInfo->FrameIter.OriginalControlPC, 16);
+                Console.Write("\r\n");
+
+                Console.Write("  sfi.framePointer=0x");
+                Console.WriteHexRaw(exInfo->FrameIter.FramePointer, 16);
+                Console.Write(" sfi.SP=0x");
+                Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
+                Console.Write("\r\n");
+
+                Console.Write("  regSet: pRbx=0x");
+                Console.WriteHexRaw((ulong)(nuint)exInfo->FrameIter.RegDisplay.pRbx, 16);
+                Console.Write(" pRbp=0x");
+                Console.WriteHexRaw((ulong)(nuint)exInfo->FrameIter.RegDisplay.pRbp, 16);
+                Console.Write(" pR12=0x");
+                Console.WriteHexRaw((ulong)(nuint)exInfo->FrameIter.RegDisplay.pR12, 16);
+                Console.Write("\r\n");
+
+                // Sanity: register pointers should point INTO the PAL
+                // struct on stack (callee-owned). PAL begins at
+                // exContext, ends at exContext + sizeof(PAL) = +0x100.
+                ulong palStart = (ulong)(nuint)exInfo->ExContext;
+                ulong palEnd = palStart + (ulong)OS.Boot.EH.PalLimitedContext.Size;
+                ulong pRbxAddr = (ulong)(nuint)exInfo->FrameIter.RegDisplay.pRbx;
+                bool inPal = pRbxAddr >= palStart && pRbxAddr < palEnd;
+                Console.Write("  pRbx in PAL? ");
+                Console.Write(inPal ? "yes" : "no");
+                Console.Write("\r\n");
+            }
+
+            Console.Write("*** halting (5.2 sfi-init probe) ***\r\n");
             while (true) { }
         }
 

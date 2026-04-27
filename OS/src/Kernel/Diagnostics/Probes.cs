@@ -41,7 +41,7 @@ namespace OS.Kernel.Diagnostics
         public const bool EhRootWalk = true;              // step 2 gate: .pdata lookup + funclet->ROOT walk
         public const bool EhDecode = true;                // step 3 gate: ehInfoRVA + varint clause decoder
         public const bool EhFrameWalk = true;             // step 4 gate: PAL/RegDisplay/SFI + 4-opcode unwind
-        public const bool EhIngressThrow = false;         // step 5.1 gate: RhpThrowEx shellcode -> ingress halt-stub (HALTS! verified once, default off)
+        public const bool EhIngressThrow = false;         // step 5.2 verified: RhpThrowEx -> SFI init OK (default off, halts when on)
 
         public const bool IdtPanic = false;          // never returns when on
         public const bool ExceptionThrow = false;    // never returns when on (legacy single-throw probe)
