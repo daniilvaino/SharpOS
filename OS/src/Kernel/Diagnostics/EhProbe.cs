@@ -58,6 +58,9 @@ namespace OS.Kernel.Diagnostics
             if (Probes.EhFrameWalk)
                 ReportLevel("eh L7 frame walk", FrameWalk());
 
+            if (Probes.EhEnumLive)
+                ReportLevel("eh 5.3 enum-live", EnumLiveDirect());
+
             if (Probes.EhIngressThrow)
             {
                 Log.Write(LogLevel.Info,
@@ -66,13 +69,131 @@ namespace OS.Kernel.Diagnostics
             }
         }
 
-        // Step 5.1 ingress test: triggers `throw` so RhpThrowEx shellcode
+        // Step 5.3 probe A — Direct enumeration without throw.
+        // Captures live context from INSIDE a try region of a known
+        // method, inits SFI, walks EH enumerator, logs each clause.
+        // Sanity: codeOffset (= ControlPC - methodStart) must fall within
+        // the typed clause's [tryStart, tryEnd) range.
+        //
+        // Score bits:
+        //   1 = SFI init succeeded
+        //   2 = EhEnumInit succeeded (method has HAS_EHINFO trailer)
+        //   4 = at least 1 clause enumerated
+        //   8 = ControlPC's codeOffset falls within a clause's try range
+        // Expected: 15 (all 4 bits).
+        private static int EnumLiveDirect()
+        {
+            if (!CoffRuntimeFunctionTable.IsInitialized) return -1;
+
+            PalLimitedContext ctx = default;
+            // Run through method that captures context FROM INSIDE try block.
+            EnumLive_TryHost(&ctx);
+
+            int score = 0;
+
+            // Init SFI from captured context.
+            StackFrameIterator iter = default;
+            StackFrameIteratorOps.Init(&iter, &ctx);
+            score |= 1;
+
+            // Enumerate clauses for the frame containing ControlPC.
+            byte* methodStart;
+            CoffEhDecoder.EHEnum enumState;
+            if (!CoffEhDecoder.EhEnumInit((byte*)iter.ControlPC, out enumState, out methodStart))
+            {
+                Log.Write(LogLevel.Warn, "  5.3-A: EhEnumInit returned false (no EH info on this frame)");
+                return score;
+            }
+            score |= 2;
+
+            uint codeOffset = (uint)((nint)iter.ControlPC - (nint)methodStart);
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("  5.3-A diag: methodStart=0x");
+            Console.WriteHexRaw((ulong)(nuint)methodStart, 16);
+            Console.Write(" controlPC=0x");
+            Console.WriteHexRaw(iter.ControlPC, 16);
+            Console.Write(" codeOffset=0x");
+            Console.WriteHexRaw(codeOffset, 8);
+            Console.Write(" nClauses=");
+            Console.WriteUIntRaw(enumState.TotalClauses);
+            Log.EndLine();
+
+            int clauseIdx = 0;
+            while (CoffEhDecoder.EhEnumNext(ref enumState, out CoffEhDecoder.RhEHClause clause))
+            {
+                score |= 4;
+
+                Log.Begin(LogLevel.Info);
+                Console.Write("    clause[");
+                Console.WriteUIntRaw((uint)clauseIdx);
+                Console.Write("] kind=");
+                Console.WriteUIntRaw((uint)clause.Kind);
+                Console.Write(" try=[0x");
+                Console.WriteHexRaw(clause.TryStartOffset, 8);
+                Console.Write("..0x");
+                Console.WriteHexRaw(clause.TryEndOffset, 8);
+                Console.Write(") handler=0x");
+                Console.WriteHexRaw((ulong)(nuint)clause.HandlerAddress, 16);
+                Log.EndLine();
+
+                if (codeOffset >= clause.TryStartOffset && codeOffset < clause.TryEndOffset)
+                    score |= 8;
+
+                clauseIdx++;
+            }
+
+            return score;
+        }
+
+        // Test method that captures context FROM INSIDE its try region.
+        // ControlPC after capture returns will be the instruction after
+        // the CALL — which lies inside the try { ... } block.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int EnumLive_TryHost(PalLimitedContext* ctx)
+        {
+            int x = 0;
+            try
+            {
+                delegate* unmanaged<byte*, void> capture =
+                    (delegate* unmanaged<byte*, void>)CaptureContextStub.GetMethodAddress();
+                capture((byte*)ctx);
+                x = Opaque(7);
+            }
+            catch (System.InvalidOperationException)
+            {
+                x = -1;
+            }
+            return x;
+        }
+
+        // Step 5.1+ ingress test: triggers `throw` so RhpThrowEx shellcode
         // builds ExInfo and tail-calls RhpTest_ThrowIngress, which logs
         // ExInfo invariants and halts. Verifies the asm thunk works
         // before any managed dispatcher is in place.
+        //
+        // Wrapped in outer try/catch so the caller frame carries EH info
+        // (1 typed clause). Step 5.3 probe B walks up from throw site and
+        // finds these clauses on this frame.
         [System.Runtime.CompilerServices.MethodImpl(
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static void IngressThrow()
+        {
+            try
+            {
+                IngressThrow_Inner();
+            }
+            catch (System.InvalidOperationException)
+            {
+                // Unreachable until step 5.6 wires the dispatcher. Until
+                // then RhpTest_ThrowIngress halts before reaching here.
+            }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void IngressThrow_Inner()
         {
             throw new System.InvalidOperationException("ingress-5.1");
         }

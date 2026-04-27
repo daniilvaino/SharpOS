@@ -128,9 +128,72 @@ namespace OS.Boot
                 Console.Write("  pRbx in PAL? ");
                 Console.Write(inPal ? "yes" : "no");
                 Console.Write("\r\n");
+
+                // Phase 1 step 5.3 probe B — walk up via SfiNext until
+                // we find a frame that carries EH info (HAS_EHINFO trailer
+                // flag). Stock DispatchEx does this same walk searching
+                // for a typed clause that matches. Here we just enumerate
+                // and log.
+                Console.Write("\r\n*** RhpTest_EhEnumChain (5.3 probe B) ***\r\n");
+
+                int walked = 0;
+                bool foundClauses = false;
+                while (walked < 16)
+                {
+                    if (OS.Boot.EH.CoffEhDecoder.EhEnumInit(
+                        (byte*)exInfo->FrameIter.ControlPC,
+                        out OS.Boot.EH.CoffEhDecoder.EHEnum eh,
+                        out byte* methodStart))
+                    {
+                        uint codeOffset = (uint)((nint)exInfo->FrameIter.ControlPC - (nint)methodStart);
+
+                        Console.Write("  found EH at frame walked=");
+                        Console.WriteUIntRaw((uint)walked);
+                        Console.Write(" methodStart=0x");
+                        Console.WriteHexRaw((ulong)(nuint)methodStart, 16);
+                        Console.Write(" codeOffset=0x");
+                        Console.WriteHexRaw(codeOffset, 8);
+                        Console.Write(" nClauses=");
+                        Console.WriteUIntRaw(eh.TotalClauses);
+                        Console.Write("\r\n");
+
+                        int idx = 0;
+                        while (OS.Boot.EH.CoffEhDecoder.EhEnumNext(ref eh,
+                            out OS.Boot.EH.CoffEhDecoder.RhEHClause clause))
+                        {
+                            Console.Write("    clause[");
+                            Console.WriteUIntRaw((uint)idx);
+                            Console.Write("] kind=");
+                            Console.WriteUIntRaw((uint)clause.Kind);
+                            Console.Write(" try=[0x");
+                            Console.WriteHexRaw(clause.TryStartOffset, 8);
+                            Console.Write("..0x");
+                            Console.WriteHexRaw(clause.TryEndOffset, 8);
+                            Console.Write(") handler=0x");
+                            Console.WriteHexRaw((ulong)(nuint)clause.HandlerAddress, 16);
+                            Console.Write("\r\n");
+
+                            idx++;
+                        }
+                        foundClauses = true;
+                        break;
+                    }
+
+                    if (!OS.Boot.EH.StackFrameIteratorOps.Next(&exInfo->FrameIter))
+                    {
+                        Console.Write("  SfiNext exhausted at walked=");
+                        Console.WriteUIntRaw((uint)walked);
+                        Console.Write("\r\n");
+                        break;
+                    }
+                    walked++;
+                }
+
+                if (!foundClauses)
+                    Console.Write("  no EH info found within 16 frames\r\n");
             }
 
-            Console.Write("*** halting (5.2 sfi-init probe) ***\r\n");
+            Console.Write("*** halting (5.3 probe B) ***\r\n");
             while (true) { }
         }
 
