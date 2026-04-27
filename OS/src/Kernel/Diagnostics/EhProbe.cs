@@ -44,6 +44,34 @@ namespace OS.Kernel.Diagnostics
                 int v = TryCatchWithThrow(3);
                 ReportLevel("eh L3 try/catch with throw", v);
             }
+
+            if (Probes.EhExceptionShape)
+                ReportLevel("eh L4 exception shape", ExceptionShape());
+        }
+
+        // L4 — Phase 1 step 1 gate. Verifies that the full Exception
+        // contract (message round-trip via virtual property + 6 missing
+        // derived types via runtime type identity) is in place. No throw
+        // happens, so this never depends on the unwinder. A bitmask is
+        // returned so a partial pass (e.g. some derived types missing)
+        // shows exactly which.
+        //
+        // Expected: 127 (all 7 bits set).
+        private static int ExceptionShape()
+        {
+            int mask = 0;
+
+            System.Exception e1 = new System.InvalidOperationException("m");
+            if (e1.Message == "m") mask |= 1;
+
+            if (new System.NullReferenceException() is System.NullReferenceException) mask |= 2;
+            if (new System.OverflowException() is System.OverflowException) mask |= 4;
+            if (new System.DivideByZeroException() is System.DivideByZeroException) mask |= 8;
+            if (new System.InvalidCastException() is System.InvalidCastException) mask |= 16;
+            if (new System.ArrayTypeMismatchException() is System.ArrayTypeMismatchException) mask |= 32;
+            if (new System.NotImplementedException() is System.NotImplementedException) mask |= 64;
+
+            return mask;
         }
 
         // x is non-const at compile time (depends on caller arg) so ILC

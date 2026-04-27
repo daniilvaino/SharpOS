@@ -146,6 +146,9 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\StringTransforms.cs" Link="src\Std\StringTransforms.cs" />
     <Compile Include="..\std\no-runtime\shared\NumberFormatting.cs" Link="src\Std\NumberFormatting.cs" />
     <Compile Include="..\std\no-runtime\shared\Threading.cs" Link="src\Std\Threading.cs" />
+    <Compile Include="..\std\no-runtime\shared\Exception.cs" Link="src\Std\Exception.cs" />
+    <Compile Include="..\std\no-runtime\shared\Exceptions.Derived.cs" Link="src\Std\Exceptions.Derived.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\ExceptionIDs.cs" Link="src\Std\Runtime\ExceptionIDs.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\RuntimeAttributes.cs" Link="src\Std\Runtime\RuntimeAttributes.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\CodeAnalysisAttributes.cs" Link="src\Std\Runtime\CodeAnalysisAttributes.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\ByReference.cs" Link="src\Std\Runtime\ByReference.cs" />

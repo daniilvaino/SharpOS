@@ -74,12 +74,43 @@ namespace OS.Boot
         // are no-ops in our minimal model; FailFast is the terminal halt.
 
         [RuntimeExport("GetRuntimeException")]
-        public static Exception GetRuntimeException(int id)
+        public static Exception GetRuntimeException(System.Runtime.ExceptionIDs id)
         {
-            // BCL maps numeric IDs to specific exception types. We don't
-            // have the full ID enum wired through ILC's runtime imports,
-            // so just return a generic Exception. Caller will print it.
-            return new Exception("runtime exception (id=" + id + ")");
+            // Classlib-provided "translate runtime fault to managed
+            // exception object" helper. Runtime passes one of the BCL's
+            // ExceptionIDs values; we instantiate the concrete type it
+            // expects. This is what makes `int* p = null; *p = 0;` →
+            // NullReferenceException (rather than generic Exception).
+            //
+            // Mirror of Test.CoreLib's RuntimeExceptionHelpers.cs. The
+            // wrap-in-try/catch pattern (so this never leaks an exception
+            // back into the dispatcher) will matter once the unwinder
+            // lands; for step 1 the throws here just halt.
+            switch (id)
+            {
+                case System.Runtime.ExceptionIDs.OutOfMemory:
+                    return new OutOfMemoryException();
+                case System.Runtime.ExceptionIDs.Arithmetic:
+                    return new ArithmeticException();
+                case System.Runtime.ExceptionIDs.ArrayTypeMismatch:
+                    return new ArrayTypeMismatchException();
+                case System.Runtime.ExceptionIDs.DivideByZero:
+                    return new DivideByZeroException();
+                case System.Runtime.ExceptionIDs.IndexOutOfRange:
+                    return new IndexOutOfRangeException();
+                case System.Runtime.ExceptionIDs.InvalidCast:
+                    return new InvalidCastException();
+                case System.Runtime.ExceptionIDs.Overflow:
+                    return new OverflowException();
+                case System.Runtime.ExceptionIDs.NullReference:
+                    return new NullReferenceException();
+                case System.Runtime.ExceptionIDs.DataMisaligned:
+                    // No DataMisalignedException type yet; PNS is the
+                    // canonical Test.CoreLib placeholder.
+                    return new PlatformNotSupportedException();
+                default:
+                    return new Exception("runtime exception (unknown id)");
+            }
         }
 
         [RuntimeExport("FailFast")]
