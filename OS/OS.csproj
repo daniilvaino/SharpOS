@@ -16,6 +16,8 @@
     <LinkerSubsystem>EFI_APPLICATION</LinkerSubsystem>
 
     <PublishAot>true</PublishAot>
+    <!-- IlcGenerateMapFile=true was used during step 40 cctor research.
+         Re-enable temporarily if investigating ILC node emission. -->
   </PropertyGroup>
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <LinkerArg Include="libcmt.lib" />
@@ -99,6 +101,19 @@ detach vdisk
     </ItemGroup>
   </Target>
 
+  <!-- Step 40 (Phase 1b) tried dropping the resilient flag here to force
+       ILC to pick up our managed ClassConstructorRunner. Result: ILC
+       still routed cctor checks through internal fallback stubs that
+       return sentinel pointers (CR2=0xFFFFF000... pattern). Our managed
+       runner was compiled into OS.dll but never invoked. The resilient
+       flag is therefore not what gates the fallback; the gate is deeper
+       in ILC's symbol resolution and would require cloning ILC sources
+       to bypass. See done/step040.md for the full investigation.
+
+       Reverting to default behavior. ClassConstructorRunner port remains
+       in std/no-runtime/shared/Runtime/ClassConstructorRunner.cs as
+       future scaffolding, but is currently unreachable. -->
+
   <!-- Exclude NativeAOT's Runtime.WorkstationGC.lib from the link. We provide
        our own GC (SharpOS.Std.NoRuntime.GcHeap) and the low-level runtime
        helpers NativeAOT would otherwise pull from WorkstationGC (RhpNewFast,
@@ -144,6 +159,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Runtime\Array.cs" Link="src\Std\Runtime\Array.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\MemoryMarshal.cs" Link="src\Std\Runtime\MemoryMarshal.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Diagnostics.cs" Link="src\Std\Runtime\Diagnostics.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\ClassConstructorRunner.cs" Link="src\Std\Runtime\ClassConstructorRunner.cs" />
     <Compile Include="..\std\no-runtime\shared\Text\StringBuilder.cs" Link="src\Std\Text\StringBuilder.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\NativeFormatDecoder.cs" Link="src\Std\GC\NativeFormatDecoder.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="src\Std\GC\OptionalFieldsReader.cs" />

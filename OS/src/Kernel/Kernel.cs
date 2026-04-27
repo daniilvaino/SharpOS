@@ -68,6 +68,9 @@ namespace OS.Kernel
                 RunPagerValidation();
                 InitializeAcpi(bootInfo);
                 InitializeHpet();
+                // GcStaticsMaterializer.Diagnose();  // diagnostic dump, enable when investigating
+                GcStaticsMaterializer.Materialize();
+                CctorProbe.Run();
                 RunIdtPanicProbe();
                 RunExceptionThrowProbe();
                 RunElfValidation(bootInfo);

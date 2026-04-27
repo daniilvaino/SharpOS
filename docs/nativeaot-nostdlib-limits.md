@@ -15,66 +15,33 @@
 
 ## 1. Static-field инициализация
 
-### ❌ Lazy static reference field
+### ✅ Lazy static reference field — РАБОТАЕТ (step 40-41)
 
+Каноничный паттерн:
 ```csharp
-private static T s_default;
-public static T Default
-{
-    get
-    {
-        if (s_default == null) s_default = new T();
-        return s_default;
-    }
-}
+private static readonly T s_default = new T();
+public static T Default => s_default;
 ```
 
-**Симптом:** первый доступ к `Default` даёт `#GP`; RAX на crash site — либо `0xF0000000_xxxx_xxxx` (non-canonical mangled ptr), либо `0x08_FFFFFFFFFFFFFF` (sentinel "unresolved helper").
+Работает напрямую на нашей сборке. Полное решение собрано из трёх частей:
 
-**Причина:** ILC перед первым чтением static-field вставляет вызов в `System.Runtime.CompilerServices.ClassConstructorRunner.CheckStaticClassConstructionReturn{GC,NonGC}StaticBase`. В стоковой BCL эти методы запускают cctor и выставляют `initialized=1`. В NoStdLib их нет. Порт из Test.CoreLib не помог — ILC в `--resilient` режиме его молча игнорирует (проверено через `ilc --map`: наш тип отсутствует в бинаре).
+1. **`System.Runtime.CompilerServices.ClassConstructorRunner` port** — `std/no-runtime/shared/Runtime/ClassConstructorRunner.cs`. Methods: `CheckStaticClassConstructionReturnGCStaticBase`, `CheckStaticClassConstructionReturnNonGCStaticBase`, `CheckStaticClassConstruction`. Без recursion fix (state==2 → return immediately) на single-thread депозит deadlock'ит — мы добавили early-return.
+2. **Drop `--resilient` ILC flag** — без этого ILC молча подставляет fallback stub'ы (sentinel `0xFFFFF0000000000E`) вместо нашего runner'а. CSproj `DropResilient` MSBuild target пере-эмитит `OS.ilc.rsp` без флага между `WriteIlcRspFileForCompilation` и `IlcCompile`.
+3. **GC statics materialization** — `OS/src/Kernel/Memory/GcStaticsMaterializer.cs`. Port `StartupCodeHelpers.InitializeStatics`: walks `ReadyToRunSectionType.GCStaticRegion` (id=201), для каждого Uninitialized entry аллоцирует объект через `RhpNewFast`-equivalent, копирует preInit blob в raw data, заменяет tagged pointer на object reference. Без неё canonical pattern с implicit cctor крашится с `#GP` (sentinel `0xFFFF000000000010`) — ILC's TypePreinit interpreter эмитит descriptor cell, но без runtime materialization она остаётся unresolved.
 
-**⚠️ Workaround:** factory-property, без кеширования:
-```csharp
-public static T Default => new T();
-```
-Одна аллокация за чтение. `EqualityComparer<T>.Default` у нас реализован так.
+Ограничение текущего setup: materialization runs **поздно** в boot (после ACPI/HPET). Для использования `static readonly T x = new T()` в коде, который **выполняется на самом раннем boot'е** (banner, heap init, exec stubs), нужен step 42 — переместить materialization сразу после `GcHeap.Init()`. До этого момента continued использовать `""` literal или factory property.
 
-**Фикс-позже:** клонировать `ILCompiler.Compiler` sources, разобраться в resolution path. Или обновиться до SDK 10+ и проверить поведение.
-
-### ❌ Reference-typed field initializer
+### ✅ Explicit static cctor работает
 
 ```csharp
-private static L1 s_l1 = new L1Child();   // крашит при first-access class-а
+class C { public static T X; static C() { X = new T(); } }   // ok
 ```
 
-Та же причина: компилятор заворачивает это в cctor, cctor зовётся через ClassConstructorRunner.
-
-**⚠️ Workaround:** объявить без инициализации, присвоить в первом методе, который трогает класс:
-```csharp
-private static L1 s_l1;
-
-public static void Init() { s_l1 = new L1Child(); }   // вызываем явно
-```
-
-### ❌ Explicit static cctor на classe с reference-полем
-
-```csharp
-class C { public static T X; static C() { X = new T(); } }
-```
-
-Тот же механизм — `static C()` делает класс не-beforefieldinit → ClassConstructorRunner нужен.
-
-### ✅ Explicit static cctor с value-typed полем работает
-
-```csharp
-class C { public static int X; static C() { X = 99; } }   // ok
-```
-
-Подтверждено probe. Вероятно ILC для value-type static использует другой helper (NonGC-вариант), который нам удаётся не задевать. Но reference-cctor всё равно не работает — избегаем.
+Через тот же ClassConstructorRunner pathway. Reference и value поля — оба ОК.
 
 ### ✅ Прямое `s_field = new X(); ...; s_field.M()` работает
 
-В пределах одного метода ILC видит что инициализация уже произошла, не вставляет cctor-check. Это главная лазейка.
+В пределах одного метода ILC видит что инициализация уже произошла, не вставляет cctor-check. Полезная лазейка для случаев когда хочется избежать static field вообще.
 
 ---
 

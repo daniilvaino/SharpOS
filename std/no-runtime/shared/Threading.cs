@@ -56,6 +56,12 @@ namespace System.Threading
             location1 = value;
             return original;
         }
+
+        // Single-threaded kernel — full barrier is a no-op semantically
+        // (all loads/stores already happen in program order from our
+        // perspective). Will need a real `mfence` shellcode when SMP
+        // arrives in Phase 3.5.
+        public static void MemoryBarrier() { }
     }
 }
 

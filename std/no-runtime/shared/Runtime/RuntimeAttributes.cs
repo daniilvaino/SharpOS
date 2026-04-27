@@ -23,6 +23,11 @@ namespace System.Runtime.CompilerServices
     {
         public IndexerNameAttribute(string indexerName) { }
     }
+
+    // Marker type the C# compiler uses as a modreq on volatile field types.
+    // No members needed — its existence in this namespace is what the
+    // compiler checks. Without it, `volatile int x;` gives CS0518.
+    public static class IsVolatile { }
 }
 
 namespace System.Runtime.InteropServices
