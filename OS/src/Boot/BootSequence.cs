@@ -120,6 +120,7 @@ namespace OS.Boot
                 InstallInterfaceDispatchBridge(bootInfo);
                 InstallByRefAssignRefShellcode();
                 InstallPortIoShellcode();
+                InstallCaptureContextShellcode();
             }
             if (bootInfo.JumpStubExecBuffer != null)
                 X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
@@ -257,6 +258,13 @@ namespace OS.Boot
             bool ok = PortIoPatcher.TryInstall();
             Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
                 ok ? "port-io shellcode installed" : "port-io shellcode install failed");
+        }
+
+        private static void InstallCaptureContextShellcode()
+        {
+            bool ok = OS.Boot.EH.CaptureContextPatcher.TryInstall();
+            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
+                ok ? "capture-context shellcode installed" : "capture-context shellcode install failed");
         }
 
         private static void InitializePager()

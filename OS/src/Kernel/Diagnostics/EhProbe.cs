@@ -54,6 +54,9 @@ namespace OS.Kernel.Diagnostics
 
             if (Probes.EhDecode)
                 ReportLevel("eh L6 ehInfo varint decode", EhDecode());
+
+            if (Probes.EhFrameWalk)
+                ReportLevel("eh L7 frame walk", FrameWalk());
         }
 
         // L4 — Phase 1 step 1 gate. Verifies that the full Exception
@@ -303,6 +306,78 @@ namespace OS.Kernel.Diagnostics
             try { x = Opaque(11); }
             catch (System.Exception ex) when (ex.Message != null) { x = -1; }
             return x;
+        }
+
+        // L7 — Phase 1 step 4 gate. Builds the chain A → B → C → Walk
+        // via NoInlining; from inside Walk, captures the live CPU
+        // context, initialises a StackFrameIterator over it, and walks
+        // upward counting frames until method A's body is reached.
+        //
+        // Expected: 3 (Walk → C is step 1, C → B is step 2, B → A is step 3).
+        //
+        // Returns negative on failure:
+        //   -1 = capture failed / no module
+        //   -2 = SfiNext returned false before A
+        //   -3 = walked > 100 frames without reaching A (loop guard)
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int FrameWalk_A() => FrameWalk_B();
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int FrameWalk_B() => FrameWalk_C();
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int FrameWalk_C() => FrameWalk_Walk();
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int FrameWalk_Walk()
+        {
+            if (!CoffRuntimeFunctionTable.IsInitialized) return -1;
+
+            // Capture live context via the patched shellcode.
+            PalLimitedContext ctx = default;
+            delegate* unmanaged<byte*, void> capture =
+                (delegate* unmanaged<byte*, void>)CaptureContextStub.GetMethodAddress();
+            capture((byte*)&ctx);
+
+            // Initialise iterator from PAL.
+            StackFrameIterator iter = default;
+            StackFrameIteratorOps.Init(&iter, &ctx);
+
+            // Resolve method A's start RVA. We compare ROOT runtime
+            // function BeginAddress because addresses of funclets and
+            // mid-method IPs all map back to ROOT via WalkToRoot.
+            delegate*<int> ptrA = &FrameWalk_A;
+            byte* ipA = (byte*)ptrA;
+            if (!CoffMethodLookup.TryFindMethod(ipA, out CoffMethodLookup.MethodInfo infoA))
+                return -1;
+            uint targetBeginRva = infoA.RootRuntimeFunction->BeginAddress;
+
+            int count = 0;
+            for (int safety = 0; safety < 100; safety++)
+            {
+                // Resolve current frame.
+                if (!CoffMethodLookup.TryFindMethod((byte*)iter.ControlPC, out CoffMethodLookup.MethodInfo cur))
+                    return -2;
+                if (cur.RootRuntimeFunction->BeginAddress == targetBeginRva)
+                    return count;
+
+                if (!StackFrameIteratorOps.Next(&iter))
+                    return -2;
+                count++;
+            }
+            return -3;
+        }
+
+        private static int FrameWalk()
+        {
+            // Entry point — runs the chain. We need a layer that's NOT
+            // FrameWalk_A so its caller (FrameWalk → FrameWalk_A) doesn't
+            // affect the count. The probe expects exactly Walk→C→B→A = 3.
+            return FrameWalk_A();
         }
 
         private static void ReportLevel(string label, int value)
