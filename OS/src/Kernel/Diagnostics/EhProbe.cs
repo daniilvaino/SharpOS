@@ -1,4 +1,5 @@
 using OS.Hal;
+using OS.Boot.EH;
 
 namespace OS.Kernel.Diagnostics
 {
@@ -28,7 +29,7 @@ namespace OS.Kernel.Diagnostics
     //
     // Runtime-dependent inputs prevent ILC from constant-folding the
     // bodies away.
-    internal static class EhProbe
+    internal static unsafe class EhProbe
     {
         public static void Run()
         {
@@ -47,6 +48,9 @@ namespace OS.Kernel.Diagnostics
 
             if (Probes.EhExceptionShape)
                 ReportLevel("eh L4 exception shape", ExceptionShape());
+
+            if (Probes.EhRootWalk)
+                ReportLevel("eh L5 .pdata + root walk", RootWalk());
         }
 
         // L4 — Phase 1 step 1 gate. Verifies that the full Exception
@@ -120,6 +124,89 @@ namespace OS.Kernel.Diagnostics
                 string m = ex.Message;
                 return m == null ? -1 : m.Length;   // expected: 7 ("ehprobe")
             }
+        }
+
+        // L5 — Phase 1 step 2 gate. Verifies that .pdata lookup +
+        // funclet -> ROOT backward walk works on our actual binary.
+        // Doesn't require the EH info decoder (step 3) — finds funclet
+        // records by linear scan of unwindBlockFlags trailer bytes.
+        //
+        // Score bits:
+        //   1 = binary search finds a record for the probe's own IP.
+        //   2 = at least one funclet record (kind != ROOT) was found
+        //       within the first MaxScan records.
+        //   4 = WalkToRoot from that funclet returns a valid index
+        //       BELOW the funclet (root must precede its funclets).
+        //
+        // Expected: 7. -1..-3 indicate which bit failed first so the
+        // failure is localized.
+        private static int RootWalk()
+        {
+            if (!CoffRuntimeFunctionTable.IsInitialized) return -1;
+            int count = CoffRuntimeFunctionTable.Count;
+            if (count <= 0) return -2;
+
+            int score = 0;
+
+            // Bit 1: binary search for an IP inside this very method.
+            // Take the address of RootWalk itself via a function pointer.
+            delegate*<int> selfPtr = &RootWalk;
+            byte* selfIp = (byte*)selfPtr;
+            if (CoffMethodLookup.TryFindMethod(selfIp, out CoffMethodLookup.MethodInfo selfInfo))
+            {
+                score |= 1;
+            }
+
+            // Bit 2: locate the first funclet record by linear scan of
+            // unwindBlockFlags. Bound the scan so we don't read every
+            // record on every probe boot.
+            const int MaxScan = 200;
+            int limit = count < MaxScan ? count : MaxScan;
+            int firstFuncletIdx = -1;
+            for (int i = 0; i < limit; i++)
+            {
+                RuntimeFunction* rf = CoffRuntimeFunctionTable.GetRecord(i);
+                if (rf == null) continue;
+                byte flags = CoffMethodLookup.ReadUnwindBlockFlags(rf);
+                int kind = flags & CoffMethodLookup.UBF_FUNC_KIND_MASK;
+                if (kind != CoffMethodLookup.UBF_FUNC_KIND_ROOT)
+                {
+                    firstFuncletIdx = i;
+                    break;
+                }
+            }
+            if (firstFuncletIdx >= 0) score |= 2;
+
+            // Bit 4: walk to root from that funclet. Root must come
+            // before the funclet in .pdata (funclets are emitted right
+            // after their parent body).
+            if (firstFuncletIdx > 0)
+            {
+                int rootIdx = CoffMethodLookup.WalkToRoot(firstFuncletIdx);
+                if (rootIdx >= 0 && rootIdx < firstFuncletIdx)
+                    score |= 4;
+            }
+
+            // Diagnostic line — always emit, useful for sanity reading
+            // even when score is full.
+            Log.Begin(LogLevel.Info);
+            Console.Write("  l5-diag: count=");
+            Console.WriteUIntRaw((uint)count);
+            Console.Write(" selfIp=0x");
+            Console.WriteHexRaw((ulong)(nuint)selfIp, 16);
+            Console.Write(" selfRecord=");
+            if ((score & 1) != 0)
+                Console.WriteUIntRaw((uint)selfInfo.RootIndex);
+            else
+                Console.Write("none");
+            Console.Write(" firstFunclet=");
+            if (firstFuncletIdx >= 0)
+                Console.WriteUIntRaw((uint)firstFuncletIdx);
+            else
+                Console.Write("none");
+            Log.EndLine();
+
+            return score;
         }
 
         private static void ReportLevel(string label, int value)

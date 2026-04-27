@@ -135,6 +135,13 @@ namespace OS.Boot
             if (!NativeAotModuleInit.TryInitialize(anchor))
                 Log.Write(LogLevel.Warn, "naot module init failed");
 
+            // Coff RUNTIME_FUNCTION table — Phase 1 step 2. Locates the
+            // PE image, parses .pdata, sets up binary search for IP ->
+            // method resolution. Required by future EH dispatcher and
+            // step 3 EH info decoder.
+            if (!OS.Boot.EH.CoffRuntimeFunctionTable.TryInitialize((byte*)anchor))
+                Log.Write(LogLevel.Warn, "coff method table init failed");
+
             // GC statics materialization. After this, canonical
             // `static readonly T x = new T()` works for any code that
             // runs in subsequent phases.
