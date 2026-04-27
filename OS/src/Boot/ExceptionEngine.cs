@@ -129,71 +129,50 @@ namespace OS.Boot
                 Console.Write(inPal ? "yes" : "no");
                 Console.Write("\r\n");
 
-                // Phase 1 step 5.3 probe B — walk up via SfiNext until
-                // we find a frame that carries EH info (HAS_EHINFO trailer
-                // flag). Stock DispatchEx does this same walk searching
-                // for a typed clause that matches. Here we just enumerate
-                // and log.
-                Console.Write("\r\n*** RhpTest_EhEnumChain (5.3 probe B) ***\r\n");
+                // Phase 1 step 5.4 — replace 5.3 ad-hoc walk-up with
+                // production FindFirstPassHandler that walks frames AND
+                // matches typed clauses against exception type via class
+                // hierarchy. Filter clauses skipped (5.5 territory).
+                // RhpCallCatchFunclet still halt-stub — we only verify
+                // first-pass decision is correct.
+                Console.Write("\r\n*** FindFirstPassHandler (5.4) ***\r\n");
 
-                int walked = 0;
-                bool foundClauses = false;
-                while (walked < 16)
+                // Exception object's first 8 bytes = MT pointer.
+                SharpOS.Std.NoRuntime.GcMethodTable* exType = null;
+                if (exceptionPtr != null)
+                    exType = *(SharpOS.Std.NoRuntime.GcMethodTable**)exceptionPtr;
+
+                Console.Write("  exType=0x");
+                Console.WriteHexRaw((ulong)(nuint)exType, 16);
+                Console.Write("\r\n");
+
+                OS.Boot.EH.DispatchEx.FirstPassResult fp =
+                    OS.Boot.EH.DispatchEx.FindFirstPassHandler(exType, &exInfo->FrameIter);
+
+                if (fp.Found)
                 {
-                    if (OS.Boot.EH.CoffEhDecoder.EhEnumInit(
-                        (byte*)exInfo->FrameIter.ControlPC,
-                        out OS.Boot.EH.CoffEhDecoder.EHEnum eh,
-                        out byte* methodStart))
-                    {
-                        uint codeOffset = (uint)((nint)exInfo->FrameIter.ControlPC - (nint)methodStart);
-
-                        Console.Write("  found EH at frame walked=");
-                        Console.WriteUIntRaw((uint)walked);
-                        Console.Write(" methodStart=0x");
-                        Console.WriteHexRaw((ulong)(nuint)methodStart, 16);
-                        Console.Write(" codeOffset=0x");
-                        Console.WriteHexRaw(codeOffset, 8);
-                        Console.Write(" nClauses=");
-                        Console.WriteUIntRaw(eh.TotalClauses);
-                        Console.Write("\r\n");
-
-                        int idx = 0;
-                        while (OS.Boot.EH.CoffEhDecoder.EhEnumNext(ref eh,
-                            out OS.Boot.EH.CoffEhDecoder.RhEHClause clause))
-                        {
-                            Console.Write("    clause[");
-                            Console.WriteUIntRaw((uint)idx);
-                            Console.Write("] kind=");
-                            Console.WriteUIntRaw((uint)clause.Kind);
-                            Console.Write(" try=[0x");
-                            Console.WriteHexRaw(clause.TryStartOffset, 8);
-                            Console.Write("..0x");
-                            Console.WriteHexRaw(clause.TryEndOffset, 8);
-                            Console.Write(") handler=0x");
-                            Console.WriteHexRaw((ulong)(nuint)clause.HandlerAddress, 16);
-                            Console.Write("\r\n");
-
-                            idx++;
-                        }
-                        foundClauses = true;
-                        break;
-                    }
-
-                    if (!OS.Boot.EH.StackFrameIteratorOps.Next(&exInfo->FrameIter))
-                    {
-                        Console.Write("  SfiNext exhausted at walked=");
-                        Console.WriteUIntRaw((uint)walked);
-                        Console.Write("\r\n");
-                        break;
-                    }
-                    walked++;
+                    Console.Write("  MATCH: framesWalked=");
+                    Console.WriteUIntRaw((uint)fp.FramesWalked);
+                    Console.Write(" handler=0x");
+                    Console.WriteHexRaw((ulong)(nuint)fp.HandlerAddress, 16);
+                    Console.Write(" idxCurClause=");
+                    Console.WriteUIntRaw(fp.IdxCurClause);
+                    Console.Write("\r\n");
+                    Console.Write("  methodStart=0x");
+                    Console.WriteHexRaw((ulong)(nuint)fp.MethodStart, 16);
+                    Console.Write(" codeOffset=0x");
+                    Console.WriteHexRaw(fp.CodeOffset, 8);
+                    Console.Write("\r\n");
                 }
-
-                if (!foundClauses)
-                    Console.Write("  no EH info found within 16 frames\r\n");
+                else
+                {
+                    Console.Write("  NO MATCH after framesWalked=");
+                    Console.WriteUIntRaw((uint)fp.FramesWalked);
+                    Console.Write("\r\n");
+                }
             }
 
-            Console.Write("*** halting (5.3 probe B) ***\r\n");
+            Console.Write("*** halting (5.4 first-pass probe) ***\r\n");
             while (true) { }
         }
 

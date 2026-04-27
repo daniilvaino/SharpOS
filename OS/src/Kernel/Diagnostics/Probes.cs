@@ -41,7 +41,7 @@ namespace OS.Kernel.Diagnostics
         public const bool EhRootWalk = true;              // step 2 gate: .pdata lookup + funclet->ROOT walk
         public const bool EhDecode = true;                // step 3 gate: ehInfoRVA + varint clause decoder
         public const bool EhFrameWalk = true;             // step 4 gate: PAL/RegDisplay/SFI + 4-opcode unwind
-        public const bool EhIngressThrow = false;         // step 5.3 verified: throw -> walk up -> enum outer (default off, halts when on)
+        public const bool EhIngressThrow = false;         // step 5.4 verified: FindFirstPassHandler matches (default off, halts when on)
         public const bool EhEnumLive = true;              // step 5.3 probe A: enum clauses on live frame inside try (non-halting)
 
         public const bool IdtPanic = false;          // never returns when on
