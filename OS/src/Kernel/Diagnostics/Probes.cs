@@ -29,7 +29,15 @@ namespace OS.Kernel.Diagnostics
         public const bool GcStress = true;
         public const bool NativeAotFeatures = true;
         public const bool Cctor = true;
+
+        // EH probe gradient — flip each level on independently. L1+L2 are
+        // expected to pass today (no-throw paths). L3 throws and currently
+        // halts; flipping it green is the Phase 1 closure criterion.
+        public const bool EhTryFinallyNoThrow = true;
+        public const bool EhTryCatchNoThrow = true;
+        public const bool EhTryCatchWithThrow = false;   // ← set true to verify unwinder
+
         public const bool IdtPanic = false;          // never returns when on
-        public const bool ExceptionThrow = false;    // never returns when on
+        public const bool ExceptionThrow = false;    // never returns when on (legacy single-throw probe)
     }
 }

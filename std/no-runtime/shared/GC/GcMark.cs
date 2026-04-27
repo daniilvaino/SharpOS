@@ -70,6 +70,31 @@ namespace SharpOS.Std.NoRuntime
                 if (GcHeap.FindSegmentContaining(ptr) == null)
                     continue;
 
+                // Sanity-check the candidate MT pointer BEFORE dereferencing
+                // anything else on the object. Conservative stack scan can
+                // pick up arbitrary 8-byte words that happen to point inside
+                // a heap segment but at the middle of a payload, not at an
+                // object header. Reading *(MT**)payload returns garbage —
+                // typically a non-canonical address that #GP's on dereference
+                // (we've seen RAX=0x24000000_xxxxxxxx in production).
+                //
+                // Real MT pointers live in our binary's .rdata range. They
+                // are NEVER inside any GcHeap segment (the heap stores
+                // objects, not type info). So:
+                //   1. The candidate MT must look canonical (high bits zero
+                //      — our kernel runs in low canonical half only).
+                //   2. The candidate MT must NOT itself be inside any heap
+                //      segment.
+                // Both checks are cheap and catch the failure mode before
+                // mt[-1] / GcDescSeries access can fault.
+                nint mtAddr = *(nint*)ptr;
+                if (mtAddr == 0)
+                    continue;
+                if (!IsCanonicalLowHalf(mtAddr))
+                    continue;
+                if (GcHeap.FindSegmentContaining(mtAddr) != null)
+                    continue;
+
                 if (obj->IsMarked())
                     continue;
 
@@ -78,6 +103,16 @@ namespace SharpOS.Std.NoRuntime
 
                 GcObject.EnumerateObjectReferences(obj, &Push);
             }
+        }
+
+        // x64 canonical low-half check: bits 63..47 must all be zero. Our
+        // kernel runs entirely in low canonical addresses (UEFI loader
+        // identity-maps the binary in low canonical, all heap pages are
+        // there too). High canonical and non-canonical addresses are
+        // immediate red flags.
+        private static bool IsCanonicalLowHalf(nint addr)
+        {
+            return ((ulong)(long)addr & 0xFFFF800000000000UL) == 0;
         }
 
         // Push callback used by EnumerateObjectReferences. Must match the

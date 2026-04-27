@@ -185,6 +185,10 @@ namespace OS.Boot
             if (Probes.Cctor)
                 CctorProbe.Run();
 
+            // EH probe — three levels (try/finally no-throw, try/catch
+            // no-throw, try/catch with throw). L3 currently halts.
+            EhProbe.Run();
+
             // Never-returning probes — last so a regular boot still finishes.
             if (Probes.IdtPanic)
                 IdtProbe.TriggerNullDeref();
