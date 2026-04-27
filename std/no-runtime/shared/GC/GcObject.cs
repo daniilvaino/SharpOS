@@ -66,6 +66,19 @@ namespace SharpOS.Std.NoRuntime
             uint objectSize = obj->ComputeSize();
             nint seriesCount = mt[-1];
 
+            // Sanity bound on seriesCount. Synthetic MTs (e.g. GCStaticEEType
+            // emitted for materialized GC static bases) may have layout that
+            // doesn't match our reader, leaving garbage in mt[-1]. Real types
+            // never have hundreds of GcDesc series. Skip scan if value is
+            // implausible — caller (mark phase) will still treat the object
+            // itself as alive via root registration; only inner refs are
+            // missed, which is acceptable for the synthetic GC-static shape
+            // (its inner refs come from frozen segments / are themselves
+            // separately rooted).
+            const nint MaxReasonableSeriesCount = 64;
+            if (seriesCount > MaxReasonableSeriesCount || seriesCount < -MaxReasonableSeriesCount)
+                return;
+
             if (seriesCount > 0)
             {
                 // Regular series: fields at fixed offsets within the object.
@@ -75,6 +88,10 @@ namespace SharpOS.Std.NoRuntime
                 {
                     nint sz = series[-i].Size + (nint)objectSize;
                     nint off = series[-i].Offset;
+
+                    // Bound check: offset/size must place ptr range within obj.
+                    if (off < 0 || sz < 0 || (ulong)off + (ulong)sz > objectSize)
+                        continue;
 
                     nint* ptr = (nint*)((nint)obj + off);
                     nint count = sz / sizeof(nint);

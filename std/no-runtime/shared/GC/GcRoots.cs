@@ -87,6 +87,22 @@ namespace SharpOS.Std.NoRuntime
             }
         }
 
+        // Register a raw address that holds a managed object reference.
+        // Used by GcStaticsMaterializer for ILC-emitted GC static block
+        // pointers (each `__GCSTATICS@*` slot is a managed ref slot the
+        // GC must walk so the materialized object isn't swept).
+        public static void RegisterRawSlot(nint* slotAddr)
+        {
+            if (slotAddr == null || s_count >= Capacity) return;
+
+            fixed (GcRootsStorage* basePtr = &s_slots)
+            {
+                nint** slots = (nint**)basePtr;
+                slots[s_count] = slotAddr;
+                s_count++;
+            }
+        }
+
         // Unmanaged entry point for the register-spill trampoline.
         // Called from a shellcode stub that pushes all callee-saved regs
         // (RBX/RBP/RDI/RSI/R12..R15) onto the stack; MarkAll then runs
