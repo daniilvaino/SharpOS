@@ -69,13 +69,6 @@ namespace OS.Kernel.Diagnostics
             if (Probes.EhTryCatchNoThrow)
                 ReportLevel("eh L2 try/catch no-throw", TryCatchNoThrow(2));
 
-            if (Probes.EhTryCatchWithThrow)
-            {
-                Log.Write(LogLevel.Info, "eh L3 try/catch with throw — expected to halt unless unwinder is in place");
-                int v = TryCatchWithThrow(3);
-                ReportLevel("eh L3 try/catch with throw", v);
-            }
-
             if (Probes.EhExceptionShape)
                 ReportLevel("eh L4 exception shape", ExceptionShape());
 
@@ -90,6 +83,12 @@ namespace OS.Kernel.Diagnostics
 
             if (Probes.EhEnumLive)
                 ReportLevel("eh 5.3 enum-live", EnumLiveDirect());
+
+            if (Probes.EhTryCatchWithThrow)
+            {
+                int v = TryCatchWithThrow(3);
+                ReportLevel("eh L8 typed catch (real dispatch)", v);
+            }
 
             if (Probes.EhCatchFuncletProbe)
             {
@@ -423,16 +422,17 @@ namespace OS.Kernel.Diagnostics
         {
             try
             {
-                System.Exception e = new System.InvalidOperationException("ehprobe");
-                throw e;
+                throw new System.InvalidOperationException("eh8");
             }
-            catch (System.Exception ex)
+            catch (System.InvalidOperationException ex)
             {
-                // If we ever land here, the unwinder works. Return the
-                // length of the message so we can verify Exception.Message
-                // round-trips through the dispatch path.
-                string m = ex.Message;
-                return m == null ? -1 : m.Length;   // expected: 7 ("ehprobe")
+                // L8 gate (per phase1-trycatch-roadmap.md). Real dispatch
+                // path: throw → RhpThrowEx shellcode → RhpTest_ThrowIngress
+                // → DispatchEx.Dispatch → FindFirstPassHandler →
+                // RhpCallCatchFunclet → ILC catch funclet body (this code)
+                // → mov rsp + jmp rax → continuation IP in TryCatchWithThrow's
+                // body past the catch → returns 801.
+                return ex.Message == "eh8" ? 801 : -1;
             }
         }
 

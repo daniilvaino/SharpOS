@@ -52,6 +52,19 @@ namespace OS.Boot
             object exception = null;
             *(byte**)&exception = exceptionPtr;
 
+            // Phase 1 step 5.6 — production dispatch. When EhRealDispatch
+            // is on, route directly into DispatchEx без 5.1-5.5 logging.
+            // Path: RhpThrowEx shellcode → RhpTest_ThrowIngress → Dispatch
+            //       → FindFirstPassHandler → RhpCallCatchFunclet →
+            //       ILC catch funclet → real continuation в parent.
+            // Does not return on success.
+            if (OS.Kernel.Diagnostics.Probes.EhRealDispatch)
+            {
+                OS.Boot.EH.DispatchEx.Dispatch(exceptionPtr, exInfo);
+                Console.Write("\r\n*** Dispatch returned (BUG) ***\r\n");
+                while (true) { }
+            }
+
             Console.Write("\r\n*** RhpTest_ThrowIngress (5.1) ***\r\n");
 
             Console.Write("  exception type: ");

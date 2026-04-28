@@ -97,6 +97,56 @@ namespace OS.Boot.EH
             return result;   // Found = false
         }
 
+        // Top-level dispatcher. Called by RhThrowEx (managed seam after
+        // RhpThrowEx shellcode built ExInfo + PAL). Walks frames upward,
+        // finds typed catch handler, transfers control via RhpCallCatchFunclet.
+        //
+        // Stock NativeAOT does two-pass dispatch: pass 1 finds handler,
+        // pass 2 runs finallys + invokes catch funclet. For 5.6 we do
+        // single-pass (no finallys yet — second pass added in 5.7).
+        //
+        // Does NOT return on success — RhpCallCatchFunclet does non-local
+        // transfer through `mov rsp; jmp rax` to parent's continuation IP.
+        // Returns only on unhandled exception (halts caller).
+        public static void Dispatch(byte* exceptionPtr, ExInfo* exInfo)
+        {
+            // Initialise StackFrameIterator from the captured PAL.
+            StackFrameIteratorOps.Init(&exInfo->FrameIter, exInfo->ExContext);
+
+            // Resolve exception type from object header (first 8 bytes).
+            GcMethodTable* exType = null;
+            if (exceptionPtr != null)
+                exType = *(GcMethodTable**)exceptionPtr;
+
+            // First-pass: find catch handler.
+            FirstPassResult fp = FindFirstPassHandler(exType, &exInfo->FrameIter);
+            if (!fp.Found)
+            {
+                // Unhandled. In 5.6 we just halt; full plumbing для
+                // OnUnhandledException + FailFast comes later.
+                OS.Hal.Console.Write("\r\n*** unhandled exception (no matching catch) ***\r\n");
+                while (true) { }
+            }
+
+            // Update ExInfo state перед catch.
+            exInfo->IdxCurClause = fp.IdxCurClause;
+            exInfo->Exception = (ulong)(nuint)exceptionPtr;
+            exInfo->PassNumber = 2;
+
+            // Hand off к catch funclet via shellcode. RegDisplay is first
+            // field of StackFrameIterator — &FrameIter == &RegDisplay.
+            delegate* unmanaged<byte*, byte*, RegDisplay*, ExInfo*, void> catchFn =
+                (delegate* unmanaged<byte*, byte*, RegDisplay*, ExInfo*, void>)
+                CallCatchFuncletStub.GetMethodAddress();
+
+            catchFn(exceptionPtr, fp.HandlerAddress,
+                    (RegDisplay*)&exInfo->FrameIter, exInfo);
+
+            // Should not return.
+            OS.Hal.Console.Write("\r\n*** RhpCallCatchFunclet returned to Dispatch (BUG) ***\r\n");
+            while (true) { }
+        }
+
         // Class assignability — true if `objType` is `targetType` or any
         // class derived from it. Walks the parent chain via GetBaseType.
         // Same algorithm as RhTypeCast_IsInstanceOfClass in

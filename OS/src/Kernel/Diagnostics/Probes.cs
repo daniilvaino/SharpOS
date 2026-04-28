@@ -36,7 +36,7 @@ namespace OS.Kernel.Diagnostics
         // criterion.
         public const bool EhTryFinallyNoThrow = true;
         public const bool EhTryCatchNoThrow = true;
-        public const bool EhTryCatchWithThrow = false;   // ← set true to verify unwinder
+        public const bool EhTryCatchWithThrow = true;    // step 5.6 GATE: L8 == 801 with real dispatch
         public const bool EhExceptionShape = true;       // step 1 gate: full Exception + 6 derived types
         public const bool EhRootWalk = true;              // step 2 gate: .pdata lookup + funclet->ROOT walk
         public const bool EhDecode = true;                // step 3 gate: ehInfoRVA + varint clause decoder
@@ -44,6 +44,7 @@ namespace OS.Kernel.Diagnostics
         public const bool EhIngressThrow = false;         // step 5.5b verified: throw -> 5.1+5.2+5.4+5.5b chain (default off, halts when on)
         public const bool EhCatchFuncletProbe = false;    // step 5.5a verified: RhpCallCatchFunclet end-to-end OK (default off, halts when on)
         public const bool EhCatchFuncletReal = false;    // step 5.5b verified: real REGDISPLAY + fake handler OK (default off, requires EhIngressThrow too)
+        public const bool EhRealDispatch = true;         // step 5.6: full real dispatch (DispatchEx + ILC catch funclet) — needed for L8 == 801
         public const bool EhEnumLive = true;              // step 5.3 probe A: enum clauses on live frame inside try (non-halting)
 
         public const bool IdtPanic = false;          // never returns when on
