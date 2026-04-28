@@ -37,18 +37,41 @@ namespace OS.Boot.EH
         // FirstPassResult and the iterator is positioned at the
         // catching frame. On failure (no match) returns Found=false and
         // iterator is exhausted.
+        //
+        // `startIdx` (default = MaxTryRegionIdx = no skip) — for rethrow,
+        // pass prev ExInfo's IdxCurClause so the FIRST frame's clauses
+        // 0..startIdx (inclusive) are skipped — prevents the just-ran
+        // catch from re-catching its own rethrow.
         public static FirstPassResult FindFirstPassHandler(
             GcMethodTable* exceptionType,
-            StackFrameIterator* iter)
+            StackFrameIterator* iter,
+            uint startIdx = ExInfo.MaxTryRegionIdx)
         {
             FirstPassResult result = default;
             const int MaxFrames = 100;
+            bool isFirstFrame = true;
 
             while (result.FramesWalked < MaxFrames)
             {
-                if (CoffEhDecoder.EhEnumInit((byte*)iter->ControlPC,
+                bool ehOk = CoffEhDecoder.EhEnumInit((byte*)iter->ControlPC,
                     out CoffEhDecoder.EHEnum enumState,
-                    out byte* methodStart))
+                    out byte* methodStart);
+
+                OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                OS.Hal.Console.Write("    fp[");
+                OS.Hal.Console.WriteUIntRaw((uint)result.FramesWalked);
+                OS.Hal.Console.Write("]: PC=0x");
+                OS.Hal.Console.WriteHexRaw(iter->ControlPC, 16);
+                OS.Hal.Console.Write(" ehInit=");
+                OS.Hal.Console.Write(ehOk ? "Y" : "N");
+                if (ehOk)
+                {
+                    OS.Hal.Console.Write(" methodStart=0x");
+                    OS.Hal.Console.WriteHexRaw((ulong)(nuint)methodStart, 16);
+                }
+                OS.Hal.Log.EndLine();
+
+                if (ehOk)
                 {
                     uint codeOffset = (uint)((nint)iter->ControlPC - (nint)methodStart);
                     uint clauseIdx = 0;
@@ -56,6 +79,31 @@ namespace OS.Boot.EH
                     while (CoffEhDecoder.EhEnumNext(ref enumState,
                         out CoffEhDecoder.RhEHClause clause))
                     {
+                        OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                        OS.Hal.Console.Write("      clause[");
+                        OS.Hal.Console.WriteUIntRaw(clauseIdx);
+                        OS.Hal.Console.Write("] kind=");
+                        OS.Hal.Console.WriteUIntRaw((uint)clause.Kind);
+                        OS.Hal.Console.Write(" try=[0x");
+                        OS.Hal.Console.WriteHexRaw(clause.TryStartOffset, 8);
+                        OS.Hal.Console.Write("..0x");
+                        OS.Hal.Console.WriteHexRaw(clause.TryEndOffset, 8);
+                        OS.Hal.Console.Write(") off=0x");
+                        OS.Hal.Console.WriteHexRaw(codeOffset, 8);
+                        OS.Hal.Console.Write(" type=0x");
+                        OS.Hal.Console.WriteHexRaw((ulong)(nuint)clause.TargetTypeRaw, 16);
+                        OS.Hal.Log.EndLine();
+
+                        // Rethrow skip: на first frame skip clauses
+                        // up to и включая startIdx. Subsequent frames
+                        // — full search.
+                        if (isFirstFrame && startIdx != ExInfo.MaxTryRegionIdx
+                            && clauseIdx <= startIdx)
+                        {
+                            clauseIdx++;
+                            continue;
+                        }
+
                         // Filter clauses — skipped в 5.4. Need
                         // RhpCallFilterFunclet (5.5+).
                         if (clause.Kind == CoffEhDecoder.ClauseKind.Filter)
@@ -92,6 +140,7 @@ namespace OS.Boot.EH
                 if (!StackFrameIteratorOps.Next(iter))
                     break;
                 result.FramesWalked++;
+                isFirstFrame = false;
             }
 
             return result;   // Found = false
@@ -110,8 +159,83 @@ namespace OS.Boot.EH
         // Returns only on unhandled exception (halts caller).
         public static void Dispatch(byte* exceptionPtr, ExInfo* exInfo)
         {
-            // Initialise StackFrameIterator from the captured PAL.
-            StackFrameIteratorOps.Init(&exInfo->FrameIter, exInfo->ExContext);
+            // Rethrow path (Phase 1 step 6): Kind has Rethrow bit set.
+            // Stock NativeAOT keeps the StackFrameIterator positioned at
+            // the catch's establisher frame after first-pass succeeds.
+            // For rethrow we COPY prev->FrameIter (still at catch frame)
+            // into our own FrameIter и применяем startIdx skip = prev's
+            // IdxCurClause так что catch который только что отработал
+            // не зацепится снова. Walking up from the catch frame finds
+            // the next enclosing catch (outer try in our L9 test).
+            //
+            // Re-initing from prev->ExContext (= original throw site)
+            // would put iter at the throwing frame — but our isFirstFrame
+            // skip would apply to the WRONG frame (throw site, not catch
+            // site), so inner catch would re-catch its own rethrow и
+            // зациклит — stack overflow → #GP с non-canonical RIP.
+            //
+            // Normal throw: init from own ExContext, no skip.
+            uint startIdx = ExInfo.MaxTryRegionIdx;
+            bool isRethrow = (exInfo->Kind & ExInfo.KindRethrow) != 0;
+            bool reusedIter = false;
+
+            OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+            OS.Hal.Console.Write("Dispatch: kind=0x");
+            OS.Hal.Console.WriteHexRaw(exInfo->Kind, 2);
+            OS.Hal.Console.Write(" exInfo=0x");
+            OS.Hal.Console.WriteHexRaw((ulong)(nuint)exInfo, 16);
+            OS.Hal.Console.Write(" prevExInfo=0x");
+            OS.Hal.Console.WriteHexRaw((ulong)(nuint)exInfo->PrevExInfo, 16);
+            OS.Hal.Log.EndLine();
+
+            if (isRethrow)
+            {
+                ExInfo* prev = exInfo->PrevExInfo;
+                if (prev != null)
+                {
+                    // Source exception from prev->Exception. Stock NativeAOT
+                    // does this в RhRethrow: `rethrownException = activeExInfo.ThrownException`.
+                    // ILC's `rethrow` IL does NOT pass the exception в RCX —
+                    // RhpRethrow shellcode receives whatever garbage RCX held
+                    // before the call. Using that garbage causes IsAssignable
+                    // to deref a non-canonical MT and #GP.
+                    exceptionPtr = (byte*)(nuint)prev->Exception;
+
+                    OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                    OS.Hal.Console.Write("  rethrow: prev->IdxCurClause=");
+                    OS.Hal.Console.WriteUIntRaw(prev->IdxCurClause);
+                    OS.Hal.Console.Write(" prev->Exception=0x");
+                    OS.Hal.Console.WriteHexRaw((ulong)(nuint)exceptionPtr, 16);
+                    OS.Hal.Console.Write(" prev->FrameIter.ControlPC=0x");
+                    OS.Hal.Console.WriteHexRaw(prev->FrameIter.ControlPC, 16);
+                    OS.Hal.Console.Write(" prev->FrameIter.SP=0x");
+                    OS.Hal.Console.WriteHexRaw(prev->FrameIter.RegDisplay.SP, 16);
+                    OS.Hal.Log.EndLine();
+
+                    exInfo->FrameIter = prev->FrameIter;
+                    startIdx = prev->IdxCurClause;
+                    reusedIter = true;
+                }
+                else
+                {
+                    OS.Hal.Log.Write(OS.Hal.LogLevel.Warn, "  rethrow but prev=null — fallback to own ExContext");
+                }
+            }
+
+            if (!reusedIter)
+            {
+                StackFrameIteratorOps.Init(&exInfo->FrameIter, exInfo->ExContext);
+            }
+
+            OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+            OS.Hal.Console.Write("  iter ready: ControlPC=0x");
+            OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.ControlPC, 16);
+            OS.Hal.Console.Write(" SP=0x");
+            OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
+            OS.Hal.Console.Write(" startIdx=0x");
+            OS.Hal.Console.WriteHexRaw(startIdx, 8);
+            OS.Hal.Console.Write(reusedIter ? " (reused prev iter)" : " (init from ExContext)");
+            OS.Hal.Log.EndLine();
 
             // Resolve exception type from object header (first 8 bytes).
             GcMethodTable* exType = null;
@@ -119,7 +243,18 @@ namespace OS.Boot.EH
                 exType = *(GcMethodTable**)exceptionPtr;
 
             // First-pass: find catch handler.
-            FirstPassResult fp = FindFirstPassHandler(exType, &exInfo->FrameIter);
+            FirstPassResult fp = FindFirstPassHandler(exType, &exInfo->FrameIter, startIdx);
+
+            OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+            OS.Hal.Console.Write("  fp.Found=");
+            OS.Hal.Console.Write(fp.Found ? "Y" : "N");
+            OS.Hal.Console.Write(" handler=0x");
+            OS.Hal.Console.WriteHexRaw((ulong)(nuint)fp.HandlerAddress, 16);
+            OS.Hal.Console.Write(" idxCurClause=");
+            OS.Hal.Console.WriteUIntRaw(fp.IdxCurClause);
+            OS.Hal.Console.Write(" framesWalked=");
+            OS.Hal.Console.WriteUIntRaw((uint)fp.FramesWalked);
+            OS.Hal.Log.EndLine();
             if (!fp.Found)
             {
                 // Unhandled. In 5.6 we just halt; full plumbing для

@@ -90,6 +90,12 @@ namespace OS.Kernel.Diagnostics
                 ReportLevel("eh L8 typed catch (real dispatch)", v);
             }
 
+            if (Probes.EhRethrowChain)
+            {
+                int v = RethrowChain();
+                ReportLevel("eh L9 rethrow chain", v);
+            }
+
             if (Probes.EhCatchFuncletProbe)
             {
                 Log.Write(LogLevel.Info,
@@ -433,6 +439,36 @@ namespace OS.Kernel.Diagnostics
                 // → mov rsp + jmp rax → continuation IP in TryCatchWithThrow's
                 // body past the catch → returns 801.
                 return ex.Message == "eh8" ? 801 : -1;
+            }
+        }
+
+        // L9 gate — rethrow baseline (Phase 1 step 6).
+        // Path:
+        //   throw → first catch caught it → throw; (rethrow) →
+        //   RhpRethrow shellcode builds new ExInfo with Kind=Throw|Rethrow,
+        //   PrevExInfo = active (= first catch's ExInfo) →
+        //   DispatchEx detects Rethrow flag, uses prev->ExContext (=
+        //   original throw site PAL) + startIdx = prev->IdxCurClause
+        //   (skip clauses up to и including the inner catch's clause) →
+        //   second catch matches → returns 901.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int RethrowChain()
+        {
+            try
+            {
+                try
+                {
+                    throw new System.InvalidOperationException("eh9");
+                }
+                catch (System.InvalidOperationException)
+                {
+                    throw;   // RhpRethrow path
+                }
+            }
+            catch (System.InvalidOperationException ex)
+            {
+                return ex.Message == "eh9" ? 901 : -1;
             }
         }
 

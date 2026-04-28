@@ -225,15 +225,10 @@ namespace OS.Boot
             while (true) { }
         }
 
-        // Some BCL paths call `throw;` (rethrow). ILC emits RhpRethrow.
-        [RuntimeExport("RhpRethrow")]
-        public static void RhpRethrow(object exception)
-        {
-            Console.Write("\r\n*** UNHANDLED EXCEPTION (rethrow) ***\r\n");
-            PrintExceptionInfo(exception);
-            Console.Write("*** halting ***\r\n");
-            while (true) { }
-        }
+        // RhpRethrow moved to OS/src/Boot/EH/RethrowStub.cs (Phase 1
+        // step 6). Body patched with ~186-byte shellcode that builds
+        // ExInfo with kind=Throw|Rethrow и calls DispatchEx — реальный
+        // rethrow path (vs original halt-stub).
 
         // Hardware fault → managed exception bridge. Without an unwinder
         // we never actually invoke this from IDT — IDT goes through

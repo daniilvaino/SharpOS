@@ -123,6 +123,7 @@ namespace OS.Boot
                 InstallCaptureContextShellcode();
                 InstallThrowExShellcode();
                 InstallCallCatchFuncletShellcode();
+                InstallRethrowShellcode();
                 // Test harness (5.5a) wired separately from EhProbe so the
                 // patcher addresses live in EhProbe statics at install time.
                 OS.Kernel.Diagnostics.EhProbe.InstallStep5_5TestHarness();
@@ -284,6 +285,13 @@ namespace OS.Boot
             bool ok = OS.Boot.EH.CallCatchFuncletPatcher.TryInstall();
             Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
                 ok ? "call-catch-funclet shellcode installed" : "call-catch-funclet shellcode install failed");
+        }
+
+        private static void InstallRethrowShellcode()
+        {
+            bool ok = OS.Boot.EH.RethrowPatcher.TryInstall();
+            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
+                ok ? "rethrow shellcode installed" : "rethrow shellcode install failed");
         }
 
         private static void InitializePager()
