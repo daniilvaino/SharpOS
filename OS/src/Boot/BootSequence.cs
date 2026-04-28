@@ -122,6 +122,10 @@ namespace OS.Boot
                 InstallPortIoShellcode();
                 InstallCaptureContextShellcode();
                 InstallThrowExShellcode();
+                InstallCallCatchFuncletShellcode();
+                // Test harness (5.5a) wired separately from EhProbe so the
+                // patcher addresses live in EhProbe statics at install time.
+                OS.Kernel.Diagnostics.EhProbe.InstallStep5_5TestHarness();
             }
             if (bootInfo.JumpStubExecBuffer != null)
                 X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
@@ -273,6 +277,13 @@ namespace OS.Boot
             bool ok = OS.Boot.EH.ThrowExPatcher.TryInstall();
             Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
                 ok ? "throw-ex shellcode installed" : "throw-ex shellcode install failed");
+        }
+
+        private static void InstallCallCatchFuncletShellcode()
+        {
+            bool ok = OS.Boot.EH.CallCatchFuncletPatcher.TryInstall();
+            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
+                ok ? "call-catch-funclet shellcode installed" : "call-catch-funclet shellcode install failed");
         }
 
         private static void InitializePager()

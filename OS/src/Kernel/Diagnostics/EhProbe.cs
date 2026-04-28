@@ -31,6 +31,36 @@ namespace OS.Kernel.Diagnostics
     // bodies away.
     internal static unsafe class EhProbe
     {
+        // ── Step 5.5a observable statics ──────────────────────────────
+        // Test harness shellcodes write to these via &s_X imm64 patches.
+        // Probe5_5_PrintResults reads them after continuation reached.
+        private static ulong s_5_5_handler_called;
+        private static ulong s_5_5_observed_rcx;
+        private static ulong s_5_5_observed_rdx;
+        private static ulong s_5_5_continuation_called;
+        private static ulong s_5_5_observed_rsp;
+
+        // Called from BootSequence Phase 2 — patches test harness stubs
+        // with shellcode что writes to our statics.
+        public static void InstallStep5_5TestHarness()
+        {
+            byte** addrHandlerCalled = (byte**)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_5_5_handler_called);
+            byte** addrObservedRcx = (byte**)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_5_5_observed_rcx);
+            byte** addrObservedRdx = (byte**)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_5_5_observed_rdx);
+            byte** addrContCalled = (byte**)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_5_5_continuation_called);
+            byte** addrObservedRsp = (byte**)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_5_5_observed_rsp);
+
+            delegate*<void> printFn = &Probe5_5_PrintResults;
+            void* printAddr = (void*)printFn;
+
+            bool ok = OS.Boot.EH.Stub5_5_Patcher.TryInstall(
+                addrHandlerCalled, addrObservedRcx, addrObservedRdx,
+                addrContCalled, addrObservedRsp, printAddr);
+
+            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
+                ok ? "5.5a test harness installed" : "5.5a test harness install failed");
+        }
+
         public static void Run()
         {
             if (Probes.EhTryFinallyNoThrow)
@@ -61,12 +91,147 @@ namespace OS.Kernel.Diagnostics
             if (Probes.EhEnumLive)
                 ReportLevel("eh 5.3 enum-live", EnumLiveDirect());
 
+            if (Probes.EhCatchFuncletProbe)
+            {
+                Log.Write(LogLevel.Info,
+                    "eh 5.5a: probing RhpCallCatchFunclet standalone (will halt in PrintResults)");
+                Probe5_5();   // never returns
+            }
+
             if (Probes.EhIngressThrow)
             {
                 Log.Write(LogLevel.Info,
                     "eh L8.ingress: triggering throw -> RhpThrowEx shellcode -> RhpTest_ThrowIngress (will halt)");
                 IngressThrow();   // never returns
             }
+        }
+
+        // Step 5.5a smoke: standalone test of RhpCallCatchFunclet.
+        // Builds fake REGDISPLAY + ExInfo on stack, calls patched
+        // RhpCallCatchFunclet shellcode. Test handler captures incoming
+        // RCX/RDX into statics, returns continuation IP. Continuation
+        // shellcode captures observed RSP, jumps to Probe5_5_PrintResults
+        // which reads статикs and prints + halts.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void Probe5_5()
+        {
+            // Saved nonvol values — handler restore loop reads pNonvol[N]
+            // pointer and dereferences it. We point each pNonvol to a local
+            // here. Recognizable constants help spot wrong restores.
+            ulong savedRbx = 0x1111111111111111UL;
+            ulong savedRbp = 0x2222222222222222UL;
+            ulong savedRsi = 0x3333333333333333UL;
+            ulong savedRdi = 0x4444444444444444UL;
+            ulong savedR12 = 0xCCCCCCCCCCCCCCCCUL;
+            ulong savedR13 = 0xDDDDDDDDDDDDDDDDUL;
+            ulong savedR14 = 0xEEEEEEEEEEEEEEEEUL;
+            ulong savedR15 = 0xFFFFFFFFFFFFFFFFUL;
+
+            OS.Boot.EH.RegDisplay rd = default;
+            rd.pRbx = &savedRbx;
+            rd.pRbp = &savedRbp;
+            rd.pRsi = &savedRsi;
+            rd.pRdi = &savedRdi;
+            rd.pR12 = &savedR12;
+            rd.pR13 = &savedR13;
+            rd.pR14 = &savedR14;
+            rd.pR15 = &savedR15;
+
+            // Fake establisher SP — pick a stack region 4KB below current
+            // rsp. This region is callable stack memory (UEFI-allocated),
+            // writable, аligned. Continuation lands here with rsp = this
+            // value, has space for its own pushes/locals.
+            byte localMarker;
+            ulong fakeSP = (ulong)(nint)(&localMarker) - 0x1000UL;
+            fakeSP &= ~0xFUL;   // 16-byte align
+            rd.SP = fakeSP;
+
+            // Fake ExInfo — link to current head, install ourselves.
+            OS.Boot.EH.ExInfo fakeEx = default;
+            fakeEx.PrevExInfo = (OS.Boot.EH.ExInfo*)OS.Boot.EH.ExInfoHead.s_head;
+            OS.Boot.EH.ExInfoHead.s_head = (System.IntPtr)(&fakeEx);
+
+            // Fake exception object — just a recognizable byte pattern.
+            ulong fakeException = 0xEEEEEEEEEEEEEEEEUL;
+            byte* fakeExceptionPtr = (byte*)&fakeException;
+
+            // Resolve handler IP and main shellcode.
+            byte* handlerIp = (byte*)OS.Boot.EH.TestCatchHandlerStub.GetMethodAddress();
+            delegate* unmanaged<byte*, byte*, OS.Boot.EH.RegDisplay*, OS.Boot.EH.ExInfo*, void> catchFn =
+                (delegate* unmanaged<byte*, byte*, OS.Boot.EH.RegDisplay*, OS.Boot.EH.ExInfo*, void>)
+                OS.Boot.EH.CallCatchFuncletStub.GetMethodAddress();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("5.5a probe entering: handler=0x");
+            Console.WriteHexRaw((ulong)(nuint)handlerIp, 16);
+            Console.Write(" rd=0x");
+            Console.WriteHexRaw((ulong)(nuint)(&rd), 16);
+            Console.Write(" exInfo=0x");
+            Console.WriteHexRaw((ulong)(nuint)(&fakeEx), 16);
+            Console.Write(" fakeSP=0x");
+            Console.WriteHexRaw(fakeSP, 16);
+            Log.EndLine();
+
+            // Tail call — never returns.
+            catchFn(fakeExceptionPtr, handlerIp, &rd, &fakeEx);
+
+            // If we reach here, shellcode returned normally — bug.
+            Console.Write("5.5a: catchFn returned (BUG — should jmp to continuation)\r\n");
+            while (true) { }
+        }
+
+        // Continuation shellcode tail-jumps here via `mov rax, &this; jmp rax`.
+        // RSP at entry = REGDISPLAY.SP (our fakeSP). Method's prolog pushes
+        // its own nonvols at this fake stack region. Body reads observable
+        // statics + prints results. Halts at end (jmp without return addr —
+        // never reach our epilog/ret).
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        public static void Probe5_5_PrintResults()
+        {
+            Log.Begin(LogLevel.Info);
+            Console.Write("\r\n*** 5.5a results ***\r\n");
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("  handler_called  = 0x");
+            Console.WriteHexRaw(s_5_5_handler_called, 16);
+            Console.Write("  (expected 0xAAAA)");
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("  observed_rcx    = 0x");
+            Console.WriteHexRaw(s_5_5_observed_rcx, 16);
+            Console.Write("  (expected = REGDISPLAY.SP from probe seam)");
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("  observed_rdx    = 0x");
+            Console.WriteHexRaw(s_5_5_observed_rdx, 16);
+            Console.Write("  (expected = pointer to fakeException 0xEE...EE local)");
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("  cont_called     = 0x");
+            Console.WriteHexRaw(s_5_5_continuation_called, 16);
+            Console.Write("  (expected 0xBBBB)");
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("  observed_rsp    = 0x");
+            Console.WriteHexRaw(s_5_5_observed_rsp, 16);
+            Console.Write("  (expected = REGDISPLAY.SP = observed_rcx)");
+            Log.EndLine();
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("  s_head_now      = 0x");
+            Console.WriteHexRaw((ulong)(long)OS.Boot.EH.ExInfoHead.s_head, 16);
+            Console.Write("  (expected = original head before probe linked fakeEx)");
+            Log.EndLine();
+
+            Console.Write("*** halting (5.5a probe complete) ***\r\n");
+            while (true) { }
         }
 
         // Step 5.3 probe A — Direct enumeration without throw.
