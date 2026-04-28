@@ -163,6 +163,42 @@ namespace OS.Boot
                     Console.Write(" codeOffset=0x");
                     Console.WriteHexRaw(fp.CodeOffset, 8);
                     Console.Write("\r\n");
+
+                    // Phase 1 step 5.5b — bridge real REGDISPLAY с fake
+                    // handler. Probes.EhCatchFuncletReal toggle gates this.
+                    // After FindFirstPassHandler, FrameIter.RegDisplay
+                    // contains real establisher frame state (IngressThrow
+                    // catcher frame). We swap real handler IP for our
+                    // fake TestCatchHandlerStub to verify whole shellcode
+                    // chain works on REAL inputs (not just synthetic).
+                    if (OS.Kernel.Diagnostics.Probes.EhCatchFuncletReal)
+                    {
+                        Console.Write("\r\n*** RhpCallCatchFunclet 5.5b (real REGDISPLAY + fake handler) ***\r\n");
+
+                        byte* fakeHandler = (byte*)OS.Boot.EH.TestCatchHandlerStub.GetMethodAddress();
+
+                        Console.Write("  passing exception=0x");
+                        Console.WriteHexRaw((ulong)(nuint)exceptionPtr, 16);
+                        Console.Write(" fakeHandler=0x");
+                        Console.WriteHexRaw((ulong)(nuint)fakeHandler, 16);
+                        Console.Write("\r\n");
+                        Console.Write("  rd.SP=0x");
+                        Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
+                        Console.Write(" rd.ControlPC=0x");
+                        Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.ControlPC, 16);
+                        Console.Write("\r\n");
+
+                        delegate* unmanaged<byte*, byte*, OS.Boot.EH.RegDisplay*, OS.Boot.EH.ExInfo*, void> catchFn =
+                            (delegate* unmanaged<byte*, byte*, OS.Boot.EH.RegDisplay*, OS.Boot.EH.ExInfo*, void>)
+                            OS.Boot.EH.CallCatchFuncletStub.GetMethodAddress();
+
+                        // RegDisplay is first field of StackFrameIterator,
+                        // so &FrameIter == &FrameIter.RegDisplay.
+                        catchFn(exceptionPtr, fakeHandler,
+                                (OS.Boot.EH.RegDisplay*)&exInfo->FrameIter, exInfo);
+
+                        Console.Write("5.5b: catchFn returned (BUG)\r\n");
+                    }
                 }
                 else
                 {
@@ -172,7 +208,7 @@ namespace OS.Boot
                 }
             }
 
-            Console.Write("*** halting (5.4 first-pass probe) ***\r\n");
+            Console.Write("*** halting (5.4/5.5b first-pass probe) ***\r\n");
             while (true) { }
         }
 
