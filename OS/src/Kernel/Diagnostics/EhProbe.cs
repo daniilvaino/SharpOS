@@ -126,6 +126,18 @@ namespace OS.Kernel.Diagnostics
                 ReportLevel("eh L15 collided unwind", v);
             }
 
+            if (Probes.EhMultiFrameFinally)
+            {
+                int v = MultiFrameFinally();
+                ReportLevel("eh L16 multi-frame finally", v);
+            }
+
+            if (Probes.EhMultiFrameStackTrace)
+            {
+                int v = MultiFrameStackTrace();
+                ReportLevel("eh L17 multi-frame stack trace", v);
+            }
+
             if (Probes.EhCatchFuncletProbe)
             {
                 Log.Write(LogLevel.Info,
@@ -554,6 +566,92 @@ namespace OS.Kernel.Diagnostics
             {
                 return 1101;
             }
+        }
+
+        // L16/L17 multi-frame test state — populated by helper methods,
+        // verified by outer probe.
+        private static int s_multiFrameFinallyCount;
+
+        // L16 helper: throws but has no catch. Caller catches.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void HelperThrow16()
+        {
+            throw new System.InvalidOperationException("eh16");
+        }
+
+        // L16 helper: protects HelperThrow16 with finally. The finally must
+        // fire when callee throws — that's the multi-frame scenario.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void HelperWithFinally16()
+        {
+            try
+            {
+                HelperThrow16();
+            }
+            finally
+            {
+                s_multiFrameFinallyCount = 16;
+            }
+        }
+
+        // L16 gate — multi-frame finally walk (Phase 1 polish).
+        // Path: caller catches; intermediate frame has try/finally that
+        // protected the throwing callee. Stock NativeAOT walks frames
+        // during second pass и invokes finally on each frame между
+        // throw site и handlingFrameSP. We do the equivalent here.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int MultiFrameFinally()
+        {
+            s_multiFrameFinallyCount = 0;
+            try
+            {
+                HelperWithFinally16();
+            }
+            catch (System.InvalidOperationException)
+            {
+                return 1600 + s_multiFrameFinallyCount;
+            }
+            return -1;
+        }
+
+        // L17 helper chain: each level adds one frame to stack trace.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void HelperLevel3_17()
+        {
+            throw new System.InvalidOperationException("eh17");
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void HelperLevel2_17() => HelperLevel3_17();
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void HelperLevel1_17() => HelperLevel2_17();
+
+        // L17 gate — multi-frame stack trace.
+        // First-pass должен append PC for every frame walked. Test verifies
+        // non-trivial trace (>= 4 frames: HelperLevel3 → 2 → 1 → MultiFrameStackTrace).
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int MultiFrameStackTrace()
+        {
+            try
+            {
+                HelperLevel1_17();
+            }
+            catch (System.Exception ex)
+            {
+                System.IntPtr[] trace = ex.GetStackIPs();
+                if (trace == null || trace.Length < 4)
+                    return -1;
+                return 1700 + trace.Length;
+            }
+            return -1;
         }
 
         // L13 gate — hardware fault bridge (Phase 1 step 10). Path:

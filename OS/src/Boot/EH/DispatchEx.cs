@@ -46,7 +46,8 @@ namespace OS.Boot.EH
             byte* exceptionPtr,
             GcMethodTable* exceptionType,
             StackFrameIterator* iter,
-            uint startIdx = ExInfo.MaxTryRegionIdx)
+            uint startIdx = ExInfo.MaxTryRegionIdx,
+            System.Exception traceTarget = null)
         {
             FirstPassResult result = default;
             const int MaxFrames = 100;
@@ -54,6 +55,14 @@ namespace OS.Boot.EH
 
             while (result.FramesWalked < MaxFrames)
             {
+                // Append this frame's IP к exception's stack trace (multi-
+                // frame trace). Done before clause matching so each visited
+                // frame contributes one entry, even those without EH info.
+                if (traceTarget != null)
+                {
+                    traceTarget.AppendStackFrame((System.IntPtr)(long)iter->ControlPC);
+                }
+
                 bool ehOk = CoffEhDecoder.EhEnumInit((byte*)iter->ControlPC,
                     out CoffEhDecoder.EHEnum enumState,
                     out byte* methodStart);
@@ -307,24 +316,18 @@ namespace OS.Boot.EH
             if (exceptionPtr != null)
                 exType = *(GcMethodTable**)exceptionPtr;
 
-            // Phase 1 step 11 — append throw site IP к exception's stack
-            // trace before first-pass. Stock NativeAOT walks frames during
-            // first-pass и appends each one (handles funclet-skip, frame-
-            // pointer dedup); we do simpler — single-frame append at the
-            // throw/rethrow site. Multi-frame trace deferred (needs
-            // funclet-aware SFI).
+            // Stash exception ref for stack trace appending in FFPH walk.
+            System.Exception exObjForTrace = null;
             if (exceptionPtr != null && !isRethrow)
             {
-                System.Exception exObj = null;
-                *(byte**)&exObj = exceptionPtr;
-                if (exObj != null)
-                {
-                    exObj.AppendStackFrame((System.IntPtr)(long)exInfo->FrameIter.ControlPC);
-                }
+                System.Exception tmp = null;
+                *(byte**)&tmp = exceptionPtr;
+                exObjForTrace = tmp;
             }
 
-            // First-pass: find catch handler.
-            FirstPassResult fp = FindFirstPassHandler(exceptionPtr, exType, &exInfo->FrameIter, startIdx);
+            // First-pass: find catch handler. Walks frames and appends each
+            // one's IP к stack trace as it goes (multi-frame trace).
+            FirstPassResult fp = FindFirstPassHandler(exceptionPtr, exType, &exInfo->FrameIter, startIdx, exObjForTrace);
 
             OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
             OS.Hal.Console.Write("  fp.Found=");
@@ -345,24 +348,18 @@ namespace OS.Boot.EH
             }
 
             uint catchingTryRegionIdx = fp.IdxCurClause;
+            ulong handlingFrameSP = exInfo->FrameIter.RegDisplay.SP;
 
             // Update ExInfo state перед catch.
             exInfo->IdxCurClause = fp.IdxCurClause;
             exInfo->Exception = (ulong)(nuint)exceptionPtr;
             exInfo->PassNumber = 2;
 
-            // Phase 1 step 7 — second pass на catch frame. Enumerate
-            // clauses на TEKUSCHEM iter (где FFPH остановился — это catch's
-            // establisher frame). Invoke fault/finally clauses с curIdx <
-            // catchingTryRegionIdx, codeOffset в TRY range. Iter NOT
-            // walked through other frames — funclet-aware multi-frame
-            // walking — это step 11 territory.
-            //
-            // Single-frame test L10 (throw + finally + catch в одном методе)
-            // covered by this; multi-frame finally clauses fire only когда
-            // SFI gets funclet-skip support.
+            // Multi-frame second pass — walk frames от throw site до
+            // handlingFrameSP, invoking fault/finally clauses на каждом
+            // frame. На catch frame uses partial pass (idxLimit=catchIdx).
             uint startSecondPassIdx = isRethrow ? startIdx : ExInfo.MaxTryRegionIdx;
-            InvokeFinalliesOnFrame(exInfo, startSecondPassIdx, catchingTryRegionIdx);
+            InvokeSecondPass(exInfo, handlingFrameSP, catchingTryRegionIdx, startSecondPassIdx);
 
             // Hand off к catch funclet via shellcode. RegDisplay is first
             // field of StackFrameIterator — &FrameIter == &RegDisplay.
@@ -376,6 +373,55 @@ namespace OS.Boot.EH
             // Should not return.
             OS.Hal.Console.Write("\r\n*** RhpCallCatchFunclet returned to Dispatch (BUG) ***\r\n");
             while (true) { }
+        }
+
+        // Multi-frame second pass — walks frames from throw site до catch's
+        // establisher frame (handlingFrameSP), invoking finally/fault clauses
+        // на каждом intermediate frame. На catch frame uses partial pass
+        // (idxLimit = catchIdx) so что catch's own finally не fires перед
+        // catch invocation.
+        //
+        // Iter init из exInfo->ExContext (throw site PAL). Для collided
+        // unwind (throw inside funclet body) adopts prev's iter — same logic
+        // as Dispatch entry — so RegDisplay.SP reflects parent's establisher
+        // не funclet's local rsp.
+        private static void InvokeSecondPass(ExInfo* exInfo, ulong handlingFrameSP,
+            uint catchIdx, uint startIdx)
+        {
+            StackFrameIteratorOps.Init(&exInfo->FrameIter, exInfo->ExContext);
+
+            // Collided-unwind detection — mirror Dispatch entry logic.
+            if (exInfo->PrevExInfo != null
+                && CoffEhDecoder.TryFindFuncletProtectedOffset(
+                    (byte*)exInfo->ExContext->IP, out _, out _, out _))
+            {
+                ulong funcletBodyPC = exInfo->ExContext->IP;
+                exInfo->FrameIter = exInfo->PrevExInfo->FrameIter;
+                exInfo->FrameIter.ControlPC = funcletBodyPC;
+            }
+
+            const int MaxFrames = 100;
+            int framesWalked = 0;
+            while (framesWalked < MaxFrames)
+            {
+                ulong frameSp = exInfo->FrameIter.RegDisplay.SP;
+                bool atCatchFrame = frameSp == handlingFrameSP;
+                bool past = frameSp > handlingFrameSP;
+
+                if (past)
+                    break;
+
+                uint idxLimit = atCatchFrame ? catchIdx : ExInfo.MaxTryRegionIdx;
+                uint frameStartIdx = atCatchFrame ? startIdx : ExInfo.MaxTryRegionIdx;
+                InvokeFinalliesOnFrame(exInfo, frameStartIdx, idxLimit);
+
+                if (atCatchFrame)
+                    break;
+
+                if (!StackFrameIteratorOps.Next(&exInfo->FrameIter))
+                    break;
+                framesWalked++;
+            }
         }
 
         // Enumerate clauses на текущем iter frame, invoke finally (kind=Fault)
