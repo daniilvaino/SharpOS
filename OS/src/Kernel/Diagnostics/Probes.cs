@@ -50,7 +50,7 @@ namespace OS.Kernel.Diagnostics
         public const bool EhFilter = true;                 // step 8 GATE: L11 == 1101 (catch when filter)
         public const bool EhHwFault = true;                // step 10 GATE: L13 == 3 (null deref → catch)
         public const bool EhStackTrace = true;             // step 11 GATE: L14 == 1401 (Exception.StackTrace populated)
-        public const bool EhCollidedUnwind = false;        // step 11 deferred: L15 needs funclet-aware SFI (Phase 2 work)
+        public const bool EhCollidedUnwind = true;         // step 11 GATE: L15 == 1501 (rethrow inside finally — funclet-aware codeOffset)
         public const bool EhEnumLive = true;              // step 5.3 probe A: enum clauses on live frame inside try (non-halting)
 
         public const bool IdtPanic = false;          // never returns when on

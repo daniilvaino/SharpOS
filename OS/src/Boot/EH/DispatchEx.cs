@@ -74,7 +74,22 @@ namespace OS.Boot.EH
 
                 if (ehOk)
                 {
-                    uint codeOffset = (uint)((nint)iter->ControlPC - (nint)methodStart);
+                    uint codeOffset;
+                    if (CoffEhDecoder.TryFindFuncletProtectedOffset(
+                        (byte*)iter->ControlPC, out uint synthOffset, out _, out uint funcIdx))
+                    {
+                        codeOffset = synthOffset;
+                        OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                        OS.Hal.Console.Write("      funclet-aware: synth codeOffset=0x");
+                        OS.Hal.Console.WriteHexRaw(codeOffset, 8);
+                        OS.Hal.Console.Write(" funcletClauseIdx=");
+                        OS.Hal.Console.WriteUIntRaw(funcIdx);
+                        OS.Hal.Log.EndLine();
+                    }
+                    else
+                    {
+                        codeOffset = (uint)((nint)iter->ControlPC - (nint)methodStart);
+                    }
                     uint clauseIdx = 0;
 
                     while (CoffEhDecoder.EhEnumNext(ref enumState,
@@ -250,6 +265,31 @@ namespace OS.Boot.EH
             if (!reusedIter)
             {
                 StackFrameIteratorOps.Init(&exInfo->FrameIter, exInfo->ExContext);
+
+                // Collided unwind detection: throw originated INSIDE a funclet
+                // body (e.g. finally re-throws). Iter is at funclet's local SP,
+                // не establisher SP — catch funclet would receive wrong RCX
+                // and access establisher locals through bad address. Adopt
+                // prev's iter (correct establisher SP + nonvol pointers), then
+                // restore ControlPC к funclet body PC так что funclet detection
+                // в FFPH/InvokeFinalliesOnFrame still fires (synth codeOffset
+                // + funcletClauseIdx skip).
+                if (exInfo->PrevExInfo != null
+                    && CoffEhDecoder.TryFindFuncletProtectedOffset(
+                        (byte*)exInfo->ExContext->IP,
+                        out _, out _, out _))
+                {
+                    ulong funcletBodyPC = exInfo->ExContext->IP;
+                    exInfo->FrameIter = exInfo->PrevExInfo->FrameIter;
+                    exInfo->FrameIter.ControlPC = funcletBodyPC;
+
+                    OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                    OS.Hal.Console.Write("  collided-unwind: adopted prev iter SP=0x");
+                    OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
+                    OS.Hal.Console.Write(" kept ControlPC=0x");
+                    OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.ControlPC, 16);
+                    OS.Hal.Log.EndLine();
+                }
             }
 
             OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
@@ -354,7 +394,23 @@ namespace OS.Boot.EH
                 out byte* methodStart))
                 return;
 
-            uint codeOffset = (uint)((nint)exInfo->FrameIter.ControlPC - (nint)methodStart);
+            // Funclet-aware codeOffset (see FindFirstPassHandler comment).
+            // Also surfaces funcletClauseIdx — the clause whose handler IS
+            // the funclet we're currently inside. Must skip это clause
+            // на second pass: иначе finally body's own throw causes
+            // recursive re-invocation → infinite recursion.
+            uint codeOffset;
+            uint funcletClauseIdx = 0xFFFFFFFFu;
+            if (CoffEhDecoder.TryFindFuncletProtectedOffset(
+                (byte*)exInfo->FrameIter.ControlPC, out uint synthOffset, out _, out uint funcIdx))
+            {
+                codeOffset = synthOffset;
+                funcletClauseIdx = funcIdx;
+            }
+            else
+            {
+                codeOffset = (uint)((nint)exInfo->FrameIter.ControlPC - (nint)methodStart);
+            }
             uint clauseIdx = 0;
 
             while (clauseIdx < idxLimit
@@ -363,6 +419,14 @@ namespace OS.Boot.EH
             {
                 // Rethrow skip — same logic as first pass.
                 if (startIdx != ExInfo.MaxTryRegionIdx && clauseIdx <= startIdx)
+                {
+                    clauseIdx++;
+                    continue;
+                }
+
+                // Skip the clause whose handler IS the funclet we're inside —
+                // prevents finally re-invoking itself when its body throws.
+                if (clauseIdx == funcletClauseIdx)
                 {
                     clauseIdx++;
                     continue;

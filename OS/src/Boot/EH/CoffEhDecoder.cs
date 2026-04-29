@@ -120,6 +120,65 @@ namespace OS.Boot.EH
             return true;
         }
 
+        // Phase 1 step 11+ — funclet-aware codeOffset resolution.
+        //
+        // When iter's ControlPC lives inside a funclet body (catch/finally/
+        // filter handler funclet), the literal `ControlPC - methodStart`
+        // codeOffset points to the funclet body region, which is past all
+        // parent's TRY ranges. Clause matching fails — outer catches don't
+        // see the throw.
+        //
+        // Stock NativeAOT solves this с funclet-aware StackFrameIterator:
+        // when iter walks к funclet, it transforms ControlPC к "logical
+        // position" inside parent's protected TRY region. We don't have
+        // funclet-aware SFI, but we can do the equivalent transformation
+        // в clause matching: for each EH info enum, find the clause whose
+        // handler starts at the funclet's begin address; use that clause's
+        // TryStartOffset as synthetic codeOffset.
+        //
+        // Returns false если methodInfo represents a ROOT (no transformation
+        // needed) или associated clause не найден (fall back to literal).
+        public static bool TryFindFuncletProtectedOffset(
+            byte* ip,
+            out uint synthOffset,
+            out byte* methodStart,
+            out uint funcletClauseIdx)
+        {
+            synthOffset = 0;
+            methodStart = null;
+            funcletClauseIdx = 0xFFFFFFFFu;
+
+            if (!CoffMethodLookup.TryFindMethod(ip, out CoffMethodLookup.MethodInfo info))
+                return false;
+
+            int kind = info.CurrentBlockFlags & CoffMethodLookup.UBF_FUNC_KIND_MASK;
+            if (kind == CoffMethodLookup.UBF_FUNC_KIND_ROOT)
+                return false;   // not a funclet
+
+            byte* imageBase = CoffRuntimeFunctionTable.ImageBase;
+            byte* root = imageBase + info.RootRuntimeFunction->BeginAddress;
+            methodStart = root;
+
+            // Walk EH info, find clause whose HandlerAddress's RVA matches funclet.
+            if (!EhEnumInit(root, out EHEnum state, out _))
+                return false;
+
+            byte* funcletAddr = imageBase + info.CurrentRuntimeFunction->BeginAddress;
+
+            uint idx = 0;
+            while (EhEnumNext(ref state, out RhEHClause clause))
+            {
+                if (clause.HandlerAddress == funcletAddr)
+                {
+                    synthOffset = clause.TryStartOffset;
+                    funcletClauseIdx = idx;
+                    return true;
+                }
+                idx++;
+            }
+            return false;
+        }
+
         // Pulls the next clause out of the cursor. Returns false when no
         // more clauses remain.
         public static bool EhEnumNext(ref EHEnum state, out RhEHClause clause)
