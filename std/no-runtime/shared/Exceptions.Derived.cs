@@ -164,6 +164,14 @@ namespace System
             : base(message, innerException) { }
     }
 
+    public class AccessViolationException : Exception
+    {
+        public AccessViolationException() { }
+        public AccessViolationException(string message) : base(message) { }
+        public AccessViolationException(string message, Exception innerException)
+            : base(message, innerException) { }
+    }
+
     public class NotImplementedException : Exception
     {
         public NotImplementedException() { }

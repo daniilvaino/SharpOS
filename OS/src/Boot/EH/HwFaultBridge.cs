@@ -141,12 +141,19 @@ namespace OS.Boot.EH
                 case VecDivideByZero:
                     return new System.DivideByZeroException();
                 case VecPageFault:
+                    // CLR tradition: #PF on low addresses (null + small offsets)
+                    // → NullReferenceException; higher unmapped addresses →
+                    // AccessViolationException. Boundary 0x10000 covers typical
+                    // `obj.field` где compiler emits load с small offset from
+                    // null base.
+                    if (frame->Cr2 < 0x10000)
+                        return new System.NullReferenceException();
+                    return new System.AccessViolationException();
                 case VecGeneralProtection:
-                    // CLR tradition: any access violation → NullReferenceException
-                    // (covers null deref + out-of-bounds + bad pointer alike в
-                    // managed code path). #GP from non-canonical addresses
-                    // тоже маппится сюда — semantic identical с user perspective.
-                    return new System.NullReferenceException();
+                    // #GP — non-canonical address writes/reads. Доступ к памяти
+                    // вне canonical range всегда AccessViolationException
+                    // (no null-deref path applies).
+                    return new System.AccessViolationException();
                 default:
                     return null;
             }

@@ -675,7 +675,7 @@ namespace OS.Kernel.Diagnostics
                 *p = 0;        // → #GP (non-canonical write)
                 return -1;     // unreachable
             }
-            catch (System.NullReferenceException)
+            catch (System.AccessViolationException)
             {
                 return 3;
             }

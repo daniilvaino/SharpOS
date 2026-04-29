@@ -323,6 +323,9 @@ namespace OS.Boot.EH
                 System.Exception tmp = null;
                 *(byte**)&tmp = exceptionPtr;
                 exObjForTrace = tmp;
+
+                // First-chance hook — invoked once per throw before search.
+                ExceptionHooks.NotifyFirstChance(tmp);
             }
 
             // First-pass: find catch handler. Walks frames and appends each
@@ -341,10 +344,12 @@ namespace OS.Boot.EH
             OS.Hal.Log.EndLine();
             if (!fp.Found)
             {
-                // Unhandled. In 5.6 we just halt; full plumbing для
-                // OnUnhandledException + FailFast comes later.
+                // Unhandled — notify hook then FailFast.
+                if (exObjForTrace != null)
+                    ExceptionHooks.NotifyUnhandled(exObjForTrace);
+
                 OS.Hal.Console.Write("\r\n*** unhandled exception (no matching catch) ***\r\n");
-                while (true) { }
+                ExceptionHooks.FailFast();
             }
 
             uint catchingTryRegionIdx = fp.IdxCurClause;
