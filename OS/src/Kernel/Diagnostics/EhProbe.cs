@@ -102,6 +102,12 @@ namespace OS.Kernel.Diagnostics
                 ReportLevel("eh L10 finally + catch", v);
             }
 
+            if (Probes.EhFilter)
+            {
+                int v = FilterClause();
+                ReportLevel("eh L11 catch-when filter", v);
+            }
+
             if (Probes.EhCatchFuncletProbe)
             {
                 Log.Write(LogLevel.Info,
@@ -505,6 +511,30 @@ namespace OS.Kernel.Diagnostics
             catch (System.InvalidOperationException)
             {
                 return 100 + x;
+            }
+        }
+
+        // L11 gate — filter clause (`catch (E) when (predicate)`)
+        // (Phase 1 step 8). Path:
+        //   throw → DispatchEx FFPH iterates clauses → filter clause
+        //   covers codeOffset → invoke RhpCallFilterFunclet с user
+        //   predicate body (returns 1 = match) → catch handler runs →
+        //   return 1101.
+        //
+        // First non-matching filter test: throw IOE("eh11"), filter
+        // checks ex.Message=="bogus" → returns 0 → no match → second
+        // filter (or default catch) matches.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int FilterClause()
+        {
+            try
+            {
+                throw new System.InvalidOperationException("eh11");
+            }
+            catch (System.InvalidOperationException ex) when (ex.Message == "eh11")
+            {
+                return 1101;
             }
         }
 

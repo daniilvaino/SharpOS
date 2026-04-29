@@ -160,7 +160,7 @@ namespace OS.Boot
                 Console.Write("\r\n");
 
                 OS.Boot.EH.DispatchEx.FirstPassResult fp =
-                    OS.Boot.EH.DispatchEx.FindFirstPassHandler(exType, &exInfo->FrameIter);
+                    OS.Boot.EH.DispatchEx.FindFirstPassHandler(exceptionPtr, exType, &exInfo->FrameIter);
 
                 if (fp.Found)
                 {

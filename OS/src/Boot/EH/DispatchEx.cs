@@ -43,6 +43,7 @@ namespace OS.Boot.EH
         // 0..startIdx (inclusive) are skipped — prevents the just-ran
         // catch from re-catching its own rethrow.
         public static FirstPassResult FindFirstPassHandler(
+            byte* exceptionPtr,
             GcMethodTable* exceptionType,
             StackFrameIterator* iter,
             uint startIdx = ExInfo.MaxTryRegionIdx)
@@ -104,12 +105,36 @@ namespace OS.Boot.EH
                             continue;
                         }
 
-                        // Filter clauses — skipped в 5.4. Need
-                        // RhpCallFilterFunclet (5.5+).
-                        if (clause.Kind == CoffEhDecoder.ClauseKind.Filter)
+                        // Filter: check IP coverage + invoke filter funclet;
+                        // non-zero return → match.
+                        if (clause.Kind == CoffEhDecoder.ClauseKind.Filter
+                            && codeOffset >= clause.TryStartOffset
+                            && codeOffset < clause.TryEndOffset)
                         {
-                            clauseIdx++;
-                            continue;
+                            delegate* unmanaged<byte*, byte*, RegDisplay*, int> filterFn =
+                                (delegate* unmanaged<byte*, byte*, RegDisplay*, int>)
+                                CallFilterFuncletStub.GetMethodAddress();
+                            int filterResult = filterFn(exceptionPtr,
+                                clause.FilterAddress,
+                                (RegDisplay*)iter);
+
+                            OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                            OS.Hal.Console.Write("      filter[");
+                            OS.Hal.Console.WriteUIntRaw(clauseIdx);
+                            OS.Hal.Console.Write("] result=");
+                            OS.Hal.Console.WriteUIntRaw((uint)filterResult);
+                            OS.Hal.Log.EndLine();
+
+                            if (filterResult != 0)
+                            {
+                                result.Found = true;
+                                result.HandlerAddress = clause.HandlerAddress;
+                                result.IdxCurClause = clauseIdx;
+                                result.TryRegionIdx = clauseIdx;
+                                result.MethodStart = methodStart;
+                                result.CodeOffset = codeOffset;
+                                return result;
+                            }
                         }
 
                         // Typed: check IP coverage + class hierarchy match.
@@ -243,7 +268,7 @@ namespace OS.Boot.EH
                 exType = *(GcMethodTable**)exceptionPtr;
 
             // First-pass: find catch handler.
-            FirstPassResult fp = FindFirstPassHandler(exType, &exInfo->FrameIter, startIdx);
+            FirstPassResult fp = FindFirstPassHandler(exceptionPtr, exType, &exInfo->FrameIter, startIdx);
 
             OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
             OS.Hal.Console.Write("  fp.Found=");

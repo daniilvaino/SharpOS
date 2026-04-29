@@ -47,6 +47,7 @@ namespace OS.Kernel.Diagnostics
         public const bool EhRealDispatch = true;         // step 5.6: full real dispatch (DispatchEx + ILC catch funclet) — needed for L8 == 801
         public const bool EhRethrowChain = true;         // step 6 GATE: L9 == 901 (nested catch with throw;)
         public const bool EhTryCatchFinally = true;       // step 7 GATE: L10 == 111 (finally runs before catch)
+        public const bool EhFilter = true;                 // step 8 GATE: L11 == 1101 (catch when filter)
         public const bool EhEnumLive = true;              // step 5.3 probe A: enum clauses on live frame inside try (non-halting)
 
         public const bool IdtPanic = false;          // never returns when on
