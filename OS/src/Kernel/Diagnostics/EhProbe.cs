@@ -108,6 +108,12 @@ namespace OS.Kernel.Diagnostics
                 ReportLevel("eh L11 catch-when filter", v);
             }
 
+            if (Probes.EhHwFault)
+            {
+                int v = HwFault();
+                ReportLevel("eh L13 hw fault (null deref)", v);
+            }
+
             if (Probes.EhCatchFuncletProbe)
             {
                 Log.Write(LogLevel.Info,
@@ -535,6 +541,33 @@ namespace OS.Kernel.Diagnostics
             catch (System.InvalidOperationException ex) when (ex.Message == "eh11")
             {
                 return 1101;
+            }
+        }
+
+        // L13 gate — hardware fault bridge (Phase 1 step 10). Path:
+        //   write to non-canonical address → CPU #GP → IDT trampoline →
+        //   Idt.Dispatch → HwFaultBridge.DispatchTrap → builds
+        //   NullReferenceException + PAL + ExInfo (kind=HardwareFault) →
+        //   DispatchEx.Dispatch → FFPH finds catch в этом frame →
+        //   RhpCallCatchFunclet → return 3.
+        //
+        // Note: actual `*((int*)null) = 0` doesn't fault в UEFI environment
+        // потому что low memory identity-mapped writable. Use non-canonical
+        // address (0x8000_0000_0000_0000) which guarantees CPU #GP regardless
+        // of paging.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static unsafe int HwFault()
+        {
+            try
+            {
+                int* p = (int*)0x8000_0000_0000_0000UL;   // non-canonical
+                *p = 0;        // → #GP (non-canonical write)
+                return -1;     // unreachable
+            }
+            catch (System.NullReferenceException)
+            {
+                return 3;
             }
         }
 

@@ -140,13 +140,23 @@ namespace OS.Hal.Idt
 
         // Managed dispatcher invoked by the common stub via Win64 ABI.
         // RCX = InterruptFrame* (pointer to current stack-saved snapshot).
-        // We do not return — common stub follows our return with hlt/jmp $.
+        //
+        // Phase 1 step 10: для supported CPU exception vectors (#PF, #DE,
+        // etc.) build managed exception + PAL + ExInfo и call DispatchEx.
+        // На success (catch found) Dispatch transfers control via mov rsp+jmp;
+        // we never return. На unsupported vector or unhandled exception
+        // fall through to PanicDump (legacy path).
         [UnmanagedCallersOnly]
         private static void Dispatch(InterruptFrame* frame)
         {
+            int vector = (int)frame->Vector;
+            if (OS.Boot.EH.HwFaultBridge.IsSupported(vector))
+            {
+                OS.Boot.EH.HwFaultBridge.DispatchTrap(frame);
+                // DispatchTrap does not return на success.
+            }
+
             PanicDump.Print(frame);
-            // If we ever return, the common stub falls into hlt/jmp$. To be
-            // explicit, spin here as well.
             while (true) { }
         }
     }

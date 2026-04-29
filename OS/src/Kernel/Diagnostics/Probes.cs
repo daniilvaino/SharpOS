@@ -48,6 +48,7 @@ namespace OS.Kernel.Diagnostics
         public const bool EhRethrowChain = true;         // step 6 GATE: L9 == 901 (nested catch with throw;)
         public const bool EhTryCatchFinally = true;       // step 7 GATE: L10 == 111 (finally runs before catch)
         public const bool EhFilter = true;                 // step 8 GATE: L11 == 1101 (catch when filter)
+        public const bool EhHwFault = true;                // step 10 GATE: L13 == 3 (null deref → catch)
         public const bool EhEnumLive = true;              // step 5.3 probe A: enum clauses on live frame inside try (non-halting)
 
         public const bool IdtPanic = false;          // never returns when on
