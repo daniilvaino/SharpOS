@@ -263,10 +263,25 @@ namespace OS.Boot.EH
                 while (true) { }
             }
 
+            uint catchingTryRegionIdx = fp.IdxCurClause;
+
             // Update ExInfo state перед catch.
             exInfo->IdxCurClause = fp.IdxCurClause;
             exInfo->Exception = (ulong)(nuint)exceptionPtr;
             exInfo->PassNumber = 2;
+
+            // Phase 1 step 7 — second pass на catch frame. Enumerate
+            // clauses на TEKUSCHEM iter (где FFPH остановился — это catch's
+            // establisher frame). Invoke fault/finally clauses с curIdx <
+            // catchingTryRegionIdx, codeOffset в TRY range. Iter NOT
+            // walked through other frames — funclet-aware multi-frame
+            // walking — это step 11 territory.
+            //
+            // Single-frame test L10 (throw + finally + catch в одном методе)
+            // covered by this; multi-frame finally clauses fire only когда
+            // SFI gets funclet-skip support.
+            uint startSecondPassIdx = isRethrow ? startIdx : ExInfo.MaxTryRegionIdx;
+            InvokeFinalliesOnFrame(exInfo, startSecondPassIdx, catchingTryRegionIdx);
 
             // Hand off к catch funclet via shellcode. RegDisplay is first
             // field of StackFrameIterator — &FrameIter == &RegDisplay.
@@ -280,6 +295,60 @@ namespace OS.Boot.EH
             // Should not return.
             OS.Hal.Console.Write("\r\n*** RhpCallCatchFunclet returned to Dispatch (BUG) ***\r\n");
             while (true) { }
+        }
+
+        // Enumerate clauses на текущем iter frame, invoke finally (kind=Fault)
+        // clauses covering codeOffset. Каждый Fault clause — IL finally
+        // (в NativeAOT encoding finally компилируется как FAULT).
+        //
+        // startIdx — для rethrow second pass: skip clauses 0..startIdx как в
+        // first pass (catch который только что отработал не должен run свой
+        // finally — он по семантике уже выполнился перед catch'ем).
+        // idxLimit — partial-pass cap: clauses с curIdx >= idxLimit не run
+        // (catch's own finally не должен fire перед самим catch'ем).
+        private static void InvokeFinalliesOnFrame(ExInfo* exInfo, uint startIdx, uint idxLimit)
+        {
+            if (!CoffEhDecoder.EhEnumInit((byte*)exInfo->FrameIter.ControlPC,
+                out CoffEhDecoder.EHEnum enumState,
+                out byte* methodStart))
+                return;
+
+            uint codeOffset = (uint)((nint)exInfo->FrameIter.ControlPC - (nint)methodStart);
+            uint clauseIdx = 0;
+
+            while (clauseIdx < idxLimit
+                && CoffEhDecoder.EhEnumNext(ref enumState,
+                    out CoffEhDecoder.RhEHClause clause))
+            {
+                // Rethrow skip — same logic as first pass.
+                if (startIdx != ExInfo.MaxTryRegionIdx && clauseIdx <= startIdx)
+                {
+                    clauseIdx++;
+                    continue;
+                }
+
+                if (clause.Kind == CoffEhDecoder.ClauseKind.Fault
+                    && codeOffset >= clause.TryStartOffset
+                    && codeOffset < clause.TryEndOffset)
+                {
+                    OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                    OS.Hal.Console.Write("    finally[");
+                    OS.Hal.Console.WriteUIntRaw(clauseIdx);
+                    OS.Hal.Console.Write("]: handler=0x");
+                    OS.Hal.Console.WriteHexRaw((ulong)(nuint)clause.HandlerAddress, 16);
+                    OS.Hal.Console.Write(" frameSP=0x");
+                    OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
+                    OS.Hal.Log.EndLine();
+
+                    exInfo->IdxCurClause = clauseIdx;
+                    delegate* unmanaged<byte*, RegDisplay*, void> finallyFn =
+                        (delegate* unmanaged<byte*, RegDisplay*, void>)
+                        CallFinallyFuncletStub.GetMethodAddress();
+                    finallyFn(clause.HandlerAddress, (RegDisplay*)&exInfo->FrameIter);
+                    exInfo->IdxCurClause = ExInfo.MaxTryRegionIdx;
+                }
+                clauseIdx++;
+            }
         }
 
         // Class assignability — true if `objType` is `targetType` or any

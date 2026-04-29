@@ -96,6 +96,12 @@ namespace OS.Kernel.Diagnostics
                 ReportLevel("eh L9 rethrow chain", v);
             }
 
+            if (Probes.EhTryCatchFinally)
+            {
+                int v = TryCatchFinally();
+                ReportLevel("eh L10 finally + catch", v);
+            }
+
             if (Probes.EhCatchFuncletProbe)
             {
                 Log.Write(LogLevel.Info,
@@ -469,6 +475,36 @@ namespace OS.Kernel.Diagnostics
             catch (System.InvalidOperationException ex)
             {
                 return ex.Message == "eh9" ? 901 : -1;
+            }
+        }
+
+        // L10 gate — finally + second pass (Phase 1 step 7).
+        // Path:
+        //   throw → DispatchEx first pass finds outer catch (idxCurClause=K) →
+        //   InvokeSecondPass walks frames от throw site до handlingFrameSP,
+        //   on catch frame partial-pass с idxLimit=K so that finally clause
+        //   (curIdx<K, kind=Fault, codeOffset in TRY range) is invoked →
+        //   RhpCallFinallyFunclet runs `x = 11` body, writes back nonvols
+        //   к REGDISPLAY → returns → catch funclet runs `return 100 + x` → 111.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int TryCatchFinally()
+        {
+            int x = 0;
+            try
+            {
+                try
+                {
+                    throw new System.InvalidOperationException("eh10");
+                }
+                finally
+                {
+                    x = 11;
+                }
+            }
+            catch (System.InvalidOperationException)
+            {
+                return 100 + x;
             }
         }
 
