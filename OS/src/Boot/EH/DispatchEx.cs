@@ -267,6 +267,22 @@ namespace OS.Boot.EH
             if (exceptionPtr != null)
                 exType = *(GcMethodTable**)exceptionPtr;
 
+            // Phase 1 step 11 — append throw site IP к exception's stack
+            // trace before first-pass. Stock NativeAOT walks frames during
+            // first-pass и appends each one (handles funclet-skip, frame-
+            // pointer dedup); we do simpler — single-frame append at the
+            // throw/rethrow site. Multi-frame trace deferred (needs
+            // funclet-aware SFI).
+            if (exceptionPtr != null && !isRethrow)
+            {
+                System.Exception exObj = null;
+                *(byte**)&exObj = exceptionPtr;
+                if (exObj != null)
+                {
+                    exObj.AppendStackFrame((System.IntPtr)(long)exInfo->FrameIter.ControlPC);
+                }
+            }
+
             // First-pass: find catch handler.
             FirstPassResult fp = FindFirstPassHandler(exceptionPtr, exType, &exInfo->FrameIter, startIdx);
 

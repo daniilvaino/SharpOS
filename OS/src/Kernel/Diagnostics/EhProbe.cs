@@ -114,6 +114,18 @@ namespace OS.Kernel.Diagnostics
                 ReportLevel("eh L13 hw fault (null deref)", v);
             }
 
+            if (Probes.EhStackTrace)
+            {
+                int v = StackTraceCheck();
+                ReportLevel("eh L14 stack trace populated", v);
+            }
+
+            if (Probes.EhCollidedUnwind)
+            {
+                int v = CollidedUnwind();
+                ReportLevel("eh L15 collided unwind", v);
+            }
+
             if (Probes.EhCatchFuncletProbe)
             {
                 Log.Write(LogLevel.Info,
@@ -568,6 +580,51 @@ namespace OS.Kernel.Diagnostics
             catch (System.NullReferenceException)
             {
                 return 3;
+            }
+        }
+
+        // L14 gate — rich stack trace (Phase 1 step 11). DispatchEx
+        // appends throw-site IP к exception's _corDbgStackTrace во время
+        // first-pass; StackTrace getter returns non-null marker. Test
+        // verifies trace populated после catch.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int StackTraceCheck()
+        {
+            try
+            {
+                throw new System.InvalidOperationException("eh14");
+            }
+            catch (System.Exception ex)
+            {
+                return ex.StackTrace != null ? 1401 : -1;
+            }
+        }
+
+        // L15 gate — collided unwind (Phase 1 step 11). Inner finally
+        // throws while outer dispatch is in second pass. New throw should
+        // "steal" the catch и deliver the LATER exception. Stack-jump
+        // semantics naturally handles this — recursive Dispatch на throw "b"
+        // finds outer catch и jumps к continuation, abandoning original "a"
+        // dispatch state. Outer catch sees "b".
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int CollidedUnwind()
+        {
+            try
+            {
+                try
+                {
+                    throw new System.InvalidOperationException("a");
+                }
+                finally
+                {
+                    throw new System.InvalidOperationException("b");
+                }
+            }
+            catch (System.InvalidOperationException ex)
+            {
+                return ex.Message == "b" ? 1501 : -1;
             }
         }
 

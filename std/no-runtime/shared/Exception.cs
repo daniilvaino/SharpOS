@@ -116,6 +116,24 @@ namespace System
         // "has been thrown".
         internal bool HasBeenThrown => _idxFirstFreeStackTraceEntry != 0;
 
+        // Phase 1 step 11 — used by DispatchEx to populate stack trace
+        // на first-pass walk. Each call appends iter.ControlPC к
+        // _corDbgStackTrace и increments index. _stackTraceString is also
+        // updated к non-null marker so StackTrace getter returns non-null
+        // (proper formatting deferred).
+        internal void AppendStackFrame(System.IntPtr ip)
+        {
+            const int Capacity = 16;
+            if (_corDbgStackTrace == null)
+                _corDbgStackTrace = new System.IntPtr[Capacity];
+            if (_idxFirstFreeStackTraceEntry < _corDbgStackTrace.Length)
+            {
+                _corDbgStackTrace[_idxFirstFreeStackTraceEntry] = ip;
+                _idxFirstFreeStackTraceEntry++;
+                _stackTraceString = "[trace]";   // marker — non-null indicates trace populated
+            }
+        }
+
         public override string ToString()
         {
             // Minimal: just Message, prefixed with type name. Without
