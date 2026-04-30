@@ -79,6 +79,17 @@ namespace OS.Boot
                     info.IdtExecBuffer = idtBufferRaw;
                     info.IdtExecBufferSize = IdtBufferSize;
                 }
+
+                // X64Asm exec buffer — tiny, для STI/CLI/HLT shellcode stubs.
+                const uint AsmBufferSize = 256;
+                void* asmBufferRaw = null;
+                ulong asmStatus = systemTable->BootServices->AllocatePool(
+                    EFI_MEMORY_TYPE.EfiLoaderCode, AsmBufferSize, &asmBufferRaw);
+                if (asmStatus == 0 && asmBufferRaw != null)
+                {
+                    info.AsmExecBuffer = asmBufferRaw;
+                    info.AsmExecBufferSize = AsmBufferSize;
+                }
             }
 
             if (UefiMemoryMapBuilder.TryBuild(systemTable, out info.MemoryMap))

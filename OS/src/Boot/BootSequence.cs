@@ -111,6 +111,11 @@ namespace OS.Boot
         {
             // Exec-memory stubs first — InterfaceDispatchBridge / GcStackSpill
             // / ByRefAssignRef shellcodes need EfiLoaderCode buffer mapped.
+            if (bootInfo.AsmExecBuffer != null)
+            {
+                OS.Hal.X64Asm.SetExecBuffer(bootInfo.AsmExecBuffer, bootInfo.AsmExecBufferSize);
+            }
+
             if (bootInfo.ExecStubBuffer != null)
             {
                 X64PageTable.SetExecBuffer(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize);

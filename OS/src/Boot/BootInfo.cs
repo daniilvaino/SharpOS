@@ -48,6 +48,13 @@ namespace OS.Boot
         public void* IdtExecBuffer;
         public uint IdtExecBufferSize;
 
+        // Small EfiLoaderCode buffer для misc inline-asm helpers (STI/CLI/HLT
+        // в OS.Hal.X64Asm). 256 bytes — несколько 2-3-byte instruction stubs.
+        // KernelHeap allocations are NX post-pager-init, поэтому helpers
+        // typed as `delegate* unmanaged<...>` нуждаются в proper exec memory.
+        public void* AsmExecBuffer;
+        public uint AsmExecBufferSize;
+
         // Pointer to the live UEFI System Table. Needed by Acpi.Init to
         // walk EFI_CONFIGURATION_TABLE for the ACPI 2.0 RSDP. Set by
         // UefiBootInfoBuilder; null only if firmware path isn't UEFI.

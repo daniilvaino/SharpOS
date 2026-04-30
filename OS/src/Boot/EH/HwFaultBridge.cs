@@ -102,13 +102,15 @@ namespace OS.Boot.EH
             Console.WriteHexRaw(frame->Cr2, 16);
             Log.EndLine();
 
-            // RFLAGS.IF restoration deferred — X64Asm stub buffer is
-            // KernelHeap-backed, non-executable post-pager-init (W^X).
-            // Proper fix needs EfiLoaderCode exec buffer (same approach
-            // как BootInfo.IdtExecBuffer / Cr3Accessor's exec slot).
-            // Phase 1 closure caveat: catch funclet runs с IF=0 после
-            // HW fault. Kernel doesn't currently depend on IRQ delivery
-            // в HW-fault catch path для known workloads.
+            // Re-enable interrupts before handing к managed dispatcher.
+            // IDT entry was an interrupt gate (RFLAGS.IF cleared on entry).
+            // Our control transfer through RhpCallCatchFunclet uses
+            // mov rsp+jmp bypassing IRETQ, so IF would stay 0 в catch
+            // funclet — disabling all hardware interrupts post-catch.
+            // STI ensures catch runs с interrupts enabled, как if managed
+            // code threw в normal context. X64Asm uses BootInfo.AsmExecBuffer
+            // (EfiLoaderCode, R+X) to host the STI shellcode stub.
+            OS.Hal.X64Asm.Sti();
 
             // Hand off к managed dispatcher. Does not return on success.
             DispatchEx.Dispatch(exceptionPtr, &exInfo);

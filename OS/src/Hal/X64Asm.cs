@@ -1,26 +1,39 @@
 namespace OS.Hal
 {
     // Inline-asm-style CPU instruction helpers via shellcode buffer pattern.
+    // Same approach как Cr3Accessor — write tiny instruction + ret bytes,
+    // expose via delegate* unmanaged.
     //
-    // ⚠️ NOT YET USABLE: KernelHeap allocations become non-executable after
-    // pager init enforces W^X. Calling stubs placed в KernelHeap memory
-    // triggers #PF on instruction fetch — verified в Phase 1 closure attempt
-    // (recursive #PF при STI call from HwFaultBridge).
+    // Storage: external EfiLoaderCode buffer (passed via SetExecBuffer
+    // from BootInfo.AsmExecBuffer at boot). KernelHeap-backed allocations
+    // are NX after pager init enforces W^X — instruction fetch from such
+    // address triggers #PF. EfiLoaderCode pages stay R+X.
     //
-    // To activate: route through proper EfiLoaderCode buffer (similar к
-    // BootInfo.IdtExecBuffer pattern) или patch [RuntimeExport] method body
-    // в .text section (similar к existing shellcode patchers).
+    // Used for CPU-level operations не expressible in managed C#:
+    //   STI/CLI — RFLAGS.IF manipulation (e.g., re-enable interrupts after
+    //             HW fault catch path bypasses IRETQ).
+    //   HLT — halt CPU to wait for next interrupt.
     internal static unsafe class X64Asm
     {
-        private const uint StubBufferSize = 64;
         private const uint StiOffset = 0;
         private const uint CliOffset = 16;
         private const uint HltOffset = 32;
+        private const uint MinBufferSize = 64;
 
         private static bool s_initialized;
+        private static void* s_execBuffer;
+        private static uint s_execBufferSize;
         private static delegate* unmanaged<void> s_sti;
         private static delegate* unmanaged<void> s_cli;
         private static delegate* unmanaged<void> s_hlt;
+
+        public static bool IsAvailable => s_initialized;
+
+        public static void SetExecBuffer(void* buffer, uint size)
+        {
+            s_execBuffer = buffer;
+            s_execBufferSize = size;
+        }
 
         public static void Sti()
         {
@@ -46,11 +59,13 @@ namespace OS.Hal
         private static bool TryInitialize()
         {
             if (s_initialized) return true;
+            if (s_execBuffer == null || s_execBufferSize < MinBufferSize)
+                return false;
 
-            byte* stub = (byte*)global::OS.Kernel.Memory.KernelHeap.Alloc(StubBufferSize);
-            if (stub == null) return false;
+            byte* stub = (byte*)s_execBuffer;
 
-            OS.Kernel.Util.Memory.Zero(stub, StubBufferSize);
+            // Zero only the slots we use (avoid touching unrelated memory).
+            for (int i = 0; i < (int)MinBufferSize; i++) stub[i] = 0;
 
             // STI; RET — sets RFLAGS.IF, returns.
             stub[StiOffset + 0] = 0xFB;
