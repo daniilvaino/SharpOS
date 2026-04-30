@@ -152,14 +152,31 @@ Track независимый от Phase 6/7 — может вестись пар
 
 **Критерий готовности:** SharpOS работает после `ExitBootServices()` со своим экраном/клавиатурой/диском. `wget http://example.com` (или эквивалент) завершается с правильным контентом.
 
-### Phase 6 — PAL implementation и CoreCLR
+### Phase 6 — CoreCLR integration через host/guest split
 
-- **PAL implementation** (реализация всех каталогизированных функций на C# через `[UnmanagedCallersOnly]`; threading-функции pthread-shape — тонкие обёртки над scheduler'ом из Phase 3; memory paging API; file I/O через VFS из Phase 5; executable memory management для JIT). Перед стартом — повторить de-risk spike на актуальном CoreCLR snapshot'е (полугодовая давность Phase 2 spike'а).
-- **CoreCLR fork + build pipeline + hosting layer** (форкаем `dotnet/runtime`, патчим PAL слой на наш, cross-build на host'е через cmake/clang, упаковка libs в SharpOS image, упрощённый аналог hostfxr/hostpolicy для запуска `coreclr_initialize` + `coreclr_execute_assembly`).
+После Phase 2 sage queries (rounds 1-2-3) архитектура refined:
 
-**Граница между tier'ами — ABI line, не shared memory.** CoreCLR аллоцирует свой heap из нашего PAL `VirtualAlloc`, GC'ит независимо. Наш kernel-tier GC не знает про hosted-tier объекты, и наоборот. Boundary crossing — только через PAL calls.
+**Two-repo split** (precedent: rump kernels, NetBSD anykernel research):
 
-**Критерий готовности:** наш kernel умеет загрузить CoreCLR runtime, инициализировать его, передать ему IL assembly для исполнения.
+- **SharpOS repo (this one)** — strict C# по Invariant 1. Publish'аем `libsharposhost.a` (NativeAOT static archive) с C-ABI exports через `[UnmanagedCallersOnly]`. ~30-50 stable HOST primitives (memory/threading/sync/time/io/fault-callbacks). Function table pattern для iteration speed.
+
+- **dotnet-runtime-sharpos fork** (separate repo) — fork `dotnet/runtime` release/10.0 с минимальными patches. Все C/C++ allowed там natively. Содержит: новый `pal/sharpos/` (parallel к `pal/linux/`, paзделяет существующие emulation logic), `pal/sharposhost-backend/linux.c` для Phase 2 spike (~500 LOC POSIX). PAL implementation calls SharpOSHost_* C-ABI primitives через function table.
+
+- **Связка repos**: SharpOS repo publishes libsharposhost.a + sharposhost.h. CoreCLR fork imports both at build time. CMake option `-DSHARPOS_PAL=ON -DSHARPOSHOST_LIB=path/to/libsharposhost.a`.
+
+- **Critical engineering risk** (highest): static init ordering. CoreCLR's C++ static initializers могут call PAL до PAL_Initialize. Mitigation — tiny C++ bootstrap shim в pal/sharpos/ + explicit init order в host (load sharposhost first, set g_host_ready=1, THEN dlopen libcoreclr).
+
+- **External deps в CoreCLR fork**: musl libc subset, libc++ subset, optionally libunwind — submodules в fork repo. Migration plan: incremental replacement к pure C# в Phase 7+ (not scope-blocking для Phase 6 ship).
+
+- **EH integration** — three paths (linux-x64 + libunwind / win-x64 + Phase 1 EH / hybrid). Decision **deferred к post-spike** — на основании concrete data о libunwind port effort vs Win32-shape SharpOSHost design effort.
+
+- **Hosting layer** — direct API через `coreclr_initialize` + `coreclr_execute_assembly` + `coreclr_shutdown_2` (skip hostfxr/hostpolicy mux).
+
+**Граница между tier'ами — ABI line, не shared memory.** CoreCLR аллоцирует свой heap из нашего HOST primitives (`SharpOSHost_ReservePages` + `_CommitPages`), GC'ит независимо. Наш kernel-tier GC не знает про hosted-tier объекты, и наоборот. Boundary crossing — только через C-ABI POD types + status codes (no exceptions, no C++ objects, no managed refs crossing).
+
+**Критерий готовности:** наш kernel загружает CoreCLR runtime через linked libcoreclr + libsharposhost, инициализирует его, передаёт IL assembly для исполнения. Hello.dll runs end-to-end через JIT.
+
+**Detail spec** в `done/phase6-architecture.md`.
 
 ### Phase 7 — hosted-tier
 
