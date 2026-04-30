@@ -102,6 +102,14 @@ namespace OS.Boot.EH
             Console.WriteHexRaw(frame->Cr2, 16);
             Log.EndLine();
 
+            // RFLAGS.IF restoration deferred — X64Asm stub buffer is
+            // KernelHeap-backed, non-executable post-pager-init (W^X).
+            // Proper fix needs EfiLoaderCode exec buffer (same approach
+            // как BootInfo.IdtExecBuffer / Cr3Accessor's exec slot).
+            // Phase 1 closure caveat: catch funclet runs с IF=0 после
+            // HW fault. Kernel doesn't currently depend on IRQ delivery
+            // в HW-fault catch path для known workloads.
+
             // Hand off к managed dispatcher. Does not return on success.
             DispatchEx.Dispatch(exceptionPtr, &exInfo);
 
