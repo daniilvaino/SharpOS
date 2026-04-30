@@ -101,18 +101,18 @@ detach vdisk
     </ItemGroup>
   </Target>
 
-  <!-- Step 40 (Phase 1b) tried dropping the resilient flag here to force
-       ILC to pick up our managed ClassConstructorRunner. Result: ILC
-       still routed cctor checks through internal fallback stubs that
-       return sentinel pointers (CR2=0xFFFFF000... pattern). Our managed
-       runner was compiled into OS.dll but never invoked. The resilient
-       flag is therefore not what gates the fallback; the gate is deeper
-       in ILC's symbol resolution and would require cloning ILC sources
-       to bypass. See done/step040.md for the full investigation.
-
-       Reverting to default behavior. ClassConstructorRunner port remains
-       in std/no-runtime/shared/Runtime/ClassConstructorRunner.cs as
-       future scaffolding, but is currently unreachable. -->
+  <!-- Phase 1 closure: drop the resilient ILC flag.
+       Resilient mode makes ILC silently emit fallback stubs for missing
+       helpers instead of erroring; this hides cctor problems (managed
+       ClassConstructorRunner unreachable) and blocks lazy static patterns.
+       Dropping it routes cctor checks через our managed ClassConstructorRunner
+       (combined с GcStaticsMaterializer для preinit blob materialization). -->
+  <Target Name="DropResilient" AfterTargets="WriteIlcRspFileForCompilation" BeforeTargets="IlcCompile">
+    <ItemGroup>
+      <IlcArg Remove="--resilient" />
+    </ItemGroup>
+    <WriteLinesToFile File="%(ManagedBinary.IlcRspFile)" Lines="@(IlcArg)" Overwrite="true" />
+  </Target>
 
   <!-- Exclude NativeAOT's Runtime.WorkstationGC.lib from the link. We provide
        our own GC (SharpOS.Std.NoRuntime.GcHeap) and the low-level runtime
