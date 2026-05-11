@@ -89,10 +89,12 @@ SharpOS не переиспользует канонические .NET namespac
 
 ### Phase 2 — PAL разведка и дизайн
 
-- **PAL design — каталог требуемых функций** (разбор `src/coreclr/pal/inc/*.h`, выделение minimal subset который CoreCLR реально дёргает, POSIX-shape; декомпозиция по областям: memory / threading / sync / file I/O / time / TLS / signals / executable memory для JIT; финал — спека с сигнатурами и semantics на каждую функцию).
-- **De-risk spike на Linux host'е** (1-2 weeks эксперимент: подменить системный PAL на наши stubs прямо на Linux, прогнать managed Hello World **с JIT-компиляцией**; валидирует что архитектура CoreCLR-fork в принципе работает до того как полгода потратить на real PAL).
+- **PAL design — каталог требуемых функций + finalized architecture.** Полная спека D1-D20 + Phase 2 Redesign + TARGET_SHARPOS Build Configuration в `work/PAL/`. Sources: финализированная архитектура host/guest split, провайдер environment-specific, compile-time firewall, .pdata unwind reuse от Phase 1.
+- **Windows-hosted TARGET_SHARPOS replacement PAL spike** (Phase 2A — Quick surface discovery 3-5 дней; Phase 2B — production-shaped boundary). Изначальный план "Linux WSL spike" retired per Phase 2 Redesign — WSL подтягивает Linux substrate (libunwind, .eh_frame, signals, pthread) который антипаттерн для bare-metal target. Windows mental model совпадает с Phase 1 SharpOS (.pdata, Win64 calling convention).
 
-**Критерий готовности:** есть письменная спека PAL surface'а; spike на Linux показывает что наш stub-PAL принимает CoreCLR call'ы и managed Hello World отрабатывает.
+**Критерий готовности:** finalized design plan в `work/PAL/` (готов); spike на Windows TARGET_SHARPOS показывает что наш pal/sharpos/ принимает CoreCLR call'ы через SharpOSHost_* ABI namespace и managed Hello World отрабатывает.
+
+**Detail spec:** `work/PAL/pal-design.md` (entry point) + `work/PAL/D1-D20 FINALIZED/`.
 
 ### Phase 3 — managed runtime infrastructure (single-core)
 
@@ -152,31 +154,40 @@ Track независимый от Phase 6/7 — может вестись пар
 
 **Критерий готовности:** SharpOS работает после `ExitBootServices()` со своим экраном/клавиатурой/диском. `wget http://example.com` (или эквивалент) завершается с правильным контентом.
 
+### Phase 5.5 — Native TLS bring-up (узкая подзадача, 1-2 недели)
+
+Prerequisite инфраструктура для Phase 6 — единственный native TLS gap который выявлен в Phase 1. C++11 `thread_local` keyword будет использоваться как стабильный контракт в pal/sharpos/ и kernel-tier коде (D2 finalized).
+
+- **TLS register bootstrap** для main thread: FS/GS register convention зависит от final CoreCLR archive format (PE/COFF default expected, ELF/SysV alternative). Format decision deferred до empirical confirmation from Phase 2 spike.
+- **TLS image loader** из object format секций при boot (.tdata/.tbss для ELF, TLS Directory для PE).
+- **`RhpGetThreadStaticBase*` helpers** реализованы для kernel-side `[ThreadStatic]` support.
+- **Single thread only.** Multi-thread расширение этой инфраструктуры — в Phase 3 при появлении scheduler.
+
+**Критерий готовности:** `thread_local` в C++ и `[ThreadStatic]` в C# работают для main thread на bare metal. PAL пишется один раз против стабильного контракта, никакого переделывания при Phase 3.
+
+**Detail spec:** `work/PAL/D1-D20 FINALIZED/D2___FINALIZED.md`.
+
 ### Phase 6 — CoreCLR integration через host/guest split
 
-После Phase 2 sage queries (rounds 1-2-3) архитектура refined:
+Архитектура finalized в `work/PAL/` (D10/D11 REVISED после WSL spike + 7 rounds sage analysis). Precedent: rump kernels, NetBSD anykernel research.
 
-**Two-repo split** (precedent: rump kernels, NetBSD anykernel research):
+**Two-repo split:**
+- **SharpOS repo (this one)** — strict C# по Invariant 1. Final SharpOS kernel image включает CoreCLR guest archive статически — NativeAOT-compiled kernel objects + `coreclr_sharpos_static.lib` + bare-metal shim/glue resolving `SharpOSHost_*` ABI namespace.
+- **dotnet-runtime-sharpos fork** (separate repo) — fork `dotnet/runtime` release/10.0 с TARGET_SHARPOS conditional (не Unix, не Windows). Содержит новый `pal/sharpos/` (flat domain structure: memory/thread/file/sync/exception/time). Pal/sharpos/ вызывает `SharpOSHost_*` C-ABI напрямую через `extern "C"`; compile-time firewall физически предотвращает прямой WinAPI/syscall use внутри pal/sharpos/.
 
-- **SharpOS repo (this one)** — strict C# по Invariant 1. Publish'аем `libsharposhost.a` (NativeAOT static archive) с C-ABI exports через `[UnmanagedCallersOnly]`. ~30-50 stable HOST primitives (memory/threading/sync/time/io/fault-callbacks). Function table pattern для iteration speed.
+**Phase 6 split на 6.1 / 6.2** (honest scope):
 
-- **dotnet-runtime-sharpos fork** (separate repo) — fork `dotnet/runtime` release/10.0 с минимальными patches. Все C/C++ allowed там natively. Содержит: новый `pal/sharpos/` (parallel к `pal/linux/`, paзделяет существующие emulation logic), `pal/sharposhost-backend/linux.c` для Phase 2 spike (~500 LOC POSIX). PAL implementation calls SharpOSHost_* C-ABI primitives через function table.
+- **Phase 6.1 — Initial bare metal bootstrap.** TARGET_SHARPOS mode active. Zero GC + non-concurrent + Workstation. ABORT_FATAL stubs для thread-management PAL functions (CoreCLR конфигурируется так что CreateThread физически не вызывается). Demo-grade managed scenarios (Hello World, basic JIT). **НЕ production** — финализаторы не работают, leaks accumulate.
 
-- **Связка repos**: SharpOS repo publishes libsharposhost.a + sharposhost.h. CoreCLR fork imports both at build time. CMake option `-DSHARPOS_PAL=ON -DSHARPOSHOST_LIB=path/to/libsharposhost.a`.
+- **Phase 6.2 — Production.** После Phase 3 done. TARGET_SHARPOS mode disabled, standard CoreCLR configuration. D5/D6/D8 (threading + state ownership + GC suspend) переоткрываются с реальной implementation через SharpOSHost provider routing в SharpOS scheduler. Roslyn/PowerShell работают полноценно.
 
-- **Critical engineering risk** (highest): static init ordering. CoreCLR's C++ static initializers могут call PAL до PAL_Initialize. Mitigation — tiny C++ bootstrap shim в pal/sharpos/ + explicit init order в host (load sharposhost first, set g_host_ready=1, THEN dlopen libcoreclr).
+**EH integration finalized (D13):** reuse + extend Phase 1 .pdata unwinder для CoreCLR coverage. Microsoft portable amd64 unwinder (1847 LOC, `src/coreclr/unwinder/amd64/`) — fallback если Phase 1 extension недостаточно. **libunwind полностью исключён** из production path. Windows `RtlVirtualUnwind` — diagnostic oracle only.
 
-- **External deps в CoreCLR fork**: musl libc subset, libc++ subset, optionally libunwind — submodules в fork repo. Migration plan: incremental replacement к pure C# в Phase 7+ (not scope-blocking для Phase 6 ship).
+**Граница между tier'ами — ABI line, не shared memory.** CoreCLR аллоцирует свой heap через `SharpOSHost_AllocPages` etc., GC'ит независимо. Наш kernel-tier GC не знает про hosted-tier объекты, и наоборот. Boundary crossing — только через C-ABI POD types + status codes (no exceptions cross boundary, no C++ objects, no managed refs).
 
-- **EH integration** — three paths (linux-x64 + libunwind / win-x64 + Phase 1 EH / hybrid). Decision **deferred к post-spike** — на основании concrete data о libunwind port effort vs Win32-shape SharpOSHost design effort.
+**Критерий готовности (6.1):** SharpOS kernel image (NativeAOT + CoreCLR guest archive) запускается, JIT компилит Hello.dll, "hello" выводится. **Критерий готовности (6.2):** Roslyn REPL + PowerShell host работают полноценно.
 
-- **Hosting layer** — direct API через `coreclr_initialize` + `coreclr_execute_assembly` + `coreclr_shutdown_2` (skip hostfxr/hostpolicy mux).
-
-**Граница между tier'ами — ABI line, не shared memory.** CoreCLR аллоцирует свой heap из нашего HOST primitives (`SharpOSHost_ReservePages` + `_CommitPages`), GC'ит независимо. Наш kernel-tier GC не знает про hosted-tier объекты, и наоборот. Boundary crossing — только через C-ABI POD types + status codes (no exceptions, no C++ objects, no managed refs crossing).
-
-**Критерий готовности:** наш kernel загружает CoreCLR runtime через linked libcoreclr + libsharposhost, инициализирует его, передаёт IL assembly для исполнения. Hello.dll runs end-to-end через JIT.
-
-**Detail spec** в `done/phase6-architecture.md`.
+**Detail spec:** `work/PAL/pal-design.md` (entry point) + `work/PAL/D1-D20 FINALIZED/`.
 
 ### Phase 7 — hosted-tier
 
@@ -210,10 +221,10 @@ Track независимый от Phase 6/7 — может вестись пар
 
 **Sequential (нельзя перепрыгнуть):**
 - Phase 0 (IDT) → всё остальное (без IDT debugging невозможен).
-- Phase 1 (exceptions + ACPI) → Phase 2 (PAL design знает про signal model) → Phase 3 (scheduler хочет HPET).
-- Phase 3 (scheduler) → Phase 3.7 (StackInterpreter использует threading) → Phase 6 (PAL опирается на scheduler).
+- Phase 1 (exceptions + ACPI) → Phase 2 (PAL design + Windows spike) → Phase 5.5 (Native TLS) → Phase 6.1 (initial bare-metal CoreCLR).
+- Phase 3 (scheduler) → Phase 6.2 (CoreCLR production with threading; D5/D6/D8 reopen).
 - Phase 5 storage + display + keyboard → ExitBootServices (нельзя без своих драйверов).
-- Phase 6 → Phase 7 (CoreCLR должен работать перед hosted-tier app'ами).
+- Phase 6.1 → Phase 7 first hosted app; Phase 6.2 → full Roslyn/PowerShell.
 
 **Параллельно:**
 - Phase 5 (drivers) полностью независим от Phases 2/3/4 — может идти параллельно.
@@ -230,12 +241,14 @@ Track независимый от Phase 6/7 — может вестись пар
 |---|---|
 | Phase 0 (IDT + BCL base) | 2-3 месяца |
 | Phase 1 (exceptions + ACPI + timers + ClassConstructorRunner) | 3-6 месяцев |
-| Phase 2 (PAL design + spike) | 1-2 месяца |
+| Phase 2 (PAL design done; Phase 2A/2B Windows spike) | 1-2 месяца |
 | Phase 3 (scheduler + threading + Task/async) | 4-6 месяцев |
 | Phase 3.7 (StackInterpreter) | 1 месяц |
 | Phase 4 (UEFI encapsulation) | 1-2 месяца |
 | Phase 5 (drivers до HTTP) | 8-15 месяцев (параллелизуется) |
-| Phase 6 (PAL impl + CoreCLR fork) | 9-18 месяцев |
+| Phase 5.5 (Native TLS bring-up) | 1-2 недели |
+| Phase 6.1 (initial bare-metal CoreCLR, demo-grade) | 4-9 месяцев |
+| Phase 6.2 (production CoreCLR, после Phase 3) | 3-6 месяцев |
 | Phase 7 (hosted-tier до Roslyn REPL) | 2-4 месяца после Phase 6 |
 | **До Roslyn REPL внутри SharpOS** | **24-36 месяцев** |
 | Phase 7 (PowerShell host) | +6-12 месяцев после Roslyn |
