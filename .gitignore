@@ -74,11 +74,12 @@ ovmf/*.fd
 # vs
 **/.vs/
 
-# Legacy / reference material not part of the current project
-old SharpOS/
-
-# GC research — external reference projects, not part of the tree
+# GC research + legacy material — external reference projects, not part
+# of the tree. old SharpOS lives at gc-experiment/old-SharpOS/.
 gc-experiment/
 # ILC --map outputs
 **/map.txt
 .claude/settings.local.json
+
+# Transient build logs from build_clr_sharpos.ps1 runs (Tee-Object output).
+build_log*.txt
