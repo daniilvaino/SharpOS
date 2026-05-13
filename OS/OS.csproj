@@ -23,6 +23,46 @@
     <LinkerArg Include="libcmt.lib" />
   </ItemGroup>
 
+  <!-- Phase 6.1.0b: link CoreCLR guest archive bundle. На bare-metal these
+       libs supply VM/GC/JIT/JIT-helpers/PAL surface. CoreCLR vm/ calls
+       Win32-shaped names через pal/sharpos/ which on host phase routes
+       to native kernel32 (still imported via libcmt.lib chain). На kernel
+       target later — pal/sharpos/ routes to SharpOSHost_* C-ABI exports
+       defined in OS/src/PAL/SharpOSHost/.
+
+       Initial integration attempt — expect massive unresolved cascade.
+       Each error class will need targeted handling per L1-L5 strategy. -->
+  <PropertyGroup>
+    <CoreClrForkObj>$(MSBuildThisFileDirectory)..\dotnet-runtime-sharpos\artifacts\obj\coreclr\windows.x64.Debug</CoreClrForkObj>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\dlls\mscoree\coreclr\coreclr_static.lib&quot;" />
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\gc\sharpos\gc_pal.lib&quot;" />
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\gcinfo\gcinfo_win_x64.lib&quot;" />
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\utilcode\utilcodestaticnohost.lib&quot;" />
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\shared_minipal\minipal.lib&quot;" />
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\minipal\Windows\coreclrminipal.lib&quot;" />
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\pal\sharpos\coreclrpal.lib&quot;" />
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\jit\clrjit.lib&quot;" />
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\vm\eventing\dummyprovider\eventprovider.lib&quot;" />
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\pal\sharpos\coreclrtraceptprovider.lib&quot;" />
+
+    <!-- Force /INCLUDE of coreclr_initialize — без этого linker /OPT:REF
+         drops the entire coreclr_static.lib (no symbol references it from
+         OS managed side). Pulling coreclr_initialize transitively pulls
+         the full CoreCLR runtime closure. -->
+    <LinkerArg Include="/INCLUDE:coreclr_initialize" />
+
+    <!-- Phase 6.1.0b yolo path: CoreCLR brings duplicate copies of
+         NativeAOT runtime helpers (RhpAssignRef, RhpNewFast, etc.) which
+         conflict с our kernel's Rh* exports. /FORCE:MULTIPLE picks the
+         first definition (linker order: OS.obj приходит первым → наши
+         managed implementations win). Architectural cleanup deferred —
+         this is "see if a kernel image with CoreCLR linked even produces
+         output" experiment. -->
+    <LinkerArg Include="/FORCE:MULTIPLE" />
+  </ItemGroup>
+
   <!--
     EFI follows the Windows ABI so we would need to pretend we're compiling for Windows. Should be possible
     with targetos ILC argument, but I don't have bandwidth to test. Plus we need to run linker somehow after.
