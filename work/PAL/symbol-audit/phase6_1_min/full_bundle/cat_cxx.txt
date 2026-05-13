@@ -1,0 +1,13 @@
+??2@YAPEAX_K@Z
+??2@YAPEAX_KAEBUnothrow_t@std@@@Z
+??3@YAXPEAX@Z
+??3@YAXPEAXAEBUnothrow_t@std@@@Z
+??3@YAXPEAX_K@Z
+??_7type_info@@6B@
+??_U@YAPEAX_K@Z
+??_U@YAPEAX_KAEBUnothrow_t@std@@@Z
+??_V@YAXPEAX@Z
+??_V@YAXPEAXAEBUnothrow_t@std@@@Z
+??_V@YAXPEAX_K@Z
+?nothrow@std@@3Unothrow_t@1@B
+?uncaught_exception@std@@YA_NXZ

@@ -83,3 +83,8 @@ gc-experiment/
 
 # Transient build logs from build_clr_sharpos.ps1 runs (Tee-Object output).
 build_log*.txt
+
+# Vanilla CoreCLR clones for 3-way symbol audit reference baselines (huge,
+# rebuilt on demand).
+dotnet-runtime-vanilla-win/
+dotnet-runtime-vanilla-wsl/

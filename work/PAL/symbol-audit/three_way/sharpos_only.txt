@@ -1,0 +1,10 @@
+?CLRLoadLibraryEx@@YAPEAUHINSTANCE__@@PEB_WPEAXK@Z
+?ClrGetProcessExecutableHeap@@YAPEAXXZ
+?GetTlsIndexObjectAddress@@YAPEAXXZ
+?InsertThreadIntoAsyncSafeMap@@YA_N_KPEAX@Z
+?RemoveThreadFromAsyncSafeMap@@YAX_KPEAX@Z
+FireEtXplatCodeSymbols
+WaitHandle_WaitOnePrioritized
+__CxxFrameHandler3
+__atomic_compare_exchange_16
+ldiv
