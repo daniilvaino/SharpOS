@@ -39,7 +39,12 @@
     <LinkerArg Include="&quot;$(CoreClrForkObj)\dlls\mscoree\coreclr\coreclr_static.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\gc\sharpos\gc_pal.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\gcinfo\gcinfo_win_x64.lib&quot;" />
-    <LinkerArg Include="&quot;$(CoreClrForkObj)\utilcode\utilcodestaticnohost.lib&quot;" />
+    <!-- DROPPED: utilcodestaticnohost.lib — duplicates utilcode .obj files
+         already present в coreclr_static.lib. /FORCE:MULTIPLE picked
+         arbitrary copy → ctor4 (log.cpp static init) called wrong-signature
+         function → garbage args → memory corruption → HW #PF.
+         coreclr_static.lib provides utilcode internally.
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\utilcode\utilcodestaticnohost.lib&quot;" /> -->
     <LinkerArg Include="&quot;$(CoreClrForkObj)\shared_minipal\minipal.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\minipal\Windows\coreclrminipal.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\pal\sharpos\coreclrpal.lib&quot;" />

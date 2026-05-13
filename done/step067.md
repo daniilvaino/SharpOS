@@ -317,3 +317,53 @@ cd c:\work\OS\dotnet-runtime-sharpos
 #   artifacts/obj/coreclr/windows.x64.Debug/dlls/mscoree/coreclr/coreclr_static.lib  (~197 MB)
 #   artifacts/bin/coreclr/windows.x64.Debug/mscordaccore.dll  (~5 MB)
 ```
+
+## Update — Phase 6.1.0 link integration + Phase 6.1.a first call attempted
+
+After WinAPI surface analysis closed:
+
+1. **Phase 6.1.0 link integration achieved** (commit `b4b0156`). 16.5 MB
+   kernel image с coreclr_static.lib + 9 bundle libs statically linked.
+   `/INCLUDE:coreclr_initialize` force-pulls transitive closure. `/FORCE:MULTIPLE`
+   resolves duplicate `Rh*` helpers (SharpOS managed wins by link order).
+   `CrtAndEhStubs.cs` (~30 stubs) covers L1 (real impl via SharpOS.Std) и
+   L5 (fatal stubs). Kernel boots в QEMU.
+
+2. **Phase 6.1.a first call attempted**. `SharpOSHost_RunCxxCtors` walker
+   (forked into `pal/sharpos/winapi_shim.cpp`) manually walks `.CRT$XCA..$XCZ`
+   table since SharpOS kernel entry is `EfiMain` (no mainCRTStartup → no
+   `__scrt_initialize_crt`). С counter/limit/skip-mask/table accessor
+   diagnostics — bisection identified **ctor 4 = `log.cpp` static init**
+   crashes inside libcmtd's `_register_thread_local_exe_atexit_callback`
+   reading uninit'нутый sentinel global at link RVA `0xF6F510`.
+
+3. **Sentinel patch hack** advanced one level (patches sentinel к `-1`
+   before walker — pushes past first wall, hits next inside malloc-equivalent).
+   Each step deeper reveals new uninit'нутую table — manual patching does
+   not scale.
+
+4. **Empirical confirmation** of sage round 1 predictions: Sage 1 Q2 (CRT
+   init order — debug build pulls full bootstrap chain) and Sage 2 L5
+   (EH personality + CRT bootstrap = separate work stream) — обе verified.
+
+5. **Architectural decision required**. Options documented в
+   `work/PAL/phase6_1a-empirical-findings.md`:
+   - A: Full CRT bring-up (provide real heap/TLS/atexit primitives,
+        libcmtd happy).
+   - B: Surgical strip (remove all C++ static init from CoreCLR fork).
+   - C: Replace libcmtd entirely (~150+ symbols в C# host).
+   - D: Vanilla Linux PAL path (build SharpOS target as Linux-shape).
+   Sage round 2 query planned.
+
+Files added:
+- `OS/src/Kernel/Diagnostics/CoreClrProbe.cs` — bisection + sentinel patch.
+- `OS/src/PAL/SharpOSHost/Diagnostics.cs` — real `SharpOSHost_DebugPrint`.
+- `OS/src/Boot/BootSequence.cs` — invocation в Phase4.
+- `OS/src/Kernel/Diagnostics/Probes.cs` — `CoreClrInit = true` toggle.
+- `OS/src/Boot/MinimalRuntime.cs` — `DllImportAttribute` + `CallingConvention`
+  for P/Invoke into statically-linked `coreclr_*` symbols.
+- `work/PAL/phase6_1a-empirical-findings.md` — full writeup.
+
+Fork:
+- `dotnet-runtime-sharpos/src/coreclr/pal/sharpos/winapi_shim.cpp` —
+  `SharpOSHost_RunCxxCtors` walker + 5 diagnostic accessors.

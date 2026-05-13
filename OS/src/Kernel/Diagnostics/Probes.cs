@@ -57,5 +57,11 @@ namespace OS.Kernel.Diagnostics
 
         public const bool IdtPanic = false;          // never returns when on
         public const bool ExceptionThrow = false;    // never returns when on (legacy single-throw probe)
+
+        // Phase 6 — CoreCLR integration probe. Calls coreclr_initialize
+        // statically-linked from coreclr_static.lib (Phase 6.1.0). Expected
+        // to halt at first unimplemented SharpOSHost_* / CrtAndEh stub —
+        // tells us empirically what CoreCLR wants на init.
+        public const bool CoreClrInit = true;
     }
 }

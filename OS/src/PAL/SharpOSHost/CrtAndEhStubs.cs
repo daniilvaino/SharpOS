@@ -31,28 +31,9 @@ namespace OS.PAL.SharpOSHost
     {
         // ---------------------------------------------------------------
         // L1 — mechanical CRT (real impl via SharpOS.Std.NoRuntime).
+        // NOTE: memset/memcpy/memmove already provided by OS/src/Boot/
+        // MinimalRuntime.cs NativeMemoryStubs (predates Phase 6).
         // ---------------------------------------------------------------
-
-        [RuntimeExport("memset")]
-        [UnmanagedCallersOnly(EntryPoint = "memset")]
-        public static void* Memset(void* dest, int value, ulong count)
-        {
-            return MemoryPrimitives.Memset(dest, (byte)value, count);
-        }
-
-        [RuntimeExport("memcpy")]
-        [UnmanagedCallersOnly(EntryPoint = "memcpy")]
-        public static void* Memcpy(void* dest, void* src, ulong count)
-        {
-            return MemoryPrimitives.Memcpy(dest, src, count);
-        }
-
-        [RuntimeExport("memmove")]
-        [UnmanagedCallersOnly(EntryPoint = "memmove")]
-        public static void* Memmove(void* dest, void* src, ulong count)
-        {
-            return MemoryPrimitives.Memmove(dest, src, count);
-        }
 
         [RuntimeExport("memcmp")]
         [UnmanagedCallersOnly(EntryPoint = "memcmp")]

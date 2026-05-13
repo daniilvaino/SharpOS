@@ -1,5 +1,6 @@
 using System.Runtime;
 using System.Runtime.InteropServices;
+using OS.Hal;
 using OS.Kernel;
 
 namespace OS.PAL.SharpOSHost
@@ -15,13 +16,30 @@ namespace OS.PAL.SharpOSHost
     // log facility).
     internal static unsafe class SharpOSHostDiagnostics
     {
-        // UTF-8 message, null-terminated. Length capped at реасонable
-        // limit (1024?) by callee to prevent runaway формат strings.
+        // UTF-8 message, null-terminated. Writes one character at a time
+        // to OS.Console (which routes to UEFI ConOut / kernel serial port).
+        // Used by CRT walker для прогресса диагностики во время Phase 6.1.a.
         [RuntimeExport("SharpOSHost_DebugPrint")]
         [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugPrint")]
         public static void DebugPrint(byte* utf8Message)
         {
-            Panic.Fail("SharpOSHost_DebugPrint not implemented (Phase 6.1.a)");
+            if (utf8Message == null) return;
+            byte* p = utf8Message;
+            while (*p != 0)
+            {
+                Console.WriteChar((char)*p);
+                p++;
+            }
+        }
+
+        // Print hex value followed by newline — used от walker для
+        // emitting ctor addresses each iteration.
+        [RuntimeExport("SharpOSHost_DebugPrintHex")]
+        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugPrintHex")]
+        public static void DebugPrintHex(ulong value)
+        {
+            Console.WriteHex(value);
+            Console.WriteLine("");
         }
 
         [RuntimeExport("SharpOSHost_DebugBreak")]

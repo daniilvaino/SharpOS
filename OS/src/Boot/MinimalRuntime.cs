@@ -410,6 +410,34 @@ namespace System.Runtime.InteropServices
         public string EntryPoint;
     }
 
+    // Phase 6.1.a: P/Invoke into statically-linked C symbols (coreclr_*
+    // entry points pulled from coreclr_static.lib). ILC recognizes
+    // [DllImport("*")] as "find в self image" — needs the attribute
+    // present в System.Runtime.InteropServices namespace.
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class DllImportAttribute : Attribute
+    {
+        public string EntryPoint;
+        public CharSet CharSet;
+        public bool SetLastError;
+        public bool ExactSpelling;
+        public CallingConvention CallingConvention;
+        public bool PreserveSig;
+        public bool BestFitMapping;
+        public bool ThrowOnUnmappableChar;
+
+        public DllImportAttribute(string dllName) { }
+    }
+
+    public enum CallingConvention
+    {
+        Winapi = 1,
+        Cdecl = 2,
+        StdCall = 3,
+        ThisCall = 4,
+        FastCall = 5,
+    }
+
     internal enum LayoutKind
     {
         Sequential = 0,
@@ -417,7 +445,7 @@ namespace System.Runtime.InteropServices
         Auto = 3,
     }
 
-    internal enum CharSet
+    public enum CharSet
     {
         None = 1,
         Ansi = 2,

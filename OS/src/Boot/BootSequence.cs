@@ -210,6 +210,12 @@ namespace OS.Boot
             // no-throw, try/catch with throw). L3 currently halts.
             EhProbe.Run();
 
+            // Phase 6.1.a — call coreclr_initialize from kernel boot path.
+            // Expected to panic at first unimplemented SharpOSHost_* /
+            // CrtAndEh stub. Iterate until S_OK.
+            if (Probes.CoreClrInit)
+                CoreClrProbe.Run();
+
             // Never-returning probes — last so a regular boot still finishes.
             if (Probes.IdtPanic)
                 IdtProbe.TriggerNullDeref();
