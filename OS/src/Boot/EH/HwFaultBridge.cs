@@ -100,7 +100,102 @@ namespace OS.Boot.EH
             Console.WriteHexRaw(frame->Rsp, 16);
             Console.Write(" CR2=0x");
             Console.WriteHexRaw(frame->Cr2, 16);
+            Console.Write(" ERR=0x");
+            Console.WriteHexRaw(frame->ErrorCode, 8);
             Log.EndLine();
+
+            // For #PF (vec=14) — decode the page-fault error code so we can
+            // tell write-vs-fetch / present-vs-not / NX-violation at a glance.
+            //   bit 0: P  (1 = protection violation; 0 = not-present)
+            //   bit 1: W  (1 = write; 0 = read)
+            //   bit 2: U  (1 = user-mode access)
+            //   bit 3: R  (reserved bit set in PTE)
+            //   bit 4: I  (instruction fetch — NX violation when bit 0 also set)
+            if (frame->Vector == 14)
+            {
+                Log.Begin(LogLevel.Info);
+                ulong pfec = frame->ErrorCode;
+                Console.Write("  PFEC: P=");
+                Console.WriteUIntRaw((uint)((pfec >> 0) & 1));
+                Console.Write(" W=");
+                Console.WriteUIntRaw((uint)((pfec >> 1) & 1));
+                Console.Write(" U=");
+                Console.WriteUIntRaw((uint)((pfec >> 2) & 1));
+                Console.Write(" R=");
+                Console.WriteUIntRaw((uint)((pfec >> 3) & 1));
+                Console.Write(" I=");
+                Console.WriteUIntRaw((uint)((pfec >> 4) & 1));
+                Console.Write("  (");
+                if ((pfec & 0x10) != 0) Console.Write("instr-fetch ");
+                else if ((pfec & 0x2) != 0) Console.Write("write ");
+                else Console.Write("read ");
+                if ((pfec & 0x1) == 0) Console.Write("not-present");
+                else Console.Write("protection");
+                Console.Write(")");
+                Log.EndLine();
+
+                // PTE-of-faulting-VA — tells whether mapping exists and what
+                // protection bits are set (helps confirm NX-violation diagnosis).
+                if (global::OS.Kernel.Paging.X64PageTable.TryGetKernelLeafPte(frame->Cr2, out ulong pte))
+                {
+                    Log.Begin(LogLevel.Info);
+                    Console.Write("  PTE(CR2)=0x");
+                    Console.WriteHexRaw(pte, 16);
+                    Console.Write("  P=");
+                    Console.WriteUIntRaw((uint)((pte >> 0) & 1));
+                    Console.Write(" W=");
+                    Console.WriteUIntRaw((uint)((pte >> 1) & 1));
+                    Console.Write(" NX=");
+                    Console.WriteUIntRaw((uint)((pte >> 63) & 1));
+                    Log.EndLine();
+                }
+            }
+
+            // Phase 6.1.b deep diagnostic — register snapshot + stack top.
+            // Helps localize WHICH callsite + what register values were
+            // in flight when fault hit.
+            Log.Begin(LogLevel.Info);
+            Console.Write("  RAX=0x"); Console.WriteHexRaw(frame->Rax, 16);
+            Console.Write(" RBX=0x"); Console.WriteHexRaw(frame->Rbx, 16);
+            Console.Write(" RCX=0x"); Console.WriteHexRaw(frame->Rcx, 16);
+            Console.Write(" RDX=0x"); Console.WriteHexRaw(frame->Rdx, 16);
+            Log.EndLine();
+            Log.Begin(LogLevel.Info);
+            Console.Write("  RSI=0x"); Console.WriteHexRaw(frame->Rsi, 16);
+            Console.Write(" RDI=0x"); Console.WriteHexRaw(frame->Rdi, 16);
+            Console.Write(" RBP=0x"); Console.WriteHexRaw(frame->Rbp, 16);
+            Console.Write(" R8 =0x"); Console.WriteHexRaw(frame->R8,  16);
+            Log.EndLine();
+            Log.Begin(LogLevel.Info);
+            Console.Write("  R9 =0x"); Console.WriteHexRaw(frame->R9,  16);
+            Console.Write(" R10=0x"); Console.WriteHexRaw(frame->R10, 16);
+            Console.Write(" R11=0x"); Console.WriteHexRaw(frame->R11, 16);
+            Console.Write(" R12=0x"); Console.WriteHexRaw(frame->R12, 16);
+            Log.EndLine();
+            Log.Begin(LogLevel.Info);
+            Console.Write("  R13=0x"); Console.WriteHexRaw(frame->R13, 16);
+            Console.Write(" R14=0x"); Console.WriteHexRaw(frame->R14, 16);
+            Console.Write(" R15=0x"); Console.WriteHexRaw(frame->R15, 16);
+            Log.EndLine();
+            // Stack top — first 32 qwords from RSP. For indirect-call
+            // fault into BSS, multiple frames may be in zero-memory
+            // chain. Look for first .text-range return address to find
+            // real CoreCLR caller. Loaded image base ≈ 0xC1A9000;
+            // .text spans ~0xC1AA000 to ~0xCE5E8DC.
+            ulong* sp = (ulong*)frame->Rsp;
+            if (sp != null)
+            {
+                for (int i = 0; i < 32; i++)
+                {
+                    ulong v = sp[i];
+                    Log.Begin(LogLevel.Info);
+                    Console.Write("  [RSP+0x"); Console.WriteHexRaw((ulong)(i * 8), 3);
+                    Console.Write("] = 0x"); Console.WriteHexRaw(v, 16);
+                    // Hint: tag values that look like .text return addresses.
+                    if (v >= 0xC1A9000UL && v < 0xCE5F000UL) Console.Write("  <- .text");
+                    Log.EndLine();
+                }
+            }
 
             // Re-enable interrupts before handing к managed dispatcher.
             // IDT entry was an interrupt gate (RFLAGS.IF cleared on entry).

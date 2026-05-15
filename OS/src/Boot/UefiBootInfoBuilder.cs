@@ -80,8 +80,11 @@ namespace OS.Boot
                     info.IdtExecBufferSize = IdtBufferSize;
                 }
 
-                // X64Asm exec buffer — tiny, для STI/CLI/HLT shellcode stubs.
-                const uint AsmBufferSize = 256;
+                // X64Asm exec buffer — STI/CLI/HLT stubs (offsets 0/16/32 ×
+                // ~2 bytes), CoreClrProbe wrmsr GS_BASE shellcode (offset
+                // 64, 18 bytes), SehDispatch capture/restore shellcode
+                // (offsets 0x80 + 0x100, ~130 bytes each). Total need ≈ 1 KiB.
+                const uint AsmBufferSize = 1024;
                 void* asmBufferRaw = null;
                 ulong asmStatus = systemTable->BootServices->AllocatePool(
                     EFI_MEMORY_TYPE.EfiLoaderCode, AsmBufferSize, &asmBufferRaw);

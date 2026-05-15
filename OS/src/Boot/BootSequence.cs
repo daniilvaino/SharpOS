@@ -124,6 +124,7 @@ namespace OS.Boot
 
                 InstallInterfaceDispatchBridge(bootInfo);
                 InstallByRefAssignRefShellcode();
+                InstallChkstkShellcode();
                 InstallPortIoShellcode();
                 InstallCaptureContextShellcode();
                 InstallThrowExShellcode();
@@ -174,6 +175,16 @@ namespace OS.Boot
         {
             InitializePager();
             RunPagerValidation();
+
+            // VM manager self-test — Reserve/Commit/MapKernel produce live
+            // writable mappings. Must run after InitializePager (X64PageTable
+            // s_kernelRootTable set from CR3) + PhysicalMemory (Phase1).
+            // CoreCLR GC (Phase4) depends on this; fail loud here, not later.
+            if (OS.Kernel.Memory.VirtualMemory.SelfTest())
+                Log.Write(LogLevel.Info, "VM manager self-test ok");
+            else
+                Panic.Fail("VM manager self-test failed");
+
             InitializeAcpi(bootInfo);
             InitializeHpet();
 
@@ -270,6 +281,13 @@ namespace OS.Boot
             bool ok = ByRefAssignRefPatcher.TryInstall();
             Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
                 ok ? "byref-assign shellcode installed" : "byref-assign shellcode install failed");
+        }
+
+        private static void InstallChkstkShellcode()
+        {
+            bool ok = OS.PAL.SharpOSHost.ChkstkPatcher.TryInstall();
+            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
+                ok ? "__chkstk shellcode installed" : "__chkstk shellcode install failed");
         }
 
         private static void InstallPortIoShellcode()

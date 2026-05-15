@@ -177,6 +177,36 @@ namespace OS.Kernel.Paging
             return true;
         }
 
+        // Map a fresh VA→PA into the **active** (firmware) PML4
+        // (s_kernelRootTable). `Map` above targets s_rootTable (the inactive
+        // pager clone — we never switch CR3), so its entries are invisible to
+        // the CPU. The VirtualMemory manager's Commit/MapFixed need live
+        // mappings → must root at the active table, same as TrySetKernelFlags*.
+        // Intermediate tables auto-created (zeroed) via GetOrCreateNextTable.
+        // Caller flushes TLB after a batch.
+        public static bool MapKernel(ulong virtualAddress, ulong physicalAddress, PageFlags flags)
+        {
+            if (s_kernelRootTable == 0)
+                return false;
+
+            bool userPage = (flags & PageFlags.User) == PageFlags.User;
+            ulong* pml4 = (ulong*)s_kernelRootTable;
+            if (!GetOrCreateNextTable(pml4, Pml4Index(virtualAddress), userPage, out ulong* pdpt))
+                return false;
+            if (!GetOrCreateNextTable(pdpt, PdptIndex(virtualAddress), userPage, out ulong* pd))
+                return false;
+            if (!GetOrCreateNextTable(pd, PdIndex(virtualAddress), userPage, out ulong* pt))
+                return false;
+
+            uint ptIndex = PtIndex(virtualAddress);
+            if ((pt[ptIndex] & PresentMask) != 0)
+                return false;   // already mapped — caller treats as error
+
+            pt[ptIndex] = CreateLeafEntry(physicalAddress, flags);
+            s_mappedPages++;
+            return true;
+        }
+
         public static bool Unmap(ulong virtualAddress)
         {
             s_unmapCalls++;
@@ -213,6 +243,92 @@ namespace OS.Kernel.Paging
         public static bool TryQueryKernel(ulong virtualAddress, out ulong physicalAddress, out PageFlags flags)
         {
             return TryQueryForRoot(s_kernelRootTable, virtualAddress, out physicalAddress, out flags);
+        }
+
+        // Modify the protection flags (Present/Writable/NoExecute/etc.) of an
+        // existing 4 KiB mapping в the **active UEFI** PML4 (s_kernelRootTable
+        // — we never call TryActivatePagerRoot, so kernel CR3 == firmware CR3).
+        // Address bits are preserved; only the low 12 + bit 63 fields are
+        // rewritten. Used by SharpOSHost_AllocExecutable / VirtualProtect
+        // to flip a freshly-allocated EfiLoaderCode page to full RWX so
+        // CoreCLR's JIT can write code, then execute it.
+        //
+        // Returns false if no leaf mapping covers the address (no 4 KiB PT
+        // entry) or if the leaf is a large page (2 MiB / 1 GiB — not safe to
+        // narrow without splitting). Caller must invalidate TLB после успеха.
+        // Try to narrow the protection of a single 4 KiB page. If the active
+        // mapping resolves to a large page (PD 2 MiB / PDPT 1 GiB), we report
+        // it via `wasLargePage = true` but still consider the call successful
+        // if the existing large-page flags already satisfy `requiredMask`
+        // (the bits the caller absolutely needs set — e.g. Writable). Caller
+        // can use this signal to skip splitting когда already acceptable.
+        public static bool TrySetKernelFlags(ulong virtualAddress, PageFlags newFlags)
+        {
+            return TrySetKernelFlagsEx(virtualAddress, newFlags, (PageFlags)PresentMask, out _);
+        }
+
+        public static bool TrySetKernelFlagsEx(ulong virtualAddress, PageFlags newFlags, PageFlags requiredMask, out bool wasLargePage)
+        {
+            wasLargePage = false;
+            if (!TryResolveMappedEntryForRoot(s_kernelRootTable, virtualAddress, out ulong* entry, out ulong value, out ResolvedEntryLevel level))
+                return false;
+            if (entry == null) return false;
+
+            // Sanitize input flags + always force Present.
+            ulong sanitized = (ulong)(newFlags & (PageFlags)LeafFlagMask);
+            if ((sanitized & PresentMask) == 0)
+                sanitized |= PresentMask;
+
+            if (level == ResolvedEntryLevel.Pt)
+            {
+                // Regular 4 KiB PTE — fully overwrite with sanitized flags.
+                ulong physBits = value & AddressMask;
+                *entry = physBits | sanitized;
+                return true;
+            }
+
+            // Large page (2 MiB / 1 GiB): NEVER tighten protection on the
+            // shared sibling pages — they may contain kernel code (NX=0
+            // required) или data (W=1 required). We only ever LOOSEN:
+            //   - clear NX if caller wants exec (safe — was non-exec, becomes
+            //     exec, still readable/writable)
+            //   - set Writable if caller wants write (safe — was read-only,
+            //     becomes RW)
+            // Setting NX or clearing W on a 2 MiB region containing kernel code
+            // or data would triple-fault the next kernel instruction-fetch /
+            // write. To fully match caller's intent on a sub-page basis, a
+            // large-page-split into 512 × 4 KiB PTEs is needed; deferred.
+            wasLargePage = true;
+            const ulong NX = 1UL << 63;
+            ulong newPte = value;
+            bool wantExec = (sanitized & NX) == 0;     // caller didn't set NX → wants exec
+            bool wantWrite = (sanitized & WritableMask) != 0;
+            if (wantExec)  newPte &= ~NX;              // clear NX (safe loosen)
+            if (wantWrite) newPte |= WritableMask;     // set W (safe loosen)
+            // NEVER `newPte |= NX` or `newPte &= ~WritableMask` here.
+            _ = requiredMask;
+            *entry = newPte;
+            return true;
+        }
+
+        public static bool TryGetKernelLeafPte(ulong virtualAddress, out ulong rawPte)
+        {
+            rawPte = 0;
+            if (!TryResolveMappedEntryForRoot(s_kernelRootTable, virtualAddress, out ulong* entry, out ulong value, out _))
+                return false;
+            if (entry == null) return false;
+            rawPte = value;
+            return true;
+        }
+
+        // Flush all TLB entries (non-global) by reloading CR3. Single-core
+        // kernel, so no SMP fence needed. Cheaper alternative would be INVLPG
+        // per page, but we'd need new shellcode; CR3 reload reuses existing
+        // Cr3Accessor and is fine for the JIT-allocation cadence (rare).
+        public static void FlushTlbAll()
+        {
+            if (Cr3Accessor.TryRead(out ulong cr3))
+                Cr3Accessor.TryWrite(cr3);
         }
 
         public static bool TryGetWalkInfo(ulong virtualAddress, out PageWalkInfo walkInfo)

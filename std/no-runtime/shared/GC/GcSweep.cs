@@ -66,6 +66,13 @@ namespace SharpOS.Std.NoRuntime
         // (ready for next GC pass) and dead objects replaced with free markers.
         public static void Run()
         {
+            // Foreign-runtime guard: when CoreCLR is allocating into the
+            // kernel GcHeap, its live objects are invisible to the kernel
+            // Mark phase (rooted only in CoreCLR's GC graph). Sweeping would
+            // free-marker / reuse them → corruption. See GC.ReclamationDisabled.
+            if (GC.ReclamationDisabled)
+                return;
+
             EnsureInit();
 
             s_sweptCount = 0;

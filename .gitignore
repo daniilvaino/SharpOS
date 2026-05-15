@@ -88,3 +88,11 @@ build_log*.txt
 # rebuilt on demand).
 dotnet-runtime-vanilla-win/
 dotnet-runtime-vanilla-wsl/
+
+# Build/test output trees, transient logs & MSBuild caches — regenerable,
+# never source. (f715a32 accidentally committed 838 of these — 334k lines,
+# 75 MB pdb; see done/step068.md / memory feedback-never-commit-build-artifacts.)
+work/
+hello/
+last_build.log
+*.lscache

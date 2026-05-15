@@ -1,4 +1,5 @@
 using OS.Hal;
+using OS.Boot.EH;
 
 namespace OS.Hal.Idt
 {
@@ -67,6 +68,52 @@ namespace OS.Hal.Idt
             Console.Write("\r\n");
             Console.Write("R15=0x"); Console.WriteHexRaw(frame->R15, 16);
             Console.Write("\r\n");
+
+            // Image base — needed to convert RIP → RVA for PDB lookups.
+            ulong imageBase = (ulong)CoffRuntimeFunctionTable.ImageBase;
+            Console.Write("imageBase=0x"); Console.WriteHexRaw(imageBase, 16);
+            if (imageBase != 0 && frame->Rip >= imageBase)
+            {
+                Console.Write(" rva=0x"); Console.WriteHexRaw(frame->Rip - imageBase, 8);
+            }
+            Console.Write("\r\n");
+
+            // Bytes at [RIP-16, RIP+24] — lets us see the offending opcode
+            // и couple of instructions on each side without re-running. Wrapped
+            // in a sanity check on RIP pointer to avoid recursive fault.
+            byte* rip = (byte*)frame->Rip;
+            if (rip != null)
+            {
+                Console.Write("bytes@RIP-16..+23: ");
+                for (int i = -16; i <= 23; i++)
+                {
+                    if (i == 0) Console.Write("[");
+                    Console.WriteHexRaw((ulong)rip[i], 2);
+                    if (i == 0) Console.Write("]");
+                    else Console.Write(" ");
+                }
+                Console.Write("\r\n");
+            }
+
+            // Stack top — first 16 qwords from RSP. Return addresses to
+            // .text (relative to imageBase) get tagged so we can identify
+            // the call chain via PDB without manually filtering.
+            ulong* sp = (ulong*)frame->Rsp;
+            if (sp != null)
+            {
+                for (int i = 0; i < 16; i++)
+                {
+                    ulong v = sp[i];
+                    Console.Write("  [RSP+0x"); Console.WriteHexRaw((ulong)(i * 8), 3);
+                    Console.Write("] = 0x"); Console.WriteHexRaw(v, 16);
+                    // Tag .text-range hits: image_base..image_base+0x10000000 is generous.
+                    if (imageBase != 0 && v >= imageBase && v < imageBase + 0x10000000UL)
+                    {
+                        Console.Write("  rva=0x"); Console.WriteHexRaw(v - imageBase, 8);
+                    }
+                    Console.Write("\r\n");
+                }
+            }
 
             Console.Write("*** halting ***\r\n");
         }

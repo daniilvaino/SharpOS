@@ -473,6 +473,78 @@ $espBootDir = Join-Path $qemuWorkDir "esp\EFI\BOOT"
 New-Item -ItemType Directory -Force -Path $espBootDir | Out-Null
 $bootx64 = Join-Path $espBootDir "BOOTX64.EFI"
 Copy-Item -LiteralPath $builtEfi -Destination $bootx64 -Force
+
+# CoreCLR expects System.Private.CoreLib.dll at path \sharpos\System.Private.CoreLib.dll
+# (our Path.GetFullPath prepends "\sharpos\" to relative paths). Place the DLL there
+# on the EFI partition so CreateFileW -> SharpOSHost_FileOpen -> Platform.TryReadFile
+# via UEFI SimpleFileSystem can find it.
+$spcDll = Join-Path "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\coreclr\windows.x64.Debug" "System.Private.CoreLib.dll"
+$espSharpOSDir = Join-Path $qemuWorkDir "esp\sharpos"
+if (Test-Path -LiteralPath $spcDll) {
+    New-Item -ItemType Directory -Force -Path $espSharpOSDir | Out-Null
+    Copy-Item -LiteralPath $spcDll -Destination (Join-Path $espSharpOSDir "System.Private.CoreLib.dll") -Force
+    Write-Host "Prepared CoreCLR BCL: \sharpos\System.Private.CoreLib.dll"
+}
+else {
+    Write-Warning "System.Private.CoreLib.dll not found at $spcDll - CoreCLR init will fail with FILE_NOT_FOUND"
+}
+
+# Stage A — byte-for-byte NORMAL dotnet program hosting.
+#
+# A genuinely-normal `dotnet build` console app (no -nostdlib, no -r:forkSPC)
+# references System.Runtime + System.Console v10.0.0.0. The fork's full
+# Microsoft.NETCore.App (coreclr-pack/Debug/net10.0) is also v10.0.0.0 — exact
+# version match, so the SAME binary that runs via `dotnet`/`corerun` on Windows
+# binds & runs in SharpOS. We are our own hostfxr/hostpolicy: ship the fx set,
+# generate the TPA list, host via coreclr_execute_assembly.
+#
+#   \sharpos\System.Private.CoreLib.dll  — proven SPC (windows.x64.Debug)
+#   \sharpos\fx\*.dll                    — rest of framework (171, ex-SPC)
+#   \sharpos\NormalHello.dll             — stock dotnet build artifact
+#   \sharpos\tpa.txt                     — newline/semicolon TPA list (host reads)
+$forkFx   = "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\coreclr-pack\Debug\net10.0\linux-x64"
+$fxDest   = Join-Path $espSharpOSDir "fx"
+$normalProj = "C:\work\OS\work\normal-hello"
+$normalDllSrc = Join-Path $normalProj "bin\Release\net10.0\NormalHello.dll"
+if (Test-Path -LiteralPath $forkFx) {
+    New-Item -ItemType Directory -Force -Path $fxDest | Out-Null
+    # Copy all framework dlls EXCEPT SPC (we keep the proven windows SPC at
+    # \sharpos\ root; listing SPC once in TPA avoids a duplicate simple-name).
+    Get-ChildItem -LiteralPath $forkFx -Filter *.dll |
+        Where-Object { $_.Name -ne "System.Private.CoreLib.dll" } |
+        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $fxDest $_.Name) -Force }
+    $fxCount = (Get-ChildItem -LiteralPath $fxDest -Filter *.dll).Count
+    Write-Host "Prepared framework: \sharpos\fx\ ($fxCount dll)"
+
+    # Build the normal app (stock SDK, normal references). If project missing,
+    # create a vanilla `dotnet new console`.
+    if (-not (Test-Path -LiteralPath (Join-Path $normalProj "NormalHello.csproj"))) {
+        New-Item -ItemType Directory -Force -Path $normalProj | Out-Null
+        Push-Location $normalProj; & dotnet new console -n NormalHello -o . | Out-Null; Pop-Location
+    }
+    Push-Location $normalProj; & dotnet build -c Release | Out-Null; Pop-Location
+    if (Test-Path -LiteralPath $normalDllSrc) {
+        Copy-Item -LiteralPath $normalDllSrc -Destination (Join-Path $espSharpOSDir "NormalHello.dll") -Force
+        $h = (Get-FileHash -LiteralPath $normalDllSrc -Algorithm SHA256).Hash
+        Write-Host "Prepared NormalHello.dll (stock dotnet build) sha256=$h"
+    } else {
+        Write-Warning "NormalHello.dll not found at $normalDllSrc"
+    }
+
+    # Generate TPA list: SPC (root) + every fx dll + the app. Semicolon-sep,
+    # UEFI-style \sharpos\ paths (matches our SharpOSHost_FileOpen resolution).
+    $tpa = New-Object System.Text.StringBuilder
+    [void]$tpa.Append('\sharpos\System.Private.CoreLib.dll')
+    Get-ChildItem -LiteralPath $fxDest -Filter *.dll | ForEach-Object {
+        [void]$tpa.Append(';\sharpos\fx\' + $_.Name)
+    }
+    [void]$tpa.Append(';\sharpos\NormalHello.dll')
+    [System.IO.File]::WriteAllText((Join-Path $espSharpOSDir "tpa.txt"), $tpa.ToString())
+    Write-Host "Prepared \sharpos\tpa.txt (length=$($tpa.Length))"
+}
+else {
+    Write-Warning "fork fx not found at $forkFx - Stage A normal hosting unavailable"
+}
 $helloElf = Join-Path $espBootDir "HELLO.ELF"
 $abiInfoElf = Join-Path $espBootDir "ABIINFO.ELF"
 $markerElf = Join-Path $espBootDir "MARKER.ELF"
@@ -550,7 +622,7 @@ try {
     $cpuArgs = @("-cpu", "qemu64,+nx")
 
     $qemuArgs = $machineArgs + $cpuArgs + @(
-        "-m", "256",
+        "-m", "512",
         "-nographic",
         "-serial", "mon:stdio",
         "-echr", "0x1d",

@@ -17,6 +17,17 @@ namespace SharpOS.Std.NoRuntime
 {
     public static class GC
     {
+        // When true, GcSweep.Run() is a no-op: unmarked objects are NOT
+        // converted to free markers and the freelist is not rebuilt, so no
+        // block is ever reused. Set this once a foreign managed runtime
+        // (CoreCLR) starts allocating into the kernel GcHeap: its objects are
+        // reachable only from ITS GC graph, which the kernel Mark phase does
+        // not scan — so they look dead here and sweep would clobber them
+        // (observed: AppContext.s_dataStore zeroed mid-run). The kernel arena
+        // is bump-backed; disabling reclamation just forgoes reuse, which is
+        // acceptable until CoreCLR is fully off the kernel heap (plan 5b).
+        public static bool ReclamationDisabled;
+
         public static void Collect()
         {
             GcMark.Begin();

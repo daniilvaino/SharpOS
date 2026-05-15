@@ -32,14 +32,26 @@ namespace OS.PAL.SharpOSHost
             }
         }
 
-        // Print hex value followed by newline — used от walker для
-        // emitting ctor addresses each iteration.
+        // Length-prefixed serial write — no NUL terminator required. Used by
+        // the libSystem.Native console shim (SystemNative_Write) so managed
+        // System.Console output reaches COM1 byte-exact (handles embedded
+        // NULs / non-ASCII / no trailing zero).
+        [RuntimeExport("SharpOSHost_DebugWrite")]
+        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugWrite")]
+        public static void DebugWrite(byte* buf, int len)
+        {
+            if (buf == null || len <= 0) return;
+            for (int i = 0; i < len; i++)
+                Console.WriteChar((char)buf[i]);
+        }
+
+        // Print hex value inline (no trailing newline). Callers append "\n"
+        // through DebugPrint when they want a line break.
         [RuntimeExport("SharpOSHost_DebugPrintHex")]
         [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugPrintHex")]
         public static void DebugPrintHex(ulong value)
         {
             Console.WriteHex(value);
-            Console.WriteLine("");
         }
 
         [RuntimeExport("SharpOSHost_DebugBreak")]
@@ -47,6 +59,28 @@ namespace OS.PAL.SharpOSHost
         public static void DebugBreak()
         {
             Panic.Fail("SharpOSHost_DebugBreak not implemented (Phase 6.1.a)");
+        }
+
+        // Panic — fork-side trap stubs (CRT) call this after printing
+        // their diagnostic. Routes к kernel Panic.Fail → clean halt
+        // with backtrace instead of hlt-loop hang.
+        [RuntimeExport("SharpOSHost_Panic")]
+        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_Panic")]
+        public static void Panic_C(byte* utf8Message)
+        {
+            // Print the failing reason via existing diagnostic, then halt
+            // через kernel Panic so QEMU exits cleanly via -no-reboot.
+            if (utf8Message != null)
+            {
+                byte* p = utf8Message;
+                while (*p != 0)
+                {
+                    Console.WriteChar((char)*p);
+                    p++;
+                }
+                Console.WriteLine("");
+            }
+            Panic.Fail("SharpOSHost_Panic from fork-side trap");
         }
     }
 }

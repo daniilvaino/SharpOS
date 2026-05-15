@@ -1,5 +1,10 @@
+using System;
 using System.Runtime.InteropServices;
+using OS.Boot;
+using OS.Boot.EH;
 using OS.Hal;
+using OS.PAL.SharpOSHost;
+using SharpOS.Std.NoRuntime;
 
 namespace OS.Kernel.Diagnostics
 {
@@ -36,6 +41,37 @@ namespace OS.Kernel.Diagnostics
             void** hostHandle,
             uint* domainId);
 
+        // int coreclr_create_delegate(
+        //     void* hostHandle,
+        //     unsigned int domainId,
+        //     const char* entryPointAssemblyName,    // simple name, no .dll
+        //     const char* entryPointTypeName,        // full type name
+        //     const char* entryPointMethodName,      // method name
+        //     void** delegate);                       // out: native fn ptr
+        [DllImport("*", EntryPoint = "coreclr_create_delegate", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int coreclr_create_delegate(
+            void* hostHandle,
+            uint domainId,
+            byte* entryPointAssemblyName,
+            byte* entryPointTypeName,
+            byte* entryPointMethodName,
+            void** del);
+
+        // int coreclr_execute_assembly(
+        //     void* hostHandle, unsigned int domainId,
+        //     int argc, const char** argv,
+        //     const char* managedAssemblyPath, unsigned int* exitCode);
+        // Normal-program entry — runs the assembly's Main (what dotnet/corerun
+        // use). Stage A: host a byte-for-byte stock `dotnet build` app.
+        [DllImport("*", EntryPoint = "coreclr_execute_assembly", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int coreclr_execute_assembly(
+            void* hostHandle,
+            uint domainId,
+            int argc,
+            byte** argv,
+            byte* managedAssemblyPath,
+            uint* exitCode);
+
         // Walk .CRT$XCA..$XCZ pointers and invoke each — required by
         // CoreCLR C++ globals (vtables, registries). SharpOS kernel
         // entry EfiMain bypasses normal __scrt_initialize_crt, so this
@@ -68,82 +104,511 @@ namespace OS.Kernel.Diagnostics
         private static readonly byte[] s_exePath = new byte[] { (byte)'k', (byte)'e', (byte)'r', (byte)'n', (byte)'e', (byte)'l', 0 };
         private static readonly byte[] s_domainName = new byte[] { (byte)'S', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'O', (byte)'S', 0 };
 
+        // Property keys/values for coreclr_initialize. TRUSTED_PLATFORM_ASSEMBLIES
+        // is a `;`-separated list of full paths to assemblies known to the host.
+        // CoreCLR uses it for assembly resolution in coreclr_create_delegate.
+        private static readonly byte[] s_propKeyTPA = new byte[] {
+            (byte)'T', (byte)'R', (byte)'U', (byte)'S', (byte)'T', (byte)'E', (byte)'D', (byte)'_',
+            (byte)'P', (byte)'L', (byte)'A', (byte)'T', (byte)'F', (byte)'O', (byte)'R', (byte)'M', (byte)'_',
+            (byte)'A', (byte)'S', (byte)'S', (byte)'E', (byte)'M', (byte)'B', (byte)'L', (byte)'I', (byte)'E', (byte)'S', 0 };
+        // \sharpos\Hello.dll;\sharpos\System.Private.CoreLib.dll
+        private static readonly byte[] s_propValTPA = new byte[] {
+            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
+            (byte)'H', (byte)'e', (byte)'l', (byte)'l', (byte)'o', (byte)'.', (byte)'d', (byte)'l', (byte)'l',
+            (byte)';',
+            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
+            (byte)'S', (byte)'y', (byte)'s', (byte)'t', (byte)'e', (byte)'m', (byte)'.',
+            (byte)'P', (byte)'r', (byte)'i', (byte)'v', (byte)'a', (byte)'t', (byte)'e', (byte)'.',
+            (byte)'C', (byte)'o', (byte)'r', (byte)'e', (byte)'L', (byte)'i', (byte)'b', (byte)'.',
+            (byte)'d', (byte)'l', (byte)'l', 0 };
+        // APP_PATHS so probing locates assemblies by name.
+        private static readonly byte[] s_propKeyAppPaths = new byte[] {
+            (byte)'A', (byte)'P', (byte)'P', (byte)'_', (byte)'P', (byte)'A', (byte)'T', (byte)'H', (byte)'S', 0 };
+        // \sharpos
+        private static readonly byte[] s_propValAppPaths = new byte[] {
+            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', 0 };
+
+        // --- GC bound config (Phase 6.2 GC-arena step 1) ---
+        // Workstation, non-concurrent (single-thread, no background-GC), hard
+        // 64 MiB heap, 128 MiB region range, 1 MiB region, RetainVM (Decommit
+        // → standby, no VA churn — matches our demand-mapped VM manager).
+        // Public knob names from gc/gcconfig.h; INT values accept 0x hex.
+        // Explicit const-element byte[] literals only — ILC freezes these as
+        // RVA blobs (no cctor); a helper/method initializer would force a
+        // class-cctor → ClassConstructorRunner #GP (nostdlib-limits §1).
+        private static readonly byte[] s_kGcServer = new byte[] {
+            (byte)'S',(byte)'y',(byte)'s',(byte)'t',(byte)'e',(byte)'m',(byte)'.',
+            (byte)'G',(byte)'C',(byte)'.',(byte)'S',(byte)'e',(byte)'r',(byte)'v',(byte)'e',(byte)'r',0 };
+        private static readonly byte[] s_kGcConc = new byte[] {
+            (byte)'S',(byte)'y',(byte)'s',(byte)'t',(byte)'e',(byte)'m',(byte)'.',
+            (byte)'G',(byte)'C',(byte)'.',(byte)'C',(byte)'o',(byte)'n',(byte)'c',(byte)'u',(byte)'r',(byte)'r',(byte)'e',(byte)'n',(byte)'t',0 };
+        private static readonly byte[] s_kGcHardLim = new byte[] {
+            (byte)'S',(byte)'y',(byte)'s',(byte)'t',(byte)'e',(byte)'m',(byte)'.',
+            (byte)'G',(byte)'C',(byte)'.',(byte)'H',(byte)'e',(byte)'a',(byte)'p',(byte)'H',(byte)'a',(byte)'r',(byte)'d',(byte)'L',(byte)'i',(byte)'m',(byte)'i',(byte)'t',0 };
+        private static readonly byte[] s_kGcRegRange = new byte[] {
+            (byte)'S',(byte)'y',(byte)'s',(byte)'t',(byte)'e',(byte)'m',(byte)'.',
+            (byte)'G',(byte)'C',(byte)'.',(byte)'R',(byte)'e',(byte)'g',(byte)'i',(byte)'o',(byte)'n',(byte)'R',(byte)'a',(byte)'n',(byte)'g',(byte)'e',0 };
+        private static readonly byte[] s_kGcRegSize = new byte[] {
+            (byte)'S',(byte)'y',(byte)'s',(byte)'t',(byte)'e',(byte)'m',(byte)'.',
+            (byte)'G',(byte)'C',(byte)'.',(byte)'R',(byte)'e',(byte)'g',(byte)'i',(byte)'o',(byte)'n',(byte)'S',(byte)'i',(byte)'z',(byte)'e',0 };
+        private static readonly byte[] s_kGcRetainVM = new byte[] {
+            (byte)'S',(byte)'y',(byte)'s',(byte)'t',(byte)'e',(byte)'m',(byte)'.',
+            (byte)'G',(byte)'C',(byte)'.',(byte)'R',(byte)'e',(byte)'t',(byte)'a',(byte)'i',(byte)'n',(byte)'V',(byte)'M',0 };
+        private static readonly byte[] s_vFalse = new byte[] { (byte)'f',(byte)'a',(byte)'l',(byte)'s',(byte)'e',0 };
+        private static readonly byte[] s_vTrue  = new byte[] { (byte)'t',(byte)'r',(byte)'u',(byte)'e',0 };
+        private static readonly byte[] s_v64M   = new byte[] { (byte)'0',(byte)'x',(byte)'4',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',0 }; // 64 MiB
+        private static readonly byte[] s_v128M  = new byte[] { (byte)'0',(byte)'x',(byte)'8',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',0 }; // 128 MiB
+        private static readonly byte[] s_v1M    = new byte[] { (byte)'0',(byte)'x',(byte)'1',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',0 };           // 1 MiB
+
+        // Stage A — managed assembly path for coreclr_execute_assembly.
+        // \sharpos\NormalHello.dll  (stock `dotnet build` artifact)
+        private static readonly byte[] s_normalAppPath = new byte[] {
+            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
+            (byte)'N', (byte)'o', (byte)'r', (byte)'m', (byte)'a', (byte)'l',
+            (byte)'H', (byte)'e', (byte)'l', (byte)'l', (byte)'o', (byte)'.', (byte)'d', (byte)'l', (byte)'l', 0 };
+
+        // Names for coreclr_create_delegate — Hello.dll's SharpOSHello.Program.Run.
+        private static readonly byte[] s_helloAsm = new byte[] {
+            (byte)'H', (byte)'e', (byte)'l', (byte)'l', (byte)'o', 0 };
+        private static readonly byte[] s_helloType = new byte[] {
+            (byte)'S', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'O', (byte)'S',
+            (byte)'H', (byte)'e', (byte)'l', (byte)'l', (byte)'o', (byte)'.',
+            (byte)'P', (byte)'r', (byte)'o', (byte)'g', (byte)'r', (byte)'a', (byte)'m', 0 };
+        private static readonly byte[] s_helloMethod = new byte[] {
+            (byte)'R', (byte)'u', (byte)'n', 0 };
+
         public static void Run()
         {
             Console.WriteLine("=== CoreClrProbe===");
 
-            // Bisection — call walker с increasing limits. Report counts
-            // after each. SKIP coreclr_initialize entirely (its fault would
-            // confuse signal). Find the limit where walker itself crashes.
-            int xiPhase = 0, xcPhase = 0;
-            ulong lastAddr = 0;
-            // HACK — patch CRT atexit sentinel from 0 to -1 before walker.
-            // The libcmtd's _register_thread_local_exe_atexit_callback expects
-            // global at 0x180F6F510 (link RVA 0xF6F510) initialized к -1
-            // ("uninitialized table"). С zero-init it goes wrong path → crash.
-            // Compute loaded address from sentinel diagnostic, write -1.
+            // First — dump CRT table layout (sentinels + first N entries)
+            // WITHOUT executing.
             ulong xiAA = 0, xiZZ = 0, xcAA = 0, xcZZ = 0;
             SharpOSHost_GetCtorTable(&xiAA, &xiZZ, &xcAA, &xcZZ, null);
-            // xcAA = loaded __xc_a_sentinel = image_base + link_RVA_0xFED000
-            ulong imageBase = xcAA - 0xFED000UL;
-            ulong* atexitSentinel = (ulong*)(imageBase + 0xF6F510UL);
-            *atexitSentinel = 0xFFFFFFFFFFFFFFFFUL; // -1
-
-            Console.Write("patched sentinel @ 0x");
-            Console.WriteHex((ulong)atexitSentinel);
+            Console.Write("XI: 0x"); Console.WriteHex(xiAA);
+            Console.Write("..0x"); Console.WriteHex(xiZZ);
+            Console.Write(" XC: 0x"); Console.WriteHex(xcAA);
+            Console.Write("..0x"); Console.WriteHex(xcZZ);
             Console.WriteLine("");
 
-            SharpOSHost_SetCtorSkipMask(0);
-
-            int[] limits = new int[] { 4, 7, 10, 15, 20, 30, 60 };
-            foreach (int limit in limits)
+            // Read XC table entries directly from memory. Each entry is 8 bytes.
+            // Walker iterates from xcAA up to xcZZ; the bisection counter ignores
+            // null entries, so an "index N" in walker terms corresponds to the
+            // Nth non-null pointer in this table.
+            ulong* table = (ulong*)xcAA;
+            int entryCount = (int)((xcZZ - xcAA) / 8);
+            int nonNull = 0;
+            for (int i = 0; i < entryCount; i++)
             {
-                Console.Write("limit=");
-                Console.WriteInt(limit);
-                Console.Write(" (skip ctor4): ");
-
-                SharpOSHost_SetCtorLimit(limit);
-                SharpOSHost_RunCxxCtors();
-
-                SharpOSHost_GetCtorDiag(&xiPhase, &xcPhase, &lastAddr);
-                Console.Write("xi=");
-                Console.WriteInt(xiPhase);
-                Console.Write(" xc=");
-                Console.WriteInt(xcPhase);
-                Console.Write(" last=0x");
-                Console.WriteHex(lastAddr);
+                ulong p = table[i];
+                if (p == 0) continue;
+                nonNull++;
+                // Only print ctors near the wall (around 50-61)
+                if (nonNull < 49 || nonNull > 62) continue;
+                Console.Write("  ctor#");
+                Console.WriteInt(nonNull);
+                Console.Write(" @ [+");
+                Console.WriteInt(i);
+                Console.Write("] = 0x");
+                Console.WriteHex(p);
                 Console.WriteLine("");
             }
-            Console.WriteLine("--- skip-4 bisection done ---");
-            return;
+
+            // Phase 6.1.b CRITICAL FIX: Zero .data BSS region.
+            // UEFI PE loader may not zero BSS portion of .data section.
+            // CoreCLR's C++ static globals (g_codeRangeMap, crstDebugInfo,
+            // EE state) live there and EXPECT zero initialization.
+            // Without this, vtable reads / function pointer lookups get
+            // garbage memory → jumps to invalid addresses.
+            //
+            // Section offsets (link-time RVAs from PE headers):
+            //   .data init end:  0xF3CC40 (= .data start 0xF26000 + raw 0x16C40)
+            //   .data end:       0xF726EC (= .data start + virt 0x4C6EC)
+            //   BSS portion:     0xF3CC40 .. 0xF726EC (~219 KB)
+            //
+            // imageBase = xcAA - 0xFF1000 (.CRT link RVA).
+            // Zero specific BSS regions in .data that CoreCLR depends on:
+            //   - g_codeRangeMap (RangeSectionMap, .data offset 0x22AA0, 2064 B)
+            //   - crstDebugInfo (CrstDebugInfo[4000], .data offset 0x2C310, 64000 B)
+            ulong imageBase = xcAA - 0xFF1000UL;
+            ulong dataStart = imageBase + 0xF26000UL;
+
+            ulong gCRM = dataStart + 0x22AA0UL;
+            ulong* p1 = (ulong*)gCRM;
+            for (int z = 0; z < 2064 / 8; z++) p1[z] = 0;
+            Console.WriteLine("g_codeRangeMap zeroed");
+
+            ulong crstDi = dataStart + 0x2C310UL;
+            ulong* p2 = (ulong*)crstDi;
+            for (int z = 0; z < 64000 / 8; z++) p2[z] = 0;
+            Console.WriteLine("crstDebugInfo zeroed");
+
+            // Bisection — run walker с increasing limits. After each, print
+            // counter to find exactly which ctor index faults.
+            // Skip mask (bit N-1 = skip Nth ctor):
+            //   bit 13 = skip ctor 14 (??__Es_thunkFreeList — CrstStatic::Init →
+            //                          InitializeCriticalSection Win32 API)
+            //   bit 53 = skip ctor 54 (??__EanalysisTimer — NormalizedTimer ctor →
+            //                          minipal_hires_tick_frequency →
+            //                          QueryPerformanceFrequency Win32 API)
+            ulong skipMask = (1UL << 13) | (1UL << 53);
+
+            // Run walker once with skip mask, no limit. 58 of 60 ctors run.
+            int xiPhase = 0, xcPhase = 0;
+            ulong lastAddr = 0;
+            SharpOSHost_SetCtorSkipMask(skipMask);
+            SharpOSHost_SetCtorLimit(0);
+            Console.Write("skip mask = 0x");
+            Console.WriteHex(skipMask);
+            Console.WriteLine("");
+            SharpOSHost_RunCxxCtors();
+            SharpOSHost_GetCtorDiag(&xiPhase, &xcPhase, &lastAddr);
+            Console.Write("walker: xi=");
+            Console.WriteInt(xiPhase);
+            Console.Write(" xc=");
+            Console.WriteInt(xcPhase);
+            Console.Write(" last=0x");
+            Console.WriteHex(lastAddr);
+            Console.WriteLine("");
+
+            // --- Phase 6.1.b: TEB facade + GS_BASE MSR setup BEFORE
+            // coreclr_initialize. CoreCLR jit'd / inline code emits 2982
+            // distinct `mov rXX, gs:0x58` reads (TEB->TlsSlots) plus
+            // gs:0x30 (TEB->Self), gs:0x10 (StackLimit). Without a TEB
+            // those reads return garbage from whatever firmware left in
+            // the GS shadow, leading to non-canonical pointers deep in
+            // stack frames (e.g. GenerateCallStubForSig+0x74 #GP at
+            // 0x00000002_0C43A7AE).
+            //
+            // Strategy: synthesize a minimal TEB in GcHeap memory:
+            //   teb[0x30] = &teb        (TEB.Self)
+            //   teb[0x58] = &tls_slots  (TEB.TlsSlots[64] pointer block)
+            //   tls_slots[0] = &tls_block  (per-thread copy of TLS template)
+            // Copy PE TLS template (StartAddressOfRawData..EndAddressOfRawData)
+            // into tls_block. Write _tls_index = 0 into AddressOfIndex
+            // so PE-emitted `mov rXX, gs:[rdx]` (where rdx = _tls_index*8)
+            // resolves to tls_slots[0]. Set IA32_GS_BASE MSR (0xC0000101)
+            // to &teb via wrmsr shellcode (managed code can't emit wrmsr).
+            SetupTebFacade();
+
+            // Walker passed → CoreCLR globals init'd (modulo 2 skipped
+            // subsystems: UMEntryThunkFreeList + analysisTimer). Live
+            // runtime path next — expect new wave of walls (Win32 imports
+            // from 154 L3 classification).
+            Console.WriteLine("--- calling coreclr_initialize ---");
 
             void* hostHandle = null;
             uint domainId = 0;
 
+            // Stage A: TPA list is generated at build time (171 fx dll + SPC +
+            // app) и shipped as \sharpos\tpa.txt — far too large for a C#
+            // byte[] literal. Read it, copy into a NUL-terminated buffer so it
+            // can serve as the UTF-8 TRUSTED_PLATFORM_ASSEMBLIES value.
+            byte* tpaVal = null;
+            if (Platform.TryReadFile("\\sharpos\\tpa.txt", out void* tpaBuf, out uint tpaSize)
+                && tpaBuf != null && tpaSize > 0)
+            {
+                byte* nt = (byte*)GcHeap.AllocateRaw(tpaSize + 1);
+                if (nt != null)
+                {
+                    byte* src = (byte*)tpaBuf;
+                    for (uint i = 0; i < tpaSize; i++) nt[i] = src[i];
+                    nt[tpaSize] = 0;
+                    tpaVal = nt;
+                }
+                Console.Write("tpa.txt loaded size=0x"); Console.WriteHex(tpaSize);
+                Console.WriteLine("");
+            }
+            else
+            {
+                Console.WriteLine("tpa.txt NOT found — falling back to builtin TPA");
+            }
+
             fixed (byte* exePath = s_exePath)
             fixed (byte* domainName = s_domainName)
+            fixed (byte* kTpa = s_propKeyTPA)
+            fixed (byte* vTpaFallback = s_propValTPA)
+            fixed (byte* kApp = s_propKeyAppPaths)
+            fixed (byte* vApp = s_propValAppPaths)
+            fixed (byte* appPath = s_normalAppPath)
+            fixed (byte* kGcSrv = s_kGcServer)   fixed (byte* kGcCon = s_kGcConc)
+            fixed (byte* kGcHL  = s_kGcHardLim)  fixed (byte* kGcRR  = s_kGcRegRange)
+            fixed (byte* kGcRS  = s_kGcRegSize)  fixed (byte* kGcRV  = s_kGcRetainVM)
+            fixed (byte* vF = s_vFalse) fixed (byte* vT = s_vTrue)
+            fixed (byte* v64 = s_v64M) fixed (byte* v128 = s_v128M) fixed (byte* v1m = s_v1M)
             {
+                byte* vTpa = tpaVal != null ? tpaVal : vTpaFallback;
+                byte** keys   = stackalloc byte*[8] {
+                    kTpa, kApp, kGcSrv, kGcCon, kGcHL, kGcRR, kGcRS, kGcRV };
+                byte** values = stackalloc byte*[8] {
+                    vTpa, vApp, vF,     vF,     v64,   v128,  v1m,   vT };
+                // CoreCLR is about to allocate managed objects (e.g.
+                // AppContext.s_dataStore) into the kernel GcHeap. Those are
+                // rooted only in CoreCLR's GC graph — invisible to the kernel
+                // Mark phase — so kernel sweep would reclaim/clobber them
+                // (confirmed: s_dataStore zeroed mid-run). Freeze kernel
+                // reclamation for the rest of the session (bump-backed arena;
+                // plan 5b moves CoreCLR fully off the kernel heap properly).
+                SharpOS.Std.NoRuntime.GC.ReclamationDisabled = true;
+                Console.WriteLine("[host] kernel GC reclamation frozen for CoreCLR");
+
                 int hr = coreclr_initialize(
                     exePath,
                     domainName,
-                    propertyCount: 0,
-                    propertyKeys: null,
-                    propertyValues: null,
+                    propertyCount: 8,
+                    propertyKeys: keys,
+                    propertyValues: values,
                     hostHandle: &hostHandle,
                     domainId: &domainId);
 
+                Console.Write("coreclr_initialize hr=0x");
+                Console.WriteHex((ulong)(uint)hr);
+                Console.WriteLine("");
                 if (hr == 0)
                 {
-                    Console.WriteLine("coreclr_initialize returned S_OK!");
-                    Console.WriteLine("Phase 6.1.a achieved");
-                }
-                else
-                {
-                    Console.WriteLine("coreclr_initialize returned non-zero HRESULT");
-                    // Could format hr as hex here but if we got back at all
-                    // some progress was made.
+                    Console.WriteLine("=== S_OK — CoreCLR initialized ===");
+
+                    // Stage A — host a byte-for-byte stock `dotnet build` app
+                    // via the normal-program entry point (runs its Main).
+                    Console.WriteLine("--- coreclr_execute_assembly(\\sharpos\\NormalHello.dll) ---");
+                    uint exitCode = 0xFFFFFFFF;
+                    int xr = coreclr_execute_assembly(
+                        hostHandle, domainId,
+                        argc: 0, argv: null,
+                        managedAssemblyPath: appPath,
+                        exitCode: &exitCode);
+                    Console.Write("execute_assembly hr=0x"); Console.WriteHex((ulong)(uint)xr);
+                    Console.Write(" exitCode="); Console.WriteInt((int)exitCode);
+                    Console.WriteLine("");
+                    if (xr == 0 && exitCode == 42)
+                        Console.WriteLine("=== NORMAL .NET PROGRAM EXECUTED (byte-for-byte) ===");
                 }
             }
+        }
+
+        // Phase 6.1.c first managed code execution. coreclr_create_delegate
+        // resolves a function pointer for `SharpOSHello.Program.Run` in
+        // Hello.dll (managed library compiled against our SPC.dll, placed at
+        // \sharpos\Hello.dll on ESP). We invoke it passing the address of
+        // SharpOSHostDiagnostics.DebugPrint as a print callback — managed
+        // code calls it to write "[managed] Hello, World" to COM1.
+        private static void RunHelloWorld(void* hostHandle, uint domainId)
+        {
+            Console.WriteLine("--- coreclr_create_delegate(Hello, SharpOSHello.Program, Run) ---");
+            void* del = null;
+            int chr;
+            fixed (byte* a = s_helloAsm)
+            fixed (byte* t = s_helloType)
+            fixed (byte* m = s_helloMethod)
+            {
+                chr = coreclr_create_delegate(hostHandle, domainId, a, t, m, &del);
+            }
+            Console.Write("create_delegate hr=0x");
+            Console.WriteHex((ulong)(uint)chr);
+            Console.Write(" del=0x");
+            Console.WriteHex((ulong)del);
+            Console.WriteLine("");
+
+            if (chr != 0 || del == null) return;
+
+            // Cast delegate to function pointer matching Hello.Program.Run signature:
+            //   int Run(IntPtr printFnPtr).
+            // No CallConvCdecl modifier — on x64 there's a single calling
+            // convention. CallConv types live in mscorlib's
+            // System.Runtime.CompilerServices, which our std doesn't have.
+            delegate* unmanaged<IntPtr, int> hello =
+                (delegate* unmanaged<IntPtr, int>)del;
+
+            // Function pointer to our [UnmanagedCallersOnly] DebugPrint.
+            delegate* unmanaged<byte*, void> printFn = &SharpOSHostDiagnostics.DebugPrint;
+
+            Console.WriteLine("--- invoking managed Hello.Run ---");
+            int rv = hello((IntPtr)printFn);
+            Console.Write("Hello.Run returned ");
+            Console.WriteInt(rv);
+            Console.WriteLine("");
+            if (rv == 42)
+            {
+                Console.WriteLine("=== managed code execution VERIFIED ===");
+            }
+        }
+
+        // Minimal TEB facade so CoreCLR's 2982 `gs:0x58` (TlsSlots) reads
+        // resolve. Without this every TLS-keyed access in EEStartup,
+        // CallStubGenerator, JIT init, GC barriers, etc. picks up garbage
+        // and produces non-canonical pointers → #GP deep in the call chain.
+        //
+        // Walks the PE TLS directory dynamically (so RVAs survive image
+        // rebuilds), allocates GcHeap-backed buffers, wires TEB.Self +
+        // TEB.TlsSlots[0]->tls_block, copies the linker-emitted TLS template
+        // into tls_block, writes _tls_index = 0, and emits a wrmsr stub
+        // into BootInfo.AsmExecBuffer to load IA32_GS_BASE.
+        private static void SetupTebFacade()
+        {
+            Console.WriteLine("--- TEB facade setup ---");
+
+            // Use the REAL kernel PE base (CoffRuntimeFunctionTable scanned for
+            // MZ/PE via page-aligned downward walk from a kernel anchor and
+            // validated). After static-link of coreclr into kernel.exe, the
+            // .CRT RVA we used elsewhere (xcAA - 0xFF1000) does NOT yield
+            // the kernel PE header — that was the original standalone
+            // coreclr.dll RVA, not the merged kernel image RVA.
+            if (!CoffRuntimeFunctionTable.IsInitialized)
+            {
+                Console.WriteLine("  CoffRuntimeFunctionTable not init — abort");
+                return;
+            }
+            byte* image = CoffRuntimeFunctionTable.ImageBase;
+            ulong imageBase = (ulong)image;
+            Console.Write("  imageBase=0x"); Console.WriteHex(imageBase);
+            Console.WriteLine("");
+            uint peOffset = *(uint*)(image + 0x3C);
+            byte* pe = image + peOffset;
+
+            // After 4-byte "PE\0\0" sig + 20-byte COFF header → optional
+            // header. PE32+ DataDirectory starts at optional-header offset
+            // 112 (24 standard + 88 windows-specific). Total file offset
+            // from PE = 4 + 20 + 112 = 136. TLS entry is DataDirectory[9].
+            byte* opt = pe + 24;
+            ulong linkImageBase = *(ulong*)(opt + 24);  // PE32+ ImageBase
+            uint tlsDirRva = *(uint*)(opt + 112 + 9 * 8);
+            uint tlsDirSize = *(uint*)(opt + 112 + 9 * 8 + 4);
+
+            Console.Write("  linkBase=0x"); Console.WriteHex(linkImageBase);
+            Console.Write(" runtimeBase=0x"); Console.WriteHex(imageBase);
+            Console.Write(" tlsDirRva=0x"); Console.WriteHex(tlsDirRva);
+            Console.Write(" size=0x"); Console.WriteHex(tlsDirSize);
+            Console.WriteLine("");
+
+            if (tlsDirRva == 0)
+            {
+                Console.WriteLine("  no TLS directory — abort facade setup");
+                return;
+            }
+
+            // IMAGE_TLS_DIRECTORY64 (40 bytes):
+            //   StartAddressOfRawData  ulong (linked VA)
+            //   EndAddressOfRawData    ulong
+            //   AddressOfIndex         ulong
+            //   AddressOfCallBacks     ulong
+            //   SizeOfZeroFill         uint
+            //   Characteristics        uint
+            ulong* tlsDir = (ulong*)(image + tlsDirRva);
+            ulong tlsStartVa = tlsDir[0];
+            ulong tlsEndVa = tlsDir[1];
+            ulong tlsIndexVa = tlsDir[2];
+            // tlsDir[3] = callbacks (we ignore)
+            uint tlsZeroFill = *(uint*)((byte*)tlsDir + 32);
+
+            ulong tlsTemplateRva = tlsStartVa - linkImageBase;
+            ulong tlsIndexRva = tlsIndexVa - linkImageBase;
+            uint tlsRawSize = (uint)(tlsEndVa - tlsStartVa);
+            uint tlsBlockSize = tlsRawSize + tlsZeroFill;
+
+            Console.Write("  template rva=0x"); Console.WriteHex(tlsTemplateRva);
+            Console.Write(" raw=0x"); Console.WriteHex(tlsRawSize);
+            Console.Write(" zfill=0x"); Console.WriteHex(tlsZeroFill);
+            Console.Write(" idxRva=0x"); Console.WriteHex(tlsIndexRva);
+            Console.WriteLine("");
+
+            // GcHeap returns zeroed memory — TEB + slots start clean.
+            const uint TEB_SIZE = 0x1000;        // 4 KiB
+            const uint TLS_SLOTS_SIZE = 64 * 8;  // 64 slots * 8 bytes
+
+            byte* teb = (byte*)GcHeap.AllocateRaw(TEB_SIZE);
+            byte* slots = (byte*)GcHeap.AllocateRaw(TLS_SLOTS_SIZE);
+            byte* tlsBlock = (byte*)GcHeap.AllocateRaw(tlsBlockSize);
+
+            if (teb == null || slots == null || tlsBlock == null)
+            {
+                Console.WriteLine("  GcHeap alloc failed — abort");
+                return;
+            }
+
+            // Copy TLS template (initialized portion). Zero-fill portion is
+            // already zero from GcHeap.
+            byte* templateSrc = image + tlsTemplateRva;
+            for (uint i = 0; i < tlsRawSize; i++) tlsBlock[i] = templateSrc[i];
+
+            // Wire pointers.
+            //
+            // NT_TIB layout (first 0x38 bytes of TEB on x64):
+            //   +0x00 ExceptionList  PEXCEPTION_REGISTRATION_RECORD
+            //   +0x08 StackBase      void*   TOP of stack (HIGH address)
+            //   +0x10 StackLimit     void*   BOTTOM of stack (LOW address)
+            //   +0x18 SubSystemTib
+            //   +0x20 FiberData / Version
+            //   +0x28 ArbitraryUserPointer
+            //   +0x30 Self           TEB*    ← TEB.Self
+            //   +0x58 ThreadLocalStoragePointer
+            //
+            // Stack grows DOWNWARD: StackBase > StackLimit. CoreCLR not only
+            // asserts `Base >= Limit` (threads.cpp:6108) и computes
+            // available = Base - Limit — оно ТАКЖЕ dereferences адреса в этом
+            // диапазоне (stack probes, GC root scan, unwind). Synthetic
+            // values трогающие unmapped VA вызовут #PF. Используем реальный
+            // kernel stack — &localMarker даёт текущую позицию RSP, оттуда
+            // расширяем диапазон в обе стороны.
+            //
+            // Conservative range: 32 KiB above и 32 KiB below current SP,
+            // округлённое к 4K page. Kernel stack typically 64 KiB+ так что
+            // эти 64 KiB полностью смаплены.
+            int stackMarker = 0;
+            ulong sp = (ulong)&stackMarker;
+            ulong syntheticStackBase  = (sp + 0x8000UL) & ~0xFFFUL;   // SP + ~32 KiB, page-aligned
+            ulong syntheticStackLimit = (sp - 0x8000UL) & ~0xFFFUL;   // SP - ~32 KiB, page-aligned
+            *(ulong*)(teb + 0x08) = syntheticStackBase;   // TEB.StackBase (TOP)
+            *(ulong*)(teb + 0x10) = syntheticStackLimit;  // TEB.StackLimit (BOTTOM)
+            *(ulong*)(teb + 0x30) = (ulong)teb;           // TEB.Self
+            *(ulong*)(teb + 0x58) = (ulong)slots;         // TEB.ThreadLocalStoragePointer
+            *(ulong*)(slots + 0) = (ulong)tlsBlock;       // slots[0] → tls_block
+
+            Console.Write("  stack base=0x"); Console.WriteHex(syntheticStackBase);
+            Console.Write(" limit=0x"); Console.WriteHex(syntheticStackLimit);
+            Console.Write(" sp=0x"); Console.WriteHex(sp);
+            Console.WriteLine("");
+
+            // Write _tls_index = 0 so PE-emitted reads
+            //   mov rax, [_tls_index]
+            //   mov rcx, gs:[0x58]
+            //   mov rax, [rcx + rax*8]
+            // resolve slots[0] = tlsBlock.
+            *(ulong*)(image + tlsIndexRva) = 0;
+
+            Console.Write("  teb=0x"); Console.WriteHex((ulong)teb);
+            Console.Write(" slots=0x"); Console.WriteHex((ulong)slots);
+            Console.Write(" tlsBlock=0x"); Console.WriteHex((ulong)tlsBlock);
+            Console.WriteLine("");
+
+            // Emit wrmsr shellcode into AsmExecBuffer at offset 64 (past
+            // X64Asm STI/CLI/HLT slots at 0/16/32). Args via x64 ABI:
+            // RCX = TEB address.
+            //   48 89 C8        mov rax, rcx               ; RAX = TEB (low 32 → EAX)
+            //   48 89 CA        mov rdx, rcx               ; RDX = TEB
+            //   48 C1 EA 20     shr rdx, 32                ; RDX = high 32 (in EDX)
+            //   B9 01 01 00 C0  mov ecx, 0xC0000101        ; IA32_GS_BASE
+            //   0F 30           wrmsr                      ; MSR[ECX] = EDX:EAX
+            //   C3              ret
+            BootInfo bi = Platform.GetBootInfo();
+            if (bi.AsmExecBuffer == null || bi.AsmExecBufferSize < 128)
+            {
+                Console.WriteLine("  AsmExecBuffer unavailable — cannot set GS_BASE");
+                return;
+            }
+
+            byte* code = (byte*)bi.AsmExecBuffer + 64;
+            code[0] = 0x48; code[1] = 0x89; code[2] = 0xC8;          // mov rax, rcx
+            code[3] = 0x48; code[4] = 0x89; code[5] = 0xCA;          // mov rdx, rcx
+            code[6] = 0x48; code[7] = 0xC1; code[8] = 0xEA; code[9] = 0x20; // shr rdx, 32
+            code[10] = 0xB9;
+            code[11] = 0x01; code[12] = 0x01; code[13] = 0x00; code[14] = 0xC0; // 0xC0000101
+            code[15] = 0x0F; code[16] = 0x30;                        // wrmsr
+            code[17] = 0xC3;                                          // ret
+
+            delegate* unmanaged<ulong, void> setGsBase = (delegate* unmanaged<ulong, void>)code;
+            setGsBase((ulong)teb);
+
+            Console.WriteLine("  GS_BASE = TEB via wrmsr OK");
         }
     }
 }

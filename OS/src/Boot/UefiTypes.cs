@@ -136,8 +136,10 @@ namespace OS.Boot
         public readonly EFI_TABLE_HEADER Hdr;
         private readonly void* _RaiseTpl;
         private readonly void* _RestoreTpl;
-        private readonly void* _AllocatePages;
-        private readonly void* _FreePages;
+        // EFI_ALLOCATE_TYPE: 0=AllocateAnyPages, 1=AllocateMaxAddress, 2=AllocateAddress
+        // Returns physical 4 KiB-aligned address для Pages count.
+        public readonly delegate* unmanaged<uint, EFI_MEMORY_TYPE, ulong, ulong*, ulong> AllocatePages;
+        public readonly delegate* unmanaged<ulong, ulong, ulong> FreePages;
         public readonly delegate* unmanaged<ulong*, EFI_MEMORY_DESCRIPTOR*, ulong*, ulong*, uint*, ulong> GetMemoryMap;
         public readonly delegate* unmanaged<EFI_MEMORY_TYPE, ulong, void**, ulong> AllocatePool;
         public readonly delegate* unmanaged<void*, ulong> FreePool;

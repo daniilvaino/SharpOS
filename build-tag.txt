@@ -1,1 +1,1 @@
-gc-mark-sweep
+coreCLR-probe

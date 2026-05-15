@@ -48,6 +48,10 @@
     <LinkerArg Include="&quot;$(CoreClrForkObj)\shared_minipal\minipal.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\minipal\Windows\coreclrminipal.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\pal\sharpos\coreclrpal.lib&quot;" />
+    <!-- Phase 6.1.b: CRT trap stubs for 124 ucrt imports. Excluded from
+         fork's coreclr.dll target (would collide with libcmtd's _callnewh
+         etc.); pulled here for kernel link via /FORCE:MULTIPLE. -->
+    <LinkerArg Include="&quot;$(CoreClrForkObj)\pal\sharpos\coreclrpal_kernel_crt.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\jit\clrjit.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\vm\eventing\dummyprovider\eventprovider.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\pal\sharpos\coreclrtraceptprovider.lib&quot;" />
@@ -222,6 +226,8 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\GC\GcSweep.cs" Link="src\Std\GC\GcSweep.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\GcRoots.cs" Link="src\Std\GC\GcRoots.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\GC.cs" Link="src\Std\GC\GC.cs" />
+    <Compile Include="..\std\no-runtime\shared\Bcl\Guid.cs" Link="src\Std\Bcl\Guid.cs" />
+    <Compile Include="..\std\no-runtime\shared\Bcl\Path.cs" Link="src\Std\Bcl\Path.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Interfaces.cs" Link="src\Std\Bcl\Interfaces.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\EqualityComparer.cs" Link="src\Std\Bcl\EqualityComparer.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Comparer.cs" Link="src\Std\Bcl\Comparer.cs" />

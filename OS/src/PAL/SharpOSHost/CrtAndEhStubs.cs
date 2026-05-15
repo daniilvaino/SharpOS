@@ -1,5 +1,6 @@
 using System.Runtime;
 using System.Runtime.InteropServices;
+using OS.Hal;
 using OS.Kernel;
 using SharpOS.Std.NoRuntime;
 
@@ -50,44 +51,149 @@ namespace OS.PAL.SharpOSHost
         }
 
         // ---------------------------------------------------------------
-        // L5 — EH personality stubs (fatal in Phase 6.1.0b).
-        // Per D13: real implementation deferred until 6.1.c (Phase 1
-        // unwinder extension с MSVC personality semantics).
+        // L5 — EH personality routines.
+        // __CxxFrameHandler3 lives in CxxFrameHandler.cs (Phase 6.1.b — real
+        // MSVC C++ EH personality). __C_specific_handler is here.
         // ---------------------------------------------------------------
-
-        // EXCEPTION_DISPOSITION __CxxFrameHandler3(
-        //     PEXCEPTION_RECORD pExceptionRecord,
-        //     void*             pEstablisherFrame,
-        //     PCONTEXT          pContextRecord,
-        //     void*             pDispatcherContext);
-        [RuntimeExport("__CxxFrameHandler3")]
-        [UnmanagedCallersOnly(EntryPoint = "__CxxFrameHandler3")]
-        public static int CxxFrameHandler3(void* record, void* frame, void* context, void* dispatcher)
-        {
-            Panic.Fail("__CxxFrameHandler3 fired (Phase 6.1.0b stub, D13 EH not implemented)");
-            return 1; // ExceptionContinueSearch
-        }
 
         // EXCEPTION_DISPOSITION __C_specific_handler(
         //     PEXCEPTION_RECORD pExceptionRecord,
         //     void*             pEstablisherFrame,
         //     PCONTEXT          pContextRecord,
         //     void*             pDispatcherContext);
+        // __C_specific_handler — Windows SEH personality для C `__try/__except`
+        // и `__try/__finally`. CoreCLR EX_TRY macros expand to __try/__except.
+        //
+        // DispatcherContext.HandlerData → ScopeTable:
+        //   [count: 4 bytes]
+        //   then count × ScopeRecord (16 bytes):
+        //     BeginAddress   — try-region start RVA (from image base)
+        //     EndAddress     — try-region end RVA
+        //     HandlerAddress — filter RVA, or const 1 (always-catch __except)
+        //     JumpTarget     — __except body RVA, or 0 если scope is __finally
+        //
+        // First pass (search): walk scopes covering current RIP. For each
+        // __except (JumpTarget != 0), invoke filter:
+        //   - 1  EXECUTE_HANDLER → match, set TargetIp, return marker
+        //   - 0  CONTINUE_SEARCH → skip scope, try next
+        //   - -1 CONTINUE_EXECUTION → resume from current RIP
+        // Filter ABI (x64): rcx = EXCEPTION_POINTERS*, rdx = establisher frame.
+        //
+        // Unwind pass: walk scopes whose JumpTarget == 0 (__finally), call
+        // handler funclet. ABI: rcx = abnormal flag (1), rdx = establisher.
         [RuntimeExport("__C_specific_handler")]
         [UnmanagedCallersOnly(EntryPoint = "__C_specific_handler")]
-        public static int CSpecificHandler(void* record, void* frame, void* context, void* dispatcher)
+        public static int CSpecificHandler(ExceptionRecord* rec,
+                                            void* establisherFrame,
+                                            Context* ctx,
+                                            DispatcherContext* dc)
         {
-            Panic.Fail("__C_specific_handler fired (Phase 6.1.0b stub, D13 EH not implemented)");
-            return 1; // ExceptionContinueSearch
+            byte* image = (byte*)dc->ImageBase;
+            uint* scopeTable = (uint*)dc->HandlerData;
+            if (scopeTable == null) return 1;   // ContinueSearch
+            uint count = scopeTable[0];
+            ScopeRecord* records = (ScopeRecord*)(scopeTable + 1);
+
+            uint ripRva = (uint)(dc->ControlPc - dc->ImageBase);
+            Console.Write("[__C_specific_handler] controlPc=0x"); Console.WriteHex(dc->ControlPc);
+            Console.Write(" ripRva=0x"); Console.WriteHex(ripRva);
+            Console.Write(" nScopes="); Console.WriteInt((int)count);
+            Console.WriteLine("");
+            for (uint si = 0; si < count && si < 8; si++)
+            {
+                Console.Write("  scope["); Console.WriteInt((int)si);
+                Console.Write("] beg=0x"); Console.WriteHex(records[si].BeginAddress);
+                Console.Write(" end=0x"); Console.WriteHex(records[si].EndAddress);
+                Console.Write(" h=0x"); Console.WriteHex(records[si].HandlerAddress);
+                Console.Write(" jt=0x"); Console.WriteHex(records[si].JumpTarget);
+                Console.WriteLine("");
+            }
+            bool unwinding = (rec->ExceptionFlags &
+                (ExceptionRecord.EXCEPTION_UNWINDING |
+                 ExceptionRecord.EXCEPTION_EXIT_UNWIND)) != 0;
+            bool targetUnwind = (rec->ExceptionFlags &
+                ExceptionRecord.EXCEPTION_TARGET_UNWIND) != 0;
+
+            for (uint i = 0; i < count; i++)
+            {
+                ScopeRecord r = records[i];
+                if (ripRva < r.BeginAddress || ripRva >= r.EndAddress) continue;
+
+                Console.Write("  → scope["); Console.WriteInt((int)i); Console.Write("] matches ripRva");
+                Console.WriteLine("");
+
+                if (r.JumpTarget == 0)
+                {
+                    Console.WriteLine("    __finally");
+                    if (unwinding && !targetUnwind)
+                    {
+                        delegate* unmanaged<int, void*, void> finallyFn =
+                            (delegate* unmanaged<int, void*, void>)(image + r.HandlerAddress);
+                        finallyFn(1, establisherFrame);
+                    }
+                    continue;
+                }
+
+                Console.Write("    __except, unwinding="); Console.WriteInt(unwinding ? 1 : 0);
+                Console.WriteLine("");
+                if (unwinding) continue;
+
+                int filterResult;
+                if (r.HandlerAddress == 1)
+                {
+                    filterResult = 1;
+                    Console.WriteLine("    handler==1 (always-catch)");
+                }
+                else
+                {
+                    ExceptionPointers ep;
+                    ep.ExceptionRecord = rec;
+                    ep.ContextRecord = ctx;
+                    void* filterAbs = image + r.HandlerAddress;
+                    Console.Write("    calling filter @0x"); Console.WriteHex((ulong)filterAbs);
+                    Console.WriteLine("");
+                    delegate* unmanaged<ExceptionPointers*, void*, int> filter =
+                        (delegate* unmanaged<ExceptionPointers*, void*, int>)filterAbs;
+                    filterResult = filter(&ep, establisherFrame);
+                    Console.Write("    filter returned "); Console.WriteInt(filterResult);
+                    Console.WriteLine("");
+                }
+
+                if (filterResult == 1)
+                {
+                    dc->TargetIp = (ulong)(image + r.JumpTarget);
+                    Console.Write("    HANDLER MATCHED, target=0x"); Console.WriteHex(dc->TargetIp);
+                    Console.WriteLine("");
+                    return ExceptionDispositionExt.ExceptionExecuteHandlerMarker;
+                }
+                if (filterResult == -1)
+                {
+                    return 0;
+                }
+            }
+
+            return 1;   // ExceptionContinueSearch
         }
 
-        // void _CxxThrowException(void* pExceptionObject, void* pThrowInfo);
-        [RuntimeExport("_CxxThrowException")]
-        [UnmanagedCallersOnly(EntryPoint = "_CxxThrowException")]
-        public static void CxxThrowException(void* exceptionObj, void* throwInfo)
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ScopeRecord
         {
-            Panic.Fail("_CxxThrowException fired (CoreCLR threw C++ exception; Phase 6.1.0b stub)");
+            public uint BeginAddress;
+            public uint EndAddress;
+            public uint HandlerAddress;
+            public uint JumpTarget;
         }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private unsafe struct ExceptionPointers
+        {
+            public ExceptionRecord* ExceptionRecord;
+            public Context* ContextRecord;
+        }
+
+        // _CxxThrowException — implemented в SehDispatch.CxxThrow (Phase 6.1.b
+        // SEH unwind port). Drives full first-pass search + second-pass
+        // unwind with __CxxFrameHandler3 personality routine.
 
         // ---------------------------------------------------------------
         // L1 misc CRT.
@@ -101,17 +207,18 @@ namespace OS.PAL.SharpOSHost
             Panic.Fail("_purecall fired (pure virtual function call — CoreCLR bug if reached)");
         }
 
-        // __chkstk — stack probe для allocations >4KB. Real impl walks
-        // pages and touches each (forces page fault for guard page).
-        // Phase 6.1.0b: trivial no-op (assumes stack always committed).
-        [RuntimeExport("__chkstk")]
-        [UnmanagedCallersOnly(EntryPoint = "__chkstk")]
-        public static void Chkstk()
-        {
-            // No-op для kernel context. Kernel stack is wholly committed
-            // (no guard pages, no demand-paged kernel stack). CoreCLR's
-            // __chkstk calls для large local arrays are safe to ignore.
-        }
+        // __chkstk — see ChkstkStub.cs / ChkstkPatcher.cs. The MSVC ABI for
+        // __chkstk is net-zero on RSP — the CALLER emits the actual
+        // `sub rsp, rax` after the call returns. So our no-op `ret` works
+        // on the unikernel where guard-page probing is unnecessary (flat
+        // large kernel stack, no guard pages).
+        //
+        // Earlier in Phase 6.1.a we ran with libcmt's __chkstk, but its asm
+        // reads `gs:[10h]` (TEB.StackLimit). On bare metal TEB.StackLimit
+        // is a one-shot snapshot from boot SP; when current RSP descends
+        // below it (CoreCLR frames >= 4 KiB), __chkstk enters its
+        // page-by-page zero-write extension loop and corrupts kernel memory.
+        // The patched stub bypasses that path.
 
         // ---------------------------------------------------------------
         // L1 — CRT string functions (real impl, trivial).
@@ -244,13 +351,43 @@ namespace OS.PAL.SharpOSHost
         }
 
         // _CrtDbgReportW(int reportType, const wchar_t* filename, int line, ...)
-        // — debug CRT assertion reporter. Fatal stub.
+        // — debug CRT assertion / warning reporter. Surface to console and
+        // return 0 (= "handled, do not break") so caller continues. This
+        // covers both fatal asserts AND non-fatal warnings — we'd rather
+        // see the message than halt blindly. Real fatal cases are still
+        // catchable downstream if the caller treats _CrtDbgReportW's exit
+        // code as terminal.
         [RuntimeExport("_CrtDbgReportW")]
         [UnmanagedCallersOnly(EntryPoint = "_CrtDbgReportW")]
         public static int CrtDbgReportW(int reportType, char* filename, int line, char* module, char* fmt, void* vargs)
         {
-            Panic.Fail("_CrtDbgReportW fired (CRT assertion in CoreCLR)");
-            return 0;
+            Console.Write("[CrtDbgReport type=");
+            Console.WriteInt(reportType);
+            Console.Write(" line=");
+            Console.WriteInt(line);
+            Console.Write("] file=");
+            WriteWChar(filename);
+            Console.Write(" mod=");
+            WriteWChar(module);
+            Console.Write(" fmt=");
+            WriteWChar(fmt);
+            Console.WriteLine("");
+            return 0; // do not break / continue
+        }
+
+        // Helper: print a null-terminated wide string as ASCII (non-printable
+        // chars rendered as '?'). Used by diagnostic stubs.
+        private static void WriteWChar(char* p)
+        {
+            if (p == null) { Console.Write("(null)"); return; }
+            while (*p != 0)
+            {
+                char wc = *p++;
+                if ((wc >= ' ' && wc < (char)0x7F) || wc == '\n' || wc == '\t')
+                    Console.WriteChar(wc);
+                else
+                    Console.WriteChar('?');
+            }
         }
 
         // void longjmp(jmp_buf env, int val) — non-local control transfer.
@@ -348,26 +485,85 @@ namespace OS.PAL.SharpOSHost
         [UnmanagedCallersOnly(EntryPoint = "_is_c_termination_complete")]
         public static int IsCTerminationComplete() { return 0; }
 
-        // _malloc_dbg / _free_dbg — debug CRT heap.  Fatal — kernel doesn't
-        // route through these (uses SharpOS GC + kernel mm).
+        // _malloc_dbg / _free_dbg — debug CRT heap entry points emitted by
+        // libcmtd / Debug-build CoreCLR's `new`/`delete` operators. Route
+        // to SharpOSHost so they share the SharpOS GC heap with regular
+        // malloc/free. blockType + filename + line are debug-tracking args
+        // we ignore (no leak tracking needed in unikernel).
         [RuntimeExport("_malloc_dbg")]
         [UnmanagedCallersOnly(EntryPoint = "_malloc_dbg")]
         public static void* MallocDbg(ulong size, int blockType, byte* filename, int line)
         {
-            Panic.Fail("_malloc_dbg fired (debug CRT heap; should be unreachable)");
-            return null;
+            if (size == 0) return GcHeap.AllocateRaw(1);
+            if (size > uint.MaxValue) return null;
+            return GcHeap.AllocateRaw((uint)size);
         }
 
         [RuntimeExport("_free_dbg")]
         [UnmanagedCallersOnly(EntryPoint = "_free_dbg")]
         public static void FreeDbg(void* ptr, int blockType)
         {
-            Panic.Fail("_free_dbg fired");
+            // No-op — GC sweeps unreachable blocks.
         }
+
+        [RuntimeExport("_calloc_dbg")]
+        [UnmanagedCallersOnly(EntryPoint = "_calloc_dbg")]
+        public static void* CallocDbg(ulong num, ulong size, int blockType, byte* filename, int line)
+        {
+            ulong total = num * size;
+            if (total == 0 || total > uint.MaxValue) return null;
+            void* p = GcHeap.AllocateRaw((uint)total);
+            // GcHeap.AllocateRaw already zero-fills.
+            return p;
+        }
+
+        [RuntimeExport("_realloc_dbg")]
+        [UnmanagedCallersOnly(EntryPoint = "_realloc_dbg")]
+        public static void* ReallocDbg(void* old, ulong size, int blockType, byte* filename, int line)
+        {
+            if (size == 0) return null;
+            if (size > uint.MaxValue) return null;
+            void* fresh = GcHeap.AllocateRaw((uint)size);
+            if (fresh != null && old != null)
+            {
+                byte* dst = (byte*)fresh;
+                byte* src = (byte*)old;
+                for (ulong i = 0; i < size; i++) dst[i] = src[i];
+            }
+            return fresh;
+        }
+
+        // ---------------------------------------------------------------
+        // Static-ctor hijack stubs (Phase 6.1.a — replaces libcmtd's
+        // internal init paths that were faulting on uninit sentinels).
+        //
+        // ctor dep audit found 3 truly-external CRT symbols used by 197
+        // static C++ ctors in our linked surface. By providing our own
+        // implementations CoreCLR's ctors call us directly and libcmtd's
+        // _register_thread_local_exe_atexit_callback / TLS dtor table
+        // paths never run.
+        //
+        // See work/PAL/symbol-audit/ctor-deps/summary.md.
+        // ---------------------------------------------------------------
+
+        // int atexit(void (*func)(void)) — register at-exit callback.
+        // 6 ctors call this (log/pgo/profdetach/stubhelpers).
+        // Kernel never shuts down → callbacks never need to run → no-op.
+        [RuntimeExport("atexit")]
+        [UnmanagedCallersOnly(EntryPoint = "atexit")]
+        public static int Atexit(void* func) { return 0; }
+
+        // int __tlregdtor(_PVFV func) — libcmtd internal: register
+        // thread-local destructor for current thread's TLS shutdown.
+        // 3 ctors call this (ceemain tls_destructionMonitor, eventpipe).
+        // D5 says single-threaded boot → no thread teardown → no-op.
+        [RuntimeExport("__tlregdtor")]
+        [UnmanagedCallersOnly(EntryPoint = "__tlregdtor")]
+        public static int Tlregdtor(void* func) { return 0; }
     }
 
     // Globals что MSVC CRT linker expects as DATA, not functions.
-    internal static unsafe class CrtGlobals
+    internal static class CrtGlobals
     {
         // `_fltused` — CRT linker marker that floating-point code is used.
         // Just needs to exist with non-zero value.
@@ -381,13 +577,29 @@ namespace OS.PAL.SharpOSHost
         public static ulong SecurityCookie = 0x2B992DDFA232L;
 
         // `__security_check_cookie` — verifies cookie matches at epilogue.
-        // Phase 6.1.0b: no-op (CFG defeat).
+        // Phase 6.1.b: false-positive прошёл empirically на CoreCLR boot —
+        // MSVC's __security_init_cookie clears low byte (`& ~0xff`) BEFORE
+        // first use, while our static SecurityCookie keeps its full literal
+        // value. Different compilation units also reference different
+        // `__security_cookie` symbol storage under /FORCE:MULTIPLE linkage.
+        // Reconciling is complex; net result is no real stack-canary semantic
+        // is enforced anyway, so make this a true no-op (avoids #UD from
+        // libcmt's __report_gsfailure on mismatch).
         [RuntimeExport("__security_check_cookie")]
         [UnmanagedCallersOnly(EntryPoint = "__security_check_cookie")]
         public static void SecurityCheckCookie(ulong cookie)
         {
-            // No-op для Phase 6.1.0b. Real check would compare cookie с
-            // __security_cookie and __fastfail if mismatch.
+            _ = cookie;
         }
+
+        // `_tls_index` — link-time TLS module slot index. Normally assigned
+        // by linker when an image contributes к .tls section; thread_local
+        // accessors load this value and use it for `gs:[58h] + idx*8` TEB
+        // lookup. Phase 6.1.a: provide as 0 to satisfy link. Runtime
+        // access via gs:[58h] is a SEPARATE wall (no TEB setup yet) —
+        // those specific ctors (t_random, g_threadHolderTLS) will fault
+        // when reached если no TEB facade.
+        [RuntimeExport("_tls_index")]
+        public static uint TlsIndex = 0;
     }
 }

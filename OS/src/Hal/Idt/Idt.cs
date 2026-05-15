@@ -150,6 +150,22 @@ namespace OS.Hal.Idt
         private static void Dispatch(InterruptFrame* frame)
         {
             int vector = (int)frame->Vector;
+
+            // Demand-fault completion for the VM window: a NOT-present #PF
+            // whose CR2 is inside the demand-mapped reservation is a lazy
+            // commit, not a fault. Back the page and IRETQ-resume the
+            // faulting instruction. Scoped to the window — anything else
+            // falls through to the normal exception/panic path unchanged.
+            if (vector == 14 && (frame->ErrorCode & 1UL) == 0 &&
+                OS.Kernel.Memory.VirtualMemory.TryDemandCommit(frame->Cr2))
+            {
+                if (OS.Hal.X64Asm.TryResumeFrame(frame))
+                    return;                 // iretq — does not return
+                // Resume stub unavailable: page IS now backed, but we can't
+                // resume — fall through (will surface as AV; should not happen
+                // once the exec buffer is wired, i.e. by the time CLR runs).
+            }
+
             if (OS.Boot.EH.HwFaultBridge.IsSupported(vector))
             {
                 OS.Boot.EH.HwFaultBridge.DispatchTrap(frame);

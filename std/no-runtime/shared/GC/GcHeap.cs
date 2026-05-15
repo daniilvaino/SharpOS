@@ -248,7 +248,14 @@ namespace SharpOS.Std.NoRuntime
 
             GcSegmentHeader* hdr = (GcSegmentHeader*)block;
             hdr->Start = (nint)block;
-            hdr->ObjectStart = (nint)(block + sizeof(GcSegmentHeader));
+            // sizeof(GcSegmentHeader) = 40 → block+40 is only 8-aligned even if
+            // block is page-aligned. Bump round-up to ObjectAlignment (16) so
+            // the first user allocation lands at a 16-aligned address. All
+            // subsequent allocations bump by 16-multiples and stay aligned.
+            // Required by CoreCLR (and CRT spec): malloc-returned memory must
+            // be aligned for MAX_ALIGN_T = 16 on x64 — `movaps` etc. otherwise #GP.
+            nint rawStart = (nint)(block + sizeof(GcSegmentHeader));
+            hdr->ObjectStart = (rawStart + (nint)(ObjectAlignment - 1)) & ~(nint)(ObjectAlignment - 1);
             hdr->End = (nint)(block + totalSize);
             hdr->Current = hdr->ObjectStart;
             hdr->Next = null;
