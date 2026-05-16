@@ -16,6 +16,17 @@ namespace OS.PAL.SharpOSHost
     // log facility).
     internal static unsafe class SharpOSHostDiagnostics
     {
+        // Master verbosity gate for ALL fork-side diagnostic chatter
+        // ([crt]/[real]/[prestub]/[Crst]/[VH]/[LoadLibrary]/[seh]/… — every
+        // one routes through DebugPrint/DebugPrintHex). Default OFF: serial
+        // I/O of those lines is the dominant runtime cost; silencing them
+        // makes coverage testing fast. Program output (SystemNative_Write →
+        // DebugWrite) and kernel banners (Console.WriteLine) are NOT gated
+        // and always print. Panic reason (Panic_C) prints directly, also
+        // ungated. Flip to true + rebuild kernel (no fork rebuild) to get
+        // the full trace back for a failing case.
+        public static bool Verbose = false;
+
         // UTF-8 message, null-terminated. Writes one character at a time
         // to OS.Console (which routes to UEFI ConOut / kernel serial port).
         // Used by CRT walker для прогресса диагностики во время Phase 6.1.a.
@@ -23,6 +34,7 @@ namespace OS.PAL.SharpOSHost
         [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugPrint")]
         public static void DebugPrint(byte* utf8Message)
         {
+            if (!Verbose) return;
             if (utf8Message == null) return;
             byte* p = utf8Message;
             while (*p != 0)
@@ -51,6 +63,7 @@ namespace OS.PAL.SharpOSHost
         [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugPrintHex")]
         public static void DebugPrintHex(ulong value)
         {
+            if (!Verbose) return;
             Console.WriteHex(value);
         }
 

@@ -77,6 +77,29 @@ namespace OS.PAL.SharpOSHost
             for (int i = 0; i < 16; i++) dst[i] = src[i];
         }
 
+        // SharpOSHost_FillRandom — fork's BCryptGenRandom forwarder. Fills
+        // `n` bytes of non-deterministic data (hash-flood-resistant seed for
+        // System.HashCode / randomized string hashing / System.Text.Json;
+        // NOT cryptographic). Entropy reuses the same source as CreateGuid
+        // (BCL Guid.NewGuid → 16 entropy bytes/draw) — no second RNG, logic
+        // stays in C# per CLAUDE.md invariant 1.
+        [RuntimeExport("SharpOSHost_FillRandom")]
+        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FillRandom")]
+        public static void FillRandom(void* buf, int n)
+        {
+            if (buf == null || n <= 0) return;
+            byte* dst = (byte*)buf;
+            int off = 0;
+            while (off < n)
+            {
+                Guid g = Guid.NewGuid();
+                byte* src = (byte*)&g;
+                int chunk = n - off; if (chunk > 16) chunk = 16;
+                for (int i = 0; i < chunk; i++) dst[off + i] = src[i];
+                off += chunk;
+            }
+        }
+
         // SharpOSHost_GetFullPathName — fork's GetFullPathNameW forwarder.
         // Marshals wchar input → managed string, calls BCL System.IO.Path.
         // GetFullPath (pure string normalization, no FS probe), copies result

@@ -266,14 +266,17 @@ namespace OS.PAL.SharpOSHost
             // 0xAFAF... pattern obviously not canonical.
             if (rip == 0) return false;
             if ((rip >> 48) != 0 && (rip >> 48) != 0xFFFF) return false;
-            byte* image = CoffRuntimeFunctionTable.ImageBase;
-            if (!CoffRuntimeFunctionTable.IsInitialized) return false;
-            // Rough range check: Rip should be в the .text section. Image
-            // size ≈ 16 MiB upper bound для smoke build.
-            ulong baseAddr = (ulong)image;
-            if (rip < baseAddr) return false;
-            if (rip - baseAddr > 0x10000000UL) return false;
-            return true;
+            // Kernel image (static .pdata): Rip in [base, base+16 MiB).
+            if (CoffRuntimeFunctionTable.IsInitialized)
+            {
+                ulong baseAddr = (ulong)CoffRuntimeFunctionTable.ImageBase;
+                if (rip >= baseAddr && rip - baseAddr <= 0x10000000UL) return true;
+            }
+            // JIT code in a registered dynamic function-table region — unwind
+            // info is resolvable via DynamicLookup (Step 1). Must NOT reject
+            // it here, else the walker stops before consulting the registry.
+            if (SehUnwind.InDynamicRange(rip)) return true;
+            return false;
         }
 
         // Core dispatch loop: walk frames upward, call each frame's
@@ -543,6 +546,88 @@ namespace OS.PAL.SharpOSHost
             void* hd = null;
             ulong ef = 0;
             SehUnwind.VirtualUnwind(0, ib, ctx->Rip, rf, ctx, &hd, &ef);
+        }
+
+        // RtlUnwind — Windows second-pass unwinder. CoreCLR's ClrUnwindEx
+        // (exceptionhandling.cpp, SHARPOS path) calls this once its
+        // personality (managed funclet / __CxxFrameHandler3 /
+        // ProcessCLRException) chose the target frame+IP. Unwinds from our
+        // caller down to targetFrame, running each frame's
+        // EXCEPTION_UNWINDING handlers (finally / fault / funclets), then
+        // transfers control to targetIp with Rsp=targetFrame, Rax=
+        // returnValue. Does not return. C#-side per CLAUDE.md invariant 1;
+        // the fork CRT_STUB(RtlUnwind) is only the __imp_ alias (same
+        // arrangement as RtlVirtualUnwind / RtlLookupFunctionEntry).
+        [RuntimeExport("RtlUnwind")]
+        [UnmanagedCallersOnly(EntryPoint = "RtlUnwind")]
+        public static void RtlUnwind(void* targetFrame, void* targetIp,
+                                     ExceptionRecord* excRec, void* returnValue)
+        {
+            DispatcherContext* dc = (DispatcherContext*)GcHeap.AllocateRaw((uint)sizeof(DispatcherContext));
+            Context* uc = (Context*)GcHeap.AllocateRaw((uint)sizeof(Context));
+            ExceptionRecord* rec = excRec;
+            if (dc == null || uc == null) { Panic.Fail("RtlUnwind alloc"); return; }
+            if (rec == null)
+            {
+                rec = (ExceptionRecord*)GcHeap.AllocateRaw((uint)sizeof(ExceptionRecord));
+                if (rec == null) { Panic.Fail("RtlUnwind rec alloc"); return; }
+                rec->ExceptionCode = 0xC0000027;   // STATUS_UNWIND
+            }
+            rec->ExceptionFlags |= ExceptionRecord.EXCEPTION_UNWINDING;
+
+            CaptureCurrentContext(uc);
+            UnwindOneFrame(uc);   // step out of RtlUnwind → caller (ClrUnwindEx)
+
+            ulong target = (ulong)targetFrame;
+            ulong establisher = 0;
+            int limit = 64;
+            while (limit-- > 0)
+            {
+                ulong rawRip = uc->Rip;
+                ulong controlPc = rawRip - 1;
+                if (!IsValidIp(controlPc)) break;
+                ulong ib;
+                RuntimeFunction* rf = SehUnwind.LookupFunctionEntry(controlPc, &ib);
+                if (rf == null) break;
+
+                void* handlerData = null;
+                ulong newFrame = 0;
+                void* personality = SehUnwind.VirtualUnwind(
+                    UnwindFlags.UNW_FLAG_UHANDLER, ib, rawRip, rf, uc,
+                    &handlerData, &newFrame);
+
+                if (personality != null)
+                {
+                    if (newFrame == target)
+                        rec->ExceptionFlags |= ExceptionRecord.EXCEPTION_TARGET_UNWIND;
+                    dc->ControlPc = controlPc;
+                    dc->ImageBase = ib;
+                    dc->FunctionEntry = rf;
+                    dc->EstablisherFrame = newFrame;
+                    dc->TargetIp = (ulong)targetIp;
+                    dc->ContextRecord = uc;
+                    dc->LanguageHandler = personality;
+                    dc->HandlerData = handlerData;
+                    delegate* unmanaged<ExceptionRecord*, void*, Context*, DispatcherContext*, int> fn =
+                        (delegate* unmanaged<ExceptionRecord*, void*, Context*, DispatcherContext*, int>)personality;
+                    fn(rec, (void*)newFrame, uc, dc);
+                }
+
+                if (newFrame == target)
+                {
+                    uc->Rip = (ulong)targetIp;
+                    uc->Rsp = target;
+                    uc->Rax = (ulong)returnValue;
+                    RestoreContextAsm(uc);
+                    return;   // unreachable
+                }
+                if (newFrame == 0 || newFrame == establisher) break;
+                establisher = newFrame;
+                if (uc->Rip == 0) break;
+            }
+
+            Console.WriteLine("[RtlUnwind] target frame not reached — HALT");
+            Panic.Fail("RtlUnwind: target not found");
         }
 
         // Helpers backed by AsmExecBuffer shellcode (emitted on first use):

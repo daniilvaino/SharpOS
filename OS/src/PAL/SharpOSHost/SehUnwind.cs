@@ -64,7 +64,15 @@ namespace OS.PAL.SharpOSHost
 
             // Use existing binary search infra. Convert IP → byte* anchor.
             if (!CoffMethodLookup.TryFindMethod((byte*)controlPc, out var info))
-                return null;
+            {
+                // 1) JIT code-heap callback range (RtlInstallFunctionTableCallback)
+                RuntimeFunction* dyn = DynamicLookup(controlPc, pImageBase);
+                if (dyn != null) return dyn;
+                // 2) R2R image static .pdata (RtlAddFunctionTable) — e.g.
+                //    System.Private.CoreLib precompiled code mapped into the
+                //    VM window. peimagelayout.cpp registers it under SHARPOS.
+                return StaticTableLookup(controlPc, pImageBase);
+            }
 
             // CoffMethodLookup returns CurrentRuntimeFunction (which may be
             // a funclet inside the method). For Windows ABI, that IS what
@@ -72,6 +80,177 @@ namespace OS.PAL.SharpOSHost
             // distinct "function" в RUNTIME_FUNCTION sense. Funclet/parent
             // distinction matters только to personality routines.
             return (RuntimeFunction*)info.CurrentRuntimeFunction;
+        }
+
+        // ─── Dynamic JIT function tables (Step 1: JIT-frame SEH unwind) ──
+        // CoreCLR's code-heap manager calls RtlInstallFunctionTableCallback
+        // for each JIT code region — those methods have NO static .pdata.
+        // The fork stub (crt_imp_stubs.cpp) forwards here. On an SEH walk,
+        // LookupFunctionEntry first tries the kernel image .pdata
+        // (CoffMethodLookup); if controlPc is in a registered JIT region we
+        // invoke CoreCLR's GET_RUNTIME_FUNCTION_CALLBACK to synthesize the
+        // RUNTIME_FUNCTION (RVAs relative to that region base) so
+        // RtlVirtualUnwind can step the JIT frame like any native one.
+        //
+        // Storage: value-type static + fixed buffer — NO managed alloc, NO
+        // static-ref initializer (ClassConstructorRunner trap). 64 regions
+        // max (JIT code heaps are few); 4 ulongs/entry: base,len,cb,ctx.
+        private const int DynMax = 64;
+        private struct DynTab { public fixed ulong S[DynMax * 4]; }
+        private static DynTab s_dyn;
+        private static int s_dynCount;
+
+        [RuntimeExport("SharpOSHost_RegisterFunctionTableCallback")]
+        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegisterFunctionTableCallback")]
+        public static void RegisterFunctionTableCallback(
+            ulong baseAddr, uint length, void* callback, void* context)
+        {
+            if (callback == null || length == 0) return;
+            int i = s_dynCount;
+            if (i >= DynMax) return;                  // registry full — unexpected
+            fixed (ulong* p = s_dyn.S)
+            {
+                ulong* e = p + (i * 4);
+                e[0] = baseAddr;
+                e[1] = length;
+                e[2] = (ulong)callback;
+                e[3] = (ulong)context;
+            }
+            s_dynCount = i + 1;
+        }
+
+        // True if pc falls in any registered JIT code region. Used by the
+        // SEH walker's IsValidIp so it doesn't reject JIT frames before
+        // LookupFunctionEntry/DynamicLookup gets a chance.
+        public static bool InDynamicRange(ulong pc)
+        {
+            int n = s_dynCount;
+            fixed (ulong* p = s_dyn.S)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    ulong* e = p + (i * 4);
+                    ulong b = e[0];
+                    if (pc >= b && pc < b + e[1]) return true;
+                }
+            }
+            return InStaticRange(pc);   // also accept R2R static .pdata regions
+        }
+
+        // controlPc in a registered JIT region → invoke CoreCLR's callback
+        // (GET_RUNTIME_FUNCTION_CALLBACK: PRUNTIME_FUNCTION(DWORD64,PVOID)).
+        // *pImageBase ← region base (returned entry's RVAs are relative
+        // to it, so RtlVirtualUnwind's RVA math stays correct).
+        private static RuntimeFunction* DynamicLookup(ulong controlPc, ulong* pImageBase)
+        {
+            int n = s_dynCount;
+            fixed (ulong* p = s_dyn.S)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    ulong* e = p + (i * 4);
+                    ulong b = e[0];
+                    ulong len = e[1];
+                    if (controlPc < b || controlPc >= b + len) continue;
+                    var cb = (delegate* unmanaged<ulong, void*, RuntimeFunction*>)e[2];
+                    RuntimeFunction* rf = cb(controlPc, (void*)e[3]);
+                    if (rf == null) return null;
+                    if (pImageBase != null) *pImageBase = b;
+                    return rf;
+                }
+            }
+            return null;
+        }
+
+        // ─── Static R2R function tables (RtlAddFunctionTable) ───────────
+        // peimagelayout.cpp (re-enabled under TARGET_SHARPOS) registers a
+        // loaded R2R image's static .pdata: a sorted RUNTIME_FUNCTION[]
+        // whose RVAs are relative to the image base. The fork
+        // RtlAddFunctionTable forwards here. Without this, unwinding R2R
+        // CoreLib code (mapped into the VM window, no kernel-image .pdata,
+        // no JIT callback) fails → "invalid Rip" → unhandled C++ exception.
+        // Layout: 3 ulongs/entry: base, funcTablePtr, count. Value-type
+        // static + fixed buffer — no managed alloc, no cctor (CCR trap).
+        private const int StatMax = 64;
+        private struct StatTab { public fixed ulong S[StatMax * 3]; }
+        private static StatTab s_stat;
+        private static int s_statCount;
+
+        [RuntimeExport("SharpOSHost_RegisterStaticFunctionTable")]
+        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegisterStaticFunctionTable")]
+        public static void RegisterStaticFunctionTable(
+            ulong baseAddr, void* funcTable, uint count)
+        {
+            if (funcTable == null || count == 0) return;
+            int i = s_statCount;
+            if (i >= StatMax) return;
+            fixed (ulong* p = s_stat.S)
+            {
+                ulong* e = p + (i * 3);
+                e[0] = baseAddr;
+                e[1] = (ulong)funcTable;
+                e[2] = count;
+            }
+            s_statCount = i + 1;
+        }
+
+        // True if pc is inside any registered static R2R table's span
+        // [base + first.BeginAddress, base + last.EndAddress). Folded into
+        // the IsValidIp path via InDynamicRange so the walker doesn't
+        // reject R2R frames before StaticTableLookup runs.
+        private static bool InStaticRange(ulong pc)
+        {
+            int n = s_statCount;
+            fixed (ulong* p = s_stat.S)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    ulong* e = p + (i * 3);
+                    ulong b = e[0];
+                    var f = (RuntimeFunction*)e[1];
+                    uint c = (uint)e[2];
+                    if (c == 0 || pc < b) continue;
+                    ulong rva = pc - b;
+                    if (rva >= f[0].BeginAddress && rva < f[c - 1].EndAddress)
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        // controlPc in a registered R2R image → binary-search its sorted
+        // RUNTIME_FUNCTION[] (RVAs relative to base) and return the entry;
+        // *pImageBase ← image base for RtlVirtualUnwind's RVA math.
+        private static RuntimeFunction* StaticTableLookup(ulong controlPc, ulong* pImageBase)
+        {
+            int n = s_statCount;
+            fixed (ulong* p = s_stat.S)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    ulong* e = p + (i * 3);
+                    ulong b = e[0];
+                    var f = (RuntimeFunction*)e[1];
+                    int c = (int)e[2];
+                    if (c == 0 || controlPc < b) continue;
+                    ulong rvaU = controlPc - b;
+                    if (rvaU >= f[c - 1].EndAddress || rvaU < f[0].BeginAddress) continue;
+                    uint rva = (uint)rvaU;
+                    int lo = 0, hi = c - 1;
+                    while (lo <= hi)
+                    {
+                        int mid = lo + ((hi - lo) >> 1);
+                        if (rva < f[mid].BeginAddress) hi = mid - 1;
+                        else if (rva >= f[mid].EndAddress) lo = mid + 1;
+                        else
+                        {
+                            if (pImageBase != null) *pImageBase = b;
+                            return &f[mid];
+                        }
+                    }
+                }
+            }
+            return null;
         }
 
         // RtlVirtualUnwind — applies one function's unwind codes to a

@@ -154,6 +154,14 @@ namespace OS.Kernel.Diagnostics
         private static readonly byte[] s_kGcRetainVM = new byte[] {
             (byte)'S',(byte)'y',(byte)'s',(byte)'t',(byte)'e',(byte)'m',(byte)'.',
             (byte)'G',(byte)'C',(byte)'.',(byte)'R',(byte)'e',(byte)'t',(byte)'a',(byte)'i',(byte)'n',(byte)'V',(byte)'M',0 };
+        // Invariant globalization — no ICU/NLS. Removes the locale P/Invoke
+        // surface (GetLocaleInfoEx etc.) that throws during AppContext /
+        // globalization init on bare metal. Standard for minimal embedded
+        // CoreCLR with no ICU.
+        private static readonly byte[] s_kGloblInv = new byte[] {
+            (byte)'S',(byte)'y',(byte)'s',(byte)'t',(byte)'e',(byte)'m',(byte)'.',
+            (byte)'G',(byte)'l',(byte)'o',(byte)'b',(byte)'a',(byte)'l',(byte)'i',(byte)'z',(byte)'a',(byte)'t',(byte)'i',(byte)'o',(byte)'n',(byte)'.',
+            (byte)'I',(byte)'n',(byte)'v',(byte)'a',(byte)'r',(byte)'i',(byte)'a',(byte)'n',(byte)'t',0 };
         private static readonly byte[] s_vFalse = new byte[] { (byte)'f',(byte)'a',(byte)'l',(byte)'s',(byte)'e',0 };
         private static readonly byte[] s_vTrue  = new byte[] { (byte)'t',(byte)'r',(byte)'u',(byte)'e',0 };
         private static readonly byte[] s_v64M   = new byte[] { (byte)'0',(byte)'x',(byte)'4',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',0 }; // 64 MiB
@@ -334,14 +342,15 @@ namespace OS.Kernel.Diagnostics
             fixed (byte* kGcSrv = s_kGcServer)   fixed (byte* kGcCon = s_kGcConc)
             fixed (byte* kGcHL  = s_kGcHardLim)  fixed (byte* kGcRR  = s_kGcRegRange)
             fixed (byte* kGcRS  = s_kGcRegSize)  fixed (byte* kGcRV  = s_kGcRetainVM)
+            fixed (byte* kGInv = s_kGloblInv)
             fixed (byte* vF = s_vFalse) fixed (byte* vT = s_vTrue)
             fixed (byte* v64 = s_v64M) fixed (byte* v128 = s_v128M) fixed (byte* v1m = s_v1M)
             {
                 byte* vTpa = tpaVal != null ? tpaVal : vTpaFallback;
-                byte** keys   = stackalloc byte*[8] {
-                    kTpa, kApp, kGcSrv, kGcCon, kGcHL, kGcRR, kGcRS, kGcRV };
-                byte** values = stackalloc byte*[8] {
-                    vTpa, vApp, vF,     vF,     v64,   v128,  v1m,   vT };
+                byte** keys   = stackalloc byte*[9] {
+                    kTpa, kApp, kGcSrv, kGcCon, kGcHL, kGcRR, kGcRS, kGcRV, kGInv };
+                byte** values = stackalloc byte*[9] {
+                    vTpa, vApp, vF,     vF,     v64,   v128,  v1m,   vT,   vT };
                 // CoreCLR is about to allocate managed objects (e.g.
                 // AppContext.s_dataStore) into the kernel GcHeap. Those are
                 // rooted only in CoreCLR's GC graph — invisible to the kernel
@@ -355,7 +364,7 @@ namespace OS.Kernel.Diagnostics
                 int hr = coreclr_initialize(
                     exePath,
                     domainName,
-                    propertyCount: 8,
+                    propertyCount: 9,
                     propertyKeys: keys,
                     propertyValues: values,
                     hostHandle: &hostHandle,
