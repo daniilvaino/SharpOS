@@ -197,6 +197,12 @@ namespace OS.Boot.EH
                 }
             }
 
+            // Sage-2 frontier discriminator (step 71). Cheapest single-run
+            // signal that splits frontier A (stack overflow / no guard-page)
+            // from frontier B (LCG/DynamicMethod). Pure C#, fault-time only —
+            // no alloc, only pointer-walks segment headers. See work/sage2-*.
+            FaultClassify(frame);
+
             // Re-enable interrupts before handing к managed dispatcher.
             // IDT entry was an interrupt gate (RFLAGS.IF cleared on entry).
             // Our control transfer through RhpCallCatchFunclet uses
@@ -213,6 +219,101 @@ namespace OS.Boot.EH
             // If we get here, Dispatch failed (unhandled). Halt.
             Console.Write("\r\n*** HwFaultBridge: Dispatch returned (unhandled HW exception) ***\r\n");
             while (true) { }
+        }
+
+        // ---- Sage-2 frontier discriminator (step 71) ------------------------
+        //
+        // The two open frontiers share ONE symptom (an ASCII qword sits where
+        // a pointer/MethodTable was expected → #GP) but, per sage-2, almost
+        // certainly have TWO roots:
+        //   A  recursion/checked  — kernel stack has no guard page; deep
+        //                            recursion runs RSP down into adjacent
+        //                            memory / the GC heap → object headers
+        //                            read as strings → MethodTable::SanityCheck.
+        //   B  System.Text.Json   — LCG / DynamicMethod / dynamic-IL path
+        //                            (ReflectionEmitCachingMemberAccessor).
+        //
+        // The decisive cheap test that needs NO recorded stack bounds and NO
+        // stack-size change: is the faulting RSP literally INSIDE a managed GC
+        // heap segment ("stack-bottom-falls-into-heap")? Plus the ASCII-spray
+        // run length and a RAX/RCX classifier (canonical / ASCII / heap /
+        // image). One run, fires on whichever frontier crashes first.
+
+        private static bool IsCanonical(ulong v)
+        {
+            ulong hi = v >> 47;            // bits 63..47 must all equal bit 47
+            return hi == 0UL || hi == 0x1FFFFUL;
+        }
+
+        private static bool IsAsciiQword(ulong v)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                byte b = (byte)(v >> (i * 8));
+                if (b < 0x20 || b > 0x7E) return false;
+            }
+            return true;
+        }
+
+        private static void ClassifyWord(string name, ulong v)
+        {
+            Log.Begin(LogLevel.Info);
+            Console.Write("  ["); Console.Write(name); Console.Write("]=0x");
+            Console.WriteHexRaw(v, 16);
+            if (!IsCanonical(v)) Console.Write("  non-canonical");
+            if (IsAsciiQword(v))
+            {
+                Console.Write("  ascii=\"");
+                for (int i = 0; i < 8; i++) Console.WriteChar((char)(byte)(v >> (i * 8)));
+                Console.Write("\"");
+            }
+            if (GcHeap.IsInitialized &&
+                GcHeap.FindSegmentContaining((nint)v) != null)
+                Console.Write("  in-GC-heap");
+            ulong ib = (ulong)CoffRuntimeFunctionTable.ImageBase;
+            if (ib != 0 && v >= ib && v < ib + 0x10000000UL)
+                Console.Write("  in-image");
+            Log.EndLine();
+        }
+
+        private static void FaultClassify(InterruptFrame* frame)
+        {
+            ClassifyWord("RAX", frame->Rax);
+            ClassifyWord("RCX", frame->Rcx);
+
+            // Frontier-A discriminator: faulting RSP inside a managed heap
+            // segment is the literal "stack ran into the heap" — a near-
+            // certain stack-overflow verdict that needs no stack bounds.
+            bool rspInHeap = GcHeap.IsInitialized &&
+                GcHeap.FindSegmentContaining((nint)frame->Rsp) != null;
+            Log.Begin(LogLevel.Info);
+            if (rspInHeap)
+                Console.Write("  [SO-SUSPECT] RSP is INSIDE a GC heap segment "
+                    + "— stack descended into managed heap (frontier A: SO)");
+            else
+                Console.Write("  RSP not in GC heap (frontier-A SO not confirmed by this signal)");
+            Log.EndLine();
+
+            // ASCII-spray extent: a long contiguous run of one ASCII qword up
+            // the stack is the overrun/spray fingerprint (frontier A). Scan is
+            // upward only (mapped, contiguous with the dump above) — never
+            // downward (may be unmapped → recursive fault).
+            ulong* sp = (ulong*)frame->Rsp;
+            if (sp != null && IsAsciiQword(frame->Rax))
+            {
+                ulong pat = frame->Rax;
+                int run = 0;
+                while (run < 4096 && sp[run] == pat) run++;   // contiguous from RSP
+                int total = 0;
+                for (int i = 0; i < 4096; i++) if (sp[i] == pat) total++;
+                Log.Begin(LogLevel.Info);
+                Console.Write("  [SPRAY] RAX-pattern qwords: run-from-RSP=");
+                Console.WriteUIntRaw((uint)run);
+                Console.Write(" total-in-32KB=");
+                Console.WriteUIntRaw((uint)total);
+                Console.Write(" (of 4096)");
+                Log.EndLine();
+            }
         }
 
         // Populate PAL_LIMITED_CONTEXT from interrupt frame. Captures the
