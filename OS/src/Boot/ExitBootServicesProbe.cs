@@ -90,23 +90,56 @@ namespace OS.Boot
             }
 
             // 4. POST-EBS. UEFI is gone. No Boot Services from here.
+            // Self-checking oracle that the OWN substrate is bit-for-bit
+            // alive without firmware — headless-deterministic.
             Console.WriteLine("[ebs] ExitBootServices OK -- POST-EBS substrate LIVE");
+
+            // UART: re-init the own 16550 post-EBS (loopback self-test
+            // inside Init) — proves the port driver works with no UEFI.
+            bool uartOk = Serial.Init();
             Serial.WriteString("[ebs] direct own-UART line written after ExitBootServices\n");
 
+            // GOP: re-render the deterministic frame via the own path
+            // and assert the SAME golden as pre-EBS (Phase B#2). Equal
+            // crc => the renderer/font/MMIO mapping is identical without
+            // firmware.
+            bool fbOk = !Framebuffer.IsAvailable || OS.Kernel.Diagnostics.FbRenderProbe.Verify();
             if (Framebuffer.IsAvailable)
+                FbConsole.DrawString(40, 380, "POST ExitBootServices - own substrate LIVE",
+                    FbConsole.Pack(0, 230, 120), -1, 2);
+
+            // PS/2: controller still answers.
+            byte ks = Ps2Keyboard.ReadStatus();
+            bool ps2Ok = Ps2Keyboard.IsPresent();
+
+            // HPET: counter advances without UEFI (timekeeping survives).
+            bool hpetOk = true;
+            if (global::OS.Hal.Timer.Hpet.IsInitialized)
             {
-                FbConsole.Clear(0, 0, 40);
-                FbConsole.DrawString(40, 80, "POST ExitBootServices",
-                    FbConsole.Pack(0, 230, 120), -1, 4);
-                FbConsole.DrawString(40, 150, "own UART + GOP + PS2 alive - UEFI gone",
-                    FbConsole.Pack(230, 230, 0), -1, 2);
+                ulong t0 = global::OS.Hal.Timer.Hpet.ReadCounter();
+                ulong t1 = t0;
+                int guard = 5_000_000;
+                // ReadCounter is an MMIO read (side-effecting) so the
+                // loop is not optimised away; exits when the counter
+                // ticks or the guard expires.
+                while (guard-- > 0)
+                {
+                    t1 = global::OS.Hal.Timer.Hpet.ReadCounter();
+                    if (t1 != t0) break;
+                }
+                hpetOk = t1 != t0;
             }
 
-            byte ks = Ps2Keyboard.ReadStatus();
-            Console.Write("[ebs] ps2 status=0x");
+            bool pass = uartOk && fbOk && ps2Ok && hpetOk;
+            Console.Write("[ebsx] uart=");
+            Console.Write(uartOk ? "Y" : "N");
+            Console.Write(" fb=");
+            Console.Write(fbOk ? "PASS" : "FAIL");
+            Console.Write(" ps2=0x");
             Console.WriteHex(ks);
-            Console.Write(" present=");
-            Console.WriteLine(Ps2Keyboard.IsPresent() ? "Y" : "N");
+            Console.Write(" hpet=");
+            Console.Write(hpetOk ? "adv" : "STUCK");
+            Console.WriteLine(pass ? " PASS" : " FAIL");
             Console.WriteLine("[ebs] halting (no UEFI launcher post-EBS)");
             Platform.Halt();
         }

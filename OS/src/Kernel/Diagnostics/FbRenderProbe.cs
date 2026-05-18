@@ -23,52 +23,7 @@ namespace OS.Kernel.Diagnostics
 
             uint w = Framebuffer.Width;
             uint h = Framebuffer.Height;
-
-            // Background: dark navy.
-            FbConsole.Clear(0, 0, 40);
-
-            // Channel-order swatches across the top: R, G, B, white. If
-            // the red block looks blue under GUI, Pack()/PixelFormat is
-            // wrong — a defect the headless crc also moves.
-            int sw = (int)(w / 4);
-            FbConsole.FillRect(0 * sw, 0, sw, 64, 255, 0, 0);
-            FbConsole.FillRect(1 * sw, 0, sw, 64, 0, 255, 0);
-            FbConsole.FillRect(2 * sw, 0, sw, 64, 0, 0, 255);
-            FbConsole.FillRect(3 * sw, 0, sw, 64, 255, 255, 255);
-
-            uint fg = FbConsole.Pack(230, 230, 0);   // amber text
-            uint cyan = FbConsole.Pack(0, 220, 220);
-            FbConsole.DrawString(40, 110, "SHARPOS GOP", fg, -1, 5);
-            FbConsole.DrawString(40, 180, "8x8 FONT RENDERER - PHASE B#2", cyan, -1, 3);
-
-            // Geometry line, numbers rendered glyph-by-glyph (no string
-            // allocation): "FB <w>x<h> stride=<s>".
-            int cx = 40;
-            int gy = 230;
-            cx = DrawText(cx, gy, "FB ", cyan, 3);
-            cx = DrawUInt(cx, gy, w, cyan, 3);
-            cx = DrawText(cx, gy, "x", cyan, 3);
-            cx = DrawUInt(cx, gy, h, cyan, 3);
-            cx = DrawText(cx, gy, " STRIDE=", cyan, 3);
-            cx = DrawUInt(cx, gy, Framebuffer.Stride, cyan, 3);
-
-            // Full printable-ASCII strip — proves the whole glyph table,
-            // not just the banner letters.
-            FbConsole.DrawString(40, 300,
-                "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz", fg, -1, 2);
-            FbConsole.DrawString(40, 330,
-                "0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", fg, -1, 2);
-
-            // Deterministic fingerprint of the rendered region. The
-            // region [0,512)x[0,360) covers the entire painted content
-            // (everything below y~360 is constant navy), so it is a
-            // sharper oracle than a full-frame hash diluted by megapixels
-            // of unchanging background. Self-checked against the golden
-            // value captured on the BGRX-verified run (swatches eyeballed
-            // RED GREEN BLUE WHITE @1280x800 fmt=1). Mismatch => the
-            // renderer/font/packing/stride regressed: reported, not
-            // fatal (same policy as the other probes — boot continues).
-            uint crc = FbConsole.Checksum(0, 0, 512, 360);
+            uint crc = RenderAndChecksum();
             bool pass = crc == GoldenCrc;
 
             Console.Write("[fbtext] ");
@@ -90,6 +45,52 @@ namespace OS.Kernel.Diagnostics
                 Console.WriteLine("");
             }
         }
+
+        // Paint the deterministic test frame and return the FNV-1a of
+        // the rendered region [0,512)x[0,360) (covers all painted
+        // content; below y~360 is constant navy — a sharper oracle than
+        // a full-frame hash). Pure of any Console output, so it is
+        // reusable post-ExitBootServices (Phase C) where the same golden
+        // proves the own GOP path is bit-identical without UEFI.
+        public static uint RenderAndChecksum()
+        {
+            uint w = Framebuffer.Width;
+            uint h = Framebuffer.Height;
+
+            FbConsole.Clear(0, 0, 40);                       // dark navy
+
+            // Channel-order swatches: R, G, B, white (eyeball BGRX).
+            int sw = (int)(w / 4);
+            FbConsole.FillRect(0 * sw, 0, sw, 64, 255, 0, 0);
+            FbConsole.FillRect(1 * sw, 0, sw, 64, 0, 255, 0);
+            FbConsole.FillRect(2 * sw, 0, sw, 64, 0, 0, 255);
+            FbConsole.FillRect(3 * sw, 0, sw, 64, 255, 255, 255);
+
+            uint fg = FbConsole.Pack(230, 230, 0);           // amber
+            uint cyan = FbConsole.Pack(0, 220, 220);
+            FbConsole.DrawString(40, 110, "SHARPOS GOP", fg, -1, 5);
+            FbConsole.DrawString(40, 180, "8x8 FONT RENDERER - PHASE B#2", cyan, -1, 3);
+
+            int cx = 40;
+            int gy = 230;
+            cx = DrawText(cx, gy, "FB ", cyan, 3);
+            cx = DrawUInt(cx, gy, w, cyan, 3);
+            cx = DrawText(cx, gy, "x", cyan, 3);
+            cx = DrawUInt(cx, gy, h, cyan, 3);
+            cx = DrawText(cx, gy, " STRIDE=", cyan, 3);
+            cx = DrawUInt(cx, gy, Framebuffer.Stride, cyan, 3);
+
+            FbConsole.DrawString(40, 300,
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz", fg, -1, 2);
+            FbConsole.DrawString(40, 330,
+                "0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", fg, -1, 2);
+
+            return FbConsole.Checksum(0, 0, 512, 360);
+        }
+
+        // Pure pass/fail (render + golden compare, no Console). Used
+        // post-EBS to assert the GOP path survived UEFI teardown.
+        public static bool Verify() => RenderAndChecksum() == GoldenCrc;
 
         // Golden FNV-1a of FbConsole.Checksum(0,0,512,360) at 1280x800
         // fmt=1 (BGRX), captured on the run whose colour swatches were
