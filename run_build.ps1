@@ -621,11 +621,22 @@ try {
     # +nx: expose the NX/XD bit to firmware and OS (required for NX memory protection policy)
     $cpuArgs = @("-cpu", "qemu64,+nx")
 
-    $qemuArgs = $machineArgs + $cpuArgs + @(
-        "-m", "512",
-        "-nographic",
-        "-serial", "mon:stdio",
-        "-echr", "0x1d",
+    # GUI-режим по $env:SHARPOS_GUI=1: окно (GOP framebuffer) + serial в
+    # ЭТОТ терминал (PowerShell) одновременно. OVMF ConSplitter веером
+    # шлёт ConOut и в GOP (окно), и в COM1 (-serial stdio → PowerShell);
+    # наш 16550-драйвер пишет COM1 напрямую → тоже сюда. Tee-Object на
+    # serial-лог продолжает работать. Headless-дефолт (CI/лог-воркфлоу)
+    # без изменений — те же -nographic/mon:stdio.
+    # -vga std в ОБЕИХ ветках: framebuffer-адаптер должен существовать
+    # всегда (OVMF поднимает GOP на нём). Видимость = отдельный выбор:
+    # headless (-nographic) — GOP реален, но не отображается; GUI — окно.
+    if ($env:SHARPOS_GUI -eq '1') {
+        $displayArgs = @("-vga", "std", "-serial", "stdio")
+    } else {
+        $displayArgs = @("-vga", "std", "-nographic", "-serial", "mon:stdio", "-echr", "0x1d")
+    }
+
+    $qemuArgs = $machineArgs + $cpuArgs + @("-m", "512") + $displayArgs + @(
         "-net", "none",
         "-no-reboot",
         "-qmp", "tcp:127.0.0.1:$QmpPort,server,nowait",

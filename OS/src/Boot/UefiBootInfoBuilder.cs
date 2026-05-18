@@ -95,6 +95,11 @@ namespace OS.Boot
                 }
             }
 
+            // GOP framebuffer snapshot — Boot Services still alive here
+            // (LocateProtocol valid). Captures base/geometry into BootInfo;
+            // the kernel maps it post-paging (next Phase-B sub-step).
+            UefiGop.TryCapture(systemTable, ref info);
+
             if (UefiMemoryMapBuilder.TryBuild(systemTable, out info.MemoryMap))
             {
                 info.MemoryMapAvailable = 1;

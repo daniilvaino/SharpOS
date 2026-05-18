@@ -64,6 +64,18 @@ namespace OS.Boot
         public ulong GraphicsAvailable;
         public MemoryMapInfo MemoryMap;
 
+        // GOP framebuffer, captured by UefiGop.TryCapture while Boot
+        // Services are still alive (valid only if GraphicsAvailable != 0).
+        // Phys base/size — map into kernel VA via Pager.MapRange
+        // post-paging (next Phase-B sub-step). Stride = pixels per scan
+        // line (not bytes). PixelFormat: 0=RGBX8 1=BGRX8 2=BitMask 3=BltOnly.
+        public ulong FramebufferBase;
+        public ulong FramebufferSize;
+        public uint  FramebufferWidth;
+        public uint  FramebufferHeight;
+        public uint  FramebufferStride;
+        public uint  FramebufferPixelFormat;
+
         public delegate* managed<char, void> WriteChar;
         public delegate* managed<void> Shutdown;
         public delegate* managed<ushort*, ushort*, uint> KeyboardTryReadKey;
