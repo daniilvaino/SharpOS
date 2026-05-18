@@ -1,270 +1,273 @@
-# План развития SharpOS
+# План развития SharpOS (DAG-редакция, post-6.1)
 
-Документ фиксирует стратегическое направление проекта: путь от текущего freestanding C#-ядра с минимальным std к OS которая хостит CoreCLR, Roslyn и PowerShell как обычные .NET приложения.
+Документ — стратегическое направление: от freestanding C#-ядра к ОС,
+которая хостит CoreCLR и запускает Roslyn/PowerShell как обычные
+.NET-приложения.
 
-Это **план фаз**, а не список конкретных todo. Каждая фаза — законченный блок работы с критерием готовности. Разбиение на конкретные подзадачи делается внутри самой фазы по мере к ней подхода.
+**Эта редакция заменяет старую фазовую (Phase 0–7).** Причина (правила
+корректировки §«Правила», + sage-1/sage-2 replan по
+`work/plan-replan-request.md`): CoreCLR bring-up **перестал быть
+critical path** — он доказанный базис (steps 68–73). Старая нумерация
+Phase 0–7 устарела (фиксировала 6.1 как OPEN). Новый главный фронт —
+**не «заставить CLR жить», а дать ему OS-substrate** (scheduler, waits,
+IO, time, fs, console, PAL). Дальше — DAG, а не линейные фазы.
 
----
-
-## Архитектура исполнения — три tier'а
-
-В SharpOS два слоя приложений могут существовать одновременно:
-
-- **Kernel-tier** — наш kernel + std + PAL. AOT-compiled C#, ring 0, использует наш минимальный std.
-- **Native-tier** — AOT-compiled C# user-mode apps (как существующий `HelloSharpFs`). На устройстве IL нет, только нативный код. Использует наш std.
-- **Hosted-tier** — IL bytes на устройстве, исполняется через CoreCLR (JIT). Использует настоящую `System.Private.CoreLib`. Roslyn/PowerShell живут здесь.
-
-Три слоя не конкурируют — у каждого своя ниша. Системные утилиты пишутся как native-tier (быстро, без runtime overhead). Динамические workload'ы (Roslyn REPL, PowerShell с reflection) — hosted-tier.
-
----
-
-## Архитектурные инварианты
-
-Жёсткие правила проекта. Любая новая фаза или подзадача должна быть сформулирована и решена в их рамках.
-
-### Инвариант 1 — C# is the only source language
-
-В дереве исходников **не появляется** ни одного `.c`, `.cpp`, `.h`, `.asm`, `.s` файла. Каждая новая low-level задача решается одним из трёх механизмов:
-
-1. **C# intrinsics** — `[RuntimeExport]`, `[UnmanagedCallersOnly]`, `delegate* unmanaged`, `fixed`, unsafe pointer math, `Internal.Runtime.CompilerHelpers`-стиль экспортов.
-2. **Byte-array shellcode** — байтовый emitter на C# пишет инструкции в exec-stub buffer (`EfiLoaderCode` allocation от UEFI). Примеры: `InterfaceDispatchBridge`, `GcStackSpill`, `Cr3Accessor`, `JumpStub`, `ByRefAssignRefPatcher`.
-3. **Build-time codegen в PowerShell build scripts** — если MSVC-линкер требует C-ABI символа (например `__security_cookie`), генерим `.c` ephemerally внутри `build_*.ps1`, компилим, подхватываем, коммитим **НЕ** в репо.
-
-Если проблема кажется требующей asm/C файла — значит либо выбран не тот механизм из трёх, либо задача сформулирована так, что её невозможно решить правильно. Обе ситуации решаются пересмотром подхода, а не добавлением нового файла.
-
-**Особое исключение:** если будем форкать CoreCLR/Mono (Phase 6) — он живёт как **внешний submodule с патчами**. Не коммитим C++ runtime в основной репо, патчим upstream и линкуем как third-party. Наш PAL пишется на C# через `[UnmanagedCallersOnly]`, граница чистая.
-
-### Инвариант 2 — Naming discipline
-
-SharpOS не переиспользует канонические .NET namespaces / type names **если реализация не полностью совместима с публичным контрактом** (modulo задокументированные ограничения в `docs/nativeaot-nostdlib-limits.md`).
-
-Правило:
-- `System.*`, `System.Collections.Generic.*`, `System.Collections.ObjectModel.*` и прочие канонические namespace — **только для BCL-compat реализаций** с совпадающей сигнатурой, поведением и (где разумно) внутренней структурой.
-- Частичные / экспериментальные / platform-specific типы — в `SharpOS.Std.*`, `OS.Kernel.*`, `OS.Boot.*`, `OS.Hal.*`.
-
-Цель: LINQ / System.Text.Json / System.Xml / прочий BCL-код должен собираться поверх нашего std **без source-level правок**. Каждый раз когда добавляем тип в `System.*`, отвечаем на вопрос: «можно ли реально взять BCL-код который этот тип использует и собрать его у нас?».
+Пошаговый разбор — в `done/stepNN.md`. Живой реестр возможностей
+hosted-режима — `docs/coreclr-hosted-limits.md` (oracle приоритизации,
+расширять при каждом новом feature-touch).
 
 ---
 
-## Что сделано к моменту написания этого плана
+## Архитектура исполнения — три tier'а (без изменений)
 
-Закрыто (steps 28-34, см. `done/stepNN.md`):
+- **kernel-tier** — ядро + std + PAL. AOT C#, ring 0, минимальный std.
+- **native-tier** — AOT C# user-apps на нашем std (быстрые утилиты).
+- **hosted-tier** — IL+JIT через форк-CoreCLR с настоящей
+  `System.Private.CoreLib`. Roslyn/PowerShell живут здесь.
 
-- **NumberFormatting + char helpers + string queries + string transforms** в `std/no-runtime/shared/`.
-- **Managed mark-sweep GC** с conservative stack scan (steps 30-31).
-- **Базовые BCL коллекции** — List/Dict/Stack/Queue/HashSet/LinkedList/SortedList/ROCollection/RODict (steps 30, 31, 33).
-- **Shared-generic interface dispatch** end-to-end (step 32).
-- **StringBuilder + Concat/Split/Join + BCL runtime fundament** (Span/Unsafe/MemoryExtensions/Buffer, step 34).
+Граница tier'ов — **ABI-линия** (`SharpOSHost_*` C-ABI POD + status
+codes), не shared memory. CoreCLR GC'ит свой heap независимо; kernel-tier
+GC не знает про hosted-объекты и наоборот.
 
-Всё это — kernel-tier и native-tier инфраструктура. Hosted-tier ещё не начат.
+## Архитектурные инварианты (без изменений, обязательны)
 
----
+**Инвариант 1 — C# is the only source language.** В дереве нет ни
+одного `.c/.cpp/.h/.asm/.s`. Low-level — одним из трёх: C# intrinsics
+(`[RuntimeExport]`/`[UnmanagedCallersOnly]`/`delegate* unmanaged`/
+`fixed`/unsafe), byte-array shellcode (exec-stub buffer), build-time
+PowerShell codegen (не коммитим). Исключение: форк CoreCLR — внешний
+репо с патчами, PAL на C#, граница чистая.
 
-## Активные фазы
-
-### Phase 0 — IDT + BCL base
-
-**Critical-path шаг: IDT first.** До любой другой работы Phase 0 — без IDT любой баг даёт triple-fault и ребут, после IDT — читаемый panic с RIP/CR2/registers.
-
-- **IDT + signal-dispatch** (256-entry interrupt descriptor table, обработчики `#PF/#GP/#UD/#DE/#DF/#NM/#TS/#NP/#SS`, GDT/TSS+IST для double-fault, диагностический dump RIP/CR2/registers; MSI vectors 0x40-0xFE зарезервированы; архитектурно сразу под PAL signal-API).
-
-- **BCL base — расширение std/no-runtime до стабильного surface'а:**
-  - MemoryExtensions (IndexOf, SequenceEqual, и т.д.)
-  - Math для float/double
-  - Array методы (Sort, Find, BinarySearch)
-  - String/StringBuilder остальные методы
-  - IntPtr arithmetic
-  - Debug реальные методы (Assert, WriteLine с реальной диагностикой)
-
-**Критерий готовности:** `int* p = null; *p = 42;` даёт читаемый panic, не reboot. BCL surface достаточен чтобы portable BCL-код (например LINQ Where/Select когда придёт) собирался без правок.
-
-### Phase 1 — kernel exception handling + platform infrastructure
-
-- **Полноценное managed exception handling** (НЕ урезано до longjmp): personality function для NativeAOT/Itanium ABI, stack unwinding через `.eh_frame` / `.pdata`, `System.Exception` базовый класс с Message/StackTrace/InnerException, производные типы, finally блоки. Используется нашим kernel/std/native-tier кодом. **Самый рисковый пункт плана** — может занять 2-6 месяцев. Если упрёмся — fallback на longjmp-only milestone.
-- **ClassConstructorRunner портирование** (полноценный путь cctor для static reference fields; разблокирует `string.Empty` как field, lazy static patterns; дропаем `--resilient` режим, появятся настоящие compile errors на missing helpers — каждый чиним).
-- **ACPI parsing** (RSDP discovery → RSDT/XSDT walk → MADT для APIC topology, HPET table для timer base, MCFG для PCIe ECAM; обязательный фундамент для всего hardware-aware кода).
-- **RTC + HPET/TSC для timekeeping** (RTC через CMOS ports для wall-clock, HPET memory-mapped через адрес из ACPI HPET table, TSC через `RDTSC` для high-resolution; `Stopwatch` API).
-
-**Критерий готовности:** `try { throw new InvalidOperationException("test"); } catch (Exception e) { Console.WriteLine(e.Message); }` ловит exception и логирует. ACPI таблицы парсятся, APIC/HPET адреса найдены, `Stopwatch` показывает корректное время.
-
-### Phase 2 — PAL разведка и дизайн
-
-- **PAL design — каталог требуемых функций + finalized architecture.** Полная спека D1-D20 + Phase 2 Redesign + TARGET_SHARPOS Build Configuration в `work/PAL/`. Sources: финализированная архитектура host/guest split, провайдер environment-specific, compile-time firewall, .pdata unwind reuse от Phase 1.
-- **Windows-hosted TARGET_SHARPOS replacement PAL spike** (Phase 2A — Quick surface discovery 3-5 дней; Phase 2B — production-shaped boundary). Изначальный план "Linux WSL spike" retired per Phase 2 Redesign — WSL подтягивает Linux substrate (libunwind, .eh_frame, signals, pthread) который антипаттерн для bare-metal target. Windows mental model совпадает с Phase 1 SharpOS (.pdata, Win64 calling convention).
-
-**Критерий готовности:** finalized design plan в `work/PAL/` (готов); spike на Windows TARGET_SHARPOS показывает что наш pal/sharpos/ принимает CoreCLR call'ы через SharpOSHost_* ABI namespace и managed Hello World отрабатывает.
-
-**Detail spec:** `work/PAL/pal-design.md` (entry point) + `work/PAL/D1-D20 FINALIZED/`.
-
-### Phase 3 — managed runtime infrastructure (single-core)
-
-- **Scheduler** (Thread struct с регистрами + FXSAVE state, per-thread stack с guard page, context-switch routine как shellcode-эмиттер, ready queue, Local APIC timer для preemption, atomic primitives через CPU instructions).
-- **Atomic operations as managed API** (`System.Threading.Interlocked` методы, `Volatile.Read/Write`, `Thread.MemoryBarrier`; всё через CPU intrinsics, ILC компилит в `LOCK CMPXCHG` / `XADD` / `MFENCE`).
-- **BCL: System.Threading.Thread + Monitor + lock + sync primitives** (`Thread.Start/Join/Sleep`, `Monitor.Enter/Exit` под `lock` keyword, ManualResetEvent, AutoResetEvent, Semaphore, ReaderWriterLockSlim; портируем 1:1 из dotnet/runtime).
-- **BCL: Task + async/await** (полная state-machine инфраструктура — `Task<T>`, `TaskCompletionSource`, `AsyncTaskMethodBuilder`, `IAsyncStateMachine`, `INotifyCompletion`/`ICriticalNotifyCompletion`, `TaskAwaiter`, `SynchronizationContext`, `TaskScheduler`, `ThreadPool`; ~2-3k строк портированного BCL; риск Roslyn-специфических требований по сигнатурам типов как было с yield return).
-
-**Критерий готовности:** `Task.Run(() => {...})` работает. `await Task.Delay(100)` работает. `lock(obj) {...}` работает. Два потока через `Thread.Start` корректно time-slice'ятся под APIC timer.
-
-### Phase 3.5 — SMP / multi-core (опциональная)
-
-Не блокирует Roslyn/PS. Решать **после** того как single-core threading стабильно работает и видны реальные bottleneck'и. +3-6 месяцев focused работы.
-
-- AP startup (через INIT-SIPI sequence из ACPI MADT)
-- Per-CPU storage
-- IPI infrastructure (через APIC)
-- Lock-free updates где нужно
-- Multi-core scheduler
-
-**Критерий готовности:** N потоков реально параллелятся на M ядер с linear speedup на CPU-bound workload'е.
-
-### Phase 3.7 — Native-tier StackInterpreter (integration milestone)
-
-Промежуточный proof-of-life **до** того как CoreCLR пайплайн начнёт строиться. Доказывает что весь kernel-tier стек (Phases 0-3) работает интегрированно на реальном workload'е, а не только на probe'ах.
-
-- **RPN calculator или mini-Forth** на нашем std/.
-- Использует Thread/Task/exceptions из Phase 1+3.
-- **Mini interactive console** — readline-like input с line buffering, history, basic editing; output через UEFI Console (драйверы ещё не на этом этапе). Это **не финальная PS shell**, отдельный простой компонент. Переиспользуется потом в Phase 7 для Roslyn REPL.
-
-**Критерий готовности:** запускается StackInterpreter.elf через launcher, принимает выражения из mini-console, корректно считает, exceptions при bad input ловятся. Hours-long uptime без deadlock'ов и memory leaks.
-
-### Phase 4 — UEFI инкапсуляция (без вызова ExitBootServices)
-
-Архитектурный refactor, не функциональная задача. Готовит почву к Phase 5+.
-
-- Архитектурный рефакторинг — все UEFI calls за интерфейс (`IPlatformConsole`, `IPlatformFileSystem`, `IPlatformKeyboard`, `IPlatformTimer`).
-- Snapshot всего что нужно после ExitBootServices (serial port адрес, framebuffer pointer + dimensions, ACPI tables копия, memory map копия).
-- Реализовать "UefiServicesGone" режим — заглушки на UEFI calls с диагностикой "вызвано после ExitBootServices".
-- Возможность переключения режимов по команде / build flag (для тестирования).
-- ExitBootServices физический вызов — опционально, по желанию когда драйверы готовы.
-
-**Критерий готовности:** существующая функциональность работает идентично через interface'ы. Build-flag переключает между UEFI-active и UEFI-gone режимами; в UEFI-gone все service-calls дают controlled errors.
-
-### Phase 5 — Drivers
-
-Track независимый от Phase 6/7 — может вестись параллельно. Все драйверы пишутся подходом **1:1 port из reference impl + unit tests**: берём готовый код из открытого проекта (BSD/MIT лицензия), портируем на C# вербатим, тесты переносим вместе с кодом.
-
-- **PCI bus enumeration** (config space через MCFG ECAM из ACPI или legacy 0xCF8/0xCFC; vendor:device discovery, BAR mapping, MSI/MSI-X setup; необходим перед любым device driver).
-- **Display: PSF-font renderer на GOP framebuffer** (выход из UEFI Console, рендер glyph'ов из PSF font на raw framebuffer, `ExitBootServices`-safe; **pilot для 1:1-port подхода** — 150 строк C из reference impl, render-hash unit tests против эталонных bitmap'ов).
-- **Keyboard: PS/2 driver** (legacy IO ports 0x60/0x64, scancode → KeyEvent translator; OSDev wiki как reference, port-IO mock + sequence tests на host'е; USB HID откладываем максимально долго).
-- **Storage: virtio-blk + FAT32 reader** (virtio-blk driver для QEMU из virtio-spec, FAT32 через FatFs port — embedded FAT lib MIT-лицензия со своим тестовым корпусом; AHCI для real SATA откладываем).
-- **ExitBootServices transition** (memory-map snapshot, переход от UEFI services на свои драйверы; работает только когда display + keyboard + storage готовы; после — мы настоящая standalone OS, не "большой UEFI app").
-- **Network stage 1: Ethernet/ARP/IP/UDP/DHCP** через lwIP port (MIT, ~30k LOC, со своим test suite). Goal: DHCP даёт IP, UDP пакеты ходят.
-- **Network stage 2: TCP + DNS** (TCP state machine из lwIP, DNS resolver на UDP). Goal: `connect()` работает, DNS resolution возвращает IP.
-- **Network stage 3: HTTP client** (тривиальный HTTP/1.1 поверх TCP, GET/parse). Goal: `http://example.com` качается end-to-end.
-
-**Критерий готовности:** SharpOS работает после `ExitBootServices()` со своим экраном/клавиатурой/диском. `wget http://example.com` (или эквивалент) завершается с правильным контентом.
-
-### Phase 5.5 — Native TLS bring-up (узкая подзадача, 1-2 недели)
-
-Prerequisite инфраструктура для Phase 6 — единственный native TLS gap который выявлен в Phase 1. C++11 `thread_local` keyword будет использоваться как стабильный контракт в pal/sharpos/ и kernel-tier коде (D2 finalized).
-
-- **TLS register bootstrap** для main thread: FS/GS register convention зависит от final CoreCLR archive format (PE/COFF default expected, ELF/SysV alternative). Format decision deferred до empirical confirmation from Phase 2 spike.
-- **TLS image loader** из object format секций при boot (.tdata/.tbss для ELF, TLS Directory для PE).
-- **`RhpGetThreadStaticBase*` helpers** реализованы для kernel-side `[ThreadStatic]` support.
-- **Single thread only.** Multi-thread расширение этой инфраструктуры — в Phase 3 при появлении scheduler.
-
-**Критерий готовности:** `thread_local` в C++ и `[ThreadStatic]` в C# работают для main thread на bare metal. PAL пишется один раз против стабильного контракта, никакого переделывания при Phase 3.
-
-**Detail spec:** `work/PAL/D1-D20 FINALIZED/D2___FINALIZED.md`.
-
-### Phase 6 — CoreCLR integration через host/guest split
-
-Архитектура finalized в `work/PAL/` (D10/D11 REVISED после WSL spike + 7 rounds sage analysis). Precedent: rump kernels, NetBSD anykernel research.
-
-**Two-repo split:**
-- **SharpOS repo (this one)** — strict C# по Invariant 1. Final SharpOS kernel image включает CoreCLR guest archive статически — NativeAOT-compiled kernel objects + `coreclr_sharpos_static.lib` + bare-metal shim/glue resolving `SharpOSHost_*` ABI namespace.
-- **dotnet-runtime-sharpos fork** (separate repo) — fork `dotnet/runtime` release/10.0 с TARGET_SHARPOS conditional (не Unix, не Windows). Содержит новый `pal/sharpos/` (flat domain structure: memory/thread/file/sync/exception/time). Pal/sharpos/ вызывает `SharpOSHost_*` C-ABI напрямую через `extern "C"`; compile-time firewall физически предотвращает прямой WinAPI/syscall use внутри pal/sharpos/.
-
-**Phase 6 split на 6.1 / 6.2** (honest scope):
-
-- **Phase 6.1 — Initial bare metal bootstrap.** TARGET_SHARPOS mode active. Zero GC + non-concurrent + Workstation. ABORT_FATAL stubs для thread-management PAL functions (CoreCLR конфигурируется так что CreateThread физически не вызывается). Demo-grade managed scenarios (Hello World, basic JIT). **НЕ production** — финализаторы не работают, leaks accumulate.
-
-    - **6.1 compile/link milestone reached** (step 67, OPEN). Форк `dotnet-runtime-sharpos` branch `sharpos/coreclr-port` собирается: `coreclr_static.lib` (~197 MB), `coreclr.dll` (~19 MB), `mscordaccore.dll`, `crossgen2` + crossgenned `System.Private.CoreLib.dll`. Build pipeline: clang-cl + lld-link + native PE/COFF. Symbol audit + smoke-tests + WinAPI debt refresh — next.
-
-- **Phase 6.2 — Production.** После Phase 3 done. TARGET_SHARPOS mode disabled, standard CoreCLR configuration. D5/D6/D8 (threading + state ownership + GC suspend) переоткрываются с реальной implementation через SharpOSHost provider routing в SharpOS scheduler. Roslyn/PowerShell работают полноценно.
-
-**EH integration finalized (D13):** reuse + extend Phase 1 .pdata unwinder для CoreCLR coverage. Microsoft portable amd64 unwinder (1847 LOC, `src/coreclr/unwinder/amd64/`) — fallback если Phase 1 extension недостаточно. **libunwind полностью исключён** из production path. Windows `RtlVirtualUnwind` — diagnostic oracle only.
-
-**Граница между tier'ами — ABI line, не shared memory.** CoreCLR аллоцирует свой heap через `SharpOSHost_AllocPages` etc., GC'ит независимо. Наш kernel-tier GC не знает про hosted-tier объекты, и наоборот. Boundary crossing — только через C-ABI POD types + status codes (no exceptions cross boundary, no C++ objects, no managed refs).
-
-**Критерий готовности (6.1):** SharpOS kernel image (NativeAOT + CoreCLR guest archive) запускается, JIT компилит Hello.dll, "hello" выводится. **Критерий готовности (6.2):** Roslyn REPL + PowerShell host работают полноценно.
-
-**Detail spec:** `work/PAL/pal-design.md` (entry point) + `work/PAL/D1-D20 FINALIZED/`.
-
-### Phase 7 — hosted-tier
-
-- **First hosted-tier app** (DLL с IL внутри загружается через `Assembly.Load`, метод вызывается через `MethodInfo.Invoke`, `Console.WriteLine` идёт через настоящую BCL → PAL → наш kernel; первое реальное JIT-исполнение IL на нашем железе — integration milestone).
-- **Roslyn REPL** (Roslyn как обычный NuGet-пакет поверх работающего CoreCLR, host-process читающий ввод и вызывающий `CSharpScript.EvaluateAsync`, переиспользует mini-console из Phase 3.7 расширенную до multi-line input + history).
-- **PowerShell host** (`System.Management.Automation` через `PowerShell.Create()`, базовые cmdlets — Write-Host/Output, Get-Variable, ForEach-Object, основной pipelining; адаптация platform-specific частей; режется до ~5% surface).
-
-**Критерий готовности:** интерактивный C# REPL работает (`var x = 1+1; x.ToString()` возвращает `"2"`); `PowerShell.Create().AddScript("1..10 | ForEach-Object { $_ * 2 }").Invoke()` возвращает корректный массив.
+**Инвариант 2 — Naming discipline.** Канонические `System.*` namespace
+— только для BCL-compat реализаций; частичное/экспериментальное — в
+`SharpOS.Std.*`/`OS.*`. Цель: portable BCL-код собирается без
+source-правок.
 
 ---
 
-## Что выкинуто из scope (намеренно)
+## Доказанный базис (steps ≤73) — НЕ переоткрывать
 
-Эти вещи приходят бесплатно из CoreCLR в Phase 6+, нет смысла дублировать в std:
-
-- AppendFormat / ISpanFormattable / ReadOnlyMemory<T>.
-- LINQ.
-- Managed delegates (`System.Delegate`, lambda support).
-- Reflection / `typeof(T).GetMethods()` / `Assembly.Load`.
-
-Эти вещи откладываем на неопределённый срок:
-
-- **TLS / HTTPS** — отдельный мега-проект (BoringSSL/mbedTLS port + AES-NI/SHA-NI intrinsics).
-- **USB stack** — нужен только для real HW без legacy-emulation; PS/2 покрывает QEMU и большую часть desktop.
-- **GUI / window manager / audio** — вне scope.
-- **Multi-NIC coverage real HW** — virtio-net + один real driver (e1000) минимум.
-
----
-
-## Зависимости и параллельность
-
-**Sequential (нельзя перепрыгнуть):**
-- Phase 0 (IDT) → всё остальное (без IDT debugging невозможен).
-- Phase 1 (exceptions + ACPI) → Phase 2 (PAL design + Windows spike) → Phase 5.5 (Native TLS) → Phase 6.1 (initial bare-metal CoreCLR).
-- Phase 3 (scheduler) → Phase 6.2 (CoreCLR production with threading; D5/D6/D8 reopen).
-- Phase 5 storage + display + keyboard → ExitBootServices (нельзя без своих драйверов).
-- Phase 6.1 → Phase 7 first hosted app; Phase 6.2 → full Roslyn/PowerShell.
-
-**Параллельно:**
-- Phase 5 (drivers) полностью независим от Phases 2/3/4 — может идти параллельно.
-- Внутри Phase 0 — BCL base items независимы друг от друга, можно параллелить.
-- Phase 3.5 (SMP) можно отложить на любой момент после Phase 3 main, **до** или **после** Phase 7.
+- Boot/IDT/паники, ACPI, **managed-EH сквозь JIT** (try/catch/finally/
+  filter/rethrow/multiframe/native-origin/HW-fault), ClassCtorRunner,
+  cctor, RTC/CMOS.
+- **Сток CoreCLR на голом железе байт-в-байт**: RyuJIT, GC
+  (non-moving mark-sweep), type loader, generics/shared-generics,
+  interface dispatch, reflection, **reflection-mode System.Text.Json**,
+  `yield`/итераторы, UTF-8/Regex/Guid/Base64/Path/Interlocked/lock,
+  self-ID. Coverage-батарея 21/21, `exitCode=42`.
+- PAL-bridge: BigStack 16 MiB, GetStackBounds, TerminateProcess-halt,
+  ntdll/kernel32-шимы, **часы из CMOS** (`DateTime.UtcNow` реальное),
+  env-vars пустой блок.
+- Старый Phase 6.1-критерий **превышен**; Phase-7 «first hosted app»
+  по факту достигнут (`NormalHello.dll` JIT-исполнен).
+- Граница demo-grade (by design, не баг): финализаторы не работают,
+  leaks, threading = hard-panic (`SwitchToThread`).
 
 ---
 
-## Ориентиры по времени
+## Новый DAG (Phase A–I)
 
-Оценки для одного разработчика без FTE, с буфером на «неожиданности». Phase 1 (full unwinding) и Phase 6 (PAL impl + CoreCLR fork) — классические места долгого застревания.
+Линейность только там где помечено sequential-gate; остальное —
+параллелизуемо.
 
-| Фаза | Диапазон |
+### Phase A — Clean milestone freeze
+- Зафлажить/убрать experiment-comfort (Probes/EH-trace) → **committable
+  clean regression-режим**, не теряя boot/EH регресс-пробы.
+- `docs/coreclr-hosted-limits.md` — поддерживать как oracle.
+- Инвариант: hosted-батарея 21/21 не ломается ни одним последующим
+  изменением (regression gate каждого step).
+
+### Phase B — Native-tier console off-ramp (insurance, строить ПЕРВЫМ)
+Параллелен A-цепочке; даёт диагностический substrate **до** SehUnwind
+(чинить размотку вслепую без post-EBS канала — нельзя).
+- Свой **16550 UART** драйвер (post-EBS serial; сейчас своего нет —
+  всё через UEFI ConOut-зеркало, умрёт на EBS).
+- **GOP framebuffer** capture + PSF/glyph рендерер + double-buffer.
+- **PS/2 keyboard** (0x60/0x64, scancode→KeyEvent).
+- Minimal line editor (input/backspace/enter; history позже).
+- native-tier command shell: `help`/`mem`/`devices`/`run-normalhello`/
+  `run-battery`/(опц. mini-Forth/StackInterpreter — бонус, не минимум).
+
+**Критерий:** SharpOS — самостоятельная managed-OS с интерактивной
+консолью и диагностикой, не «QEMU-log runner». ~2 месяца. Это
+**insurance policy** если Roslyn-путь застрянет; часть B (UART/display/
+keyboard) шарится с путём к §1.
+
+### Phase C — Post-EBS survival
+- **Post-EBS diagnostics contract**: serial-write всегда работает;
+  panic/fault-dump **без managed-аллокаций**; bounded stack-dump;
+  опц. ring-buffer.
+- Snapshot до EBS: GOP ptr+dims, serial addr, ACPI-копия, memory-map
+  копия, keyboard info.
+- UEFI-calls за интерфейсы (`IPlatformConsole/FS/Keyboard/Timer`);
+  режим «UefiServicesGone» + build-flag.
+- **Физический ExitBootServices** — как только готовы UART+display+
+  keyboard+memmap+ACPI+panic-path. **НЕ ждать storage/network**
+  (иначе critical path раздут).
+
+### Phase D — SehUnwind upstream fix (sequential-gate перед threading)
+- **§11: починить SehUnwind frame-chain** (C#-порт RtlVirtualUnwind):
+  `invalid Rip` при размотке сквозь нативные C-SEH-кадры. Единый корень
+  трёх census-💥 (Socket/OpenSSL/threads); фундамент threading-EH.
+- Снять локальные пластыри step-71/72 после upstream-фикса.
+
+**Почему здесь:** оба мудреца — SehUnwind строго ДО настоящего
+threading (иначе threading = генератор фантомных падений того же
+класса). Делается ПОСЛЕ B (зрячая диагностика), ДО D-scheduler.
+
+### Phase E — Cooperative threading substrate
+Реализация **cooperative**, модель — совместимая с будущим preemptive.
+- Per-thread stack **≥ 1 MiB + guard page** (урок Frontier-C: 128 KiB
+  мало). Page-table decision: явный kernel PML4 + page-allocator (vs
+  UEFI-inherited) — принять здесь, prerequisite guard-pages/VM-tracking.
+- Thread struct (регистры+FXSAVE) + context-switch (byte-shellcode) +
+  ready-queue + thread-state (runnable/blocked/wait-reason/safepoint).
+- `Thread.Create`/`Yield`/`Sleep(0)`/`ManualResetEvent`/
+  `AutoResetEvent`; cooperative TimerQueue; минимальный `ThreadPool`;
+  `Task`-continuation scheduling.
+- TLS per-thread (gs/fs + `RhpGetThreadStaticBase*`; Phase 5.5 был
+  только main thread).
+- CoreCLR threading-PAL routing: `CreateThread`/`SwitchToThread`/waits/
+  `Sleep` → наш scheduler.
+- Reentrancy: ревизия GcHeap/Heap-A/SharpOSHost_* на гонки (всё
+  писалось single-thread).
+- Preemptive (APIC-timer) — **DEFER** (Roslyn REPL fairness ОС-уровня
+  не нужен; нужно лишь чтобы Task/await/waits/timers не падали).
+
+### Phase F — Hosted-CoreCLR production mode
+- GC suspend/resume **кооперация со scheduler'ом** (cooperative
+  safepoints — без real signals на bare metal). **SP1, главный риск.**
+- Финализаторы; реальная RetainVM/decommit policy; hosted-heap
+  cleanup; убрать demo TARGET_SHARPOS ABORT/zero-GC конфиг
+  (D5/D6/D8 переоткрыть).
+- Инвариант ABI managed-ref discipline: `SharpOSHost_*` НЕ хранит
+  hosted OBJECTREF; hosted-refs только через CoreCLR handles;
+  kernel-refs никогда не отдаются как hosted; диагностика
+  cross-GC-указателей.
+
+### Phase E′ — Storage / filesystem (параллельно D/E, gate для G)
+- **PCI enumeration** (ECAM/MCFG или legacy; BAR; MSI) — prerequisite
+  любого device-драйвера.
+- **virtio-blk** block-драйвер.
+- **FAT32 read** `[critical for Roslyn]`. **FAT32 write** `[DEFER до
+  PowerShell/persistence]`.
+
+### Phase G — Roslyn REPL (§1a)
+- **Hosted assembly resolver**: стратегия runtimeconfig/deps.json
+  (ignore/preflatten/parse); single-app-dir probing;
+  Microsoft.NETCore.App closure; Roslyn package closure;
+  детерминированный fail-dump «assembly X not found». Без этого
+  Roslyn/PS умрут на хаотичном probing, не на «нет feature».
+- System.IO read/path/enumeration достаточно для probing.
+- Cooperative scheduler + ThreadPool + waits + real-ish timers
+  достаточны.
+- Console I/O.
+- **Timer semantics matrix** (вынести как dependency-node):
+  `DateTime.UtcNow`=RTC+monotonic-delta; `Stopwatch`=TSC/HPET;
+  `Task.Delay`=scheduler timer-queue; `Thread.Sleep`=wait-queue;
+  timeouts=тот же backend.
+- ICU/globalization: **invariant mode** (`System.Globalization.
+  Invariant=true`) — убирает ICU-зависимость, режет SP4.
+- **`CSharpScript.EvaluateAsync` smoke** → `var x=1+1; x.ToString()`
+  == `"2"`.
+
+### Phase H — PowerShell (§1b/§1c)
+Всё из G + кратно больше: System.IO (включая write), process/env/path/
+user/machine shims (Unix-PAL/System.Native bucket), pipeline/cmdlet
+host, culture, runspaces. **Scope-split (честно):**
+- §1b PowerShell-minimal (базовые cmdlets, pipeline; без WMI/COM/
+  registry) — +6-12 мес после Roslyn.
+- §1c PowerShell-full — `[DEFER индефинитно]` (WMI/COM/registry/
+  surface explosion).
+
+### Phase I — Hardware/feature expansion (DEFER до §1a)
+network (virtio-net/TCP — без DNS/TLS), preemptive scheduler
+(APIC-timer), SMP, FAT32-write, DNS/TLS/HTTPS, USB, multi-NIC,
+power-management, crash-dump-to-disk.
+
+---
+
+## Decision points (трекать явно)
+
+| Решение | Принято (sage-1+2) |
 |---|---|
-| Phase 0 (IDT + BCL base) | 2-3 месяца |
-| Phase 1 (exceptions + ACPI + timers + ClassConstructorRunner) | 3-6 месяцев |
-| Phase 2 (PAL design done; Phase 2A/2B Windows spike) | 1-2 месяца |
-| Phase 3 (scheduler + threading + Task/async) | 4-6 месяцев |
-| Phase 3.7 (StackInterpreter) | 1 месяц |
-| Phase 4 (UEFI encapsulation) | 1-2 месяца |
-| Phase 5 (drivers до HTTP) | 8-15 месяцев (параллелизуется) |
-| Phase 5.5 (Native TLS bring-up) | 1-2 недели |
-| Phase 6.1 (initial bare-metal CoreCLR, demo-grade) | 4-9 месяцев |
-| Phase 6.2 (production CoreCLR, после Phase 3) | 3-6 месяцев |
-| Phase 7 (hosted-tier до Roslyn REPL) | 2-4 месяца после Phase 6 |
-| **До Roslyn REPL внутри SharpOS** | **24-36 месяцев** |
-| Phase 7 (PowerShell host) | +6-12 месяцев после Roslyn |
-| **До интерактивного PS shell** | **30-48 месяцев** |
-| Phase 3.5 SMP (опционально) | +3-6 месяцев когда понадобится |
+| Scheduler | **cooperative first**, preemptive — defer |
+| Filesystem | **read-only FAT32 first**, write — defer |
+| Time | **UTC-only** initially (`Now==UtcNow`, нет zoneinfo) |
+| Globalization | **invariant mode** (нет ICU) |
+| ExitBootServices | **до storage**, как только UART/display/kbd/panic готовы |
+| PowerShell | **после Roslyn**; split §1b/§1c |
+| Page tables | явный kernel PML4 (решить в Phase E) |
+| Network | defer (не нужен для §1) |
 
-После Phase 3.7 в любой момент можно остановиться и получить работающую minimal managed OS, способную запускать native-tier C# приложения. Всё дальше — расширение до hosted-tier для Roslyn/PS.
+## Critical path к §1a (Roslyn C# REPL) — sequential
 
----
+Phase A (freeze) → **B (native console/UART/kbd)** → **D (SehUnwind)**
+→ **E (cooperative scheduler+TLS+threading-PAL)** → **F (hosted-GC
+suspend/production)** → **G (assembler resolver + System.IO + timers +
+invariant + CSharpScript)**.
+Параллельно к D/E: **E′ (PCI→virtio-blk→FAT32-read)**, остаток
+Phase C (EBS), B-доводка.
+`[DEFER до §1a]`: network, preemptive, SMP, FAT32-write, DNS/TLS, USB,
+PowerShell.
 
-## Правила корректировки плана
+## Stuck-point watch (после 6.1 — новые «classic stuck»)
 
-- Фазу можно разбить на подзадачи только внутри неё самой, не в этом документе.
-- Если критерий готовности оказывается недостижим в заявленном scope — сначала сужается scope, потом пересматривается критерий, потом двигается граница фазы.
-- Переход на следующую фазу — только после того как критерий готовности предыдущей выполнен на реальном железе или QEMU strict-nx.
-- Документ `done/stepNN.md` фиксирует результаты по завершении каждой фазы или её значимой части.
-- При появлении новой стратегической развилки (например, "Mono вместо CoreCLR" или "skip Phase 7 в пользу embedded use case") — обновляется этот документ, не игнорируется.
+- **SP1 scheduler↔hosted-GC suspend** (Phase F) — архитектурный, плохо
+  документирован MS, нет real signals. **Главный риск.** Если не
+  разрешается за 4-6 недель — отдельный sage-раунд + пере-оценка
+  стратегии.
+- **SP2 Roslyn JIT cold-start** — trivial-expr трогает сотни типов;
+  первый compile может быть секунды. Возможно нужен AOT-предкомпайл
+  части Roslyn.
+- **SP3 assembly resolution/TPA closure** — Roslyn ~30-50 пакетов,
+  multi-target, type-forwarding.
+- **SP4 ICU/globalization** — снят выбором invariant mode.
+- **SP5 memory pressure** — Roslyn прожорлив; coupled с SP1 (нужен
+  реально собирающий hosted-GC).
+- **SP6 PowerShell surface explosion** — кратно шире Roslyn.
+- **Threading illusion** — `CreateThread` мало; всплывут TLS/stack-
+  bounds/GC-suspend/waits/timer-queue/ThreadPool.
+- **Post-EBS blindness** — снят Phase B/C (UART+panic-contract вперёд).
+- **Unwind debt** — пластыри step-71/72 держат демо; threading может
+  снова открыть рану → снят Phase D перед E.
+
+## Вне scope (намеренно)
+
+Приходит из CoreCLR бесплатно (не дублируем в std): LINQ, delegates,
+reflection, AppendFormat/ISpanFormattable. Откладываем индефинитно:
+TLS/HTTPS (мега-проект), USB (PS/2 покрывает QEMU), GUI/WM/audio,
+multi-NIC real HW, PowerShell-full (§1c).
+
+## Ориентиры по времени (honest, solo, sage-consensus)
+
+| Веха | Диапазон |
+|---|---|
+| Phase A (freeze) | дни |
+| Phase B (native console off-ramp) | ~2 мес (insurance) |
+| Phase C (post-EBS) | 2-3 нед |
+| Phase D (SehUnwind upstream) | недели-месяц (риск unwind) |
+| Phase E (cooperative threading) | 1-2 мес |
+| Phase E′ (PCI→virtio-blk→FAT32-read) | 3-5 нед (параллельно) |
+| Phase F (hosted-GC production) | **SP1 — wildcard, 1-3 мес** |
+| Phase G (Roslyn REPL §1a) | поверх — недели после F |
+| **До §1a (C# REPL)** | **~6-12 мес** (или **~2-3 мес** при всех strategic-cuts: cooperative+RO-FS+UTC+invariant+no-EBS-via-UART) |
+| Phase H §1b (PowerShell-minimal) | +6-12 мес после §1a |
+| §1c PowerShell-full | годы / `[DEFER]` |
+
+Off-ramp (Phase B + native shell) ≈ 2 мес — гарантированно работающий
+OS-grade артефакт независимо от Roslyn-успеха.
+
+## Правила корректировки плана (без изменений)
+
+- Фазу дробить на подзадачи только внутри неё, не здесь.
+- Недостижим критерий в scope → сужается scope → пересматривается
+  критерий → двигается граница.
+- Переход к следующей фазе — после критерия предыдущей на железе/
+  QEMU strict-nx.
+- `done/stepNN.md` фиксирует результат значимой части.
+- Новая стратегическая развилка → обновляется этот документ
+  (как сделано этой DAG-редакцией по sage-1/sage-2).
+- Empirical checkpoints: «после X измерить Y до коммита к Z»
+  (напр.: после F — Roslyn smoke до завершения G; после FAT32-read —
+  измерить что Roslyn реально требует от System.IO до FAT32-write).
