@@ -185,6 +185,25 @@ namespace OS.Boot
             else
                 Panic.Fail("VM manager self-test failed");
 
+            // Phase B#2 — identity-map the GOP framebuffer MMIO into the
+            // pager PML4. Non-fatal: headless / BltOnly / no-GOP boots
+            // continue with IsAvailable=false (renderer no-ops).
+            if (OS.Hal.Framebuffer.TryInit())
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("framebuffer mapped: ");
+                Console.WriteUInt(OS.Hal.Framebuffer.Width);
+                Console.Write("x");
+                Console.WriteUInt(OS.Hal.Framebuffer.Height);
+                Console.Write(" va=0x");
+                Console.WriteHex(OS.Hal.Framebuffer.BaseAddress, 8);
+                Log.EndLine();
+            }
+            else
+            {
+                Log.Write(LogLevel.Warn, "framebuffer not mapped (no GOP / map failed)");
+            }
+
             InitializeAcpi(bootInfo);
             InitializeHpet();
 

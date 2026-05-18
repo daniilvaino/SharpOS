@@ -44,6 +44,30 @@ namespace OS.Kernel.Diagnostics
             {
                 Console.WriteLine("[gop] none (GraphicsAvailable=0)");
             }
+
+            // Phase B#2 sub-step 2 — prove the FB MMIO mapping is live:
+            // write a sentinel pixel and read it back through the same
+            // kernel VA (headless-verifiable oracle — px0 must equal the
+            // packed sentinel). Also paint a 64x64 magenta square at the
+            // origin: harmless eyeball proof under SHARPOS_GUI=1 (the
+            // renderer clears the screen in a later sub-step anyway).
+            if (Framebuffer.IsAvailable)
+            {
+                Framebuffer.PutPixel(0, 0, 0x12, 0x34, 0x56);
+                uint px0 = Framebuffer.GetPixelRaw(0, 0);
+                for (uint yy = 0; yy < 64; yy++)
+                    for (uint xx = 0; xx < 64; xx++)
+                        Framebuffer.PutPixel(xx, yy, 0xFF, 0x00, 0xFF);
+                Console.Write("[fb] map+rw OK va=0x");
+                Console.WriteHex(Framebuffer.BaseAddress);
+                Console.Write(" px0=0x");
+                Console.WriteHex(px0);
+                Console.WriteLine("");
+            }
+            else
+            {
+                Console.WriteLine("[fb] not mapped");
+            }
         }
     }
 }
