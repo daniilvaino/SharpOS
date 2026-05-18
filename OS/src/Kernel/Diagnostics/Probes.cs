@@ -98,5 +98,11 @@ namespace OS.Kernel.Diagnostics
         // path (headless-deterministic). The interactive REPL over this
         // engine is a separate default-off gate (would block headless).
         public const bool ShellEngine = true;
+
+        // Phase B#3 — interactive shell REPL (real PS/2 keystrokes,
+        // echoed to serial + FbTty). BLOCKS on input — keep false for
+        // headless/regression runs; flip true and boot under
+        // SHARPOS_GUI=1 to type at it. ILC dead-codes it when false.
+        public const bool ShellInteractive = false;
     }
 }

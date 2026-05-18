@@ -281,6 +281,14 @@ namespace OS.Boot
                     CoreClrProbe.Run();
             }
 
+            // Interactive native-tier shell — real keystrokes via the
+            // own PS/2 driver, echoed to serial + FbTty. Blocks on
+            // input, so default-off (would hang the headless regression
+            // run); flip on + boot under SHARPOS_GUI=1 to use it. Runs
+            // after all probes/census so the screen is the user's.
+            if (Probes.ShellInteractive)
+                Shell.RunInteractive();
+
             // Never-returning probes — last so a regular boot still finishes.
             if (Probes.IdtPanic)
                 IdtProbe.TriggerNullDeref();
