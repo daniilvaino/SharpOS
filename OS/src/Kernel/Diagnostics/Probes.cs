@@ -63,5 +63,13 @@ namespace OS.Kernel.Diagnostics
         // to halt at first unimplemented SharpOSHost_* / CrtAndEh stub —
         // tells us empirically what CoreCLR wants на init.
         public const bool CoreClrInit = true;
+
+        // Phase B — own 16550 UART (COM1) driver bring-up. Inits the
+        // chip directly via PortIo and self-tests via loopback, then
+        // writes one line through the OWN driver. Pre-EBS this hits the
+        // same physical COM1 the UEFI ConOut mirror reads, so the line
+        // appearing proves the post-EBS serial substrate works. Permanent
+        // regression oracle for the serial driver.
+        public const bool SerialSmoke = true;
     }
 }

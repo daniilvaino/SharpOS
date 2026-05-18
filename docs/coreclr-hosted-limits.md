@@ -157,8 +157,15 @@ Workaround: реального треда нет; threading-PAL — отдель
 
 ## 7. Globalization / encoding / regex / compression
 
-- ✅ `Encoding.UTF8` roundtrip (кириллица + 🌍), `String.Normalize(FormD)`,
-  `CultureInfo.InvariantCulture`, `Regex.IsMatch`.
+- ✅ `Encoding.UTF8` roundtrip (кириллица + эмодзи), `String.Normalize(FormD)`,
+  `CultureInfo.InvariantCulture`, `Regex.IsMatch` — **в памяти**
+  (bytes↔string) корректно.
+- ⚠️ **Отображение** не-ASCII в консоли — мусор (`â`/`ð¡`). НЕ баг
+  рантайма: `SharpOSHost_DebugWrite(byte*)` кастит UTF-8-байты по-байтно
+  в `char` и шлёт в UEFI ConOut, а firmware-шрифт эмодзи-глифов не
+  имеет. На UEFI-текст-консоли не лечится (правильный i18n — Phase B
+  own-console / позже). Вывод программ держать ASCII; не-ASCII только
+  если действительно нужен и есть свой рендерер.
 - ❌ MANAGED-EXC `CultureInfo.GetCultureInfo("ru-RU")` →
   `CultureNotFoundException` — **активен globalization-invariant mode**
   (ICU нет; именованные культуры не поддерживаются **by design**,

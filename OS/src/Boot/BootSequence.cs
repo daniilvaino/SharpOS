@@ -202,6 +202,9 @@ namespace OS.Boot
         // ─────────────────────────────────────────────────────────────────
         private static void Phase4_Probes(BootInfo bootInfo)
         {
+            if (Probes.SerialSmoke)
+                SerialProbe.Run();
+
             if (Probes.GcHeapSmoke)
                 GcHeapSmokeTest.Run();
 
