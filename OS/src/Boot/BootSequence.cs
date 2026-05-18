@@ -225,7 +225,27 @@ namespace OS.Boot
             // Expected to panic at first unimplemented SharpOSHost_* /
             // CrtAndEh stub. Iterate until S_OK.
             if (Probes.CoreClrInit)
-                CoreClrProbe.Run();
+            {
+                // Frontier-C (step 72): the unikernel runs on the fixed
+                // ~128 KiB UEFI boot stack; reflection-mode System.Text.Json
+                // (deep nested DoRunClassInit/JIT/typeload/cctor recursion)
+                // overruns it → stack #PF → #DF → triple fault → QEMU
+                // `-no-reboot` silent exit. Run the whole CoreCLR session
+                // on a large pre-mapped stack via the BigStack trampoline.
+                // GcHeap.AllocateRaw zero-fills (commits every page) so the
+                // buffer is fully mapped — safe to use as a stack. Any
+                // failure falls back to the boot stack (= prior behavior).
+                const uint BigStackSize = 16u * 1024u * 1024u;  // 16 MiB
+                void* bigBuf = GcHeap.AllocateRaw(BigStackSize);
+                bool ranBig = false;
+                if (bigBuf != null &&
+                    BigStack.TryInitialize(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize))
+                {
+                    ranBig = BigStack.RunOn(bigBuf, BigStackSize, &CoreClrProbe.RunOnBigStackThunk);
+                }
+                if (!ranBig)
+                    CoreClrProbe.Run();
+            }
 
             // Never-returning probes — last so a regular boot still finishes.
             if (Probes.IdtPanic)

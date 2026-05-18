@@ -185,6 +185,14 @@ namespace OS.Kernel.Diagnostics
         private static readonly byte[] s_helloMethod = new byte[] {
             (byte)'R', (byte)'u', (byte)'n', 0 };
 
+        // step 72 / Frontier-C — entry for the BigStack trampoline. The
+        // whole CoreCLR session runs here on a 4 MiB pre-mapped stack
+        // (the 128 KiB UEFI boot stack overflows under reflection-mode
+        // System.Text.Json → silent triple fault). Plain forwarder; no
+        // args (Win64 trampoline calls `delegate* unmanaged<void>`).
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        public static void RunOnBigStackThunk() => Run();
+
         public static void Run()
         {
             Console.WriteLine("=== CoreClrProbe===");
