@@ -79,5 +79,12 @@ namespace OS.Kernel.Diagnostics
         // screen is the eyeball proof under SHARPOS_GUI=1). Permanent
         // regression oracle for the framebuffer text path.
         public const bool FbRender = true;
+
+        // Phase B#3 — own i8042/PS-2 keyboard bring-up. Non-destructive
+        // STATUS presence read + a pure set-1 decoder self-test over a
+        // fixed synthetic scancode script (headless-deterministic; real
+        // keystroke proof is the interactive shell under SHARPOS_GUI=1).
+        // Permanent regression oracle for the keyboard decode path.
+        public const bool Ps2 = true;
     }
 }

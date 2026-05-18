@@ -227,6 +227,9 @@ namespace OS.Boot
             if (Probes.FbRender)
                 FbRenderProbe.Run();
 
+            if (Probes.Ps2)
+                Ps2Probe.Run();
+
             if (Probes.GcHeapSmoke)
                 GcHeapSmokeTest.Run();
 
