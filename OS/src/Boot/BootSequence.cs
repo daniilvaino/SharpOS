@@ -233,6 +233,9 @@ namespace OS.Boot
             if (Probes.LineEdit)
                 LineEditorProbe.Run();
 
+            if (Probes.ShellEngine)
+                ShellProbe.Run();
+
             if (Probes.GcHeapSmoke)
                 GcHeapSmokeTest.Run();
 

@@ -92,5 +92,11 @@ namespace OS.Kernel.Diagnostics
         // Enter); headless-deterministic, real typing proof is the
         // interactive shell under SHARPOS_GUI=1.
         public const bool LineEdit = true;
+
+        // Phase B#3 — native-tier shell engine. Drives Shell.Execute
+        // with literal command lines, asserts dispatch + the mem data
+        // path (headless-deterministic). The interactive REPL over this
+        // engine is a separate default-off gate (would block headless).
+        public const bool ShellEngine = true;
     }
 }
