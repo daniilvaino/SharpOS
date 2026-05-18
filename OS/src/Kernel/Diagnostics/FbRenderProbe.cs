@@ -59,8 +59,17 @@ namespace OS.Kernel.Diagnostics
             FbConsole.DrawString(40, 330,
                 "0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", fg, -1, 2);
 
-            // Deterministic fingerprint of the rendered region.
+            // Deterministic fingerprint of the rendered region. The
+            // region [0,512)x[0,360) covers the entire painted content
+            // (everything below y~360 is constant navy), so it is a
+            // sharper oracle than a full-frame hash diluted by megapixels
+            // of unchanging background. Self-checked against the golden
+            // value captured on the BGRX-verified run (swatches eyeballed
+            // RED GREEN BLUE WHITE @1280x800 fmt=1). Mismatch => the
+            // renderer/font/packing/stride regressed: reported, not
+            // fatal (same policy as the other probes — boot continues).
             uint crc = FbConsole.Checksum(0, 0, 512, 360);
+            bool pass = crc == GoldenCrc;
 
             Console.Write("[fbtext] ");
             Console.WriteInt((int)w);
@@ -70,8 +79,24 @@ namespace OS.Kernel.Diagnostics
             Console.WriteInt((int)Framebuffer.PixelFormat);
             Console.Write(" crc=0x");
             Console.WriteHex(crc);
-            Console.WriteLine("");
+            if (pass)
+            {
+                Console.WriteLine(" PASS");
+            }
+            else
+            {
+                Console.Write(" FAIL exp=0x");
+                Console.WriteHex(GoldenCrc);
+                Console.WriteLine("");
+            }
         }
+
+        // Golden FNV-1a of FbConsole.Checksum(0,0,512,360) at 1280x800
+        // fmt=1 (BGRX), captured on the run whose colour swatches were
+        // eyeball-confirmed RED GREEN BLUE WHITE (step 72d). Re-baseline
+        // ONLY together with a deliberate renderer/font/probe-layout
+        // change, never to "make it pass".
+        private const uint GoldenCrc = 0x7A1D4075u;
 
         private static int DrawText(int x, int y, string s, uint fg, int scale)
         {
