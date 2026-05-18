@@ -230,6 +230,9 @@ namespace OS.Boot
             if (Probes.Ps2)
                 Ps2Probe.Run();
 
+            if (Probes.LineEdit)
+                LineEditorProbe.Run();
+
             if (Probes.GcHeapSmoke)
                 GcHeapSmokeTest.Run();
 

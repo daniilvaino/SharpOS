@@ -86,5 +86,11 @@ namespace OS.Kernel.Diagnostics
         // keystroke proof is the interactive shell under SHARPOS_GUI=1).
         // Permanent regression oracle for the keyboard decode path.
         public const bool Ps2 = true;
+
+        // Phase B#3 — line editor over the PS/2 decoder. Synthetic-script
+        // self-test of the buffer logic (printable insert + Backspace +
+        // Enter); headless-deterministic, real typing proof is the
+        // interactive shell under SHARPOS_GUI=1.
+        public const bool LineEdit = true;
     }
 }
