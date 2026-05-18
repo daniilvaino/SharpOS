@@ -30,6 +30,15 @@ namespace OS.PAL.SharpOSHost
     //      CONTEXT и jump.
     internal static unsafe class SehDispatch
     {
+        // Permanent mainline hygiene (Phase A clean-freeze). Managed-EH
+        // pillar CLOSED (steps 70/71); this per-frame SEH raise/search +
+        // throw-side dump was debug-only bring-up scaffolding. Regression
+        // oracle = boot Probes EH-gates (L8..L17) + hosted 21/21 battery,
+        // NOT this trace — default-off loses no coverage, keeps mainline
+        // clean. HALT / alloc-failed / invalid-Rip / walked-out stay ON
+        // (signal). Flip to true only when re-debugging the unwinder.
+        private const bool Trace = false;
+
         // RaiseException / RtlRaiseException — top of the dispatch chain.
         // Builds an ExceptionRecord with the supplied code, captures
         // current context, drives the unwind loop.
@@ -40,9 +49,11 @@ namespace OS.PAL.SharpOSHost
 
         private static void RaiseExceptionImpl(uint code, uint flags, uint nParams, ulong* args)
         {
+            if (Trace) {
             Console.Write("[seh] RaiseException code=0x"); Console.WriteHex(code);
             Console.Write(" nParams="); Console.WriteInt((int)nParams);
             Console.WriteLine("");
+            }
 
             // For C++ throws (code = EH_EXCEPTION_NUMBER), the throwInfo arg
             // carries enough RTTI to extract the thrown type's mangled name.
@@ -52,7 +63,7 @@ namespace OS.PAL.SharpOSHost
             // CatchableTypeArray = {count, ctype[count]} where ctype is RVA.
             // CatchableType+0x04 = pType (RVA → TypeDescriptor).
             // TypeDescriptor+0x10 = mangled name (null-terminated bytes).
-            if (code == ExceptionRecord.EH_EXCEPTION_NUMBER && nParams >= 4 && args != null)
+            if (Trace && code == ExceptionRecord.EH_EXCEPTION_NUMBER && nParams >= 4 && args != null)
             {
                 ulong throwInfoVa = args[2];
                 ulong imgBase     = args[3];
@@ -346,9 +357,11 @@ namespace OS.PAL.SharpOSHost
                     break;
                 }
 
+                if (Trace) {
                 Console.Write("[seh] search frame Rip=0x"); Console.WriteHex(controlPc);
                 Console.Write(" Rsp=0x"); Console.WriteHex(searchCtx->Rsp);
                 Console.WriteLine("");
+                }
 
                 void* handlerData = null;
                 ulong newFrame = 0;
@@ -359,8 +372,7 @@ namespace OS.PAL.SharpOSHost
 
                 if (personality != null)
                 {
-                    Console.Write("[seh]   personality=0x"); Console.WriteHex((ulong)personality);
-                    Console.WriteLine("");
+                    if (Trace) { Console.Write("[seh]   personality=0x"); Console.WriteHex((ulong)personality); Console.WriteLine(""); }
                     dc->ControlPc = controlPc;
                     dc->ImageBase = ib;
                     dc->FunctionEntry = rf;
@@ -380,14 +392,16 @@ namespace OS.PAL.SharpOSHost
                         matchedClause = (HandlerType*)dc->HandlerData;
                         matchedTargetIp = dc->TargetIp;
                         matchedFrame = newFrame;
+                        if (Trace) {
                         Console.Write("[seh] match at frame 0x");
                         Console.WriteHex(newFrame);
                         Console.Write(" target=0x");
                         Console.WriteHex(matchedTargetIp);
                         Console.WriteLine("");
+                        }
                         break;
                     }
-                    Console.Write("[seh]   disp="); Console.WriteInt(disp); Console.WriteLine("");
+                    if (Trace) { Console.Write("[seh]   disp="); Console.WriteInt(disp); Console.WriteLine(""); }
                 }
 
                 if (newFrame == 0 || newFrame == establisherFrame)
@@ -453,6 +467,7 @@ namespace OS.PAL.SharpOSHost
                             SehUnwind.VirtualUnwind(0, ib2, rip, rf2, resumeCtx, &hd2, &ef2);
                         }
 
+                        if (Trace) {
                         Console.Write("[seh] uncaught HRException → resume managed Rip=0x");
                         Console.WriteHex(resumeCtx->Rip);
                         Console.Write(" Rsp=0x"); Console.WriteHex(resumeCtx->Rsp);
@@ -468,6 +483,7 @@ namespace OS.PAL.SharpOSHost
                         Console.Write(" R14=0x"); Console.WriteHex(resumeCtx->R14);
                         Console.Write(" R15=0x"); Console.WriteHex(resumeCtx->R15);
                         Console.WriteLine("");
+                        }
                         resumeCtx->Rax = hr;
                         RestoreContextAsm(resumeCtx);
                         return;  // unreachable

@@ -71,6 +71,17 @@ namespace OS.PAL.SharpOSHost
     // Match is by string comparison of mangled names.
     internal static unsafe class CxxFrameHandler
     {
+        // Permanent mainline hygiene (Phase A clean-freeze). The managed-EH
+        // pillar is CLOSED (steps 70/71); this per-frame C++ EH search/
+        // unwind dump was debug-only scaffolding from that bring-up. The EH
+        // regression oracle is the boot Probes EH-gates (L8..L17) + the
+        // hosted 21/21 battery — NOT this per-frame trace — so gating it
+        // default-off loses no regression coverage and keeps mainline
+        // output clean. HALT / alloc-failed / "bad magic" lines stay ON
+        // (rare, signal). ILC dead-codes the const-false blocks.
+        // Flip to true only when re-debugging the unwinder itself.
+        private const bool Trace = false;
+
         private const uint MAGIC_V1 = 0x19930520;
         private const uint MAGIC_V2 = 0x19930521;
         private const uint MAGIC_V3 = 0x19930522;
@@ -145,10 +156,12 @@ namespace OS.PAL.SharpOSHost
             Context* pContextRecord,
             DispatcherContext* pDispatcherContext)
         {
+            if (Trace) {
             Console.Write("[__CxxFrameHandler3] ENTER controlPc=0x");
             Console.WriteHex(pDispatcherContext->ControlPc);
             Console.Write(" flags=0x"); Console.WriteHex(pExceptionRecord->ExceptionFlags);
             Console.WriteLine("");
+            }
 
             // Unwind pass first (we're called both for search AND unwind).
             bool unwinding = (pExceptionRecord->ExceptionFlags
@@ -164,16 +177,18 @@ namespace OS.PAL.SharpOSHost
 
             byte* image = (byte*)pDispatcherContext->ImageBase;
             uint funcInfoRva = *(uint*)pDispatcherContext->HandlerData;
-            Console.Write("  funcInfoRva=0x"); Console.WriteHex(funcInfoRva); Console.WriteLine("");
+            if (Trace) { Console.Write("  funcInfoRva=0x"); Console.WriteHex(funcInfoRva); Console.WriteLine(""); }
             if (funcInfoRva == 0)
                 return (int)ExceptionDisposition.ExceptionContinueSearch;
 
             FuncInfo* fi = (FuncInfo*)(image + funcInfoRva);
+            if (Trace) {
             Console.Write("  magic=0x"); Console.WriteHex(fi->magicNumber);
             Console.Write(" maxState="); Console.WriteInt(fi->maxState);
             Console.Write(" nTry="); Console.WriteInt((int)fi->nTryBlocks);
             Console.Write(" nIP="); Console.WriteInt((int)fi->nIPMap);
             Console.WriteLine("");
+            }
             if (fi->magicNumber != MAGIC_V1 && fi->magicNumber != MAGIC_V2 && fi->magicNumber != MAGIC_V3)
             {
                 Console.WriteLine("  bad magic");
@@ -184,14 +199,16 @@ namespace OS.PAL.SharpOSHost
             uint controlRva = (uint)(pDispatcherContext->ControlPc - pDispatcherContext->ImageBase);
             uint relIp = controlRva - funcStartRva;
             int curState = FindCurrentState(image, fi, funcStartRva, controlRva);
+            if (Trace) {
             Console.Write("  funcStart=0x"); Console.WriteHex(funcStartRva);
             Console.Write(" relIp=0x"); Console.WriteHex(relIp);
             Console.Write(" state="); Console.WriteInt(curState);
             Console.WriteLine("");
+            }
 
             // Dump IP-to-state map raw entries (sage 2 says: see if entries
             // are func-relative or image-relative).
-            if (fi->pIPtoStateMap != 0)
+            if (Trace && fi->pIPtoStateMap != 0)
             {
                 IpToStateMapEntry* ipMap = (IpToStateMapEntry*)(image + fi->pIPtoStateMap);
                 Console.Write("  IPMap:");
@@ -231,7 +248,7 @@ namespace OS.PAL.SharpOSHost
             // covers curState. For each, walk handlers, match types. First
             // match wins.
             TryBlockMapEntry* tbm = (TryBlockMapEntry*)(image + fi->pTryBlockMap);
-            if (fi->nTryBlocks > 0)
+            if (Trace && fi->nTryBlocks > 0)
             {
                 Console.Write("  TryBlocks:");
                 for (uint tt = 0; tt < fi->nTryBlocks && tt < 4; tt++)
@@ -252,9 +269,11 @@ namespace OS.PAL.SharpOSHost
                 for (int h = 0; h < tb->nCatches; h++)
                 {
                     HandlerType* hd = &handlers[h];
+                    if (Trace) {
                     Console.Write("    catch["); Console.WriteInt(h);
                     Console.Write("] pType=0x"); Console.WriteHex(hd->pType);
                     Console.WriteLine("");
+                    }
                     if (!MatchHandler(image, hd, catchableArrayRva, out uint ctIdx))
                         continue;
 
@@ -263,9 +282,11 @@ namespace OS.PAL.SharpOSHost
                     // jump to handler->dispOfHandler within the function.
                     pDispatcherContext->TargetIp = (ulong)(image + funcStartRva + hd->dispOfHandler);
                     pDispatcherContext->HandlerData = hd;
+                    if (Trace) {
                     Console.Write("[__CxxFrameHandler3] caught at func+0x");
                     Console.WriteHex(hd->dispOfHandler);
                     Console.WriteLine("");
+                    }
                     return ExceptionDispositionExt.ExceptionExecuteHandlerMarker;
                 }
             }
@@ -290,6 +311,7 @@ namespace OS.PAL.SharpOSHost
                     // Invoke destructor funclet. Funclet ABI: RCX = frame pointer.
                     delegate* unmanaged<void*, void> action =
                         (delegate* unmanaged<void*, void>)(image + u->actionRva);
+                    if (Trace) {
                     Console.Write("[__CxxFrameHandler3] unwind state ");
                     Console.WriteInt(s);
                     Console.Write(" → ");
@@ -297,6 +319,7 @@ namespace OS.PAL.SharpOSHost
                     Console.Write(" action=0x");
                     Console.WriteHex(u->actionRva);
                     Console.WriteLine("");
+                    }
                     action(establisherFrame);
                 }
                 s = u->toState;
