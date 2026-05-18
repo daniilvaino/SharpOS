@@ -104,5 +104,14 @@ namespace OS.Kernel.Diagnostics
         // headless/regression runs; flip true and boot under
         // SHARPOS_GUI=1 to type at it. ILC dead-codes it when false.
         public const bool ShellInteractive = false;
+
+        // Phase C experiment — physically call ExitBootServices and
+        // prove the own UART+GOP+PS/2 substrate survives without UEFI.
+        // NEVER-RETURNING and tears down UEFI — must stay false for the
+        // headless regression battery; flip true to run the experiment
+        // (best under SHARPOS_GUI=1 to watch the post-EBS FB banner,
+        // serial also continues via the own 16550). ILC dead-codes it
+        // when false.
+        public const bool ExitBootServicesExperiment = false;
     }
 }

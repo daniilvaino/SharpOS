@@ -22,8 +22,23 @@ namespace OS.Hal
             return (Capabilities & capability) == capability;
         }
 
+        // Post-ExitBootServices: UEFI ConOut is dead, so the kernel
+        // Console must run on the own substrate (16550 UART hardware —
+        // pure port I/O, valid post-EBS — plus FbTty into the mapped
+        // GOP MMIO). Set once, just before calling ExitBootServices.
+        private static bool s_ownConsole;
+
+        public static void UseOwnConsole() => s_ownConsole = true;
+
         public static void WriteChar(char value)
         {
+            if (s_ownConsole)
+            {
+                Serial.WriteByte((byte)value);
+                FbTty.Putc(value);
+                return;
+            }
+
             if (!s_initialized)
                 return;
 

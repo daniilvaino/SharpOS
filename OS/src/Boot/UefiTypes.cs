@@ -162,7 +162,9 @@ namespace OS.Boot
         private readonly void* _StartImage;
         private readonly void* _Exit;
         private readonly void* _UnloadImage;
-        private readonly void* _ExitBootServices;
+        // EFI_STATUS ExitBootServices(EFI_HANDLE ImageHandle, UINTN MapKey).
+        // ImageHandle is a pointer-sized handle (IntPtr ABI-compatible).
+        public readonly delegate* unmanaged<IntPtr, ulong, ulong> ExitBootServices;
         private readonly void* _GetNextMonotonicCount;
         private readonly void* _Stall;
         private readonly void* _SetWatchdogTimer;

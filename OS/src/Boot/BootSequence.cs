@@ -281,6 +281,12 @@ namespace OS.Boot
                     CoreClrProbe.Run();
             }
 
+            // Phase C experiment — physically ExitBootServices and
+            // prove the own substrate survives UEFI teardown. Never
+            // returns; runs after all probes/census. Default-off.
+            if (Probes.ExitBootServicesExperiment)
+                ExitBootServicesProbe.Run();
+
             // Interactive native-tier shell — real keystrokes via the
             // own PS/2 driver, echoed to serial + FbTty. Blocks on
             // input, so default-off (would hang the headless regression

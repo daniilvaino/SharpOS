@@ -60,6 +60,10 @@ namespace OS.Boot
         // UefiBootInfoBuilder; null only if firmware path isn't UEFI.
         public EFI_SYSTEM_TABLE* SystemTable;
 
+        // UEFI image handle (from EfiMain). Needed as the first arg to
+        // ExitBootServices. Pointer-sized; IntPtr is ABI-compatible.
+        public System.IntPtr ImageHandle;
+
         public ulong MemoryMapAvailable;
         public ulong GraphicsAvailable;
         public MemoryMapInfo MemoryMap;
