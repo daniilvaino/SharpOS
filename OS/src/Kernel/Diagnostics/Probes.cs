@@ -71,5 +71,13 @@ namespace OS.Kernel.Diagnostics
         // appearing proves the post-EBS serial substrate works. Permanent
         // regression oracle for the serial driver.
         public const bool SerialSmoke = true;
+
+        // Phase B#2 — own GOP framebuffer renderer. Clears the screen,
+        // draws colour bands + an 8x8-font banner straight to the mapped
+        // FB MMIO, then emits a deterministic FNV-1a checksum of a fixed
+        // rendered region to serial (headless-verifiable; the painted
+        // screen is the eyeball proof under SHARPOS_GUI=1). Permanent
+        // regression oracle for the framebuffer text path.
+        public const bool FbRender = true;
     }
 }

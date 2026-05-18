@@ -224,6 +224,9 @@ namespace OS.Boot
             if (Probes.SerialSmoke)
                 SerialProbe.Run();
 
+            if (Probes.FbRender)
+                FbRenderProbe.Run();
+
             if (Probes.GcHeapSmoke)
                 GcHeapSmokeTest.Run();
 
