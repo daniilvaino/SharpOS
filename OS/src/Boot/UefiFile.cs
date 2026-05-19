@@ -15,6 +15,11 @@ namespace OS.Boot
         {
             root = null;
 
+            // Post-EBS UEFI is dead — refuse rather than call into freed
+            // firmware (simple-FS is a Boot Services protocol).
+            if (OS.Hal.Platform.BootServicesGone)
+                return false;
+
             EFI_SYSTEM_TABLE* systemTable = context.SystemTable;
             if (systemTable == null || systemTable->BootServices == null)
                 return false;

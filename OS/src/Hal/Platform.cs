@@ -30,6 +30,14 @@ namespace OS.Hal
 
         public static void UseOwnConsole() => s_ownConsole = true;
 
+        // True once the console has been rerouted off UEFI — the
+        // ExitBootServices boundary. Any UEFI Boot Services call after
+        // this point hits dead firmware, so the post-EBS-dangerous
+        // helpers (UefiFile IO, the UEFI exec-mem allocator) check this
+        // and refuse rather than fault. Defense-in-depth: the boot flow
+        // already orders all Boot Services use before the reroute.
+        public static bool BootServicesGone => s_ownConsole;
+
         public static void WriteChar(char value)
         {
             if (s_ownConsole)

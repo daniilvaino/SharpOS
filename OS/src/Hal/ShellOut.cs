@@ -1,36 +1,45 @@
 namespace OS.Hal
 {
     // Phase B#3 sub-step 4 — shell output indirection. The engine always
-    // writes to the serial Console (so the log/headless oracle is
-    // unchanged); when the interactive REPL runs under SHARPOS_GUI=1 it
-    // sets ToFb=true and the same calls also render to FbTty. No
-    // reference-type statics (no cctor trap) — FbTty is itself static.
+    // writes to the serial Console; when the interactive REPL runs it
+    // sets ToFb=true and the same calls also render to FbTty.
+    //
+    // Post-EBS subtlety: once UEFI is gone, Platform.WriteChar (i.e.
+    // Console.*) itself routes to the own UART + FbTty (the reroute).
+    // So the FbTty mirror here would draw every glyph TWICE (cursor
+    // double-advances → garbled). FbHere therefore suppresses the
+    // mirror once the console already owns the substrate — single copy
+    // in both eras. No reference-type statics (no cctor trap).
     internal static class ShellOut
     {
         public static bool ToFb;
 
+        // Mirror to FbTty only when requested AND Console isn't already
+        // rendering to it (pre-EBS Console = UEFI ConOut, no FB).
+        private static bool FbHere => ToFb && !Platform.BootServicesGone;
+
         public static void WriteChar(char c)
         {
             Console.WriteChar(c);
-            if (ToFb) FbTty.Putc(c);
+            if (FbHere) FbTty.Putc(c);
         }
 
         public static void Write(string s)
         {
             Console.Write(s);
-            if (ToFb) FbTty.Puts(s);
+            if (FbHere) FbTty.Puts(s);
         }
 
         public static void WriteLine(string s)
         {
             Console.WriteLine(s);
-            if (ToFb) { FbTty.Puts(s); FbTty.Putc('\n'); }
+            if (FbHere) { FbTty.Puts(s); FbTty.Putc('\n'); }
         }
 
         public static void WriteUInt(uint value)
         {
             Console.WriteUInt(value);
-            if (!ToFb) return;
+            if (!FbHere) return;
             if (value == 0) { FbTty.Putc('0'); return; }
             int n = 0;
             uint v = value;

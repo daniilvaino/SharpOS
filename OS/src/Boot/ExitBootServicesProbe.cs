@@ -140,6 +140,19 @@ namespace OS.Boot
             Console.Write(" hpet=");
             Console.Write(hpetOk ? "adv" : "STUCK");
             Console.WriteLine(pass ? " PASS" : " FAIL");
+
+            // Production end-state: a usable OS with UEFI gone. If the
+            // interactive gate is on, hand control to the native shell
+            // running entirely on the own substrate (PS/2 + FbTty +
+            // own 16550) — the first interactive SharpOS session with
+            // no firmware underneath. Otherwise halt (headless: the
+            // [ebsx] oracle above is the deterministic proof).
+            if (OS.Kernel.Diagnostics.Probes.ShellInteractive)
+            {
+                Console.WriteLine("[ebs] entering native shell (post-EBS, no UEFI)");
+                Shell.RunInteractive();
+            }
+
             Console.WriteLine("[ebs] halting (no UEFI launcher post-EBS)");
             Platform.Halt();
         }

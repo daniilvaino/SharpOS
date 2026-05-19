@@ -101,6 +101,9 @@ namespace OS.PAL.SharpOSHost
         public static void* AllocExecutable(ulong size)
         {
             if (size == 0) return null;
+            // Post-EBS the UEFI page allocator is gone; a post-EBS
+            // hosted tier needs its own exec allocator (deferred).
+            if (Platform.BootServicesGone) return null;
             BootInfo bi = Platform.GetBootInfo();
             if (bi.SystemTable == null) return null;
             var bs = bi.SystemTable->BootServices;

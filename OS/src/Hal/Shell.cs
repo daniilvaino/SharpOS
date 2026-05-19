@@ -100,7 +100,7 @@ namespace OS.Hal
             }
             if (Word(line, cmdStart, cl, "clear"))
             {
-                if (Framebuffer.IsAvailable) FbConsole.Clear(0, 0, 40);
+                FbTty.Clear();                 // wipe + home cursor (no-op headless)
                 ShellOut.WriteLine("[screen cleared]");
                 return true;
             }

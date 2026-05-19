@@ -30,6 +30,18 @@ namespace OS.Hal
         private static int CellW => Font8x8.CharWidth * Scale;
         private static int CellH => Font8x8.CharHeight * Scale + 2;
 
+        // Wipe the screen AND home the cursor — what a `clear` command
+        // means. FbConsole.Clear alone leaves the cursor where it was,
+        // so output continued mid-screen with a blank top. No-op until
+        // Init (non-interactive: nothing rendered anyway).
+        public static void Clear()
+        {
+            if (!s_ready) return;
+            FbConsole.Clear(s_br, s_bg, s_bb);
+            s_cx = Margin;
+            s_cy = Margin;
+        }
+
         public static void NewLine()
         {
             if (!s_ready) return;
