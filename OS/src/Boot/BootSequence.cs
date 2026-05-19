@@ -238,9 +238,12 @@ namespace OS.Boot
 
             if (Probes.PciScan)
                 PciProbe.Run();
-
-            if (Probes.AhciScan)
-                AhciProbe.Run();
+            // NOTE: AHCI/FAT bring-up is POST-EBS only — issuing AHCI
+            // commands reprograms the HBA the live UEFI firmware still
+            // owns (it loads CoreCLR assemblies + ELF apps via UEFI FS),
+            // which corrupts every later UEFI-FS read. Verified after
+            // ExitBootServices instead (ExitBootServicesProbe). PCI
+            // config-space scan above is read-only → safe pre-EBS.
 
             if (Probes.GcHeapSmoke)
                 GcHeapSmokeTest.Run();
@@ -264,28 +267,12 @@ namespace OS.Boot
             // Phase 6.1.a — call coreclr_initialize from kernel boot path.
             // Expected to panic at first unimplemented SharpOSHost_* /
             // CrtAndEh stub. Iterate until S_OK.
-            if (Probes.CoreClrInit)
-            {
-                // Frontier-C (step 72): the unikernel runs on the fixed
-                // ~128 KiB UEFI boot stack; reflection-mode System.Text.Json
-                // (deep nested DoRunClassInit/JIT/typeload/cctor recursion)
-                // overruns it → stack #PF → #DF → triple fault → QEMU
-                // `-no-reboot` silent exit. Run the whole CoreCLR session
-                // on a large pre-mapped stack via the BigStack trampoline.
-                // GcHeap.AllocateRaw zero-fills (commits every page) so the
-                // buffer is fully mapped — safe to use as a stack. Any
-                // failure falls back to the boot stack (= prior behavior).
-                const uint BigStackSize = 16u * 1024u * 1024u;  // 16 MiB
-                void* bigBuf = GcHeap.AllocateRaw(BigStackSize);
-                bool ranBig = false;
-                if (bigBuf != null &&
-                    BigStack.TryInitialize(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize))
-                {
-                    ranBig = BigStack.RunOn(bigBuf, BigStackSize, &CoreClrProbe.RunOnBigStackThunk);
-                }
-                if (!ranBig)
-                    CoreClrProbe.Run();
-            }
+            // Pre-EBS CoreCLR (loads \sharpos\* via UEFI FS). Skipped
+            // when the post-EBS experiment is on — there CoreCLR runs
+            // AFTER ExitBootServices, loading from our own FAT instead
+            // (firmware-free hosted tier). Avoids a double run.
+            if (Probes.CoreClrInit && !Probes.ExitBootServicesExperiment)
+                RunCoreClrSession(bootInfo);
 
             // Phase C experiment — physically ExitBootServices and
             // prove the own substrate survives UEFI teardown. Never
@@ -307,6 +294,25 @@ namespace OS.Boot
 
             if (Probes.ExceptionThrow)
                 ExceptionProbe.TriggerThrow();
+        }
+
+        // CoreCLR session on a 16 MiB pre-mapped BigStack (the fixed
+        // ~128 KiB UEFI boot stack overflows under reflection-mode
+        // recursion → triple fault). Callable pre-EBS (assemblies via
+        // UEFI FS) or post-EBS (via our FAT — Fs.Current set). Falls
+        // back to the boot stack if BigStack init fails.
+        internal static void RunCoreClrSession(BootInfo bootInfo)
+        {
+            const uint BigStackSize = 16u * 1024u * 1024u;
+            void* bigBuf = GcHeap.AllocateRaw(BigStackSize);
+            bool ranBig = false;
+            if (bigBuf != null &&
+                BigStack.TryInitialize(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize))
+            {
+                ranBig = BigStack.RunOn(bigBuf, BigStackSize, &CoreClrProbe.RunOnBigStackThunk);
+            }
+            if (!ranBig)
+                CoreClrProbe.Run();
         }
 
         // ─────────────────────────────────────────────────────────────────

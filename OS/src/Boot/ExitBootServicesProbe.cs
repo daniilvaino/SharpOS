@@ -141,6 +141,22 @@ namespace OS.Boot
             Console.Write(hpetOk ? "adv" : "STUCK");
             Console.WriteLine(pass ? " PASS" : " FAIL");
 
+            // Own disk stack — POST-EBS only: bringing up AHCI
+            // reprograms the HBA, which would corrupt UEFI FS if
+            // firmware were still alive. Here UEFI is gone, so we
+            // legitimately own the controller. Reads the boot disk via
+            // our AHCI + RO-FAT entirely without firmware.
+            OS.Kernel.Diagnostics.AhciProbe.Run();
+            OS.Kernel.Diagnostics.FatProbe.Run();
+
+            // Firmware-free hosted tier: run CoreCLR HERE, post-EBS.
+            // Fs.Current is the FAT mounted above, so the host's
+            // [host] FileOpen -> Platform.TryReadFile loads every
+            // \sharpos\* assembly from our own FAT/AHCI, no UEFI. The
+            // §1 milestone if census comes up green without firmware.
+            if (OS.Kernel.Diagnostics.Probes.CoreClrInit)
+                BootSequence.RunCoreClrSession(Platform.GetBootInfo());
+
             // Production end-state: a usable OS with UEFI gone. If the
             // interactive gate is on, hand control to the native shell
             // running entirely on the own substrate (PS/2 + FbTty +

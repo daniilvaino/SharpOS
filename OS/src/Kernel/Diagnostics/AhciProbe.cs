@@ -4,10 +4,10 @@ namespace OS.Kernel.Diagnostics
 {
     // C-FS2 oracle — adapted MOOS SATA/AHCI driver brings up the q35
     // ICH9 controller (located by C-FS1 PCI scan), reads LBA0 of the
-    // boot disk via DMA, and checks the MBR boot signature. QEMU's
-    // VVFAT (fat:rw:esp) presents an MBR-partitioned disk, so
-    // sector0[510..511] == 55 AA deterministically. Pure MMIO/DMA —
-    // valid pre- and post-EBS. Foundation for C-FS3 (FAT32 RO).
+    // boot disk via DMA, checks the MBR boot signature (QEMU VVFAT
+    // sector0[510..511] == 55 AA, deterministic). Runs POST-EBS only
+    // (called from ExitBootServicesProbe) — issuing AHCI commands
+    // reprograms the HBA the live UEFI firmware owns pre-EBS.
     internal static unsafe class AhciProbe
     {
         public static void Run()

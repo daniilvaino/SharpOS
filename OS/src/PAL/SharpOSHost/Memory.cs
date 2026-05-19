@@ -101,9 +101,23 @@ namespace OS.PAL.SharpOSHost
         public static void* AllocExecutable(ulong size)
         {
             if (size == 0) return null;
-            // Post-EBS the UEFI page allocator is gone; a post-EBS
-            // hosted tier needs its own exec allocator (deferred).
-            if (Platform.BootServicesGone) return null;
+
+            // Post-EBS: UEFI's page allocator is gone — serve exec
+            // memory from PhysicalMemory, identity-mapped RWX via the
+            // pager (va==phys; exec:true => Present|Writable, NX=0).
+            // This is what makes the JIT/hosted tier firmware-free.
+            if (Platform.BootServicesGone)
+            {
+                const ulong PG = 4096UL;
+                ulong np = (size + PG - 1) / PG;
+                ulong pp = global::OS.Kernel.PhysicalMemory.AllocPages((uint)np);
+                if (pp == 0) return null;
+                if (!global::OS.Kernel.Memory.VirtualMemory.MapFixed(
+                        (void*)pp, pp, np * PG, exec: true))
+                    return null;
+                return (void*)pp;
+            }
+
             BootInfo bi = Platform.GetBootInfo();
             if (bi.SystemTable == null) return null;
             var bs = bi.SystemTable->BootServices;

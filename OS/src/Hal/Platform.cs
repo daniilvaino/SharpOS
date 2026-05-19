@@ -126,6 +126,13 @@ namespace OS.Hal
 
         public static bool FileExists(string path)
         {
+            // Own FS (our FAT over AHCI) takes over once a volume is
+            // mounted (post-EBS); until then Fs.Current is null and we
+            // fall back to UEFI SimpleFS — so this is inert in the
+            // current default boot, the seam for replacing UEFI FS.
+            if (Fs.Current != null)
+                return Fs.Current.Exists(path);
+
             if (!s_initialized)
                 return false;
 
@@ -148,6 +155,26 @@ namespace OS.Hal
         {
             buffer = null;
             size = 0;
+
+            // Own FS bridge (see FileExists): when a volume is mounted,
+            // serve from our FAT instead of UEFI. Two passes — cap=0
+            // probes the size (dst unused), then allocate + fill. The
+            // host RWX-patches the returned buffer just like the UEFI
+            // pool one.
+            if (Fs.Current != null)
+            {
+                int probe = Fs.Current.ReadFile(path, null, 0, out uint fsz);
+                if (probe < 0 || fsz == 0)
+                    return false;
+                void* buf = SharpOS.Std.NoRuntime.GcHeap.AllocateRaw(fsz);
+                if (buf == null)
+                    return false;
+                if (Fs.Current.ReadFile(path, (byte*)buf, (int)fsz, out fsz) < 0)
+                    return false;
+                buffer = buf;
+                size = fsz;
+                return true;
+            }
 
             if (!s_initialized)
                 return false;

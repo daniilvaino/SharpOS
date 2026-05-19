@@ -6,9 +6,11 @@
 //  - MOOS.FS.Disk -> OS.Hal.Disk; namespace -> OS.Hal; public->internal.
 //  - PCI.Devices registry -> OS.Hal.Pci.TryFind(0x01,0x06); PCI command
 //    register enabled via ECAM (memory-space + bus-master bits).
-//  - Allocator.Allocate/ZeroFill -> AllocDma (PhysicalMemory page +
-//    identity map so virt==phys for DMA; zero-filled). ABAR is MMIO
-//    above RAM -> identity-mapped like ECAM/framebuffer.
+//  - Allocator.Allocate/ZeroFill -> AllocDma: the HBA reads/writes
+//    command list / FIS / PRDT / data by PHYSICAL address, so these
+//    buffers are PhysicalMemory pages identity-mapped (virt==phys),
+//    low-RAM (<4G), zero-filled. ABAR is MMIO above RAM ->
+//    identity-mapped like ECAM/framebuffer.
 //  - Native.Stosb -> inline zero loop. BitHelpers -> inline bit ops.
 //  - List<SATADevice> -> first usable SATA port only (the boot disk);
 //    Console.ToString/Panic.Error dropped. Write kept but unused (the
@@ -16,6 +18,7 @@
 //
 // Pure MMIO + polling, no Native/port I/O -> Invariant-1 clean.
 
+using System.Runtime.CompilerServices;
 using OS.Kernel;
 using OS.Kernel.Memory;
 
@@ -114,8 +117,18 @@ namespace OS.Hal
             return phys;
         }
 
+        // Non-hoistable MMIO read. Without this the JIT caches a port
+        // register across a poll loop (the loop body never writes
+        // through Port, so the read looks loop-invariant) and the spin
+        // never observes hardware progress. NoInlining forces a real
+        // load every poll — correctness by design, not by an
+        // accidental call barrier elsewhere in the loop.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static uint Rd(uint* p) => *p;
+
         public static bool Initialize()
         {
+            if (Device != null) return true;          // idempotent
             if (!Pci.TryFind(0x01, 0x06, out Pci.PciDev dev)) return false;
 
             // Enable memory space + bus master in the PCI command reg
@@ -244,17 +257,34 @@ namespace OS.Hal
                 return StartCMD();
             }
 
-            // Bounded busy-wait. MOOS polls with no timeout (sage-2
-            // flagged it); a stuck bit must fail loudly, not hang
-            // forever (a silent spin is indistinguishable from a
-            // triple-fault in the log). ~tens of ms worth on TCG.
-            private const int SpinGuard = 50_000_000;
+            // Bounded busy-wait by REAL TIME (HPET), not iteration
+            // count: a stuck bit must fail loudly, never spin forever,
+            // but a slow-but-completing command (QEMU VVFAT lazily
+            // materialises sectors — the 2nd+ I/O is much slower than
+            // the 1st) must not be cut off mid-flight. Returns a HPET
+            // tick deadline `ms` from now; Expired() checks it. Falls
+            // back to a large iteration budget if HPET isn't up.
+            private const long FallbackSpins = 2_000_000_000;
+
+            private static ulong Deadline(uint ms)
+            {
+                if (!global::OS.Hal.Timer.Hpet.IsInitialized) return 0;
+                ulong hz = global::OS.Hal.Timer.Hpet.FrequencyHz;
+                return global::OS.Hal.Timer.Hpet.ReadCounter() + hz / 1000UL * ms;
+            }
+
+            private static bool Expired(ulong deadline, ref long spins)
+            {
+                if (deadline != 0)
+                    return global::OS.Hal.Timer.Hpet.ReadCounter() >= deadline;
+                return --spins <= 0;
+            }
 
             public bool StartCMD()
             {
-                int g = SpinGuard;
-                while ((Port->CommandStatus & 0x8000) != 0)
-                    if (--g <= 0) return false;
+                ulong dl = Deadline(2000); long sp = FallbackSpins;
+                while ((Rd(&Port->CommandStatus) & 0x8000) != 0)
+                    if (Expired(dl, ref sp)) return false;
                 Port->CommandStatus |= 0x0010;
                 Port->CommandStatus |= 0x0001;
                 return true;
@@ -264,11 +294,11 @@ namespace OS.Hal
             {
                 Port->CommandStatus &= ~0x0001U;
                 Port->CommandStatus &= ~0x0010U;
-                int g = SpinGuard;
+                ulong dl = Deadline(2000); long sp = FallbackSpins;
                 while (true)
                 {
-                    if ((Port->CommandStatus & 0x4000) != 0) { if (--g <= 0) return false; continue; }
-                    if ((Port->CommandStatus & 0x8000) != 0) { if (--g <= 0) return false; continue; }
+                    if ((Rd(&Port->CommandStatus) & 0x4000) != 0) { if (Expired(dl, ref sp)) return false; continue; }
+                    if ((Rd(&Port->CommandStatus) & 0x8000) != 0) { if (Expired(dl, ref sp)) return false; continue; }
                     break;
                 }
                 return true;
@@ -329,23 +359,30 @@ namespace OS.Hal
                 FIS->DeviceRegister = 1 << 6;
                 FIS->Count = Count;
 
-                int g = SpinGuard;
-                while ((Port->TaskFileData & (0x80 | 0x08)) != 0)
-                    if (--g <= 0) return false;
+                // Wait device-ready, issue, wait completion. All polls
+                // read MMIO through Rd() (no compile-time hoist) and
+                // are bounded by a real-time HPET deadline (a stuck
+                // bit fails loudly; a slow-but-completing command — the
+                // 2nd+ VVFAT access is much slower than the 1st — is
+                // not cut off).
+                ulong dl = Deadline(2000); long sp = FallbackSpins;
+                while ((Rd(&Port->TaskFileData) & (0x80 | 0x08)) != 0)
+                    if (Expired(dl, ref sp)) return false;
 
                 Port->CommandIssue = (uint)(1 << Slot);
 
-                g = SpinGuard;
+                dl = Deadline(8000); sp = FallbackSpins;
                 while (true)
                 {
-                    if ((Port->CommandIssue & (1 << Slot)) == 0) break;
-                    if ((Port->InterruptStatus & (1 << 30)) != 0) return false;
-                    if (--g <= 0) return false;
+                    if ((Rd(&Port->CommandIssue) & (1 << Slot)) == 0) break;
+                    if ((Rd(&Port->InterruptStatus) & (1 << 30)) != 0) return false;
+                    if (Expired(dl, ref sp)) return false;
                 }
-                if ((Port->InterruptStatus & (1 << 30)) != 0) return false;
-                g = SpinGuard;
-                while (Port->CommandIssue != 0)
-                    if (--g <= 0) return false;
+                if ((Rd(&Port->InterruptStatus) & (1 << 30)) != 0) return false;
+
+                dl = Deadline(2000); sp = FallbackSpins;
+                while (Rd(&Port->CommandIssue) != 0)
+                    if (Expired(dl, ref sp)) return false;
                 return true;
             }
 

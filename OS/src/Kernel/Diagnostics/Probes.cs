@@ -120,10 +120,10 @@ namespace OS.Kernel.Diagnostics
         // deterministic (fixed QEMU topology); permanent oracle.
         public const bool PciScan = true;
 
-        // C-FS2 — AHCI/SATA driver (adapted MOOS SATA.cs). Brings up the
-        // ICH9 controller, reads LBA0 via DMA, checks the MBR signature.
-        // Headless-deterministic (QEMU VVFAT MBR); foundation for the
-        // read-only FAT32 stack. Permanent oracle.
-        public const bool AhciScan = true;
+        // C-FS2/FS3 (AHCI Disk + RO-FAT) have NO Phase-4 gate: bringing
+        // up AHCI reprograms the HBA the live UEFI firmware still owns,
+        // so it runs POST-EBS only (ExitBootServicesProbe), gated by
+        // ExitBootServicesExperiment. PciScan above is read-only and
+        // safe pre-EBS.
     }
 }
