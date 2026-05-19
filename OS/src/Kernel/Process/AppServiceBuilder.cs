@@ -42,6 +42,14 @@ namespace OS.Kernel.Process
 
         private static int s_exitRequested;
         private static int s_exitCode;
+
+        // Nested app-launch depth. RunExternalApp is the single choke
+        // point for service-driven app launches (a running guest
+        // calling RunApp). Max 1: the launcher may launch an app, but
+        // that app may not launch another (recursive HELLOCS) — capped
+        // before load so it returns `unsupported`, never the faulting
+        // nested build.
+        private static int s_runExternalDepth;
         private static uint s_publishedAbiVersion = AppServiceTable.AbiVersionV1;
 
         private static bool s_serviceThunksInitialized;
@@ -965,6 +973,17 @@ namespace OS.Kernel.Process
         {
             exitCode = 0;
 
+            // Max nested depth = 1: reject a recursive app->app launch
+            // up front (clean `unsupported`, no faulting nested build).
+            if (s_runExternalDepth >= 1)
+            {
+                DebugLog.Write(LogLevel.Info, "nested app launch rejected (max depth 1)");
+                return AppServiceStatus.Unsupported;
+            }
+            s_runExternalDepth++;
+            try
+            {
+
             BootInfo bootInfo = Platform.GetBootInfo();
             if (bootInfo.FileReadAll == null)
                 return AppServiceStatus.Unsupported;
@@ -1110,14 +1129,16 @@ namespace OS.Kernel.Process
                         DebugLog.Write(LogLevel.Warn, "parent context restore failed");
                         result = AppServiceStatus.DeviceError;
                     }
-                    else
-                    {
-                        DebugLog.Write(LogLevel.Info, "parent context restored");
-                    }
+                    // else: success path silenced — the kernel's
+                    // "---- child end ----" line is the authoritative
+                    // end-of-child marker; this was redundant noise.
+                    // else { DebugLog.Write(LogLevel.Info, "parent context restored"); }
                 }
             }
 
             return result;
+            }
+            finally { s_runExternalDepth--; }
         }
 
         private static bool TryValidateSegments(ref ElfParseResult result)

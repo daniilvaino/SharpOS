@@ -105,13 +105,15 @@ namespace OS.Kernel.Diagnostics
         // SHARPOS_GUI=1 to type at it. ILC dead-codes it when false.
         public const bool ShellInteractive = false;
 
-        // Phase C experiment — physically call ExitBootServices and
-        // prove the own UART+GOP+PS/2 substrate survives without UEFI.
-        // NEVER-RETURNING and tears down UEFI — must stay false for the
-        // headless regression battery; flip true to run the experiment
-        // (best under SHARPOS_GUI=1 to watch the post-EBS FB banner,
-        // serial also continues via the own 16550). ILC dead-codes it
-        // when false.
+        // Phase C — physically call ExitBootServices and run the rest
+        // of the boot (FAT mount, CoreCLR session, native launcher) on
+        // the own UART+GOP+PS/2+AHCI substrate, no UEFI. Tears down UEFI
+        // Boot Services irreversibly, so it must stay false for the
+        // headless regression battery; flip true to run firmware-free
+        // (best under SHARPOS_GUI=1 to watch the post-EBS FB banner +
+        // launcher, serial also continues via the own 16550). ILC
+        // dead-codes the whole path when false. Phase C4 = make this
+        // the default and retire the UEFI launcher.
         public const bool ExitBootServicesExperiment = false;
 
         // C-FS1 — PCI ECAM scan (adapted MOOS PCIExpress). Finds the

@@ -243,7 +243,9 @@ namespace OS.Kernel.Memory
                 s_tail = previous;
 
             s_coalesceCount++;
-            Log.Write(LogLevel.Trace, "heap coalesce");
+            // [trace] heap coalesce — silenced (per-coalesce log spam
+            // around child teardown); s_coalesceCount still tracks it.
+            // Log.Write(LogLevel.Trace, "heap coalesce");
             return previous;
         }
 
@@ -268,7 +270,9 @@ namespace OS.Kernel.Memory
                 s_tail = block;
 
             s_coalesceCount++;
-            Log.Write(LogLevel.Trace, "heap coalesce");
+            // [trace] heap coalesce — silenced (per-coalesce log spam
+            // around child teardown); s_coalesceCount still tracks it.
+            // Log.Write(LogLevel.Trace, "heap coalesce");
             return block;
         }
 

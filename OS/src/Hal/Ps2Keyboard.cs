@@ -61,7 +61,8 @@ namespace OS.Hal
             return n;
         }
 
-        public enum KeyKind { None, Char, Enter, Backspace, Escape, Control }
+        public enum KeyKind { None, Char, Enter, Backspace, Escape, Control,
+            Up, Down, Left, Right }
 
         // Pure: feed one set-1 scancode + current modifier latch, get a
         // classified key. Make codes only produce output; break codes
@@ -82,7 +83,17 @@ namespace OS.Hal
             if (make == 0x2A || make == 0x36) { s_shift = !isBreak; return KeyKind.Control; }
             if (make == 0x3A && !isBreak) { s_caps = !s_caps; return KeyKind.Control; }
             if (isBreak) return KeyKind.None;          // ignore other releases
-            if (ext) return KeyKind.Control;           // arrows/etc — not needed yet
+            if (ext)                                   // 0xE0-prefixed keys
+            {
+                switch (make)
+                {
+                    case 0x48: return KeyKind.Up;
+                    case 0x50: return KeyKind.Down;
+                    case 0x4B: return KeyKind.Left;
+                    case 0x4D: return KeyKind.Right;
+                    default:   return KeyKind.Control;  // other extended — n/a
+                }
+            }
 
             if (make == 0x1C) return KeyKind.Enter;
             if (make == 0x0E) return KeyKind.Backspace;

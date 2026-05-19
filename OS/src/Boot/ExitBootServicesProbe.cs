@@ -157,20 +157,18 @@ namespace OS.Boot
             if (OS.Kernel.Diagnostics.Probes.CoreClrInit)
                 BootSequence.RunCoreClrSession(Platform.GetBootInfo());
 
-            // Production end-state: a usable OS with UEFI gone. If the
-            // interactive gate is on, hand control to the native shell
-            // running entirely on the own substrate (PS/2 + FbTty +
-            // own 16550) — the first interactive SharpOS session with
-            // no firmware underneath. Otherwise halt (headless: the
-            // [ebsx] oracle above is the deterministic proof).
-            if (OS.Kernel.Diagnostics.Probes.ShellInteractive)
-            {
-                Console.WriteLine("[ebs] entering native shell (post-EBS, no UEFI)");
-                Shell.RunInteractive();
-            }
-
-            Console.WriteLine("[ebs] halting (no UEFI launcher post-EBS)");
-            Platform.Halt();
+            // Production end-state: a usable OS with UEFI gone. The
+            // native shell on the own substrate (PS/2 + FbTty + own
+            // 16550 + own FAT) IS the end now — not a halt dead-end.
+            // Headless has no keys so it idles at the prompt, exactly
+            // like a real OS waiting for input (all oracles/census are
+            // already on the log above).
+            // Return into the normal boot: Phase 5 (the ELF launcher
+            // + app-batch tests) now runs POST-EBS, reading every
+            // \EFI\BOOT\*.ELF from our own FAT (TryReadFile +
+            // DirectoryReadEntry are bridged to Fs.Current). No halt,
+            // no UEFI — the boot just continues firmware-free.
+            Console.WriteLine("[ebs] post-EBS — continuing into launcher via own FAT");
         }
     }
 }

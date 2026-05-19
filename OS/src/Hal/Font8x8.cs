@@ -154,5 +154,55 @@ namespace OS.Hal
             0x6E, 0x3B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // U+007E (~)
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // U+007F
         };
+
+        // Box-drawing / block / shade glyphs the TUI apps use (FETCH's
+        // banner). Kept out of Basic, which is strictly the 0..127 ASCII
+        // page. Same row encoding; a full row = 0xFF. Public-domain
+        // CP437-style shapes: half/full fills, the classic 25%/50%
+        // dither, and a centred rule. Source is pure ASCII on purpose
+        // (codepoints by number, never literal glyphs) so the build
+        // never depends on .cs file encoding.
+        public static readonly byte[] Ext = new byte[6 * CharHeight]
+        {
+            0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, // 0 U+2580 upper half block
+            0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, // 1 U+2584 lower half block
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // 2 U+2588 full block
+            0x88, 0x00, 0x22, 0x00, 0x88, 0x00, 0x22, 0x00, // 3 U+2591 light shade
+            0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, // 4 U+2592 medium shade
+            0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, // 5 U+2500 horizontal rule
+        };
+
+        // Index into Ext for the carried box/block/shade codepoints;
+        // -1 = not one we carry (caller falls back to '?'). (char)0xNNNN
+        // constants keep this switch ASCII-only and encoding-proof.
+        public static int ExtIndex(char ch)
+        {
+            switch (ch)
+            {
+                case (char)0x2580: return 0;   // upper half block
+                case (char)0x2584: return 1;   // lower half block
+                case (char)0x2588: return 2;   // full block
+                case (char)0x2591: return 3;   // light shade
+                case (char)0x2592: return 4;   // medium shade
+                case (char)0x2500: return 5;   // horizontal rule
+                default:           return -1;
+            }
+        }
+
+        // One glyph row for any char: ASCII from Basic, carried box
+        // glyphs from Ext, anything else from '?' -- never an
+        // out-of-range read.
+        public static byte Row(char ch, int row)
+        {
+            int code = ch;
+            if (code >= 0 && code < CharCount) return Basic[code * CharHeight + row];
+            int e = ExtIndex(ch);
+            if (e >= 0) return Ext[e * CharHeight + row];
+            return Basic['?' * CharHeight + row];
+        }
+
+        // Renderable on the FB: ASCII 0x20..0x7E or a carried box glyph.
+        public static bool IsRenderable(char ch)
+            => (ch >= (char)0x20 && ch < (char)0x7F) || ExtIndex(ch) >= 0;
     }
 }

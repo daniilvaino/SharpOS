@@ -30,6 +30,18 @@ namespace OS.Hal
 
         public static void UseOwnConsole() => s_ownConsole = true;
 
+        // Repoint the BootInfo file/dir delegates at the FAT bridge so
+        // every raw bootInfo.* caller (app-service ABI, guest launcher,
+        // ELF loader) reads our FAT, not dead UEFI. Called once by
+        // Vfs.Mount after a volume comes up.
+        public static void UseFatBootDelegates()
+        {
+            s_bootInfo.FileExists         = &FatBootBridge.FileExists;
+            s_bootInfo.FileReadAll        = &FatBootBridge.FileReadAll;
+            s_bootInfo.FileReadIntoBuffer = &FatBootBridge.FileReadIntoBuffer;
+            s_bootInfo.DirectoryReadEntry = &FatBootBridge.DirectoryReadEntry;
+        }
+
         // True once the console has been rerouted off UEFI — the
         // ExitBootServices boundary. Any UEFI Boot Services call after
         // this point hits dead firmware, so the post-EBS-dangerous
@@ -42,7 +54,7 @@ namespace OS.Hal
         {
             if (s_ownConsole)
             {
-                Serial.WriteByte((byte)value);
+                Serial.WriteChar(value);
                 FbTty.Putc(value);
                 return;
             }
@@ -98,6 +110,37 @@ namespace OS.Hal
         {
             unicodeChar = 0;
             scanCode = 0;
+
+            // Post-EBS UEFI SimpleTextInput is dead — read the own PS/2
+            // instead, mapping to the (unicodeChar, scanCode) the
+            // launcher/shell expect (Enter=CR, Esc=SCAN 0x17). Same
+            // bridge idea as the file seam.
+            if (BootServicesGone)
+            {
+                if (!Ps2Keyboard.TryReadScancode(out byte psc))
+                    return KeyboardReadStatus.NoKey;
+                switch (Ps2Keyboard.Decode(psc, out char pch, out _))
+                {
+                    case Ps2Keyboard.KeyKind.Char:
+                        unicodeChar = pch; return KeyboardReadStatus.KeyAvailable;
+                    case Ps2Keyboard.KeyKind.Enter:
+                        unicodeChar = 0x0D; return KeyboardReadStatus.KeyAvailable;
+                    case Ps2Keyboard.KeyKind.Backspace:
+                        unicodeChar = 0x08; return KeyboardReadStatus.KeyAvailable;
+                    case Ps2Keyboard.KeyKind.Escape:
+                        scanCode = 0x17; return KeyboardReadStatus.KeyAvailable;
+                    case Ps2Keyboard.KeyKind.Up:
+                        scanCode = 0x01; return KeyboardReadStatus.KeyAvailable;
+                    case Ps2Keyboard.KeyKind.Down:
+                        scanCode = 0x02; return KeyboardReadStatus.KeyAvailable;
+                    case Ps2Keyboard.KeyKind.Right:
+                        scanCode = 0x03; return KeyboardReadStatus.KeyAvailable;
+                    case Ps2Keyboard.KeyKind.Left:
+                        scanCode = 0x04; return KeyboardReadStatus.KeyAvailable;
+                    default:
+                        return KeyboardReadStatus.NoKey;     // Control/None
+                }
+            }
 
             if (!s_initialized)
                 return KeyboardReadStatus.Unsupported;
@@ -212,6 +255,15 @@ namespace OS.Hal
         {
             nameLength = 0;
             attributes = 0;
+
+            // Own FS bridge (see TryReadFile): post-mount the launcher
+            // enumerates \EFI\BOOT via our FAT, no UEFI.
+            if (Fs.Current != null)
+            {
+                if (nameBuffer == null || nameBufferChars == 0) return false;
+                return Fs.Current.EnumDir(directoryPath, index,
+                    nameBuffer, nameBufferChars, out nameLength, out attributes);
+            }
 
             if (!s_initialized)
                 return false;

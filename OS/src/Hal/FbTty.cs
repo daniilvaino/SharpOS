@@ -8,7 +8,7 @@ namespace OS.Hal
     // need no guard.
     internal static class FbTty
     {
-        private const int Scale = 2;                 // 8x8 -> 16x16 cell
+        private const int Scale = 1;                 // 8x8 pixel-for-pixel
         private const int Margin = 8;
 
         private static int s_cx, s_cy;
@@ -60,7 +60,7 @@ namespace OS.Hal
             if (!s_ready) return;
             if (ch == '\n') { NewLine(); return; }
             if (ch == '\r') return;
-            if (ch < (char)0x20 || ch >= (char)0x7F) return;
+            if (!Font8x8.IsRenderable(ch)) return;
 
             if (s_cx + CellW > (int)Framebuffer.Width - Margin) NewLine();
             FbConsole.DrawChar(s_cx, s_cy, ch, s_fg,

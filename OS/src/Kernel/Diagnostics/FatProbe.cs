@@ -62,6 +62,25 @@ namespace OS.Kernel.Diagnostics
             Console.Write(" mz=");
             Console.Write(platMz ? "Y" : "N");
             Console.WriteLine(platMz ? " PASS" : " FAIL");
+
+            // EnumDir cheap-detector: what does \EFI\BOOT actually
+            // enumerate via our FAT (diagnoses the launcher's empty
+            // listing without guessing)?
+            char* nm = stackalloc char[64];
+            Console.Write("[fatdir] EFI/BOOT:");
+            int de = 0;
+            for (uint i = 0; i < 16; i++)
+            {
+                if (!fs.EnumDir("EFI/BOOT", i, nm, 64, out uint nl, out ulong at))
+                    break;
+                Console.Write(" ");
+                for (uint j = 0; j < nl && j < 64; j++) Console.WriteChar(nm[j]);
+                if ((at & 0x10) != 0) Console.Write("/");
+                de++;
+            }
+            Console.Write(" (n=");
+            Console.WriteInt(de);
+            Console.WriteLine(")");
         }
 
         private static bool CheckMz(Fs fs, string path, out uint size)

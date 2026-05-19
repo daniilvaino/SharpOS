@@ -69,16 +69,13 @@ namespace OS.Hal
         {
             if (!Framebuffer.IsAvailable) return;
             if (scale < 1) scale = 1;
-            int code = ch;
-            if (code < 0 || code >= Font8x8.CharCount) code = '?';
-            int glyph = code * Font8x8.CharHeight;
 
             int fbW = (int)Framebuffer.Width;
             int fbH = (int)Framebuffer.Height;
 
             for (int row = 0; row < Font8x8.CharHeight; row++)
             {
-                byte bits = Font8x8.Basic[glyph + row];
+                byte bits = Font8x8.Row(ch, row);
                 for (int col = 0; col < Font8x8.CharWidth; col++)
                 {
                     bool on = (bits & (1 << col)) != 0;

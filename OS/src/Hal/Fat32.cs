@@ -167,30 +167,12 @@ namespace OS.Hal
             }
         }
 
-        // Uppercase 8.3 compare: entry 11-byte field vs "NAME    EXT".
-        private static bool Name83Eq(byte* ent, byte* want11)
-        {
-            for (int i = 0; i < 11; i++)
-                if (ent[i] != want11[i]) return false;
-            return true;
-        }
-
-        // Build the padded 11-byte 8.3 field from path[cs, cs+cl)
-        // (no Substring — that BCL surface isn't guaranteed here).
-        private static void Make83(string path, int cs, int cl, byte* outp)
-        {
-            for (int i = 0; i < 11; i++) outp[i] = (byte)' ';
-            int dot = -1;
-            for (int i = 0; i < cl; i++) if (path[cs + i] == '.') { dot = i; break; }
-            int nameLen = dot < 0 ? cl : dot;
-            for (int i = 0; i < nameLen && i < 8; i++)
-                outp[i] = Up((byte)path[cs + i]);
-            if (dot >= 0)
-                for (int i = 0; i < cl - dot - 1 && i < 3; i++)
-                    outp[8 + i] = Up((byte)path[cs + dot + 1 + i]);
-        }
-
-        private static byte Up(byte c) => (c >= (byte)'a' && c <= (byte)'z') ? (byte)(c - 32) : c;
+        // NOTE: there is deliberately no Make83/Is83 here. A reader must
+        // never fabricate an 8.3 key from a requested name — the writer's
+        // ~N alias protocol is its private business and unknowable from a
+        // long name, so a guessed key can alias the wrong file. FindIn
+        // matches only against names actually stored on disk (the
+        // reconstructed LFN and the verbatim 8.3 short field).
 
         // Find a directory entry named `comp` within the directory that
         // starts at `dirCluster` (0 => FAT16 fixed root). Fills first
@@ -235,10 +217,9 @@ namespace OS.Hal
             out uint firstClus, out uint size, out bool isDir)
         {
             firstClus = 0; size = 0; isDir = false;
-            byte* want = stackalloc byte[11];
-            Make83(path, cs, cl, want);
             char* lfn = stackalloc char[260];
             int lfnLen = 0;
+            char* n83 = stackalloc char[13];   // decoded stored 8.3 ("NAME.EXT")
 
             bool fat16Root = !s_isFat32 && dirCluster == 0;
             uint cluster = fat16Root ? 0 : (dirCluster == 0 ? s_rootClus : dirCluster);
@@ -266,8 +247,19 @@ namespace OS.Hal
                             continue;
                         }
                         if ((ent[11] & 0x08) != 0) { lfnLen = 0; continue; } // vol label
-                        bool hit = (lfnLen > 0 && LongNameEq(path, cs, cl, lfn, lfnLen))
-                                   || Name83Eq(ent, want);
+                        // Collision-impossible match: compare the request
+                        // ONLY against names this entry actually stores on
+                        // disk — its reconstructed LFN (if any) and its
+                        // verbatim 8.3 short field. No fabricated key, no
+                        // lossy prefilter, so a wrong file can never alias
+                        // a right one regardless of what a writer chose for
+                        // its ~N alias. Both compares are case-insensitive.
+                        bool hit = lfnLen > 0 && LongNameEq(path, cs, cl, lfn, lfnLen);
+                        if (!hit)
+                        {
+                            int n83Len = Name83Out(ent, n83, 13);
+                            hit = LongNameEq(path, cs, cl, n83, n83Len);
+                        }
                         lfnLen = 0;
                         if (hit)
                         {
@@ -322,6 +314,101 @@ namespace OS.Hal
 
         public static bool Exists(string path)
             => Resolve(path, out _, out _, out _);
+
+        // Emit a trimmed 8.3 name ("NAME.EXT") into out[].
+        private static int Name83Out(byte* ent, char* outp, uint cap)
+        {
+            int nl = 8; while (nl > 0 && ent[nl - 1] == (byte)' ') nl--;
+            int el = 3; while (el > 0 && ent[8 + el - 1] == (byte)' ') el--;
+            int o = 0;
+            for (int i = 0; i < nl && o < cap; i++) outp[o++] = (char)ent[i];
+            if (el > 0 && o < cap)
+            {
+                outp[o++] = '.';
+                for (int i = 0; i < el && o < cap; i++) outp[o++] = (char)ent[8 + i];
+            }
+            return o;
+        }
+
+        // Directory enumeration: the `index`-th real entry of the dir
+        // at `path` ("" / "/" = root). Writes the name (LFN if present,
+        // else 8.3) into nameOut, sets attrs (0x10 = directory).
+        // Returns false past the end / bad path.
+        public static bool EnumDir(string path, uint index,
+            char* nameOut, uint nameCap, out uint nameLen, out ulong attrs)
+        {
+            nameLen = 0; attrs = 0;
+            if (!s_mounted) return false;
+
+            uint dirCluster;
+            bool fat16Root;
+            // Trim leading separators; empty => root.
+            int s0 = 0; while (s0 < path.Length &&
+                (path[s0] == '/' || path[s0] == '\\')) s0++;
+            if (s0 >= path.Length)
+            {
+                fat16Root = !s_isFat32;
+                dirCluster = s_isFat32 ? s_rootClus : 0;
+            }
+            else
+            {
+                if (!Resolve(path, out uint dc, out _, out bool isD) || !isD)
+                    return false;
+                fat16Root = false;
+                dirCluster = dc;
+            }
+
+            char* lfn = stackalloc char[260];
+            int lfnLen = 0;
+            uint seen = 0;
+            uint cluster = dirCluster;
+            uint rootSecs = fat16Root
+                ? ((s_rootEntCnt * 32u) + (s_bps - 1)) / s_bps : 0;
+            uint secInRoot = 0;
+
+            while (true)
+            {
+                uint secsThis = fat16Root ? rootSecs : s_spc;
+                for (uint si = 0; si < secsThis; si++)
+                {
+                    ulong lba = fat16Root
+                        ? s_rootLba + secInRoot + si
+                        : ClusterLba(cluster) + si;
+                    if (!ReadAbs(lba)) return false;
+                    for (uint off = 0; off < s_bps; off += 32)
+                    {
+                        byte* ent = s_sec + off;
+                        if (ent[0] == 0x00) return false;        // end of dir
+                        if (ent[0] == 0xE5) { lfnLen = 0; continue; }
+                        if ((ent[11] & 0x0F) == 0x0F)
+                        { LfnFrag(ent, lfn, ref lfnLen); continue; }
+                        if ((ent[11] & 0x08) != 0) { lfnLen = 0; continue; }
+                        if (seen == index)
+                        {
+                            int o;
+                            if (lfnLen > 0)
+                            {
+                                o = lfnLen > (int)nameCap ? (int)nameCap : lfnLen;
+                                for (int i = 0; i < o; i++) nameOut[i] = lfn[i];
+                            }
+                            else o = Name83Out(ent, nameOut, nameCap);
+                            nameLen = (uint)o;
+                            attrs = (ulong)(ent[11] & 0x10);
+                            return true;
+                        }
+                        seen++;
+                        lfnLen = 0;
+                    }
+                }
+                if (fat16Root)
+                {
+                    secInRoot += rootSecs;
+                    return false;                                // single pass
+                }
+                cluster = FatNext(cluster);
+                if (cluster == 0) return false;
+            }
+        }
 
         public static int ReadFile(string path, byte* dst, int cap, out uint fileSize)
         {

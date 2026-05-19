@@ -36,6 +36,8 @@
     <Compile Include="..\..\std\no-runtime\shared\StringTransforms.cs" Link="std\StringTransforms.cs" />
     <Compile Include="..\..\std\no-runtime\shared\NumberFormatting.cs" Link="std\NumberFormatting.cs" />
     <Compile Include="..\..\std\no-runtime\shared\GC\MethodTable.cs" Link="std\GC\MethodTable.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="std\GC\OptionalFieldsReader.cs" />
+    <Compile Include="..\..\std\no-runtime\shared\GC\NativeFormatDecoder.cs" Link="std\GC\NativeFormatDecoder.cs" />
     <Compile Include="..\..\std\no-runtime\shared\GC\GcDescSeries.cs" Link="std\GC\GcDescSeries.cs" />
     <Compile Include="..\..\std\no-runtime\shared\GC\GcObject.cs" Link="std\GC\GcObject.cs" />
     <Compile Include="..\..\std\no-runtime\shared\GC\GcSegment.cs" Link="std\GC\GcSegment.cs" />

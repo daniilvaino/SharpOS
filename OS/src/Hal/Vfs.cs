@@ -16,6 +16,7 @@ namespace OS.Hal
             if (Fat32.Mount(disk))
             {
                 Fs.Current = new Fat32Fs();
+                Platform.UseFatBootDelegates();   // raw bootInfo.* -> FAT
                 return Fs.Current;
             }
 
@@ -31,5 +32,9 @@ namespace OS.Hal
             => Fat32.ReadFile(path, dst, cap, out fileSize);
 
         public override bool Exists(string path) => Fat32.Exists(path);
+
+        public override bool EnumDir(string path, uint index,
+            char* nameOut, uint nameCap, out uint nameLen, out ulong attrs)
+            => Fat32.EnumDir(path, index, nameOut, nameCap, out nameLen, out attrs);
     }
 }

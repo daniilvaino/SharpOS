@@ -313,18 +313,21 @@ namespace HelloSharpFs
 
         private static void WriteResultBlock(string name, AppServiceStatus status, int exitCode)
         {
-            AppHost.WriteString("---- app result ----\n");
-            AppHost.WriteString("name: ");
-            AppHost.WriteString(name);
-            AppHost.WriteString(NewLine);
-            AppHost.WriteString("status: ");
-            AppHost.WriteString(StatusName(status));
-            AppHost.WriteString(NewLine);
-            AppHost.WriteString("exit: ");
-            AppHost.WriteUInt((uint)exitCode);
-            AppHost.WriteString(NewLine);
-            AppHost.WriteString("--------------------\n");
-            AppHost.WriteString(NewLine);
+            // Result block intentionally silenced — the kernel already
+            // prints the authoritative "---- child end: exit=N ----"
+            // line; this launcher echo was redundant noise.
+            // AppHost.WriteString("---- app result ----\n");
+            // AppHost.WriteString("name: ");
+            // AppHost.WriteString(name);
+            // AppHost.WriteString(NewLine);
+            // AppHost.WriteString("status: ");
+            // AppHost.WriteString(StatusName(status));
+            // AppHost.WriteString(NewLine);
+            // AppHost.WriteString("exit: ");
+            // AppHost.WriteUInt((uint)exitCode);
+            // AppHost.WriteString(NewLine);
+            // AppHost.WriteString("--------------------\n");
+            // AppHost.WriteString(NewLine);
         }
 
         private static string StatusName(AppServiceStatus status)

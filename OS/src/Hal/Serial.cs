@@ -65,12 +65,31 @@ namespace OS.Hal
             PortIo.Out8(Com1 + Data, b);
         }
 
-        // '\n' → CRLF so terminals / captured logs render correctly
-        // (matches the CRLF the UEFI ConOut mirror produced).
+        // '\n' -> CRLF so terminals / captured logs render correctly
+        // (matches the CRLF the UEFI ConOut mirror produced). Non-ASCII
+        // codepoints are UTF-8 encoded rather than truncated to a single
+        // garbage byte, so box/block glyphs (FETCH's banner) survive the
+        // post-EBS serial path into any UTF-8 terminal / QEMU log. BMP
+        // only — chars are UTF-16 code units (no surrogate pairing).
         public static void WriteChar(char c)
         {
-            if (c == '\n') WriteByte((byte)'\r');
-            WriteByte((byte)c);
+            if (c == '\n') { WriteByte((byte)'\r'); WriteByte((byte)'\n'); return; }
+            uint cp = c;
+            if (cp < 0x80)
+            {
+                WriteByte((byte)cp);
+            }
+            else if (cp < 0x800)
+            {
+                WriteByte((byte)(0xC0 | (cp >> 6)));
+                WriteByte((byte)(0x80 | (cp & 0x3F)));
+            }
+            else
+            {
+                WriteByte((byte)(0xE0 | (cp >> 12)));
+                WriteByte((byte)(0x80 | ((cp >> 6) & 0x3F)));
+                WriteByte((byte)(0x80 | (cp & 0x3F)));
+            }
         }
 
         public static void WriteString(string s)

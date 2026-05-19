@@ -16,5 +16,10 @@ namespace OS.Hal
         public abstract int ReadFile(string path, byte* dst, int cap, out uint fileSize);
 
         public abstract bool Exists(string path);
+
+        // The `index`-th entry of directory `path` ("" / "/" = root).
+        // name -> nameOut (nameLen chars), attrs bit 0x10 = directory.
+        public abstract bool EnumDir(string path, uint index,
+            char* nameOut, uint nameCap, out uint nameLen, out ulong attrs);
     }
 }

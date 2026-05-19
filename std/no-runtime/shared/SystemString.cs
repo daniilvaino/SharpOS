@@ -43,18 +43,11 @@ namespace System
                 for (int i = 0; i < length; i++) dest[i] = value[startIndex + i];
         }
 
-        public String(ReadOnlySpan<char> value)
-        {
-            int n = value.Length;
-            if (n == 0)
-            {
-                Length = 0;
-                return;
-            }
-            Length = n;
-            fixed (char* dest = &_firstChar)
-                for (int i = 0; i < n; i++) dest[i] = value[i];
-        }
+        // String(ReadOnlySpan<char>) lives in SystemString.Span.cs — it
+        // is the only Span-typed member, split out so projects without
+        // the Span types (the minimal apps) can compile a coherent
+        // Span-free String. Kernel/OS.csproj carries Span and includes
+        // that partial; apps don't include it and never call the ctor.
 
         // Internal allocation helper. Mirrors BCL's internal
         // `string.FastAllocateString(int)` — returns a fresh string with
