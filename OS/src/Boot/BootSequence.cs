@@ -236,6 +236,9 @@ namespace OS.Boot
             if (Probes.ShellEngine)
                 ShellProbe.Run();
 
+            if (Probes.PciScan)
+                PciProbe.Run();
+
             if (Probes.GcHeapSmoke)
                 GcHeapSmokeTest.Run();
 

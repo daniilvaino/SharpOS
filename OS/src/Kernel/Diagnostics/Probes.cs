@@ -113,5 +113,11 @@ namespace OS.Kernel.Diagnostics
         // serial also continues via the own 16550). ILC dead-codes it
         // when false.
         public const bool ExitBootServicesExperiment = false;
+
+        // C-FS1 — PCI ECAM scan (adapted MOOS PCIExpress). Finds the
+        // q35 AHCI controller (class 0x01/0x06, ABAR=BAR5) — foundation
+        // for the own-substrate read-only FAT32 stack. Headless-
+        // deterministic (fixed QEMU topology); permanent oracle.
+        public const bool PciScan = true;
     }
 }
