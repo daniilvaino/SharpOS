@@ -119,5 +119,11 @@ namespace OS.Kernel.Diagnostics
         // for the own-substrate read-only FAT32 stack. Headless-
         // deterministic (fixed QEMU topology); permanent oracle.
         public const bool PciScan = true;
+
+        // C-FS2 — AHCI/SATA driver (adapted MOOS SATA.cs). Brings up the
+        // ICH9 controller, reads LBA0 via DMA, checks the MBR signature.
+        // Headless-deterministic (QEMU VVFAT MBR); foundation for the
+        // read-only FAT32 stack. Permanent oracle.
+        public const bool AhciScan = true;
     }
 }

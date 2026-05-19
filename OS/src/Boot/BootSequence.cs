@@ -239,6 +239,9 @@ namespace OS.Boot
             if (Probes.PciScan)
                 PciProbe.Run();
 
+            if (Probes.AhciScan)
+                AhciProbe.Run();
+
             if (Probes.GcHeapSmoke)
                 GcHeapSmokeTest.Run();
 
