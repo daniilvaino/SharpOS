@@ -160,48 +160,46 @@ ELF — тестовая площадка (ILC через WSL/Ubuntu, `linux-x64
   pause/scan + рост гостевого стека `128 KiB → 16 MiB` (для reflection
   / `System.Text.Json`).
 
-### Что не работает — единственный EH-фронтир (§11)
+### EH-фронтир §11 — закрыт (step 90) ✅
 
-Симптом одинаковый во всех 💥-случаях (Socket / OpenSSL / threading):
-```
-[seh] invalid Rip=0x<стек-адрес> — stop walk
-[SehDispatch] no handler matched — HALT
-[PANIC] unhandled exception
-```
+Был **единственный** non-EH-баг класс — managed-to-unmanaged
+transition stubs (P/Invoke / reflection invoke / helper-method
+transitions). CoreCLR'овский `CallDescrWorkerInternal` (handwritten
+asm в `vm/amd64/CallDescrWorkerAMD64.asm`) и аналоги пушат на стек
+`Frame*` указатель в место retaddr'а — настоящий continuation
+context живёт **в `Frame*`-объекте** (per-thread linked list, head
+в `Thread::m_pFrame`), не в стеке. Наш walker наивно читал `*rsp`
+→ попадал на этот `Frame*` адрес → fail IsValidIp → HALT,
+никакого user-catch'а не достигалось.
 
-**Root cause** (выявлен в step-89, см. `done/step080.md`): walker
-**корректно** разматывает все стандартные кадры по UNWIND_INFO — это
-проверено per-opcode трейсом. Точка отказа — кадр, чьи байты
-(`53 56 55 48 8B EC 48 8B D9 8B 4B 08`…) и custom personality
-`CallDescrWorkerUnwindFrameChainHandler` однозначно идентифицируют
-его как **`CallDescrWorkerInternal`** (handwritten asm trampoline
-для managed-to-unmanaged transitions, `src/coreclr/vm/amd64/Call-
-DescrWorkerAMD64.asm`).
+**Fix (step 90)** — `SehDispatch.TryActivateFrameChain(Context*)`:
+читает `Thread::m_pFrame` через два EXTERN_C helper'а в форке
+(`SharpOSHost_GetCurrentFrame` / `SharpOSHost_SetCurrentFrame`); для
+активного `InlinedCallFrame` overrid'ит ctx из его полей
+(`m_pCallerReturnAddress`/`m_pCallSiteSP`/`m_pCalleeSavedFP`).
+Hook'и в обоих walker'ах — search-pass `DispatchException` и
+unwind-pass `RtlUnwind` — на месте bail'а по `IsValidIp` пробуют
+FrameChain skip до halt'а. Анти-реактивация — `CallSiteSP > Rsp`
+guard, pop делает personality routine во время unwind pass
+(`CleanUpForSecondPass`). Frame layout в форке — без vtable,
+ID-based dispatch.
 
-Через **stub-mechanism** CoreCLR (P/Invoke, reflection invoke,
-helper-method transitions) НЕ использует normal `call`/`ret` —
-вместо retaddr на стек пушится указатель на `Frame*` структуру
-(per-thread linked list, head в `Thread::m_pFrame`). Настоящий
-continuation context живёт **в `Frame*`-объекте**, не в стек-слоте.
+**Не threading** — singleton `Thread*` + `Frame*`-семейство
+struct'ов, без scheduler'а / TLS / SwitchToThread (это всё
+Phase E, остаётся отложенным).
 
-Наш walker наивно читает `*rsp` → попадает на self-referential
-`Frame*` указатель (= стековый адрес) → fails IsValidIp → HALT.
+**Покрыто**: `InlinedCallFrame` (P/Invoke / reflection invoke /
+helper-method transitions). Census-cohort Socket / OpenSSL /
+P/Invoke trap'ы — теперь catchable `SEHException`.
+**Не покрыто** (если потребуется в будущем): `HelperMethodFrame`,
+`TransitionFrame`, `UMThunk*` и т.д. — добавление ветки в
+TryActivateFrameChain по `frameId`. В текущем census не триггерятся.
 
-**Это не «port `RtlVirtualUnwind`» и не «PE/Win64 dispatcher
-protocol»** — гипотезы опровергнуты в step-89. Реальный fix —
-**интеграция walker'а с CoreCLR's `Thread::m_pFrame`**:
-
-1. Распознавать stub-frame по personality address.
-2. Дёрнуть `GetThread()->m_pFrame`, вызвать его `UpdateRegDisplay()`.
-3. Восстановить настоящий caller's Rip/Rsp/Rbp, поп'нуть Frame*.
-
-Это **не threading** — нужна *структура* `Thread*`+`Frame*` (singleton),
-не scheduler. `GetThread()` в форке уже работает; `m_pFrame`
-CoreCLR ведёт сам. Gap — только читалка. Оценка: 1-2 недели.
-
-Step-71/step-72 — локальные пластыри для **двух других** классов
-кадров (native-origin RBP-clobber в `CallCatchFunclet` /
-`GetStackSlot`); они закрывают свои сценарии и останутся.
+**Остаётся как настоящий HARD-PANIC** (другой класс, **не** §11):
+threading cohort — `new Thread().Start()`, `ThreadPool`, `Task.Run`,
+`Timer`, `Thread.Sleep`. Эти идут через direct `SharpOSHost_Panic`
+в `SleepEx`/`SwitchToThread`-стабах **без** поднятия C-SEH —
+walker даже не запускается. Это Phase E (threading-PAL), не EH.
 
 ---
 

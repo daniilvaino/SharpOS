@@ -186,10 +186,18 @@ Workaround: реального треда нет; threading-PAL — отдель
 
 ---
 
-## 11. Единый некатчабл корень (отложенный фронтир) ⚠️
+## 11. Единый некатчабл корень — ЗАКРЫТ (step 90) ✅
 
-Симптом во всех 💥-случаях (`Socket`, OpenSSL `RNG`/`SHA256`,
-OS-thread spawn) **один и тот же**:
+**Статус:** закрыт. `Socket` / OpenSSL `RNG` / `SHA256` и прочие
+P/Invoke-через-stub trap'ы теперь ловятся как catchable `SEHException`
+— верифицировано полным census-прогоном (`OK=20 DEG=2 FAIL=22`, ноль
+HALT'ов; см. `done/step081.md`). Threading-cohort (`new Thread()`,
+`ThreadPool`, `Task.Run`, `Timer`, `Thread.Sleep`) **остаётся**
+гарантированным HALT — это другой класс (direct `SharpOSHost_Panic`
+в `SleepEx`/`SwitchToThread`-стабах, C-SEH не поднимается, walker
+не запускается). Threading-PAL — отдельный фронт (Phase E).
+
+**Что было** (до step 90). Симптом во всех 💥-случаях:
 
 ```
 [__C_specific_handler] ... filter returned 0
@@ -238,18 +246,46 @@ walker'а с CoreCLR's per-thread FrameChain**:
 3. Продолжить раскрутку с восстановленного контекста, поп'нуть
    `Frame*` с FrameChain.
 
-Объём — **не threading-PAL**: нужна *структура* `Thread*`+`Frame*`
-(singleton, одна инстанция), не scheduler. `GetThread()` в форке
-уже работает; `m_pFrame` поддерживается CoreCLR'ом автоматически.
-Gap — **только читалка** в нашем SehDispatch. Оценка: **1-2 недели**
-sequential работы (импорт layout-совместимых деклараций `Thread` +
-`Frame*`-семейства типов + walker integration + регрессии).
+**Что сделано** (step 90). Реализовано ровно три части — без
+порта `RtlVirtualUnwind`, без threading-PAL:
+
+1. Форк: два `SharpOSHost_*` helper'а в `vm/exceptionhandling.cpp`,
+   возвращают/обновляют `Thread::m_pFrame` (read и pop).
+2. Kernel C# `SehDispatch.TryActivateFrameChain(Context*)`:
+   читает `m_pFrame`, для активного `InlinedCallFrame` (frameId=1,
+   `m_pCallerReturnAddress != 0`) overrid'ит `ctx->{Rip,Rsp,Rbp}`
+   из полей `CallerRA`/`CallSiteSP`/`CalleeSavedFP`. Анти-
+   реактивация через `CallSiteSP > ctx->Rsp` guard (не нужно
+   поп'ать в search pass — pop делает personality во время
+   unwind через `CleanUpForSecondPass`).
+3. Hook'и в **обоих** walker'ах SehDispatch — search pass
+   (`DispatchException`) и unwind pass (`RtlUnwind`) — при
+   `IsValidIp(controlPc) == false` пробуем FrameChain skip
+   до bail-а.
+
+Frame layout в форке **без vtable** (ID-based dispatch — см.
+`vm/frames.h`):
+```
++0:  FrameIdentifier _frameIdentifier   (1 = InlinedCallFrame)
++8:  PTR_Frame       m_Next              (~0 = FRAME_TOP)
++24: m_pCallSiteSP                       (caller's RSP)
++32: m_pCallerReturnAddress              (caller's RIP — managed JIT)
++40: m_pCalleeSavedFP                    (caller's RBP)
+```
 
 Step-71 (`CallCatchFunclet` RBP) и step-72 (`GetStackSlot` GC RBP)
-остаются локальными пластырями для **двух уже-решённых** классов
-кадров. step-89 диагностический trace-scaffolding (gated `const
-bool TraceUnwind = false` в `SehUnwind`, `Trace = false` в
-`SehDispatch`) живёт в коде на случай повторных раскопок.
+остаются локальными пластырями для **двух других** классов кадров
+(native-origin throw + GC stack-slot RBP). step-89 диагностический
+trace-scaffolding (gated `const bool TraceUnwind/Trace = false` в
+`SehUnwind`/`SehDispatch`) живёт в коде на случай повторных
+раскопок (ILC дед-кодит когда `false`).
+
+**Не покрыто** (если когда-то потребуется): другие Frame-типы
+(`HelperMethodFrame`, `TransitionFrame`, `PInvokeCalliFrame`,
+`UMThunkUnwindFrameChainHandler`'ные кадры и т.д.). В текущей
+census-батарее они не триггерятся; если будущий probe их встретит,
+расширение TryActivateFrameChain тривиально (добавить ветку по
+`frameId`).
 
 ---
 

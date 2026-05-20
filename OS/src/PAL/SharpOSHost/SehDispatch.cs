@@ -343,6 +343,13 @@ namespace OS.PAL.SharpOSHost
 
                 if (!IsValidIp(controlPc))
                 {
+                    // Phase D iteration 3 — before bailing, try FrameChain
+                    // skip-through (see TryActivateFrameChain). Same hook
+                    // is mirrored in RtlUnwind's second-pass walker.
+                    if (TryActivateFrameChain(searchCtx))
+                    {
+                        continue;
+                    }
                     Console.Write("[seh] invalid Rip=0x"); Console.WriteHex(controlPc);
                     Console.WriteLine(" — stop walk");
                     break;
@@ -629,7 +636,22 @@ namespace OS.PAL.SharpOSHost
             {
                 ulong rawRip = uc->Rip;
                 ulong controlPc = rawRip - 1;
-                if (!IsValidIp(controlPc)) break;
+                if (!IsValidIp(controlPc))
+                {
+                    // Phase D iteration 3 — mirror of search-pass hook.
+                    // Stub-frames (CoreCLR managed-to-unmanaged transition)
+                    // overwrite retaddr slot with Frame*; consult
+                    // Thread::m_pFrame to skip past them. The personality
+                    // routine for the stub (CallDescrWorkerUnwindFrame-
+                    // ChainHandler, etc.) is responsible for the eventual
+                    // FrameChain pop during this second pass via
+                    // CleanUpForSecondPass — we just READ here.
+                    if (TryActivateFrameChain(uc))
+                    {
+                        continue;
+                    }
+                    break;
+                }
                 ulong ib;
                 RuntimeFunction* rf = SehUnwind.LookupFunctionEntry(controlPc, &ib);
                 if (rf == null) break;
@@ -849,6 +871,86 @@ namespace OS.PAL.SharpOSHost
             EmitMovCtxToReg(p, ref o, 0x01 /*rcx*/, 0x80);
             // ret    — pops [rsp] (= our pre-placed target Rip) into Rip
             p[o++] = 0xC3;
+        }
+
+        // ─── Phase D iteration 3: FrameChain skip-through ──────────────────
+        //
+        // Walker integration with CoreCLR's per-thread `Thread::m_pFrame`
+        // linked list. CoreCLR's managed-to-unmanaged transition stubs
+        // (P/Invoke, reflection invoke, helper-method transitions) don't
+        // preserve a normal call/ret pattern — they overwrite the retaddr
+        // slot with a `Frame*` pointer, and the real continuation context
+        // lives inside the Frame object. Our walker, after a normal
+        // VirtualUnwind through such a stub, reads the Frame-pointer as
+        // a code address → `invalid Rip`. The fix: at the moment we'd
+        // bail with invalid Rip, consult `Thread::m_pFrame`; if the
+        // topmost Frame is an active InlinedCallFrame, use its fields
+        // to override searchCtx and pop the frame off the chain.
+        //
+        // Frame layout in fork (no vtable; ID-based dispatch — see
+        // dotnet-runtime-sharpos/src/coreclr/vm/frames.h):
+        //   +0:  FrameIdentifier _frameIdentifier   (1 = InlinedCallFrame)
+        //   +8:  PTR_Frame       m_Next             (~0 = FRAME_TOP)
+        //   +16: m_Datum
+        //   +24: m_pCallSiteSP         (caller's RSP)
+        //   +32: m_pCallerReturnAddress (caller's RIP in managed JIT)
+        //   +40: m_pCalleeSavedFP      (caller's RBP)
+        //   +48: m_pThread
+        //
+        // FrameHasActiveCall ≡ m_pCallerReturnAddress != 0. Inactive ICFs
+        // sit on the chain without a "current call" and must not be used
+        // for unwind.
+
+        [DllImport("*", EntryPoint = "SharpOSHost_GetCurrentFrame",
+                   CallingConvention = CallingConvention.Cdecl)]
+        private static extern void* SharpOSHost_GetCurrentFrame();
+
+        [DllImport("*", EntryPoint = "SharpOSHost_SetCurrentFrame",
+                   CallingConvention = CallingConvention.Cdecl)]
+        private static extern void SharpOSHost_SetCurrentFrame(void* newFrame);
+
+        private const ulong FrameTopSentinel = ulong.MaxValue;
+        private const ulong FrameId_InlinedCallFrame = 1UL;
+
+        private static bool TryActivateFrameChain(Context* ctx)
+        {
+            void* fpVoid = SharpOSHost_GetCurrentFrame();
+            ulong fp = (ulong)fpVoid;
+            // Empty chain or FRAME_TOP sentinel — nothing to do.
+            if (fp == 0 || fp == FrameTopSentinel || fp < 0x10000UL) return false;
+
+            ulong* f = (ulong*)fp;
+            ulong frameId = f[0];
+            if (frameId != FrameId_InlinedCallFrame) return false;
+
+            ulong callerRA      = f[4];   // +32 m_pCallerReturnAddress
+            if (callerRA == 0 || callerRA < 0x10000UL) return false;  // inactive ICF
+            ulong callSiteSP    = f[3];   // +24 m_pCallSiteSP
+            ulong calleeSavedFP = f[5];   // +40 m_pCalleeSavedFP
+
+            // Anti-reactivation guard: an ICF is only meaningful when the
+            // walker is still *below* its call site SP. After we activate
+            // it, walker's Rsp jumps to CallSiteSP — so any subsequent
+            // re-entry into this routine (e.g. another stub frame deeper)
+            // won't re-fire on the same ICF. This same guard makes the
+            // routine safe to call from both search and unwind walkers
+            // without needing to pop the frame (which the unwind pass'
+            // personality routine handles via CleanUpForSecondPass).
+            if (callSiteSP <= ctx->Rsp) return false;
+
+            Console.Write("[fchain] activate ICF: CallerRA=0x"); Console.WriteHex(callerRA);
+            Console.Write(" CallSiteSP=0x");                     Console.WriteHex(callSiteSP);
+            Console.Write(" CalleeSavedFP=0x");                  Console.WriteHex(calleeSavedFP);
+            Console.WriteLine("");
+
+            ctx->Rip = callerRA;
+            ctx->Rsp = callSiteSP;
+            ctx->Rbp = calleeSavedFP;
+            // CallerRA is a *post-call* IP (the return-to location in the
+            // managed JIT method). Walker's controlPc = Rip-1 correctly
+            // lands on the call instruction → finds the surrounding EH
+            // clause. Do NOT mark this as a throw-site.
+            return true;
         }
 
         // mov reg, [rcx + disp].
