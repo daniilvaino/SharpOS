@@ -65,8 +65,9 @@ namespace OS.Kernel.Threading
         // `entry`. The entry function must be [UnmanagedCallersOnly]
         // (Win64 ABI) so the synthetic stack frame's `ret` lands cleanly
         // at it. Caller should pass DefaultStackBytes (0) for the
-        // standard 64 KiB.
-        public static Thread? Spawn(delegate* unmanaged<void> entry, uint stackBytes)
+        // standard 64 KiB. `owner` is optional — non-null links the
+        // thread into the Process via Process.FirstThread (Phase E7).
+        public static Thread? Spawn(delegate* unmanaged<void> entry, uint stackBytes, Process? owner = null)
         {
             if (entry == null) return null;
             if (stackBytes == 0) stackBytes = DefaultStackBytes;
@@ -109,7 +110,18 @@ namespace OS.Kernel.Threading
                 StackBytes = stackBytes,
                 Teb = null,
                 Entry = entry,
+                OwnerProcess = owner,
             };
+
+            // Link into the process thread list (head insert -- O(1)).
+            // Cooperative single-CPU; no lock needed today.
+            if (owner != null)
+            {
+                t.NextInProcess = owner.FirstThread;
+                owner.FirstThread = t;
+                owner.ThreadCount++;
+            }
+
             EnqueueRunnable(t);
             return t;
         }

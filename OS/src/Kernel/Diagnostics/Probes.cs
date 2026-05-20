@@ -107,6 +107,12 @@ namespace OS.Kernel.Diagnostics
         // bookkeeping corruption around the allocator lock.
         public const bool AllocStress = true;
 
+        // Phase E7 acceptance — two Processes launched concurrently,
+        // each running a worker through 3 yielding iterations then
+        // Process.Exit(code). Asserts state machine, exit codes,
+        // distinct PIDs.
+        public const bool ProcessSpawn = true;
+
         // Phase B — own 16550 UART (COM1) driver bring-up. Inits the
         // chip directly via PortIo and self-tests via loopback, then
         // writes one line through the OWN driver. Pre-EBS this hits the

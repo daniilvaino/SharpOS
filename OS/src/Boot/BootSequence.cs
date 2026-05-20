@@ -304,6 +304,11 @@ namespace OS.Boot
             if (Probes.AllocStress)
                 OS.Kernel.Threading.AllocStressProbe.Run();
 
+            // Phase E7 acceptance — two concurrent Processes, each with
+            // a primary thread doing 3 iterations + Process.Exit(code).
+            if (Probes.ProcessSpawn)
+                OS.Kernel.Threading.ProcessProbe.Run();
+
             // Phase 6.1.a — call coreclr_initialize from kernel boot path.
             // Expected to panic at first unimplemented SharpOSHost_* /
             // CrtAndEh stub. Iterate until S_OK.

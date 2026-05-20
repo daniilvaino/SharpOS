@@ -54,5 +54,12 @@ namespace OS.Kernel.Threading
         public Thread? TimerNext;
         public Thread? WaitNext;
         public ulong DeadlineTicks;
+
+        // Phase E7 — Process ownership. Threads owned by a Process are
+        // linked via NextInProcess (head at Process.FirstThread).
+        // `OwnerProcess == null` for the boot-thread wrapper and for
+        // standalone test threads created without a Process.
+        public Process? OwnerProcess;
+        public Thread? NextInProcess;
     }
 }
