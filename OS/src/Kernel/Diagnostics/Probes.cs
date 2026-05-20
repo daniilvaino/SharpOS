@@ -107,14 +107,14 @@ namespace OS.Kernel.Diagnostics
 
         // Phase C — physically call ExitBootServices and run the rest
         // of the boot (FAT mount, CoreCLR session, native launcher) on
-        // the own UART+GOP+PS/2+AHCI substrate, no UEFI. Tears down UEFI
-        // Boot Services irreversibly, so it must stay false for the
-        // headless regression battery; flip true to run firmware-free
-        // (best under SHARPOS_GUI=1 to watch the post-EBS FB banner +
-        // launcher, serial also continues via the own 16550). ILC
-        // dead-codes the whole path when false. Phase C4 = make this
-        // the default and retire the UEFI launcher.
-        public const bool ExitBootServicesExperiment = false;
+        // the own UART+GOP+PS/2+AHCI substrate, no UEFI. This is the
+        // DEFAULT BOOT as of step 91 (Phase C4): the post-EBS substrate
+        // is canonical; the legacy pre-EBS path is dead code (retained
+        // for diagnostic comparison if a regression demands it, flip
+        // false). Reversal note: tears down UEFI Boot Services
+        // irreversibly, so any pre-EBS-only diagnostics must run BEFORE
+        // ExitBootServicesProbe.
+        public const bool ExitBootServicesExperiment = true;
 
         // C-FS1 — PCI ECAM scan (adapted MOOS PCIExpress). Finds the
         // q35 AHCI controller (class 0x01/0x06, ABAR=BAR5) — foundation
