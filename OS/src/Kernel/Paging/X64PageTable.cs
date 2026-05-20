@@ -147,19 +147,19 @@ namespace OS.Kernel.Paging
             bool userPage = (flags & PageFlags.User) == PageFlags.User;
 
             ulong* pml4 = (ulong*)s_rootTable;
-            if (!GetOrCreateNextTable(pml4, Pml4Index(virtualAddress), userPage, out ulong* pdpt))
+            if (!GetOrCreateNextTable(pml4, Pml4Index(virtualAddress), userPage, 4, out ulong* pdpt))
             {
                 s_mapFailures++;
                 return false;
             }
 
-            if (!GetOrCreateNextTable(pdpt, PdptIndex(virtualAddress), userPage, out ulong* pd))
+            if (!GetOrCreateNextTable(pdpt, PdptIndex(virtualAddress), userPage, 3, out ulong* pd))
             {
                 s_mapFailures++;
                 return false;
             }
 
-            if (!GetOrCreateNextTable(pd, PdIndex(virtualAddress), userPage, out ulong* pt))
+            if (!GetOrCreateNextTable(pd, PdIndex(virtualAddress), userPage, 2, out ulong* pt))
             {
                 s_mapFailures++;
                 return false;
@@ -177,25 +177,28 @@ namespace OS.Kernel.Paging
             return true;
         }
 
-        // Map a fresh VA→PA into the **active** (firmware) PML4
-        // (s_kernelRootTable). `Map` above targets s_rootTable (the inactive
-        // pager clone — we never switch CR3), so its entries are invisible to
-        // the CPU. The VirtualMemory manager's Commit/MapFixed need live
-        // mappings → must root at the active table, same as TrySetKernelFlags*.
+        // Map a fresh VA→PA into the **active** PML4. Post Phase E1 the
+        // active table is `s_rootTable` (our pager clone, activated right
+        // after `Pager.Init`). Pre-E1 historically this routed to the
+        // firmware PML4 `s_kernelRootTable`; that split-brain is closed —
+        // both `Map` and `MapKernel` write to the same active root now.
+        // The "Kernel" suffix is historical and kept only because callers
+        // (VirtualMemory.MapFixed / Commit) tag their intent ("kernel-owned
+        // live mapping") and we may want to log/audit them differently later.
         // Intermediate tables auto-created (zeroed) via GetOrCreateNextTable.
         // Caller flushes TLB after a batch.
         public static bool MapKernel(ulong virtualAddress, ulong physicalAddress, PageFlags flags)
         {
-            if (s_kernelRootTable == 0)
+            if (s_rootTable == 0)
                 return false;
 
             bool userPage = (flags & PageFlags.User) == PageFlags.User;
-            ulong* pml4 = (ulong*)s_kernelRootTable;
-            if (!GetOrCreateNextTable(pml4, Pml4Index(virtualAddress), userPage, out ulong* pdpt))
+            ulong* pml4 = (ulong*)s_rootTable;
+            if (!GetOrCreateNextTable(pml4, Pml4Index(virtualAddress), userPage, 4, out ulong* pdpt))
                 return false;
-            if (!GetOrCreateNextTable(pdpt, PdptIndex(virtualAddress), userPage, out ulong* pd))
+            if (!GetOrCreateNextTable(pdpt, PdptIndex(virtualAddress), userPage, 3, out ulong* pd))
                 return false;
-            if (!GetOrCreateNextTable(pd, PdIndex(virtualAddress), userPage, out ulong* pt))
+            if (!GetOrCreateNextTable(pd, PdIndex(virtualAddress), userPage, 2, out ulong* pt))
                 return false;
 
             uint ptIndex = PtIndex(virtualAddress);
@@ -207,26 +210,81 @@ namespace OS.Kernel.Paging
             return true;
         }
 
+        // Unmap a single 4 KiB VA. If the existing mapping resolves at a
+        // large-page level (PD 2 MiB or PDPT 1 GiB) — typical for firmware
+        // identity in low memory — split the large entry down to PT
+        // granularity first, then clear just the target 4 KiB PTE. Without
+        // the split, `*entry = 0` would wipe the entire 2 MiB / 1 GiB
+        // region (the bug that surfaced after Phase E1 activated the
+        // clone). Walk allocates table pages only for the split path;
+        // missing intermediate directories still fail Unmap.
         public static bool Unmap(ulong virtualAddress)
         {
             s_unmapCalls++;
 
-            if (!TryResolveMappedEntry(virtualAddress, out ulong* entry, out ulong value, out ResolvedEntryLevel level))
+            if (s_rootTable == 0)
             {
                 s_unmapFailures++;
                 return false;
             }
 
-            if ((value & PresentMask) == 0)
+            ulong* pml4 = (ulong*)s_rootTable;
+            uint pml4Idx = Pml4Index(virtualAddress);
+            ulong pml4Entry = pml4[pml4Idx];
+            if ((pml4Entry & PresentMask) == 0 || (pml4Entry & PageSizeMask) != 0)
+            {
+                s_unmapFailures++;
+                return false;
+            }
+            ulong* pdpt = (ulong*)(pml4Entry & AddressMask);
+
+            uint pdptIdx = PdptIndex(virtualAddress);
+            ulong pdptEntry = pdpt[pdptIdx];
+            if ((pdptEntry & PresentMask) == 0)
+            {
+                s_unmapFailures++;
+                return false;
+            }
+            if ((pdptEntry & PageSizeMask) != 0)
+            {
+                if (!TrySplitLargeEntry(pdpt, pdptIdx, 3))
+                {
+                    s_unmapFailures++;
+                    return false;
+                }
+                pdptEntry = pdpt[pdptIdx];
+            }
+            ulong* pd = (ulong*)(pdptEntry & AddressMask);
+
+            uint pdIdx = PdIndex(virtualAddress);
+            ulong pdEntry = pd[pdIdx];
+            if ((pdEntry & PresentMask) == 0)
+            {
+                s_unmapFailures++;
+                return false;
+            }
+            if ((pdEntry & PageSizeMask) != 0)
+            {
+                if (!TrySplitLargeEntry(pd, pdIdx, 2))
+                {
+                    s_unmapFailures++;
+                    return false;
+                }
+                pdEntry = pd[pdIdx];
+            }
+            ulong* pt = (ulong*)(pdEntry & AddressMask);
+
+            uint ptIdx = PtIndex(virtualAddress);
+            if ((pt[ptIdx] & PresentMask) == 0)
             {
                 s_unmapFailures++;
                 return false;
             }
 
-            *entry = 0;
-            if (level == ResolvedEntryLevel.Pt && s_mappedPages > 0)
+            pt[ptIdx] = 0;
+            if (s_mappedPages > 0)
                 s_mappedPages--;
-
+            FlushTlbAll();
             return true;
         }
 
@@ -242,12 +300,17 @@ namespace OS.Kernel.Paging
 
         public static bool TryQueryKernel(ulong virtualAddress, out ulong physicalAddress, out PageFlags flags)
         {
-            return TryQueryForRoot(s_kernelRootTable, virtualAddress, out physicalAddress, out flags);
+            // Post-E1: kernel-tagged query reads the active root same as
+            // TryQuery. Kept as a named API so call-sites stay self-
+            // describing ("looking up kernel-owned mapping"); the underlying
+            // table is identical.
+            return TryQueryForRoot(s_rootTable, virtualAddress, out physicalAddress, out flags);
         }
 
         // Modify the protection flags (Present/Writable/NoExecute/etc.) of an
-        // existing 4 KiB mapping в the **active UEFI** PML4 (s_kernelRootTable
-        // — we never call TryActivatePagerRoot, so kernel CR3 == firmware CR3).
+        // existing 4 KiB mapping в the **active** PML4 (post-E1: s_rootTable,
+        // activated immediately after Pager.Init). Pre-E1 this routed to
+        // the firmware PML4 s_kernelRootTable; the split is closed.
         // Address bits are preserved; only the low 12 + bit 63 fields are
         // rewritten. Used by SharpOSHost_AllocExecutable / VirtualProtect
         // to flip a freshly-allocated EfiLoaderCode page to full RWX so
@@ -270,7 +333,8 @@ namespace OS.Kernel.Paging
         public static bool TrySetKernelFlagsEx(ulong virtualAddress, PageFlags newFlags, PageFlags requiredMask, out bool wasLargePage)
         {
             wasLargePage = false;
-            if (!TryResolveMappedEntryForRoot(s_kernelRootTable, virtualAddress, out ulong* entry, out ulong value, out ResolvedEntryLevel level))
+            // Post-E1: walks the active root (s_rootTable). See comment above.
+            if (!TryResolveMappedEntryForRoot(s_rootTable, virtualAddress, out ulong* entry, out ulong value, out ResolvedEntryLevel level))
                 return false;
             if (entry == null) return false;
 
@@ -314,7 +378,8 @@ namespace OS.Kernel.Paging
         public static bool TryGetKernelLeafPte(ulong virtualAddress, out ulong rawPte)
         {
             rawPte = 0;
-            if (!TryResolveMappedEntryForRoot(s_kernelRootTable, virtualAddress, out ulong* entry, out ulong value, out _))
+            // Post-E1: walks the active root (s_rootTable). See MapKernel comment.
+            if (!TryResolveMappedEntryForRoot(s_rootTable, virtualAddress, out ulong* entry, out ulong value, out _))
                 return false;
             if (entry == null) return false;
             rawPte = value;
@@ -517,7 +582,15 @@ namespace OS.Kernel.Paging
             return true;
         }
 
-        private static bool GetOrCreateNextTable(ulong* table, uint index, bool userPage, out ulong* nextTable)
+        // `parentLevel` describes the directory the entry lives in (used
+        // only for split semantics): 2 = PD (so a large entry here is
+        // 2 MiB → split into PT with 512 × 4 KiB), 3 = PDPT (1 GiB →
+        // split into PD with 512 × 2 MiB), 4 = PML4 (no large pages
+        // architecturally — caller should never request split here).
+        // Pass 0 to disable split: callers that genuinely cannot tolerate
+        // a large-page entry (e.g., diagnostic walks) pass 0 and get the
+        // historical "return false on large" behaviour.
+        private static bool GetOrCreateNextTable(ulong* table, uint index, bool userPage, uint parentLevel, out ulong* nextTable)
         {
             ulong entry = table[index];
 
@@ -541,8 +614,29 @@ namespace OS.Kernel.Paging
 
             if ((entry & PageSizeMask) != 0)
             {
-                nextTable = null;
-                return false;
+                // E1 fix: firmware identity-maps low memory with 2 MiB (PD)
+                // or 1 GiB (PDPT) large pages. Once the clone is the live
+                // CR3 those mappings are CPU-visible; new finer-grained
+                // mappings on the same VA range would have been blocked
+                // (or, in Unmap, wiped out the whole large region — the
+                // bug that landed us here). Split on demand: replace the
+                // large-page entry with a freshly-allocated child table
+                // whose 512 entries inherit the large-page identity at
+                // the next finer granularity.
+                if (parentLevel == 2 || parentLevel == 3)
+                {
+                    if (!TrySplitLargeEntry(table, index, parentLevel))
+                    {
+                        nextTable = null;
+                        return false;
+                    }
+                    entry = table[index];   // re-read post-split
+                }
+                else
+                {
+                    nextTable = null;
+                    return false;
+                }
             }
 
             if (userPage && (entry & UserMask) == 0)
@@ -552,6 +646,88 @@ namespace OS.Kernel.Paging
             }
 
             nextTable = (ulong*)(entry & AddressMask);
+            return true;
+        }
+
+        // Replace a present large-page directory entry with a freshly
+        // allocated child table at the next finer level. Inherits the
+        // large page's PA + leaf flags into 512 child entries.
+        //
+        //   parentLevel = 2 (PD entry, 2 MiB large): child = PT, 512 × 4 KiB
+        //   parentLevel = 3 (PDPT entry, 1 GiB large): child = PD, 512 × 2 MiB large
+        //
+        // PML4 never holds large pages in x86-64 — caller's responsibility
+        // not to ask. The split preserves cache/protection flags but does
+        // NOT preserve the large-page PAT bit (bit 12) — kernel and firmware
+        // mappings use default cache attributes in our deployment. If a
+        // mapping with non-default PAT lands here, it gets normalised
+        // silently. Acceptable for low-memory firmware identity; revisit
+        // if MMIO ever needs splitting.
+        private static bool TrySplitLargeEntry(ulong* parentTable, uint index, uint parentLevel)
+        {
+            ulong entry = parentTable[index];
+            if ((entry & PresentMask) == 0 || (entry & PageSizeMask) == 0)
+                return false;
+
+            ulong childPage = AllocateTablePage();
+            if (childPage == 0)
+                return false;
+
+            // Carry leaf flags from the parent large entry into each child
+            // entry. Strip the address bits and the PageSizeMask bit
+            // (PSE/PAT). For PD→PT split, PageSizeMask on a PTE is the PAT
+            // bit and we want it 0. For PDPT→PD split, PageSizeMask must
+            // stay set on the child PD entries (they're still 2 MiB large
+            // pages), so we re-add it after the strip.
+            ulong childFlags = (entry & ~AddressMask) & ~PageSizeMask;
+
+            ulong baseAddress;
+            ulong stride;
+            if (parentLevel == 2)
+            {
+                // PD large = 2 MiB → split into PT (4 KiB entries).
+                baseAddress = entry & AddressMask2MB;
+                stride = PageSize;                   // 4 KiB
+                // childFlags stays as-is — PageSizeMask=0 in PTE means 4 KiB page.
+            }
+            else if (parentLevel == 3)
+            {
+                // PDPT large = 1 GiB → split into PD (2 MiB large entries).
+                baseAddress = entry & AddressMask1GB;
+                stride = LargePage2MBSize;           // 2 MiB
+                childFlags |= PageSizeMask;          // child PDEs remain 2 MiB large.
+            }
+            else
+            {
+                return false;
+            }
+
+            ulong* child = (ulong*)childPage;
+            for (uint i = 0; i < 512; i++)
+                child[i] = (baseAddress + (ulong)i * stride) | childFlags;
+
+            // Build the new parent entry: directory pointer (no PageSizeMask).
+            // PML4E/PDPTE/PDE pointing-to-next-table act as a MASK over
+            // their children — if the directory bit is restrictive, every
+            // child inherits the restriction regardless of its own bit.
+            // We make directories maximally permissive (P | W | U, NX=0)
+            // so leaves decide. Children inherited the original NX/W/U
+            // from the large entry (see childFlags above), so the original
+            // protection of inherited entries is preserved at leaf level.
+            // Newly-mapped leaves (post-split) get caller-provided flags
+            // unrestricted. Matches GetOrCreateNextTable's fresh-allocation
+            // path semantics — split should produce the same shape that
+            // a fresh allocation would, otherwise post-Phase-E1 ELF code
+            // pages re-mapped over a formerly-NX large region get blocked
+            // at the directory level (instruction-fetch #PF with P=1, I=1
+            // on the leaf even though leaf NX=0 — observed empirically).
+            ulong newParentEntry = (childPage & AddressMask) | PresentMask | WritableMask | UserMask;
+            parentTable[index] = newParentEntry;
+
+            // TLB caches large-page translations; the directory entry just
+            // changed shape. Flush all (we don't have INVLPG shellcode for
+            // a range; CR3 reload is cheap relative to a launch).
+            FlushTlbAll();
             return true;
         }
 
@@ -634,7 +810,19 @@ namespace OS.Kernel.Paging
                 if (!TryCloneTableRecursive(childSourceTable, level - 1, out ulong childClonedTable))
                     return false;
 
-                entries[i] = (entry & ~AddressMask) | childClonedTable;
+                // Directory pointers (non-large present entries at this
+                // level) are repointed to the cloned child. We also force
+                // them MAXIMALLY PERMISSIVE: P | W | U, NX=0. Reason: in
+                // x86-64 paging the directory bits act as a MASK over all
+                // descendants — if firmware happened to set NX=1 (or W=0,
+                // U=0) on a parent, every leaf underneath is forced to
+                // inherit the restriction. After Phase E1 the clone is the
+                // live CR3, and ELF code pages re-mapped into a formerly-
+                // NX directory get instruction-fetch #PF even with leaf
+                // NX=0 (observed empirically). Leaves keep their original
+                // NX/W/U bits — directory-level permissive simply means
+                // "let the leaves decide."
+                entries[i] = (childClonedTable & AddressMask) | PresentMask | WritableMask | UserMask;
             }
 
             clonedTablePage = newTablePage;

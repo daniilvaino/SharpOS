@@ -89,6 +89,11 @@ struct kernel.Thread {
     enum   state;                  // Ready | Running | Waiting | Dead
     Context regs;                  // GP + RIP + RFLAGS + RSP
     byte[512] fxsaveArea;          // FXSAVE legacy SSE+x87 (see §5)
+                                   //   MUST be 16-byte aligned. Allocator
+                                   //   either pads inside struct or returns
+                                   //   16-aligned base. assert((uintptr_t)
+                                   //   fxsaveArea % 16 == 0) before first
+                                   //   switch. (Phase F XSAVE: 64-byte.)
     void* stackBase;               // top of allocated stack
     void* stackLimit;              // bottom-most usable byte
     void* guardPage;               // unmapped slot below stackLimit
@@ -99,6 +104,20 @@ struct kernel.Thread {
     ManagedThreadBinding* binding; // non-null iff kind == CoreClr
 }
 ```
+
+**Stack guard #PF policy (sage-2 add).** Each thread reserves one
+unmapped page immediately below `stackLimit`. The `#PF` handler
+runs on the IST stack (per §10). On `#PF` with `CR2` inside a known
+`guardPage`:
+
+- Phase E: mark the process / thread as stack-overflow-fatal and
+  halt or kill it. No managed EH recovery yet.
+- We do NOT auto-grow the stack — Phase E has no strict stack-region
+  model; growth in a single AS is a foot-gun (might collide with the
+  next thread's stack or with kernel data).
+
+On `#PF` with `CR2` not in a guard page and not in a VM-demand
+region: regular page-fault path → panic dump → halt.
 
 **`ManagedThreadBinding`** glues to CoreCLR-owned state:
 
@@ -147,22 +166,40 @@ Architecturally per-thread struct memory: ~700 bytes for context.
 
 ## 5. FXSAVE vs XSAVE — FXSAVE only in Phase E
 
-Phase E uses **FXSAVE/FXRSTOR** (512 bytes per thread). Rationale:
-- We control `XCR0` via `xsetbv` at boot. We deliberately set
-  `XCR0 = x87 | SSE` only.
-- RyuJIT detects AVX through CPUID + `OSXSAVE` bit. With AVX disabled
-  in `XCR0`, `OSXSAVE` reads false → JIT emits SSE2 path, no
-  VEX-encoded instructions.
-- 4-8 threads × 512 bytes vs × ~3 KB (XSAVE+AVX-512) — economy matters
-  while we're proving the scheduler.
-- Roslyn / PowerShell demos in Phase E don't require AVX.
-- Migration to XSAVE in Phase F+ is a single point change: extend
-  shellcode emitter to use XSAVE with `xstate_bv` mask covering the
-  enabled XCR0 bits, update per-thread save area size.
+Phase E uses **FXSAVE/FXRSTOR** (16-byte aligned 512-byte area per
+thread). Misaligned operand is `#GP` — the per-thread save buffer MUST
+be 16-byte aligned and the kernel allocator must guarantee it (current
+implementation allocates a whole 4 KiB page per `ContextBlock` so the
+fxsave area at offset `0x10` is trivially 16-aligned).
 
-**Sanity check at E0:** add boot probe that reads CPUID feature flags
-+ `XCR0`, asserts AVX bit off. Document that bit will be enabled
-explicitly when XSAVE migration happens.
+How we keep AVX off the JIT codegen path (corrected per sage-2 review):
+
+- `CR4.OSXSAVE` must be set before any `xsetbv`. `xsetbv` on a system
+  with `CR4.OSXSAVE = 0` is `#UD`. (Observed empirically on QEMU/OVMF —
+  firmware does NOT set OSXSAVE by default.)
+- `XCR0 = x87 | SSE` (bits 0, 1) — no YMM bit, no AVX-512 bits.
+- RyuJIT does NOT decide AVX availability from `CPUID.OSXSAVE` alone.
+  The correct mechanic per Intel SDM: AVX is OS-enabled iff
+  `CPUID.OSXSAVE == 1` **and** `XGETBV(0).SSE == 1` **and**
+  `XGETBV(0).YMM == 1`. With `XCR0 = 0x3` (YMM bit clear), JIT sees
+  AVX as not-OS-enabled and falls back to legacy SSE; FXSAVE then
+  covers the full live FP state.
+
+AVX-512 detection uses additional XCR0 bits (`OPMASK`, `ZMM_HI256`,
+`HI16_ZMM`); leaving them at 0 keeps AVX-512 off the codegen path too.
+
+Save-area economics:
+
+- FXSAVE: **512 B/thread**.
+- XSAVE with AVX (YMM only): **~832 B/thread** (256 B legacy area +
+  AVX state area; depends on CPUID.0DH.1.EBX).
+- XSAVE with AVX-512: **several KiB/thread** (full ZMM + OPMASK).
+
+We pick FXSAVE in Phase E for the deterministic SSE-only codegen path,
+not because XSAVE-AVX is itself unaffordable. Migration to XSAVE in
+Phase F+ extends shellcode emitter to use `xsave`/`xrstor` with an
+`xstate_bv` mask matching the enabled XCR0 bits and bumps per-thread
+save-area size from the CPUID-reported figure (`CPUID.0DH.0.ECX`).
 
 ## 6. TLS via TEB facade (gs base swap)
 
@@ -178,16 +215,41 @@ ours extended above `0x600`):
 | `0x18` | `NtTib.SubSystemTib` | NULL |
 | `0x20` | `NtTib.FiberData` / `Version` | Legacy; **NOT Self** |
 | `0x30` | `NtTib.Self` | **Pointer to this TEB** (correct Self offset) |
+| `0x40` | `ClientId.UniqueProcess` | `uintptr` — Windows-compatible process ID |
+| `0x48` | `ClientId.UniqueThread`  | `uintptr` — Windows-compatible **ThreadId** offset (per Geoff Chappell's x64 TEB) |
 | `0x58` | `ThreadLocalStoragePointer` | `void**` array of TLS-module bases |
 | `0x60` | `ProcessEnvironmentBlock` | NULL (no PEB) |
 | `0x68` | `LastErrorValue` | DWORD; per-thread `GetLastError`/`SetLastError` |
-| `0x88` | `ThreadId` | DWORD; matches `osThreadId` in binding |
-| `0x100..0x500` | `TlsSlots[64]` | `TlsAlloc`-style slots (zero-init initially) |
-| `0x600` | `kernel.Thread*` | SharpOS-private back-pointer |
+| `0x6C` | `CountOfOwnedCriticalSections` | optional; pad/zero if not modelled |
+| `0x600` | `kernel.Thread*` | SharpOS-private back-pointer (clear of all known Windows fields) |
+
+**Important correction (sage-2):** earlier draft placed `ThreadId`
+at `0x88`. That offset is **not** Windows-compatible. The
+Windows-compatible thread ID lives in `ClientId.UniqueThread` at
+**`0x48`** (a `uintptr`, not DWORD). `0x88` on x64 falls in the gap
+between LastError and `GdiTebBatch` (Geoff Chappell places
+`GdiTebBatch` near `0x02F0` on x64, not `0x80` — the critic's
+"inside GdiTebBatch" assertion was incorrect; but `0x88` is still
+wrong as a Windows ABI field). Any SharpOS-private mirror of the
+thread ID goes at `0x600+` or is simply read via `kernel.Thread*`.
+
+CoreCLR-visible offsets (`0x00..0x500`) are now frozen: the JIT inlines
+`gs:[<offset>]` reads after first compile and a later layout change
+would invalidate every cached code page.
 
 MSR: **`IA32_GS_BASE` (0xC0000101)** — used by direct `gs:[N]` reads
 without `SWAPGS`. `IA32_KERNEL_GS_BASE` (0xC0000102) is only relevant
 when using `SWAPGS`; we don't (single AS, no kernel/user split).
+
+**FS_BASE / SWAPGS invariant (sage-2 add):**
+
+- `FS_BASE` is **not** used by CoreCLR-hosted code in Phase E.
+- `SwitchTo` does NOT preserve `FS_BASE`. Any future code that writes
+  `FS_BASE` must extend `Context` and the switch shellcode.
+- `IA32_KERNEL_GS_BASE` remains untouched.
+- `SWAPGS` is forbidden in Phase E — we're single-AS / no ring 3.
+- Segment selector state (`CS/DS/ES/FS/GS/SS` regs) is firmware-init'd
+  and not modified by `SwitchTo`. Document if a phase ever needs to.
 
 `SwitchTo` does `wrmsr 0xC0000101, next.teb`.
 
@@ -235,16 +297,33 @@ HPET_IRQ_handler:
     iretq                    // return to interrupted code
 ```
 
-The actual timer-queue walk happens on the next `yield`/`Sleep`/`Wait`:
+The actual timer-queue walk happens on the next `yield`/`Sleep`/`Wait`.
+
+**Lost-wakeup hazard (sage-2):** the naive `if (flag) { flag = 0;
+walk; }` pattern loses any IRQ that fires between the test and the
+clear. Even on a single core the IRQ is asynchronous. Use an atomic
+exchange so consume-the-signal and clear-the-flag are one operation:
 
 ```
 Scheduler.Yield():
-    if deadlineDue:
-        deadlineDue = 0
+    // Atomic 0-store-and-read-old: if old != 0, signal was raised
+    // between two consumes; we own it now.
+    if (xchg(&deadlineDue, 0) != 0):
         for each timer in timerQueue with expiry <= now:
             move associated thread from wait list to ready queue
     swap to next ready thread
 ```
+
+Equivalent shellcode (Win64 ABI, RCX = &deadlineDue):
+
+```
+mov eax, 0
+xchg [rcx], eax          ; eax = old value, [rcx] = 0
+test eax, eax
+jz   no_timers
+```
+
+`X64Asm.Xchg64` (Phase E3) gives this primitive at managed surface.
 
 This preserves the cooperative invariant: managed code is never
 preempted mid-execution. The IRQ only sets a flag; rescheduling happens
@@ -287,6 +366,14 @@ specific scenario demonstrates need (Roslyn deadlock on N=4 not yet
 observed; PowerShell minimal needs measurement). `Environment.Processor-
 Count` reports 2 (not 1) to keep stock BCL heuristics out of
 single-core corner cases.
+
+**Known-lie disclosure (sage-2):** `ProcessorCount = 2` is a BCL
+heuristic hack, not hardware truth. Our hardware is effectively
+single-core cooperative. Returning 2 changes heuristics inside
+`ThreadPool`, `ConcurrentDictionary`, `Parallel`, `Channels`,
+`PLINQ`, etc. — generally raising worker counts and contention
+without backing CPUs. Re-evaluate when we go SMP or add preemption;
+the right answer there is the real core count, not this canned 2.
 
 `SynchronizationContext` provided by Phase E: default-flushing context
 that posts continuations to the ThreadPool. No UI sync context.
@@ -352,12 +439,16 @@ Migration from ELF to PE doesn't affect API.
 
 The `D5 = ABORT_FATAL` stubs in `pal/sharpos/crt_imp_stubs.cpp` get
 replaced with real implementations. **Not just `CreateThread`** — full
-list:
+list (expanded per sage-2 review):
 
 ```
 Thread lifecycle:
   CreateThread, ExitThread, TerminateThread,
-  GetCurrentThread, GetCurrentThreadId
+  GetCurrentThread, GetCurrentThreadId,
+  SuspendThread, ResumeThread,                    (sage-2 add)
+  GetThreadContext, SetThreadContext,             (sage-2 add)
+  GetThreadTimes,                                 (sage-2 add)
+  QueueUserAPC                                    (sage-2 add)
 
 Sync primitives:
   WaitForSingleObject, WaitForMultipleObjects, MsgWaitForMultipleObjects,
@@ -369,7 +460,17 @@ Sync primitives:
     DeleteCriticalSection,
   TryAcquireSRWLockShared/Exclusive, AcquireSRWLockShared/Exclusive,
     ReleaseSRWLockShared/Exclusive,
-  SleepConditionVariableCS, WakeConditionVariable, WakeAllConditionVariable
+  SleepConditionVariableCS, WakeConditionVariable, WakeAllConditionVariable,
+  WaitOnAddress, WakeByAddressSingle, WakeByAddressAll  (sage-2 add — Win8+ futex-like)
+
+I/O Completion Port (for current LowLevelLifoSemaphore.Windows):
+  CreateIoCompletionPort, GetQueuedCompletionStatus,
+  PostQueuedCompletionStatus                      (sage-2 add)
+
+Unwind / EH:
+  RtlVirtualUnwind, RtlLookupFunctionEntry,
+  RtlAddFunctionTable, RtlDeleteFunctionTable,
+  RtlInstallFunctionTableCallback                 (already needed; explicit)
 
 Handle management:
   CloseHandle, DuplicateHandle
@@ -381,6 +482,22 @@ TLS:
 Errors:
   GetLastError, SetLastError    (real per-thread via TEB+0x68)
 ```
+
+**Sage-2 correction on critic claims:**
+
+- The critic's blanket assertion that "every .NET lock primitive
+  needs `WaitOnAddress`" was wrong. Current
+  `LowLevelLifoSemaphore.Windows` uses I/O Completion Port
+  (`CreateIoCompletionPort` / `GetQueuedCompletionStatus` /
+  `PostQueuedCompletionStatus`) — not `WaitOnAddress`.
+- `System.Threading.Lock` slow path in current corelib uses
+  `AutoResetEvent`, not direct `WaitOnAddress`.
+- Therefore `WaitOnAddress`/`WakeByAddress*` are likely-needed
+  surface (they're the modern futex-like API and the .NET runtime
+  reaches for them in newer paths), but they are NOT the universal
+  lock backend. Plan covers both: WaitOnAddress family AND IOCP
+  trio, with explicit `ABORT_FATAL` + known fallback documented
+  for any surface that lands first.
 
 Expect 2-3 weeks of crash-driven debugging here (Sage 1: "first crash on
 real CreateThread will be GC thread / finalizer / ThreadPool worker tripping over uninit state").
@@ -470,7 +587,11 @@ one-day landing like Phase D.
   post-Phase D; Thread.Start / ThreadPool / Task / Timer / Sleep
   unblock here).
 - `gc-experiment/MOOS/Kernel/Misc/Threading.cs` — preemptive scheduler
-  reference (MIT/Unlicense, attribution required if portions adapted).
+  reference. License (sage-2 correction): MOOS `LICENSE` is
+  **public-domain / Unlicense-like** ("free and unencumbered software
+  released into the public domain"), NOT MIT. No copyright-notice
+  retention requirement applies; we still leave an attribution comment
+  for provenance when copying code.
 - `gc-experiment/MOOS/Kernel/Driver/HPET.cs` — direct port candidate.
 - `dotnet-runtime-sharpos/src/coreclr/vm/threads.h` — CoreCLR Thread*
   layout (kernel never reads).
@@ -504,32 +625,63 @@ the latter is the SWAPGS scratch, irrelevant in our ring-0 unikernel).
 **E2 input.** Reuse the existing shellcode; switch path is one
 indirect call with the next TEB's address.
 
-### PV2 — XCR0 state at boot
+### PV2 — XCR0 state at boot (corrected per sage-2 review)
 
 Grep across kernel sources + fork PAL: ZERO occurrences of `xsetbv`,
 `XCR0`, `AVX`. We never touch the SSE/AVX enable mask explicitly.
 
-**Risk.** Firmware leaves XCR0 with bits set per its preference. On
-modern QEMU/UEFI XCR0 typically has AVX (bit 2) and possibly AVX-512
-bits set. CoreCLR's JIT reads OSXSAVE via cpuid; if AVX is enabled,
-it emits VEX-encoded code → uses YMM registers → our FXSAVE (512 B,
-xmm0-15 only) silently truncates the upper 128 bits of each ymm on
-context switch.
+**Empirical follow-up:** QEMU/OVMF leaves `CR4.OSXSAVE = 0` —
+observed when the original `xsetbv` preamble `#UD`'d on boot.
+With `CR4.OSXSAVE = 0`, `xsetbv` is illegal AND `CPUID.OSXSAVE`
+reports 0 → the JIT cannot use any XSAVE-class instruction at all,
+which incidentally keeps AVX off the codegen path. So a kernel that
+NEVER enables OSXSAVE is safe-by-omission. The current shipped code
+takes that path: read CR4 first, skip `xsetbv` if OSXSAVE is 0.
 
-**E0 lock.** Before E1, add an explicit `xsetbv` byte-shellcode that
-clears XCR0 to `x87 | SSE` (bits 0+1 = `0b11`, `0x3`). With AVX off
-the JIT emits SSE-only code and FXSAVE is sufficient. (§5 already
-records the FXSAVE-only policy; this PV gives it the missing
-enforcement step.)
+**But sage-2 corrects two things that matter for the long-term spec:**
 
-**Sequence in E1 preamble:**
+1. Earlier draft claimed "with AVX disabled in XCR0, OSXSAVE reads
+   false." **Wrong mechanic.** `CPUID.OSXSAVE` mirrors `CR4.OSXSAVE`,
+   not `XCR0` contents. AVX is OS-enabled iff `CPUID.OSXSAVE == 1`
+   **AND** `XGETBV(0).SSE == 1` **AND** `XGETBV(0).YMM == 1`. So the
+   correct way to disable AVX while keeping XSAVE infra usable is to
+   set `CR4.OSXSAVE = 1` and then `XCR0 = 0x3` (SSE bit set, YMM bit
+   cleared).
+
+2. `xsetbv` requires `CR4.OSXSAVE = 1` first, otherwise `#UD`. The
+   original preamble (xsetbv with no CR4 set) was unsafe.
+
+**Updated E1 preamble (long-term form):**
 
 ```
-mov ecx, 0      ; XCR0 selector
-mov edx, 0
-mov eax, 3      ; x87 (bit 0) | SSE (bit 1)
-xsetbv
+; require CPUID.01H:ECX.XSAVE = 1 first; if 0, hardware has no XSAVE
+; family at all — skip the whole block and rely on FXSAVE legacy.
+
+mov rax, cr4
+or  rax, 1 << 18              ; CR4.OSXSAVE = 1
+mov cr4, rax
+
+xor ecx, ecx                  ; XCR0 selector
+xor edx, edx
+mov eax, 3                    ; bits: x87 (0) | SSE (1); YMM bit clear
+xsetbv                        ; XCR0 := EDX:EAX
 ```
+
+Logging recommended:
+
+```
+[cpuid] XSAVE=...               (CPUID.01H:ECX.bit26)
+[cpuid] OSXSAVE-before-cr4=...  (CPUID.01H:ECX.bit27)
+[cpuid] OSXSAVE-after-cr4=...   (should be 1)
+[xcr0] before=...
+[xcr0] after=0x3
+```
+
+**Current code status.** `ActivatePagerRootAndLockCpuFeatures` reads
+CR4 and SKIPS `xsetbv` if `OSXSAVE = 0`. That's safe but leaves
+`CR4.OSXSAVE` unmanaged — fine while we never want XSAVE/AVX. When
+the kernel eventually wants OSXSAVE on (e.g., Phase F XSAVE
+migration), it must explicitly take the preamble above.
 
 ### PV3 — page-table active vs inactive content
 
@@ -592,17 +744,66 @@ both APIs to `s_rootTable`.
 **Boot-order constraint.** Activation must happen between
 `X64PageTable.Init()` returning and the first `VirtualMemory.MapFixed`
 call. Today that first call is `Framebuffer.Init` (`OS/src/Hal/Framebuffer.cs:51`)
-unless paging-validation pre-empts. The activation step is a single
-`TryActivatePagerCr3()` (already implemented) plus a TLB
-invalidation that's implicit in the `mov cr3, …` write.
+unless paging-validation pre-empts.
+
+### PV4 — global TLB / CR4.PGE on activation (sage-2 add)
+
+Earlier draft assumed `mov cr3, …` provides "implicit TLB
+invalidation." **Half right.** `mov cr3` invalidates non-global
+translations only; entries marked with the **global** bit
+(`PTE.G`, bit 8) survive CR3 reload when `CR4.PGE = 1`.
+
+This is not academic. The build's `last_build.log` shows PTEs with
+the global flag — e.g. `flags=P|W|G|NX`, `flags=Present|Writable|Global|NoExecute`.
+So global mappings exist in the firmware PML4, get cloned into our
+clone PML4 (memcpy preserves the G bit), and would persist in the
+TLB across activation if `CR4.PGE` is on.
+
+**Activation MUST perform a full local TLB flush.** Because CR3
+reload does not invalidate global translations when `CR4.PGE = 1`,
+activation must either:
+
+(A) Clear `CR4.PGE`, load CR3, restore `CR4.PGE` (recommended).
+(B) Prove no active G mappings exist AND keep PGE disabled until
+    after activation.
+
+Patch sequence for (A):
+
+```
+mov rax, cr4
+mov rdx, rax                  ; save original CR4 for restore
+and rax, ~(1 << 7)            ; clear CR4.PGE → invalidates global TLB
+mov cr4, rax
+
+mov cr3, <s_rootTable | flags>
+
+mov rax, rdx
+mov cr4, rax                  ; restore PGE bit
+```
+
+**Current code status.** `Pager.TryActivatePagerRoot` →
+`Cr3Accessor.TryWrite` writes CR3 without toggling CR4.PGE. The
+hazard is real but the observed boot survives because the clone
+preserves all firmware mappings PA-for-PA — stale G-cached
+translations point to the same physical pages as the cloned
+mappings, so semantics are identical for already-cached VAs. We do
+NOT modify any firmware-mapped entry post-activation; if we ever do,
+the TLB will serve the OLD translation and the change goes invisible
+until the next process-wide flush.
+
+**PV4 acceptance check** (later, when implementing): after activation,
+the active CR3 equals `s_rootTable`, AND a synthetic global-flag
+write through a fresh test VA is visible immediately (proves no
+stale G translation survived).
 
 ### Summary
 
 | PV | Status | Action absorbed into |
 |---|---|---|
 | PV1 | gs base wrmsr shellcode exists, reusable for swap | E2 |
-| PV2 | XCR0 unmanaged; firmware-dependent AVX state | E0 → E1 (xsetbv preamble) |
-| PV3 | Two-PML4 split-brain by design, inactive ledger | E1 (early activate + single-table refactor) |
+| PV2 | XCR0 mechanic corrected (OSXSAVE ≠ XCR0); preamble needs CR4.OSXSAVE first; current code gates xsetbv on CR4.OSXSAVE (safe by omission) | E0 → E1 |
+| PV3 | Two-PML4 split-brain closed; single-table model post-activation | E1 (landed) |
+| PV4 | CR4.PGE global pages survive `mov cr3`; activation must toggle PGE off/on for full local TLB flush | E1.b (post-landing fix) |
 
 E0 closes with these recorded. E1 starts with the §2 H3 sequence
 plus the PV2 xsetbv preamble inserted before any JIT-callable code

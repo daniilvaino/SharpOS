@@ -1,0 +1,45 @@
+namespace OS.Kernel.Threading
+{
+    internal enum ThreadState : byte
+    {
+        New = 0,        // allocated, not yet enqueued
+        Runnable = 1,   // in the runnable queue, waiting for CPU
+        Running = 2,    // currently executing
+        Exited = 3,     // terminated, will not run again
+    }
+
+    // Phase E4 cooperative-switch thread. One CPU; no preemption.
+    // Field layout is irrelevant for the switch shellcode — that
+    // operates only on the ContextBlock (raw byte buffer with a fixed
+    // ABI: SavedRsp at offset 0, FXSAVE area at offset 0x10).
+    internal unsafe class Thread
+    {
+        public int Id;
+        public ThreadState State;
+
+        // Singly-linked runnable queue. null when not enqueued.
+        public Thread? Next;
+
+        // ContextBlock layout (528 bytes, 16-byte aligned):
+        //   +0x00  ulong  SavedRsp  — written by CoopSwitch on switch-out
+        //   +0x08  ulong  (reserved, currently 0)
+        //   +0x10  byte[512]  FxsaveArea — fxsave/fxrstor target
+        public byte* ContextBlock;
+
+        // Stack ownership. StackBase = low VA (allocation start),
+        // StackTop = high VA (StackBase + StackBytes). For the wrapped
+        // boot thread, StackBase/Top are null (we don't own the boot
+        // stack — UEFI/loader did the allocation).
+        public byte* StackBase;
+        public byte* StackTop;
+        public uint StackBytes;
+
+        // TEB pointer. Phase E4 leaves this null on kernel-only threads
+        // (no gs base swap yet); E5+ wires per-thread TEBs.
+        public byte* Teb;
+
+        // Entry function for spawned threads. Null for the boot-thread
+        // wrapper.
+        public delegate* unmanaged<void> Entry;
+    }
+}

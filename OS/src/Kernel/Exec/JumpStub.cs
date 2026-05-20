@@ -29,9 +29,13 @@ namespace OS.Kernel.Exec
             if (s_initialized)
                 return true;
 
-            if (Pager.IsPagerRootActive())
-                return false;
-
+            // Phase E1 note: pre-E1 this method ran on firmware CR3 and the
+            // guard `if (IsPagerRootActive()) return false;` was a stale
+            // defensive check (IsPagerRootActive was never true before E1).
+            // Post-E1 kernel CR3 == pager root by design; the EfiLoaderCode
+            // buffer is still mapped executable in the clone (deep-copied
+            // from firmware), so TryAllocFromExecBuffer still succeeds. The
+            // guard would now block every ELF launch — removed.
             return TryInitialize();
         }
 

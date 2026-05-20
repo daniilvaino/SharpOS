@@ -64,6 +64,26 @@ namespace OS.Kernel.Diagnostics
         // tells us empirically what CoreCLR wants на init.
         public const bool CoreClrInit = true;
 
+        // Phase E2 — TEB facade swap. Allocates a fresh TebFacade, swaps
+        // gs base to it (under CLI), reads gs:[Self] and gs:[StackLimit]
+        // back, restores original gs base. Proves the per-switch primitive
+        // works before Phase E4 wires it into a cooperative context
+        // switch. Independent of CoreCLR (runs against own X64Asm stubs).
+        public const bool TebFacadeSwap = true;
+
+        // Phase E3 — atomic primitives (lock cmpxchg / xchg / mfence).
+        // Stack-resident ulong slot, four mini scenarios (hit, miss,
+        // xchg, mfence). Regression oracle for the X64Asm shellcode
+        // bytes — multi-core stress is E4+ business.
+        public const bool Atomics = true;
+
+        // Phase E4 — cooperative two-thread ping-pong. Wraps current
+        // execution as a Thread, spawns T1 and T2 (each yielding N
+        // times), drives Scheduler.Yield until both children exit.
+        // Asserts iteration counts + boot-thread resume. First real
+        // multi-thread artefact in the project — commit milestone.
+        public const bool ThreadPingPong = true;
+
         // Phase B — own 16550 UART (COM1) driver bring-up. Inits the
         // chip directly via PortIo and self-tests via loopback, then
         // writes one line through the OWN driver. Pre-EBS this hits the

@@ -174,12 +174,14 @@ namespace OS.Boot
         private static void Phase3_Platform(BootInfo bootInfo)
         {
             InitializePager();
+            ActivatePagerRootAndLockCpuFeatures();
             RunPagerValidation();
 
             // VM manager self-test — Reserve/Commit/MapKernel produce live
-            // writable mappings. Must run after InitializePager (X64PageTable
-            // s_kernelRootTable set from CR3) + PhysicalMemory (Phase1).
-            // CoreCLR GC (Phase4) depends on this; fail loud here, not later.
+            // writable mappings. Must run after InitializePager (creates the
+            // clone) AND ActivatePagerRootAndLockCpuFeatures (clone becomes
+            // active) + PhysicalMemory (Phase1). CoreCLR GC (Phase4) depends
+            // on this; fail loud here, not later.
             if (OS.Kernel.Memory.VirtualMemory.SelfTest())
                 Log.Write(LogLevel.Info, "VM manager self-test ok");
             else
@@ -263,6 +265,31 @@ namespace OS.Boot
             // EH probe — three levels (try/finally no-throw, try/catch
             // no-throw, try/catch with throw). L3 currently halts.
             EhProbe.Run();
+
+            // Phase E2 — TEB facade swap probe. Allocates a fresh TebFacade,
+            // CLI-fenced swaps gs base to it, reads gs:[Self] / gs:[Limit]
+            // back, restores original gs base. Gates the per-switch
+            // primitive that Phase E4 wires into cooperative context
+            // switches. Runs before CoreClrProbe so the original gs base
+            // is the firmware default (0) — restoring to 0 is safe here
+            // because no kernel path reads gs:[X] (only CoreCLR does, and
+            // CoreCLR hasn't been touched yet).
+            if (Probes.TebFacadeSwap)
+                OS.Kernel.Threading.TebFacadeProbe.Run();
+
+            // Phase E3 — atomic primitives smoke (lock cmpxchg / xchg /
+            // mfence semantics on a stack-resident ulong). Regression
+            // oracle for the X64Asm shellcode bytes; gated alongside
+            // the TEB probe so a single boot run validates the full
+            // Phase E pre-requisite stack.
+            if (Probes.Atomics)
+                OS.Kernel.Threading.AtomicsProbe.Run();
+
+            // Phase E4 — two cooperative kernel threads ping-pong via
+            // X64Asm.CoopSwitch. First real multi-thread artefact;
+            // commit milestone after this passes green.
+            if (Probes.ThreadPingPong)
+                OS.Kernel.Threading.ThreadPingPongProbe.Run();
 
             // Phase 6.1.a — call coreclr_initialize from kernel boot path.
             // Expected to panic at first unimplemented SharpOSHost_* /
@@ -446,6 +473,59 @@ namespace OS.Boot
         {
             PagingValidation.Run();
             PagingDiagnostics.DumpSummary();
+        }
+
+        // Phase E1 — flip the inactive pager clone to be the live CR3 and
+        // (conditionally) lock XCR0 to FXSAVE-safe state (x87+SSE only).
+        // Both must happen BEFORE the first VirtualMemory.MapFixed
+        // (Framebuffer / PCI / AHCI / JIT regions); the
+        // docs/threading-architecture.md §17 H3 lock.
+        //
+        // Activation: deep-cloned PML4 already has every firmware identity
+        // mapping (TryCloneTableRecursive copied directory pages; leaf
+        // entries point to the same physical pages). Switching CR3 is
+        // therefore a no-op for the live address space — the kernel keeps
+        // running on the same VAs — but any subsequent Map/MapKernel write
+        // becomes CPU-visible. Post-switch, MapKernel and Map both target
+        // s_rootTable (now the active root).
+        //
+        // XCR0 lock: gated by CR4.OSXSAVE (bit 18). xsetbv #UDs if OSXSAVE
+        // is 0 — observed empirically on QEMU/OVMF (firmware leaves it off;
+        // OSXSAVE is the OS's responsibility to set). Skipping xsetbv when
+        // OSXSAVE=0 is SAFE: cpuid.1.ecx[27] mirrors CR4.OSXSAVE and the
+        // CoreCLR JIT consults it; OSXSAVE=0 → JIT cannot use AVX/VEX →
+        // legacy SSE only → fxsave/fxrstor (512 B xmm0-15) is complete by
+        // construction. The PV2 lock (§5 / §17) is therefore enforced
+        // automatically. If a future bring-up DOES set CR4.OSXSAVE=1
+        // (e.g. to enable AVX deliberately later), the xsetbv branch fires
+        // and explicitly clears XCR0 to x87+SSE so FXSAVE stays sufficient.
+        private static void ActivatePagerRootAndLockCpuFeatures()
+        {
+            if (!Pager.TryActivatePagerRoot())
+                Panic.Fail("pager root activation failed");
+            Log.Write(LogLevel.Info, "pager root activated (clone CR3 live)");
+
+            if (!X64Asm.TryReadCr4(out ulong cr4))
+            {
+                Log.Write(LogLevel.Warn, "XCR0 lock skipped — TryReadCr4 unavailable");
+                return;
+            }
+
+            const ulong Cr4OsXsave = 1UL << 18;
+            if ((cr4 & Cr4OsXsave) == 0)
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("XCR0 lock skipped (CR4=0x");
+                Console.WriteHex(cr4, 16);
+                Console.Write(", OSXSAVE=0, legacy FXSAVE active)");
+                Log.EndLine();
+                return;
+            }
+
+            if (X64Asm.Xsetbv(0, 0x3UL))
+                Log.Write(LogLevel.Info, "XCR0 = x87|SSE locked (FXSAVE-safe)");
+            else
+                Log.Write(LogLevel.Warn, "XCR0 lock failed — AsmExecBuffer unavailable");
         }
 
         private static void InitializeAcpi(BootInfo bootInfo)

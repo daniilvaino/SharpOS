@@ -224,9 +224,10 @@ namespace OS.Kernel.Process
             if (s_serviceThunksInitialized)
                 return true;
 
-            if (Pager.IsPagerRootActive())
-                return false;
-
+            // Phase E1 note: stale guard removed — pre-E1 it never fired
+            // (IsPagerRootActive was always false); post-E1 kernel CR3 ==
+            // pager root, and Pager.Map writes are now CPU-visible directly,
+            // so thunk init works identically. See same edit in JumpStub.
             bool initialized = false;
             try
             {
