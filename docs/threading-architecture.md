@@ -434,7 +434,7 @@ Two passes:
 
 | # | Goal | Acceptance criterion |
 |---|---|---|
-| E0 | Pre-flight: PV1 (gs base swap on context switch?), PV2 (XCR0 state at boot?), PV3 (page-table active vs inactive content) | Documented findings; PV1 either confirmed or planned |
+| E0 | Pre-flight: PV1 (gs base swap on context switch?), PV2 (XCR0 state at boot?), PV3 (page-table active vs inactive content) | DONE — findings in §17 |
 | E1 | Page-table clone activated early; `Map()` visible | Probe writes new mapping, CPU sees it post-switch |
 | E2 | TEB facade allocated per (currently single) thread; gs base swap on context switch | Probe reads `gs:[0x30]` returns TEB.Self; switch-test ping-pong |
 | E3 | Atomic primitives (`lock cmpxchg`, `xchg`, `mfence`) via byte-shellcode | `Interlocked.CompareExchange` byte-equal to real `lock cmpxchg` semantics |
@@ -474,3 +474,136 @@ one-day landing like Phase D.
 - `gc-experiment/MOOS/Kernel/Driver/HPET.cs` — direct port candidate.
 - `dotnet-runtime-sharpos/src/coreclr/vm/threads.h` — CoreCLR Thread*
   layout (kernel never reads).
+
+## 17. E0 pre-flight findings (2026-05-19)
+
+Read-only investigation; no code changes. Each PV either confirms an
+assumption in §2/§5/§6 or surfaces a delta the implementer must
+absorb before E1.
+
+### PV1 — gs base today vs. swap on context switch
+
+`OS/src/Kernel/Diagnostics/CoreClrProbe.cs:600` emits a wrmsr
+shellcode at `AsmExecBuffer` offset 64 that writes
+`IA32_GS_BASE = 0xC0000101` once at boot to the address of the
+single-thread TEB struct. TEB layout matches §6:
+
+| offset | field | use |
+|---|---|---|
+| `gs:[0x10]` | StackLimit | CoreCLR stack queries |
+| `gs:[0x30]` | Self | TEB self-pointer (§6 lock) |
+| `gs:[0x58]` | TLS pointer | CoreCLR TLS slot array |
+| `gs:[0x60]` | PEB | currently null sentinel |
+| `gs:[0x68]` | LastError | mutated by Win32 emulation |
+
+**Status.** Single-thread today, so no swap needed. The wrmsr shellcode
+IS reusable for context-switch — caller just hands a different TEB
+pointer. **MSR ID is correct** (`0xC0000101`, NOT `0xC0000102` —
+the latter is the SWAPGS scratch, irrelevant in our ring-0 unikernel).
+
+**E2 input.** Reuse the existing shellcode; switch path is one
+indirect call with the next TEB's address.
+
+### PV2 — XCR0 state at boot
+
+Grep across kernel sources + fork PAL: ZERO occurrences of `xsetbv`,
+`XCR0`, `AVX`. We never touch the SSE/AVX enable mask explicitly.
+
+**Risk.** Firmware leaves XCR0 with bits set per its preference. On
+modern QEMU/UEFI XCR0 typically has AVX (bit 2) and possibly AVX-512
+bits set. CoreCLR's JIT reads OSXSAVE via cpuid; if AVX is enabled,
+it emits VEX-encoded code → uses YMM registers → our FXSAVE (512 B,
+xmm0-15 only) silently truncates the upper 128 bits of each ymm on
+context switch.
+
+**E0 lock.** Before E1, add an explicit `xsetbv` byte-shellcode that
+clears XCR0 to `x87 | SSE` (bits 0+1 = `0b11`, `0x3`). With AVX off
+the JIT emits SSE-only code and FXSAVE is sufficient. (§5 already
+records the FXSAVE-only policy; this PV gives it the missing
+enforcement step.)
+
+**Sequence in E1 preamble:**
+
+```
+mov ecx, 0      ; XCR0 selector
+mov edx, 0
+mov eax, 3      ; x87 (bit 0) | SSE (bit 1)
+xsetbv
+```
+
+### PV3 — page-table active vs inactive content
+
+`OS/src/Kernel/Paging/X64PageTable.cs:58-94` (`Init`):
+
+1. Read live CR3 → `s_kernelCr3` / `s_kernelRootTable` (firmware PML4)
+2. `TryCloneTableRecursive(s_kernelRootTable, 4, out s_rootTable)` —
+   recursive deep-clone produces our own PML4 sharing firmware's
+   identity mappings
+3. `s_pagerCr3` set; `TryActivatePagerCr3` exists but NEVER called
+
+| API | Writes to | CPU-visible today |
+|---|---|---|
+| `Pager.Map` → `X64PageTable.Map` | `s_rootTable` (inactive clone) | NO |
+| `VirtualMemory.MapFixed/Map` → `X64PageTable.MapKernel` | `s_kernelRootTable` (active firmware) | YES |
+| `TrySetKernelFlags*` | `s_kernelRootTable` | YES |
+
+**Caller audit:**
+
+- `Pager.Map` (invisible writes): `JumpStub`, `ElfLoader`,
+  `ElfValidation`, `ProcessImageBuilder`, `ProcessManager`,
+  `AppServiceBuilder`, `PagingValidation`
+- `MapKernel` (visible writes): `VirtualMemory.MapFixed` only,
+  used by `Framebuffer`, `Pci`, `Ahci`, `SharpOSHost.Memory`
+  (CoreCLR JIT exec regions)
+
+**Why ELF apps run despite `Pager.Map` being invisible.** UEFI
+identity-maps the full address space in firmware's PML4. ELF code
+and data live at PA == VA in already-mapped firmware ranges, so
+loads/stores succeed via the active kernelRootTable. The
+`Pager.Map` calls add entries to the clone for our own bookkeeping
+but the CPU never consults the clone (CR3 is firmware). The clone
+is effectively a write-only ledger today.
+
+**E1 hazard — split-brain on activation.** If we naively
+`TryActivatePagerCr3()` at the current call site (post-Init, after
+MapKernel has already populated `s_kernelRootTable` with FB/AHCI/PCI/JIT
+mappings), the clone is STALE for those ranges. CPU loses FB MMIO,
+AHCI MMIO, PCI ECAM window, and every JIT-emitted code page. Boot
+fails on first access through one of those.
+
+**E1 fix (locks Sage 2 H3 in §2).** One of:
+
+(a) **Activate clone EARLY**, immediately after `Init()` returns,
+    BEFORE any `VirtualMemory.MapFixed` / framebuffer / AHCI /
+    PCI / JIT region is mapped. After activation, redirect
+    `MapKernel` to write to `s_rootTable` (which is now active).
+    Cleanest model: one root table, period.
+
+(b) **Mirror every `MapKernel` to `s_rootTable`**, then activate
+    later. Doubles bookkeeping; one write per call goes "wherever"
+    isn't active. Higher leak surface.
+
+§2 already records H3 (early activation) as the chosen path. PV3
+confirms (a) is feasible — `MapKernel` and `Map` share the same
+algorithm (only the root-table field differs), so the refactor is
+literal: drop `s_kernelRootTable` writes after activation, route
+both APIs to `s_rootTable`.
+
+**Boot-order constraint.** Activation must happen between
+`X64PageTable.Init()` returning and the first `VirtualMemory.MapFixed`
+call. Today that first call is `Framebuffer.Init` (`OS/src/Hal/Framebuffer.cs:51`)
+unless paging-validation pre-empts. The activation step is a single
+`TryActivatePagerCr3()` (already implemented) plus a TLB
+invalidation that's implicit in the `mov cr3, …` write.
+
+### Summary
+
+| PV | Status | Action absorbed into |
+|---|---|---|
+| PV1 | gs base wrmsr shellcode exists, reusable for swap | E2 |
+| PV2 | XCR0 unmanaged; firmware-dependent AVX state | E0 → E1 (xsetbv preamble) |
+| PV3 | Two-PML4 split-brain by design, inactive ledger | E1 (early activate + single-table refactor) |
+
+E0 closes with these recorded. E1 starts with the §2 H3 sequence
+plus the PV2 xsetbv preamble inserted before any JIT-callable code
+is mapped.
