@@ -42,6 +42,16 @@ namespace OS.PAL.SharpOSHost
     // OffsetInProlog is ignored — apply all codes in forward order.
     internal static unsafe class SehUnwind
     {
+        // step 89 sec11 cheap detector -- per-opcode trace inside
+        // ApplyUnwindInfo (header / each code / finalize) plus first 48
+        // bytes of function body for identification by prolog signature.
+        // ILC dead-codes when false. Pair with SehDispatch.Trace=true
+        // for the per-frame bracket lines. Used in step-89 to identify
+        // CallDescrWorkerInternal as the sec11 kill frame; root is now
+        // understood (FrameChain integration), tier stays as scaffolding
+        // for the actual Phase D fix.
+        private const bool TraceUnwind = false;
+
         // Windows-API-shaped lookup. Returns pointer to RUNTIME_FUNCTION
         // (in our .pdata array) or null if IP isn't в our image.
         //
@@ -332,6 +342,9 @@ namespace OS.PAL.SharpOSHost
             int progress = (int)((long)rva - (long)functionEntry->BeginAddress);
             bool midProlog = (progress >= 0) && (progress < prologSize);
 
+            if (TraceUnwind) TuHeader(controlPc, image, functionEntry,
+                                      countOfCodes, flags, frameReg, frameOffset, progress, midProlog);
+
             ushort* codes = (ushort*)(unwindInfo + 4);
             int i = 0;
             while (i < countOfCodes)
@@ -342,7 +355,8 @@ namespace OS.PAL.SharpOSHost
                 int info = (raw >> 12) & 0x0F;
 
                 int slotsConsumed;
-                if (midProlog && codeOffsetInProlog > progress)
+                bool skipped = midProlog && codeOffsetInProlog > progress;
+                if (skipped)
                 {
                     // This prolog step hadn't been executed yet — skip it.
                     slotsConsumed = SlotCount(op, info);
@@ -351,6 +365,7 @@ namespace OS.PAL.SharpOSHost
                 {
                     slotsConsumed = ApplyCode(op, info, codes + i, context, frameReg, frameOffset);
                 }
+                if (TraceUnwind) TuCode(op, info, codeOffsetInProlog, skipped, slotsConsumed, context);
                 if (slotsConsumed < 0)
                 {
                     Console.Write("[seh-unwind] unknown UNWIND_CODE op=");
@@ -381,6 +396,7 @@ namespace OS.PAL.SharpOSHost
             // SP now points at saved return address. Pop it into RIP, then
             // advance SP by 8.
             ulong* sp = (ulong*)context->Rsp;
+            if (TraceUnwind) TuFinalize(context, sp);
             context->Rip = *sp;
             context->Rsp = (ulong)(sp + 1);
 
@@ -555,6 +571,62 @@ namespace OS.PAL.SharpOSHost
                 case 15: return ctx->R15;
                 default: return 0;
             }
+        }
+
+        // ─── step 89 §11 diag helpers (compile-out via TraceUnwind=false) ─
+        // Concise per-frame / per-code dump: enough to locate which
+        // UNWIND_CODE applied to the last good frame before walker
+        // reads a stack address as RIP.
+
+        private static void TuHeader(ulong controlPc, byte* image, RuntimeFunction* fn,
+                                     int nCodes, int flags, int fpReg, int fpOff,
+                                     int progress, bool midProlog)
+        {
+            Console.Write("[uw] f pc=0x");        Console.WriteHex(controlPc);
+            Console.Write(" rva=0x");             Console.WriteHex((ulong)(controlPc - (ulong)image));
+            Console.Write(" beg=0x");             Console.WriteHex((ulong)fn->BeginAddress);
+            Console.Write(" end=0x");             Console.WriteHex((ulong)fn->EndAddress);
+            Console.Write(" n=");                 Console.WriteInt(nCodes);
+            Console.Write(" flg=0x");             Console.WriteHex((ulong)flags);
+            if (fpReg != 0) { Console.Write(" fpReg="); Console.WriteInt(fpReg);
+                              Console.Write(" fpOff="); Console.WriteInt(fpOff * 16); }
+            Console.Write(" prog=");              Console.WriteInt(progress);
+            if (midProlog) Console.Write(" MID");
+            Console.WriteLine("");
+            // First 48 bytes of function body — lets us identify the function
+            // by its prolog+early-body signature when no symbols available.
+            // 48 bytes typically covers prolog (~16) + enough body to catch
+            // `mov rbp, [...]` and the first `call` displacement.
+            byte* fnBytes = image + fn->BeginAddress;
+            Console.Write("[uw]   bytes:");
+            for (int b = 0; b < 48; b++)
+            {
+                if ((b & 15) == 0 && b > 0) { Console.WriteLine(""); Console.Write("[uw]         "); }
+                Console.Write(" ");
+                byte v = fnBytes[b];
+                if (v < 0x10) Console.Write("0");
+                Console.WriteHex((ulong)v);
+            }
+            Console.WriteLine("");
+        }
+
+        private static void TuCode(int op, int info, int pOff, bool skipped,
+                                   int slots, Context* ctx)
+        {
+            Console.Write("[uw]  op=");           Console.WriteInt(op);
+            Console.Write(" info=");              Console.WriteInt(info);
+            Console.Write(" pOff=");              Console.WriteInt(pOff);
+            if (skipped) Console.Write(" SKIP");
+            Console.Write(" slots=");             Console.WriteInt(slots);
+            Console.Write("  rsp=0x");            Console.WriteHex(ctx->Rsp);
+            Console.WriteLine("");
+        }
+
+        private static void TuFinalize(Context* ctx, ulong* sp)
+        {
+            Console.Write("[uw] fin rsp=0x");     Console.WriteHex(ctx->Rsp);
+            Console.Write(" *rsp=0x");            Console.WriteHex(*sp);
+            Console.WriteLine("");
         }
     }
 }

@@ -37,7 +37,7 @@ namespace OS.PAL.SharpOSHost
         // NOT this trace — default-off loses no coverage, keeps mainline
         // clean. HALT / alloc-failed / invalid-Rip / walked-out stay ON
         // (signal). Flip to true only when re-debugging the unwinder.
-        private const bool Trace = false;
+        private const bool Trace = false;    // step-89 left scaffolding (Tu*, pers-bytes); ILC dead-codes
 
         // RaiseException / RtlRaiseException — top of the dispatch chain.
         // Builds an ExceptionRecord with the supplied code, captures
@@ -372,7 +372,22 @@ namespace OS.PAL.SharpOSHost
 
                 if (personality != null)
                 {
-                    if (Trace) { Console.Write("[seh]   personality=0x"); Console.WriteHex((ulong)personality); Console.WriteLine(""); }
+                    if (Trace) {
+                        Console.Write("[seh]   personality=0x"); Console.WriteHex((ulong)personality); Console.WriteLine("");
+                        // First 32 bytes of personality body — for signature
+                        // identification (__CxxFrameHandler3 / __C_specific_handler /
+                        // ProcessCLRException all have distinct openings).
+                        byte* pb = (byte*)personality;
+                        Console.Write("[seh]   pers bytes:");
+                        for (int pi = 0; pi < 32; pi++)
+                        {
+                            Console.Write(" ");
+                            byte pv = pb[pi];
+                            if (pv < 0x10) Console.Write("0");
+                            Console.WriteHex((ulong)pv);
+                        }
+                        Console.WriteLine("");
+                    }
                     dc->ControlPc = controlPc;
                     dc->ImageBase = ib;
                     dc->FunctionEntry = rf;
@@ -384,7 +399,20 @@ namespace OS.PAL.SharpOSHost
 
                     delegate* unmanaged<ExceptionRecord*, void*, Context*, DispatcherContext*, int> fn =
                         (delegate* unmanaged<ExceptionRecord*, void*, Context*, DispatcherContext*, int>)personality;
+                    // step 89 sec11 diag — does personality redirect dispatch via dc/searchCtx?
+                    // Compare ctx delta around the call (Rip/Rsp/Rbp).
+                    ulong preRip = searchCtx->Rip, preRsp = searchCtx->Rsp, preRbp = searchCtx->Rbp;
                     int disp = fn(rec, (void*)newFrame, searchCtx, dc);
+                    if (preRip != searchCtx->Rip || preRsp != searchCtx->Rsp || preRbp != searchCtx->Rbp)
+                    {
+                        Console.Write("[seh]   pers MUTATED ctx: rip 0x"); Console.WriteHex(preRip);
+                        Console.Write("->0x"); Console.WriteHex(searchCtx->Rip);
+                        Console.Write(" rsp 0x"); Console.WriteHex(preRsp);
+                        Console.Write("->0x"); Console.WriteHex(searchCtx->Rsp);
+                        Console.Write(" rbp 0x"); Console.WriteHex(preRbp);
+                        Console.Write("->0x"); Console.WriteHex(searchCtx->Rbp);
+                        Console.WriteLine("");
+                    }
 
                     if (disp == ExceptionDispositionExt.ExceptionExecuteHandlerMarker)
                     {

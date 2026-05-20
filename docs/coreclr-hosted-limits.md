@@ -198,20 +198,58 @@ OS-thread spawn) **один и тот же**:
 [PANIC] unhandled exception
 ```
 
-Исключение рождается в нативном C-коде (провал загрузки native-lib /
-`SwitchToThread`), поднимается через **C-style SEH**
-(`__C_specific_handler`, не C++ `__CxxFrameHandler3`), внутренний
-фильтр отказывается, и поиск handler'а **должен пройти много нативных
-кадров** — ровно тут `SehUnwind` теряет frame-chain (читает стековый
-слот как return-address → `invalid Rip`) и до CLR-кадра, который
-превратил бы SEH в ловимый managed `SEHException`, **не доходит**.
+**Root cause (step-89 диагностика, см. `done/step080.md`).** Walker
+**корректно** размотает все стандартные кадры по UNWIND_INFO — это
+проверено per-opcode трейсом и сверкой с источником `dotnet-runtime-
+sharpos`. Точка отказа — кадр, чья начальная сигнатура (`53 56 55 48
+8B EC 48 8B D9 8B 4B 08`…) и custom personality `CallDescr-
+WorkerUnwindFrameChainHandler` однозначно идентифицируют его как
+**`CallDescrWorkerInternal`** (handwritten asm trampoline в
+`src/coreclr/vm/amd64/CallDescrWorkerAMD64.asm`), через который
+CoreCLR проводит managed-to-unmanaged transitions.
 
-Это **не managed-gap и не новый баг** — это upstream-корень, который
-step-71 (`CallCatchFunclet` RBP) и step-72 (`GetStackSlot` GC RBP)
-чинили **локально для своих консьюмеров**, явно отложив сам размотчик.
-Сейчас он бьёт на третьем классе консьюмеров (native-C-SEH путь).
-«Настоящий фикс» — упорядочить `SehUnwind` frame-chain (C#-порт
-RtlVirtualUnwind) — крупный отдельный шаг.
+CoreCLR'овский **stub-mechanism** (P/Invoke, reflection invoke,
+helper-method transitions) НЕ использует обычный `call`/`ret` —
+вместо retaddr-слота на стеке пушится указатель на `Frame*`
+структуру (per-thread linked list, head в `Thread::m_pFrame`).
+Кадр между «callee» и «caller» физически разорван — настоящий
+continuation context живёт **в `Frame*`-объекте**, не в стеке.
+
+Наш walker наивно читает `*rsp` как return-address и попадает на
+этот self-referential `Frame*` указатель (= стековый адрес) → fails
+IsValidIp → HALT. Personality routine этого кадра
+(`CallDescrWorkerUnwindFrameChainHandler` — см. `vm/exception-
+handling.cpp:2114`) в **search-pass — no-op**, потому что в реальном
+Windows OS-dispatcher сам подхватывает FrameChain через
+`Thread::m_pFrame` после возврата personality `ExceptionContinue-
+Search`. Наш SehDispatch этого механизма НЕ имеет.
+
+**Не «port RtlVirtualUnwind» и не «PE/Win64 dispatcher protocol»** —
+эти теории были опровергнуты в step-89. Реальный fix — **интеграция
+walker'а с CoreCLR's per-thread FrameChain**:
+
+1. При обнаружении stub-frame'а (по personality address —
+   `CallDescrWorkerUnwindFrameChainHandler`, `FixContextHandler`,
+   `ReverseComUnwindFrameChainHandler`, etc.) обратиться к
+   `GetThread()->m_pFrame`.
+2. Дёрнуть текущий top `Frame*`, вызвать его виртуал
+   `UpdateRegDisplay(REGDISPLAY*)` — `Frame*` сам знает, где лежит
+   настоящий caller's Rip/Rsp/Rbp/saved-regs.
+3. Продолжить раскрутку с восстановленного контекста, поп'нуть
+   `Frame*` с FrameChain.
+
+Объём — **не threading-PAL**: нужна *структура* `Thread*`+`Frame*`
+(singleton, одна инстанция), не scheduler. `GetThread()` в форке
+уже работает; `m_pFrame` поддерживается CoreCLR'ом автоматически.
+Gap — **только читалка** в нашем SehDispatch. Оценка: **1-2 недели**
+sequential работы (импорт layout-совместимых деклараций `Thread` +
+`Frame*`-семейства типов + walker integration + регрессии).
+
+Step-71 (`CallCatchFunclet` RBP) и step-72 (`GetStackSlot` GC RBP)
+остаются локальными пластырями для **двух уже-решённых** классов
+кадров. step-89 диагностический trace-scaffolding (gated `const
+bool TraceUnwind = false` в `SehUnwind`, `Trace = false` в
+`SehDispatch`) живёт в коде на случай повторных раскопок.
 
 ---
 
