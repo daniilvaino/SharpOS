@@ -174,6 +174,23 @@ $results += Get-ProbeStatus -Cat 'PhaseE' -Name 'ThreadPingPong.Verdict' `
     -Status 'ping-pong probe:.*?(ok|FAIL)\b' `
     -ExpectRe '^ok$'
 
+$results += Get-ProbeStatus -Cat 'PhaseE' -Name 'ThreadSleep' `
+    -Detect 'sleep probe start' `
+    -Status 'sleep probe: pass=(\d+)/3 fail=0\s+--\s+(ok|FAIL)' `
+    -ExpectRe '^ok$' `
+    -Group 2
+
+$results += Get-ProbeStatus -Cat 'PhaseE' -Name 'ThreadEvent' `
+    -Detect 'event probe start' `
+    -Status 'event probe: latency=(-?\d+) ms.*?(ok|FAIL)' `
+    -ExpectRe '^ok$' `
+    -Group 2
+
+$results += Get-ProbeStatus -Cat 'PhaseE' -Name 'ThreadSemaphore' `
+    -Detect 'semaphore probe start' `
+    -Status 'semaphore probe:.*?residualCount=\d+\s+--\s+(ok|FAIL)' `
+    -ExpectRe '^ok$'
+
 # Drivers (Phase 4 sub).
 $results += Get-ProbeStatus -Cat 'Drivers' -Name 'SerialSmoke' `
     -Detect '\[serial\] direct-UART line via own 16550' `

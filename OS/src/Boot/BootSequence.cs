@@ -291,6 +291,15 @@ namespace OS.Boot
             if (Probes.ThreadPingPong)
                 OS.Kernel.Threading.ThreadPingPongProbe.Run();
 
+            // Phase E5 — Scheduler.Sleep + Event.Wait/Set round trip
+            // (TimerQueue + scheduler-aware blocking primitives).
+            if (Probes.ThreadSleep)
+                OS.Kernel.Threading.SleepProbe.Run();
+            if (Probes.ThreadEvent)
+                OS.Kernel.Threading.EventProbe.Run();
+            if (Probes.ThreadSemaphore)
+                OS.Kernel.Threading.SemaphoreProbe.Run();
+
             // Phase 6.1.a — call coreclr_initialize from kernel boot path.
             // Expected to panic at first unimplemented SharpOSHost_* /
             // CrtAndEh stub. Iterate until S_OK.

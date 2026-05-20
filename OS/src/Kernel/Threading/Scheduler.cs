@@ -1,4 +1,5 @@
 using OS.Hal;
+using OS.Hal.Timer;
 using OS.Kernel;
 
 namespace OS.Kernel.Threading
@@ -113,22 +114,60 @@ namespace OS.Kernel.Threading
             return t;
         }
 
-        // Cooperative yield: move current to the back of the runnable
-        // queue, dispatch the head. No-op if queue is empty (single
-        // runnable thread).
+        // Cooperative yield. Phase E5: drain expired TimerQueue entries
+        // first (wakes any threads whose deadline has elapsed), then
+        // dispatch the runnable head. Self-switch is detected and elided.
+        // If the current thread is Waiting and no other thread is ready,
+        // spin-poll the timer queue until something becomes runnable —
+        // this is the "no IRQ-driven wake yet" path (acceptable in
+        // single-CPU cooperative; replace with HLT + IRQ in Phase E6+).
         public static void Yield()
         {
             s_yieldCount++;
+
+            // Drain expired sleepers first so they participate in the
+            // selection below.
+            DrainExpiredTimers();
+
             Thread? curr = s_current;
             if (curr == null) return;
 
             Thread? next = DequeueRunnable();
-            if (next == null) return;   // nothing else runnable
 
+            // If nobody else is runnable AND we're still Running, just
+            // keep going (no-op yield). If we're Waiting (called from
+            // Sleep / Event.Wait) we must NOT continue here — block
+            // until something wakes us.
+            if (next == null)
+            {
+                if (curr.State != ThreadState.Waiting)
+                    return;
+                while (next == null)
+                {
+                    DrainExpiredTimers();
+                    next = DequeueRunnable();
+                    // No CPU-pause hint yet; tight spin. Once IRQ-driven
+                    // wake lands this becomes HLT-in-IST and the spin
+                    // collapses to interrupt latency.
+                }
+            }
+
+            // Re-enqueue current only if it's still Running. Threads
+            // that just transitioned to Waiting / Exited / etc. stay
+            // out of the ready queue.
             if (curr.State == ThreadState.Running)
             {
                 curr.State = ThreadState.Runnable;
                 EnqueueRunnable(curr);
+            }
+
+            // Self-switch elision: if `next` happens to be us (we were
+            // the only Runnable and got re-enqueued above), skip the
+            // shellcode round-trip.
+            if (next == curr)
+            {
+                next.State = ThreadState.Running;
+                return;
             }
 
             next.State = ThreadState.Running;
@@ -136,6 +175,53 @@ namespace OS.Kernel.Threading
             s_switchCount++;
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
             // CoopSwitch returns here when SOMEBODY switches back to curr.
+        }
+
+        // Phase E5 — block the current thread on the TimerQueue until
+        // `milliseconds` of HPET time have elapsed. State transitions:
+        //   Running -> Waiting (caller's "I want to sleep" intent)
+        //   Yield   -> spins / dispatches until our deadline drains us back
+        //   Running (after Yield returns)
+        // Zero ms degrades to a plain Yield. Caller must be a real thread
+        // (s_current != null) — Sleep before Scheduler.Init is a no-op.
+        public static void Sleep(uint milliseconds)
+        {
+            Thread? curr = s_current;
+            if (curr == null) return;
+            if (milliseconds == 0) { Yield(); return; }
+
+            ulong freq = Hpet.FrequencyHz;
+            if (freq == 0) return;   // HPET not initialised — degrade silently
+            ulong ticksPerMs = freq / 1000;
+            if (ticksPerMs == 0) ticksPerMs = 1;
+
+            ulong now = Hpet.ReadCounter();
+            ulong deadline = now + (ulong)milliseconds * ticksPerMs;
+
+            curr.State = ThreadState.Waiting;
+            TimerQueue.Schedule(curr, deadline);
+            Yield();
+            // When we return, deadline has expired and someone (Yield's
+            // drain or another scheduler tick) put us back on Runnable.
+        }
+
+        // Transition `t` from Waiting back to Runnable. Used by
+        // TimerQueue.DrainExpired and by Event/Semaphore.Set.
+        // Idempotent against not-currently-waiting state — guards against
+        // double-wake (timer fires concurrently with explicit Set).
+        public static void WakeFromWait(Thread t)
+        {
+            if (t == null) return;
+            if (t.State != ThreadState.Waiting) return;
+            t.State = ThreadState.Runnable;
+            EnqueueRunnable(t);
+        }
+
+        private static void DrainExpiredTimers()
+        {
+            if (Hpet.FrequencyHz == 0) return;
+            ulong now = Hpet.ReadCounter();
+            TimerQueue.DrainExpired(now);
         }
 
         // Terminate the current thread. Marks it Exited; does NOT re-

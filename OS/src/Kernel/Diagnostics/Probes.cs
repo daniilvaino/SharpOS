@@ -84,6 +84,23 @@ namespace OS.Kernel.Diagnostics
         // multi-thread artefact in the project — commit milestone.
         public const bool ThreadPingPong = true;
 
+        // Phase E5 — Scheduler.Sleep accuracy. Spawns one worker that
+        // performs 3 × Sleep(50ms), measures elapsed via HPET around
+        // each sleep, asserts [45..80] ms. Lower bound enforces "we
+        // actually slept"; upper bound absorbs spin-yield wake latency
+        // (no IRQ-driven HPET wake yet).
+        public const bool ThreadSleep = true;
+
+        // Phase E5 — Event.Wait/Set round trip with manual-reset event.
+        // Main spawns a waiter, Sleep(30ms), Set, then measures
+        // (set -> wake) latency. Asserts < 30 ms.
+        public const bool ThreadEvent = true;
+
+        // Phase E5 — Semaphore Wait + Release(n). Spawns 3 waiters on a
+        // 0-count semaphore; Release(2) should wake exactly 2; Release(1)
+        // wakes the last. Asserts residualCount == 0.
+        public const bool ThreadSemaphore = true;
+
         // Phase B — own 16550 UART (COM1) driver bring-up. Inits the
         // chip directly via PortIo and self-tests via loopback, then
         // writes one line through the OWN driver. Pre-EBS this hits the

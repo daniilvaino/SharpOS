@@ -5,7 +5,8 @@ namespace OS.Kernel.Threading
         New = 0,        // allocated, not yet enqueued
         Runnable = 1,   // in the runnable queue, waiting for CPU
         Running = 2,    // currently executing
-        Exited = 3,     // terminated, will not run again
+        Waiting = 3,    // blocked on TimerQueue or Event/Semaphore wait list
+        Exited = 4,     // terminated, will not run again
     }
 
     // Phase E4 cooperative-switch thread. One CPU; no preemption.
@@ -41,5 +42,17 @@ namespace OS.Kernel.Threading
         // Entry function for spawned threads. Null for the boot-thread
         // wrapper.
         public delegate* unmanaged<void> Entry;
+
+        // Phase E5 — wait/timer linkage. A thread is on AT MOST ONE
+        // wait list at a time (either TimerQueue or one Event/Semaphore
+        // wait queue), so two single-linked next-pointers are enough:
+        //
+        //   TimerNext      — next entry in TimerQueue (sorted by Deadline).
+        //   WaitNext       — next entry on an Event/Semaphore wait list.
+        //   DeadlineTicks  — HPET tick value at which Sleep should expire.
+        //                    0 means no deadline (pure wait).
+        public Thread? TimerNext;
+        public Thread? WaitNext;
+        public ulong DeadlineTicks;
     }
 }
