@@ -191,6 +191,11 @@ $results += Get-ProbeStatus -Cat 'PhaseE' -Name 'ThreadSemaphore' `
     -Status 'semaphore probe:.*?residualCount=\d+\s+--\s+(ok|FAIL)' `
     -ExpectRe '^ok$'
 
+$results += Get-ProbeStatus -Cat 'PhaseE' -Name 'AllocStress' `
+    -Detect 'alloc stress probe start' `
+    -Status 'alloc stress probe:.*?corruption=\d+.*?--\s+(ok|FAIL)' `
+    -ExpectRe '^ok$'
+
 # Drivers (Phase 4 sub).
 $results += Get-ProbeStatus -Cat 'Drivers' -Name 'SerialSmoke' `
     -Detect '\[serial\] direct-UART line via own 16550' `

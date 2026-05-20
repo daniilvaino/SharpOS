@@ -101,6 +101,12 @@ namespace OS.Kernel.Diagnostics
         // wakes the last. Asserts residualCount == 0.
         public const bool ThreadSemaphore = true;
 
+        // Phase E6 acceptance — 4 worker threads × 10000 Alloc/Free
+        // cycles on KernelHeap, with a Yield between write and verify
+        // of an own-thread-id pattern. Surfaces any cross-thread
+        // bookkeeping corruption around the allocator lock.
+        public const bool AllocStress = true;
+
         // Phase B — own 16550 UART (COM1) driver bring-up. Inits the
         // chip directly via PortIo and self-tests via loopback, then
         // writes one line through the OWN driver. Pre-EBS this hits the

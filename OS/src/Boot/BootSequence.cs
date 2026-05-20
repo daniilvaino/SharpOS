@@ -300,6 +300,10 @@ namespace OS.Boot
             if (Probes.ThreadSemaphore)
                 OS.Kernel.Threading.SemaphoreProbe.Run();
 
+            // Phase E6 acceptance — 4 × 10000 alloc/free stress.
+            if (Probes.AllocStress)
+                OS.Kernel.Threading.AllocStressProbe.Run();
+
             // Phase 6.1.a — call coreclr_initialize from kernel boot path.
             // Expected to panic at first unimplemented SharpOSHost_* /
             // CrtAndEh stub. Iterate until S_OK.
