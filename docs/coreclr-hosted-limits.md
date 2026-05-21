@@ -3,9 +3,13 @@
 Живой документ. Перечень того, что **работает / не работает** когда
 стоковый `dotnet build` DLL исполняется **байт-в-байт** на форк-CoreCLR
 (`dotnet-runtime-sharpos`, статически слинкован в kernel-образ;
-steps 68–73). Это **другой режим**, чем `docs/nativeaot-nostdlib-limits.md`
-(тот — про само ядро SharpOS как NativeAOT+NoStdLib). Здесь — про
-гостевой стоковый .NET поверх нашего PAL.
+steps 68–73). Это **третий tier** SharpOS:
+
+- ядро (`OS/`) — kernel NativeAOT+NoStdLib → [`nativeaot-nostd-kernel-limits.md`](nativeaot-nostd-kernel-limits.md);
+- ELF apps (`apps/`) — NativeAOT через AppSDK → [`nativeaot-nostd-elf-limits.md`](nativeaot-nostd-elf-limits.md);
+- **этот файл** — гостевой стоковый .NET поверх нашего PAL.
+
+Общая компаративная таблица — в [`README.md`](../README.md).
 
 Все пункты проверены практикой через scaffold `work/normal-hello/`
 (gitignored) — там живут repro-пробы (coverage-батарея step-72 +

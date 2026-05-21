@@ -1,6 +1,8 @@
-# NativeAOT + NoStdLib: карта ограничений
+# NativeAOT + NoStdLib (kernel tier): карта ограничений
 
-Живой документ. Перечень managed-паттернов C#, которые **не работают** или работают с оговорками в текущем SharpOS-сетапе (NativeAOT 7.0.20 + `NoStdLib=true` + наш `MinimalRuntime` без полной BCL).
+Живой документ. Перечень managed-паттернов C#, которые **не работают** или работают с оговорками в **самом ядре SharpOS** (NativeAOT 7.0.20 + `NoStdLib=true` + наш `MinimalRuntime` без полной BCL).
+
+**Область применения:** только kernel-side код (`OS/` дерево). У ELF-приложений своя поверхность ограничений (`apps/` через `apps/sdk/AppHost.cs` сервис-таблицу) — см. [`nativeaot-nostd-elf-limits.md`](nativeaot-nostd-elf-limits.md). У stock CoreCLR-hosted кода ещё другая поверхность — см. [`coreclr-hosted-limits.md`](coreclr-hosted-limits.md). Общий обзор всех трёх tier'ов с компаративной таблицей — в [`README.md`](../README.md).
 
 Все пункты проверены на практике через `OS/src/Kernel/Diagnostics/NativeAotProbe.cs` — там живут минимальные repro-ы. Если что-то из этого списка понадобится для конкретной задачи — сначала убеждаемся что работаем через workaround, потом принимаем решение: либо оставить ограничение, либо дописать недостающий helper.
 
@@ -197,7 +199,7 @@ IntFn f = x => x * 3;   // ILC: InitializeClosedInstance not found on System.Del
 
 Требует инфраструктуру `System.Delegate` с полями `_target`, `_functionPointer`, методом `InitializeClosedInstance` и Invoke-машинерией.
 
-**⚠️ Workaround:** `delegate* unmanaged<T>` / `delegate*<T>` (IL function pointers) — **работают** и используются в нашем kernel/GC везде (`GcStackSpill.Invoke(&GcRoots.MarkAllUnmanaged)`, service table in apps и т.д.). Они не требуют Delegate-инфраструктуры.
+**⚠️ Workaround:** `delegate* unmanaged<T>` / `delegate*<T>` (IL function pointers) — **работают** и используются в нашем kernel/GC везде (`GcStackSpill.Invoke(&GcRoots.MarkAllUnmanaged)` и т.д.). Они не требуют Delegate-инфраструктуры.
 
 Managed delegate допишем когда понадобится events/LINQ (там просто `Func<T>` и `Action<T>`).
 
