@@ -464,148 +464,45 @@ namespace OS.Kernel.Diagnostics
         {
             Console.WriteLine("--- TEB facade setup ---");
 
-            // Use the REAL kernel PE base (CoffRuntimeFunctionTable scanned for
-            // MZ/PE via page-aligned downward walk from a kernel anchor and
-            // validated). After static-link of coreclr into kernel.exe, the
-            // .CRT RVA we used elsewhere (xcAA - 0xFF1000) does NOT yield
-            // the kernel PE header — that was the original standalone
-            // coreclr.dll RVA, not the merged kernel image RVA.
-            if (!CoffRuntimeFunctionTable.IsInitialized)
+            // Phase E9.b: TEB allocation refactored into CoreClrTeb (so
+            // SharpOSHost_CreateThread can call it for every new thread).
+            // Here we (1) allocate the PRIMARY TEB for the boot/main thread
+            // with synthetic-but-mapped stack range, (2) write its gs base
+            // via the existing wrmsr shellcode, and (3) record the TEB on
+            // Scheduler.Current so context switches back to main restore
+            // gs base correctly.
+            if (!OS.Kernel.Threading.CoreClrTeb.EnsureTemplate())
             {
-                Console.WriteLine("  CoffRuntimeFunctionTable not init — abort");
-                return;
-            }
-            byte* image = CoffRuntimeFunctionTable.ImageBase;
-            ulong imageBase = (ulong)image;
-            Console.Write("  imageBase=0x"); Console.WriteHex(imageBase);
-            Console.WriteLine("");
-            uint peOffset = *(uint*)(image + 0x3C);
-            byte* pe = image + peOffset;
-
-            // After 4-byte "PE\0\0" sig + 20-byte COFF header → optional
-            // header. PE32+ DataDirectory starts at optional-header offset
-            // 112 (24 standard + 88 windows-specific). Total file offset
-            // from PE = 4 + 20 + 112 = 136. TLS entry is DataDirectory[9].
-            byte* opt = pe + 24;
-            ulong linkImageBase = *(ulong*)(opt + 24);  // PE32+ ImageBase
-            uint tlsDirRva = *(uint*)(opt + 112 + 9 * 8);
-            uint tlsDirSize = *(uint*)(opt + 112 + 9 * 8 + 4);
-
-            Console.Write("  linkBase=0x"); Console.WriteHex(linkImageBase);
-            Console.Write(" runtimeBase=0x"); Console.WriteHex(imageBase);
-            Console.Write(" tlsDirRva=0x"); Console.WriteHex(tlsDirRva);
-            Console.Write(" size=0x"); Console.WriteHex(tlsDirSize);
-            Console.WriteLine("");
-
-            if (tlsDirRva == 0)
-            {
-                Console.WriteLine("  no TLS directory — abort facade setup");
+                Console.WriteLine("  CoreClrTeb.EnsureTemplate failed (no PE TLS dir or CoffRuntimeFunctionTable not init)");
                 return;
             }
 
-            // IMAGE_TLS_DIRECTORY64 (40 bytes):
-            //   StartAddressOfRawData  ulong (linked VA)
-            //   EndAddressOfRawData    ulong
-            //   AddressOfIndex         ulong
-            //   AddressOfCallBacks     ulong
-            //   SizeOfZeroFill         uint
-            //   Characteristics        uint
-            ulong* tlsDir = (ulong*)(image + tlsDirRva);
-            ulong tlsStartVa = tlsDir[0];
-            ulong tlsEndVa = tlsDir[1];
-            ulong tlsIndexVa = tlsDir[2];
-            // tlsDir[3] = callbacks (we ignore)
-            uint tlsZeroFill = *(uint*)((byte*)tlsDir + 32);
-
-            ulong tlsTemplateRva = tlsStartVa - linkImageBase;
-            ulong tlsIndexRva = tlsIndexVa - linkImageBase;
-            uint tlsRawSize = (uint)(tlsEndVa - tlsStartVa);
-            uint tlsBlockSize = tlsRawSize + tlsZeroFill;
-
-            Console.Write("  template rva=0x"); Console.WriteHex(tlsTemplateRva);
-            Console.Write(" raw=0x"); Console.WriteHex(tlsRawSize);
-            Console.Write(" zfill=0x"); Console.WriteHex(tlsZeroFill);
-            Console.Write(" idxRva=0x"); Console.WriteHex(tlsIndexRva);
-            Console.WriteLine("");
-
-            // GcHeap returns zeroed memory — TEB + slots start clean.
-            const uint TEB_SIZE = 0x1000;        // 4 KiB
-            const uint TLS_SLOTS_SIZE = 64 * 8;  // 64 slots * 8 bytes
-
-            byte* teb = (byte*)GcHeap.AllocateRaw(TEB_SIZE);
-            byte* slots = (byte*)GcHeap.AllocateRaw(TLS_SLOTS_SIZE);
-            byte* tlsBlock = (byte*)GcHeap.AllocateRaw(tlsBlockSize);
-
-            if (teb == null || slots == null || tlsBlock == null)
-            {
-                Console.WriteLine("  GcHeap alloc failed — abort");
-                return;
-            }
-
-            // Copy TLS template (initialized portion). Zero-fill portion is
-            // already zero from GcHeap.
-            byte* templateSrc = image + tlsTemplateRva;
-            for (uint i = 0; i < tlsRawSize; i++) tlsBlock[i] = templateSrc[i];
-
-            // Wire pointers.
-            //
-            // NT_TIB layout (first 0x38 bytes of TEB on x64):
-            //   +0x00 ExceptionList  PEXCEPTION_REGISTRATION_RECORD
-            //   +0x08 StackBase      void*   TOP of stack (HIGH address)
-            //   +0x10 StackLimit     void*   BOTTOM of stack (LOW address)
-            //   +0x18 SubSystemTib
-            //   +0x20 FiberData / Version
-            //   +0x28 ArbitraryUserPointer
-            //   +0x30 Self           TEB*    ← TEB.Self
-            //   +0x58 ThreadLocalStoragePointer
-            //
-            // Stack grows DOWNWARD: StackBase > StackLimit. CoreCLR not only
-            // asserts `Base >= Limit` (threads.cpp:6108) и computes
-            // available = Base - Limit — оно ТАКЖЕ dereferences адреса в этом
-            // диапазоне (stack probes, GC root scan, unwind). Synthetic
-            // values трогающие unmapped VA вызовут #PF. Используем реальный
-            // kernel stack — &localMarker даёт текущую позицию RSP, оттуда
-            // расширяем диапазон в обе стороны.
-            //
-            // Conservative range: 32 KiB above и 32 KiB below current SP,
-            // округлённое к 4K page. Kernel stack typically 64 KiB+ так что
-            // эти 64 KiB полностью смаплены.
+            // Conservative stack range: 32 KiB above / below current SP,
+            // page-aligned. Kernel stack is mapped well around this point,
+            // and CoreCLR's stack probes / GC root scan / unwind walk
+            // dereference inside this range -- synthetic values pointing
+            // at unmapped VA cause #PF.
             int stackMarker = 0;
             ulong sp = (ulong)&stackMarker;
-            ulong syntheticStackBase  = (sp + 0x8000UL) & ~0xFFFUL;   // SP + ~32 KiB, page-aligned
-            ulong syntheticStackLimit = (sp - 0x8000UL) & ~0xFFFUL;   // SP - ~32 KiB, page-aligned
-            *(ulong*)(teb + 0x08) = syntheticStackBase;   // TEB.StackBase (TOP)
-            *(ulong*)(teb + 0x10) = syntheticStackLimit;  // TEB.StackLimit (BOTTOM)
-            *(ulong*)(teb + 0x30) = (ulong)teb;           // TEB.Self
-            *(ulong*)(teb + 0x58) = (ulong)slots;         // TEB.ThreadLocalStoragePointer
-            *(ulong*)(slots + 0) = (ulong)tlsBlock;       // slots[0] → tls_block
+            ulong syntheticStackBase  = (sp + 0x8000UL) & ~0xFFFUL;
+            ulong syntheticStackLimit = (sp - 0x8000UL) & ~0xFFFUL;
 
-            Console.Write("  stack base=0x"); Console.WriteHex(syntheticStackBase);
-            Console.Write(" limit=0x"); Console.WriteHex(syntheticStackLimit);
-            Console.Write(" sp=0x"); Console.WriteHex(sp);
-            Console.WriteLine("");
-
-            // Write _tls_index = 0 so PE-emitted reads
-            //   mov rax, [_tls_index]
-            //   mov rcx, gs:[0x58]
-            //   mov rax, [rcx + rax*8]
-            // resolve slots[0] = tlsBlock.
-            *(ulong*)(image + tlsIndexRva) = 0;
+            byte* teb = OS.Kernel.Threading.CoreClrTeb.Allocate(syntheticStackBase, syntheticStackLimit);
+            if (teb == null)
+            {
+                Console.WriteLine("  CoreClrTeb.Allocate failed");
+                return;
+            }
 
             Console.Write("  teb=0x"); Console.WriteHex((ulong)teb);
-            Console.Write(" slots=0x"); Console.WriteHex((ulong)slots);
-            Console.Write(" tlsBlock=0x"); Console.WriteHex((ulong)tlsBlock);
+            Console.Write(" stackBase=0x"); Console.WriteHex(syntheticStackBase);
+            Console.Write(" stackLimit=0x"); Console.WriteHex(syntheticStackLimit);
+            Console.Write(" sp=0x"); Console.WriteHex(sp);
             Console.WriteLine("");
 
             // Emit wrmsr shellcode into AsmExecBuffer at offset 64 (past
             // X64Asm STI/CLI/HLT slots at 0/16/32). Args via x64 ABI:
             // RCX = TEB address.
-            //   48 89 C8        mov rax, rcx               ; RAX = TEB (low 32 → EAX)
-            //   48 89 CA        mov rdx, rcx               ; RDX = TEB
-            //   48 C1 EA 20     shr rdx, 32                ; RDX = high 32 (in EDX)
-            //   B9 01 01 00 C0  mov ecx, 0xC0000101        ; IA32_GS_BASE
-            //   0F 30           wrmsr                      ; MSR[ECX] = EDX:EAX
-            //   C3              ret
             BootInfo bi = Platform.GetBootInfo();
             if (bi.AsmExecBuffer == null || bi.AsmExecBufferSize < 128)
             {
@@ -616,16 +513,26 @@ namespace OS.Kernel.Diagnostics
             byte* code = (byte*)bi.AsmExecBuffer + 64;
             code[0] = 0x48; code[1] = 0x89; code[2] = 0xC8;          // mov rax, rcx
             code[3] = 0x48; code[4] = 0x89; code[5] = 0xCA;          // mov rdx, rcx
-            code[6] = 0x48; code[7] = 0xC1; code[8] = 0xEA; code[9] = 0x20; // shr rdx, 32
+            code[6] = 0x48; code[7] = 0xC1; code[8] = 0xEA; code[9] = 0x20;
             code[10] = 0xB9;
-            code[11] = 0x01; code[12] = 0x01; code[13] = 0x00; code[14] = 0xC0; // 0xC0000101
-            code[15] = 0x0F; code[16] = 0x30;                        // wrmsr
-            code[17] = 0xC3;                                          // ret
+            code[11] = 0x01; code[12] = 0x01; code[13] = 0x00; code[14] = 0xC0;
+            code[15] = 0x0F; code[16] = 0x30;
+            code[17] = 0xC3;
 
             delegate* unmanaged<ulong, void> setGsBase = (delegate* unmanaged<ulong, void>)code;
             setGsBase((ulong)teb);
 
-            Console.WriteLine("  GS_BASE = TEB via wrmsr OK");
+            // Phase E9.b: record TEB on the main thread so CoopSwitch
+            // back to main also restores gs base. ContextBlock layout
+            // has Teb at offset 0x08 (see X64Asm.CoopSwitch).
+            var mainThread = OS.Kernel.Threading.Scheduler.Current;
+            if (mainThread != null && mainThread.ContextBlock != null)
+            {
+                mainThread.Teb = teb;
+                *(ulong*)(mainThread.ContextBlock + 0x08) = (ulong)teb;
+            }
+
+            Console.WriteLine("  GS_BASE = TEB via wrmsr OK; main Scheduler.Current.Teb wired");
         }
     }
 }

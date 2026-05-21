@@ -4,6 +4,11 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net7.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Nullable=annotations enables `T?` syntax without flow-analysis
+         warnings. Annotations are intent docs only; no extra runtime
+         cost. Added step 98 after CS8632 warnings surfaced from
+         Phase E1-E9 threading code using `Thread?` / `Process?` etc. -->
+    <Nullable>annotations</Nullable>
 
     <NoStdLib>true</NoStdLib>
     <NoConfig>true</NoConfig>

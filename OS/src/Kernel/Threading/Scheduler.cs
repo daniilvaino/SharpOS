@@ -61,13 +61,17 @@ namespace OS.Kernel.Threading
             return true;
         }
 
-        // Create a new Runnable thread that, on first dispatch, executes
-        // `entry`. The entry function must be [UnmanagedCallersOnly]
-        // (Win64 ABI) so the synthetic stack frame's `ret` lands cleanly
-        // at it. Caller should pass DefaultStackBytes (0) for the
-        // standard 64 KiB. `owner` is optional — non-null links the
-        // thread into the Process via Process.FirstThread (Phase E7).
-        public static Thread? Spawn(delegate* unmanaged<void> entry, uint stackBytes, Process? owner = null)
+        // Create a new thread that, on first dispatch, executes `entry`.
+        // The entry function must be [UnmanagedCallersOnly] (Win64 ABI)
+        // so the synthetic stack frame's `ret` lands cleanly at it.
+        // Caller passes 0 for stackBytes to get DefaultStackBytes (64 KiB).
+        // `owner` is optional — non-null links the thread into the
+        // Process via Process.FirstThread (Phase E7).
+        // `startRunnable` = false (Phase E9) leaves the thread in `New`
+        // state and out of the runnable queue; caller resumes via
+        // Scheduler.MakeRunnable when ready. Used by SpawnHosted when
+        // CoreCLR passes CREATE_SUSPENDED.
+        public static Thread? Spawn(delegate* unmanaged<void> entry, uint stackBytes, Process? owner = null, bool startRunnable = true)
         {
             if (entry == null) return null;
             if (stackBytes == 0) stackBytes = DefaultStackBytes;
@@ -103,7 +107,7 @@ namespace OS.Kernel.Threading
             Thread t = new Thread
             {
                 Id = s_nextId++,
-                State = ThreadState.Runnable,
+                State = startRunnable ? ThreadState.Runnable : ThreadState.New,
                 ContextBlock = ctx,
                 StackBase = stack,
                 StackTop = stackTop,
@@ -122,8 +126,110 @@ namespace OS.Kernel.Threading
                 owner.ThreadCount++;
             }
 
-            EnqueueRunnable(t);
+            if (startRunnable)
+                EnqueueRunnable(t);
             return t;
+        }
+
+        // Phase E9 -- transition a suspended (`New`) thread to `Runnable`
+        // and enqueue. Idempotent against already-runnable / running /
+        // exited threads. Used by SharpOSHost_ResumeThread to honor
+        // CoreCLR's CREATE_SUSPENDED + ResumeThread sequence.
+        public static bool MakeRunnable(Thread t)
+        {
+            if (t == null) return false;
+            if (t.State != ThreadState.New) return false;
+            t.State = ThreadState.Runnable;
+            EnqueueRunnable(t);
+            return true;
+        }
+
+        // Phase E9 -- spawn a thread whose entry has Win32 LPTHREAD_START_ROUTINE
+        // signature `uint(void*)` instead of our native `void()`. Used by
+        // SharpOSHost_CreateThread to bridge CoreCLR's PAL thread model
+        // to our Scheduler. The entry's argument and return value are
+        // stashed on the Thread; HostedTrampoline below reads them on
+        // first dispatch.
+        //
+        // Phase E9.b: also allocate a per-thread TEB + tls_block via
+        // CoreClrTeb so CoreCLR's native `thread_local` (gs:[0x58][_tls_index])
+        // gets its own copy. Without this every hosted thread shared one
+        // TEB and `t_ThreadType` polluted across threads (debugger helper
+        // misidentification, assertion storms). The TEB pointer is also
+        // written into ContextBlock+0x08 so X64Asm.CoopSwitch can swap
+        // IA32_GS_BASE atomically with the rest of the context.
+        //
+        // Single-CPU cooperative: between Spawn's EnqueueRunnable and
+        // the caller setting HostedEntry/HostedParam/Teb, no other thread
+        // can run -- so the trampoline never reads null fields. When SMP /
+        // preemption land, this needs a barrier or hand-off via Spawn
+        // taking the args directly.
+        public static Thread? SpawnHosted(delegate* unmanaged<void*, uint> hostedEntry,
+                                          void* hostedParam,
+                                          uint stackBytes,
+                                          Process? owner = null,
+                                          bool suspended = false)
+        {
+            if (hostedEntry == null) return null;
+            Thread? t = Spawn(&HostedTrampoline, stackBytes, owner, startRunnable: !suspended);
+            if (t == null) return null;
+            t.HostedEntry = hostedEntry;
+            t.HostedParam = hostedParam;
+
+            // Allocate per-thread TEB. Stack range from the kernel.Thread
+            // (StackTop is HIGH addr, StackBase is LOW addr -- matches
+            // NT_TIB StackBase/StackLimit semantics).
+            ulong stackTop  = (ulong)t.StackTop;
+            ulong stackBase = (ulong)t.StackBase;
+            byte* teb = CoreClrTeb.Allocate(stackTop, stackBase);
+            if (teb != null)
+            {
+                t.Teb = teb;
+                *(ulong*)(t.ContextBlock + 0x08) = (ulong)teb;
+            }
+            // teb == null -> ContextBlock+0x08 stays 0 (CoopSwitch skips
+            // gs swap). Acceptable for non-CoreCLR kernel threads where
+            // we don't need CoreCLR thread_local isolation.
+
+            return t;
+        }
+
+        // Trampoline that bridges Scheduler's `void()` entry convention
+        // to the hosted `uint(void*)` convention. Reads Scheduler.Current's
+        // HostedEntry + HostedParam, calls them, captures exit code, signals
+        // any JoinEvent, then Scheduler.Exit's.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void HostedTrampoline()
+        {
+            OS.Hal.Console.WriteLine("[Tramp] entry reached");
+
+            Thread? curr = s_current;
+            if (curr == null || curr.HostedEntry == null)
+            {
+                OS.Hal.Console.WriteLine("[Tramp] curr/HostedEntry null -- Exit");
+                Scheduler.Exit();
+                return;
+            }
+
+            OS.Hal.Console.Write("[Tramp] calling entry=0x");
+            OS.Hal.Console.WriteHex((ulong)curr.HostedEntry);
+            OS.Hal.Console.Write(" param=0x");
+            OS.Hal.Console.WriteHex((ulong)curr.HostedParam);
+            OS.Hal.Console.WriteLine("");
+
+            uint exitCode = curr.HostedEntry(curr.HostedParam);
+
+            OS.Hal.Console.Write("[Tramp] entry returned exitCode=");
+            OS.Hal.Console.WriteUInt(exitCode);
+            OS.Hal.Console.WriteLine("");
+
+            curr.HostedExitCode = exitCode;
+            curr.HasExited = true;
+            if (curr.JoinEvent != null)
+                curr.JoinEvent.Set();
+
+            OS.Hal.Console.WriteLine("[Tramp] Exit");
+            Scheduler.Exit();
         }
 
         // Cooperative yield. Phase E5: drain expired TimerQueue entries

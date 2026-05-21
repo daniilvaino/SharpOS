@@ -23,7 +23,8 @@ namespace OS.Kernel.Threading
 
         // ContextBlock layout (528 bytes, 16-byte aligned):
         //   +0x00  ulong  SavedRsp  — written by CoopSwitch on switch-out
-        //   +0x08  ulong  (reserved, currently 0)
+        //   +0x08  ulong  Teb       — IA32_GS_BASE to load on switch-in
+        //                              (Phase E9.b; 0 = skip gs swap)
         //   +0x10  byte[512]  FxsaveArea — fxsave/fxrstor target
         public byte* ContextBlock;
 
@@ -61,5 +62,20 @@ namespace OS.Kernel.Threading
         // standalone test threads created without a Process.
         public Process? OwnerProcess;
         public Thread? NextInProcess;
+
+        // Phase E9 — hosted thread state. When a thread is spawned via
+        // SharpOSHost_CreateThread (Win32-style PAL bridge), the entry
+        // signature is `uint(void*)` rather than our `void()` Scheduler
+        // ABI. A managed trampoline reads these fields and invokes the
+        // real entry. Null on threads spawned directly via Scheduler.Spawn.
+        public delegate* unmanaged<void*, uint> HostedEntry;
+        public void* HostedParam;
+        public uint HostedExitCode;
+
+        // Phase E9 — Win32 thread handle bookkeeping. The Thread object's
+        // identity in HandleTable plus a Join-waiters event so
+        // WaitForSingleObject can block until ExitThread.
+        public Event? JoinEvent;
+        public bool HasExited;
     }
 }

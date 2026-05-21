@@ -53,6 +53,33 @@ namespace OS.PAL.SharpOSHost
             int marker = 0;
             ulong sp = (ulong)&marker;
 
+            // Phase E9 -- if the calling thread is a hosted thread spawned
+            // by Scheduler with its own allocated stack, return the TRUE
+            // stack range (StackBase..StackTop). Without this every hosted
+            // thread inherits the bounds of whatever UEFI memory region
+            // its allocated stack happens to fall inside (the ~419 MB
+            // GcHeap region), and CoreCLR's m_CacheStackLimit ends up
+            // hundreds of MB below the actual stack base -- a #PF inside
+            // HasStarted/SetStackLimits when probing bytes beyond the
+            // real stack but inside the bogus huge "stack" range. Verify
+            // the current SP actually lies inside [StackBase, StackTop)
+            // before trusting; falls through to the BigStack/UEFI scan
+            // otherwise (e.g. boot thread calling into CoreCLR).
+            {
+                OS.Kernel.Threading.Thread? curr = OS.Kernel.Threading.Scheduler.Current;
+                if (curr != null && curr.StackBase != null && curr.StackTop != null)
+                {
+                    ulong lo = (ulong)curr.StackBase;
+                    ulong hi = (ulong)curr.StackTop;
+                    if (sp >= lo && sp < hi)
+                    {
+                        *outBase  = hi;   // TOP  (high)
+                        *outLimit = lo;   // BOTTOM (low)
+                        return;
+                    }
+                }
+            }
+
             // Frontier-C: when CoreCLR runs on the BigStack buffer, the
             // UEFI region containing it is the ~419 MB conventional-RAM
             // span (GcHeap) — the region heuristic below would hand

@@ -312,6 +312,12 @@ namespace OS.Boot
             // Phase 6.1.a — call coreclr_initialize from kernel boot path.
             // Expected to panic at first unimplemented SharpOSHost_* /
             // CrtAndEh stub. Iterate until S_OK.
+            // Phase E9 -- HandleTable must be online before CoreCLR's
+            // first SharpOSHost_CreateThread / WaitForSingleObject call.
+            // Idempotent; safe to call regardless of which CoreCLR path
+            // (pre-EBS vs post-EBS) eventually runs.
+            OS.PAL.SharpOSHost.HandleTable.Init();
+
             // Pre-EBS CoreCLR (loads \sharpos\* via UEFI FS). Skipped
             // when the post-EBS experiment is on — there CoreCLR runs
             // AFTER ExitBootServices, loading from our own FAT instead

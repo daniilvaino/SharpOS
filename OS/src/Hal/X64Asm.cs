@@ -355,15 +355,18 @@ namespace OS.Hal
             s_fxsave(buf);
         }
 
-        // Phase E4 cooperative context switch. RCX = curr context block,
-        // RDX = next context block. ContextBlock layout (16-byte aligned):
-        //   +0x00 SavedRsp (ulong) — updated here
-        //   +0x10 FxsaveArea (512 bytes) — must be 16-byte aligned
+        // Phase E4 cooperative context switch + Phase E9.b gs-base swap.
+        // RCX = curr context block, RDX = next context block.
+        // ContextBlock layout (16-byte aligned):
+        //   +0x00 SavedRsp     (ulong) — updated here
+        //   +0x08 Teb          (ulong) — IA32_GS_BASE to load post-switch;
+        //                                0 = skip (no per-thread TEB)
+        //   +0x10 FxsaveArea   (512 bytes, 16-byte aligned)
         //
         // Saves 8 callee-saved GPRs + FP state of CURR, swaps RSP from
         // CURR to NEXT, restores 8 callee-saved GPRs + FP state of NEXT,
-        // returns into NEXT's resumption point. Caller-saved regs are the
-        // caller's responsibility (volatile by Win64 ABI).
+        // optionally loads new gs base (IA32_GS_BASE MSR) from next.Teb,
+        // returns into NEXT's resumption point.
         //
         //   53            push rbx
         //   55            push rbp
@@ -377,6 +380,15 @@ namespace OS.Hal
         //   48 89 21      mov     [rcx], rsp
         //   48 8B 22      mov     rsp, [rdx]
         //   0F AE 4A 10   fxrstor [rdx + 0x10]
+        //   ; Phase E9.b: optional gs-base swap.
+        //   48 8B 42 08   mov     rax, [rdx + 8]    ; rax = next.Teb
+        //   48 85 C0      test    rax, rax
+        //   74 0E         jz      .skip_gs          ; skip if 0
+        //   48 89 C2      mov     rdx, rax          ; rdx = Teb (full)
+        //   48 C1 EA 20   shr     rdx, 32           ; edx = high 32
+        //   B9 01 01 00 C0  mov   ecx, 0xC0000101  ; IA32_GS_BASE MSR
+        //   0F 30         wrmsr                    ; gs_base = edx:eax
+        //   ; .skip_gs:
         //   41 5F         pop r15
         //   41 5E         pop r14
         //   41 5D         pop r13
@@ -386,7 +398,7 @@ namespace OS.Hal
         //   5D            pop rbp
         //   5B            pop rbx
         //   C3            ret
-        // Total: 39 bytes.
+        // Total: 39 + 23 = 62 bytes.
         public static bool CoopSwitch(byte* currCtx, byte* nextCtx)
         {
             if (currCtx == null || nextCtx == null) return false;
@@ -414,7 +426,22 @@ namespace OS.Hal
                 p[i++] = 0x48; p[i++] = 0x8B; p[i++] = 0x22;
                 // fxrstor [rdx + 0x10]
                 p[i++] = 0x0F; p[i++] = 0xAE; p[i++] = 0x4A; p[i++] = 0x10;
-                // pop r15/r14/r13/r12
+                // --- Phase E9.b: gs-base swap if next.Teb != 0 ---
+                // mov rax, [rdx + 8]
+                p[i++] = 0x48; p[i++] = 0x8B; p[i++] = 0x42; p[i++] = 0x08;
+                // test rax, rax
+                p[i++] = 0x48; p[i++] = 0x85; p[i++] = 0xC0;
+                // jz .skip_gs (rel8 = +14: mov+shr+mov+wrmsr = 3+4+5+2 = 14)
+                p[i++] = 0x74; p[i++] = 0x0E;
+                // mov rdx, rax
+                p[i++] = 0x48; p[i++] = 0x89; p[i++] = 0xC2;
+                // shr rdx, 32
+                p[i++] = 0x48; p[i++] = 0xC1; p[i++] = 0xEA; p[i++] = 0x20;
+                // mov ecx, 0xC0000101 (IA32_GS_BASE)
+                p[i++] = 0xB9; p[i++] = 0x01; p[i++] = 0x01; p[i++] = 0x00; p[i++] = 0xC0;
+                // wrmsr
+                p[i++] = 0x0F; p[i++] = 0x30;
+                // .skip_gs: pop r15/r14/r13/r12
                 p[i++] = 0x41; p[i++] = 0x5F;
                 p[i++] = 0x41; p[i++] = 0x5E;
                 p[i++] = 0x41; p[i++] = 0x5D;
