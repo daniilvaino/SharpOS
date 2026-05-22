@@ -22,22 +22,23 @@ namespace OS.Kernel.Threading
         // already marked `t.State = Waiting` and set `t.DeadlineTicks`.
         public static void Schedule(Thread t, ulong deadlineTicks)
         {
-            t.TimerNext = null;
-            t.DeadlineTicks = deadlineTicks;
+            t.Wait.TimerNext = null;
+            t.Wait.Deadline = deadlineTicks;
+            t.Wait.Kind = WaitKind.Timer;
 
-            if (s_head == null || deadlineTicks < s_head.DeadlineTicks)
+            if (s_head == null || deadlineTicks < s_head.Wait.Deadline)
             {
-                t.TimerNext = s_head;
+                t.Wait.TimerNext = s_head;
                 s_head = t;
                 return;
             }
 
             Thread? prev = s_head;
-            while (prev.TimerNext != null && prev.TimerNext.DeadlineTicks <= deadlineTicks)
-                prev = prev.TimerNext;
+            while (prev.Wait.TimerNext != null && prev.Wait.TimerNext.Wait.Deadline <= deadlineTicks)
+                prev = prev.Wait.TimerNext;
 
-            t.TimerNext = prev.TimerNext;
-            prev.TimerNext = t;
+            t.Wait.TimerNext = prev.Wait.TimerNext;
+            prev.Wait.TimerNext = t;
         }
 
         // Pop every entry whose deadline has elapsed. Each popped thread
@@ -48,12 +49,13 @@ namespace OS.Kernel.Threading
         public static uint DrainExpired(ulong nowTicks)
         {
             uint moved = 0;
-            while (s_head != null && s_head.DeadlineTicks <= nowTicks)
+            while (s_head != null && s_head.Wait.Deadline <= nowTicks)
             {
                 Thread t = s_head;
-                s_head = t.TimerNext;
-                t.TimerNext = null;
-                t.DeadlineTicks = 0;
+                s_head = t.Wait.TimerNext;
+                t.Wait.TimerNext = null;
+                t.Wait.Deadline = 0;
+                t.Wait.Kind = WaitKind.None;
                 Scheduler.WakeFromWait(t);
                 moved++;
             }
@@ -67,22 +69,22 @@ namespace OS.Kernel.Threading
             if (s_head == null) return false;
             if (s_head == t)
             {
-                s_head = t.TimerNext;
-                t.TimerNext = null;
-                t.DeadlineTicks = 0;
+                s_head = t.Wait.TimerNext;
+                t.Wait.TimerNext = null;
+                t.Wait.Deadline = 0;
                 return true;
             }
             Thread? prev = s_head;
-            while (prev.TimerNext != null)
+            while (prev.Wait.TimerNext != null)
             {
-                if (prev.TimerNext == t)
+                if (prev.Wait.TimerNext == t)
                 {
-                    prev.TimerNext = t.TimerNext;
-                    t.TimerNext = null;
-                    t.DeadlineTicks = 0;
+                    prev.Wait.TimerNext = t.Wait.TimerNext;
+                    t.Wait.TimerNext = null;
+                    t.Wait.Deadline = 0;
                     return true;
                 }
-                prev = prev.TimerNext;
+                prev = prev.Wait.TimerNext;
             }
             return false;
         }
@@ -90,7 +92,7 @@ namespace OS.Kernel.Threading
         // Diagnostic — earliest deadline or 0 if queue empty.
         public static ulong NextDeadline()
         {
-            return s_head == null ? 0UL : s_head.DeadlineTicks;
+            return s_head == null ? 0UL : s_head.Wait.Deadline;
         }
     }
 }

@@ -78,8 +78,9 @@ namespace OS.Kernel.Threading
 
             // Park the thread. Bucket head insertion (LIFO).
             int b = BucketOf(addr);
-            curr.WaitAddress = addr;
-            curr.WaitNext = s_buckets[b];
+            curr.Wait.Address = addr;
+            curr.Wait.Kind = WaitKind.Address;
+            curr.Wait.Next = s_buckets[b];
             s_buckets[b] = curr;
             curr.State = ThreadState.Waiting;
 
@@ -98,18 +99,19 @@ namespace OS.Kernel.Threading
             Thread? cur = s_buckets[b];
             while (cur != null)
             {
-                if (cur.WaitAddress == addr)
+                if (cur.Wait.Address == addr)
                 {
-                    if (prev == null) s_buckets[b] = cur.WaitNext;
-                    else prev.WaitNext = cur.WaitNext;
+                    if (prev == null) s_buckets[b] = cur.Wait.Next;
+                    else prev.Wait.Next = cur.Wait.Next;
                     Thread woken = cur;
-                    woken.WaitNext = null;
-                    woken.WaitAddress = null;
+                    woken.Wait.Next = null;
+                    woken.Wait.Address = null;
+                    woken.Wait.Kind = WaitKind.None;
                     Scheduler.WakeFromWait(woken);
                     return;
                 }
                 prev = cur;
-                cur = cur.WaitNext;
+                cur = cur.Wait.Next;
             }
         }
 
@@ -121,13 +123,14 @@ namespace OS.Kernel.Threading
             Thread? cur = s_buckets[b];
             while (cur != null)
             {
-                Thread? next = cur.WaitNext;
-                if (cur.WaitAddress == addr)
+                Thread? next = cur.Wait.Next;
+                if (cur.Wait.Address == addr)
                 {
                     if (prev == null) s_buckets[b] = next;
-                    else prev.WaitNext = next;
-                    cur.WaitNext = null;
-                    cur.WaitAddress = null;
+                    else prev.Wait.Next = next;
+                    cur.Wait.Next = null;
+                    cur.Wait.Address = null;
+                    cur.Wait.Kind = WaitKind.None;
                     Scheduler.WakeFromWait(cur);
                     // prev unchanged (we removed `cur`)
                 }

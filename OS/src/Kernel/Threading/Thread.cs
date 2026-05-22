@@ -9,6 +9,100 @@ namespace OS.Kernel.Threading
         Exited = 4,     // terminated, will not run again
     }
 
+    // Phase E9.c step 102 -- wait kind tag. Identifies which primitive
+    // the thread is parked on; consumers (Event/Semaphore/Win32Mutex/
+    // AddressWait/TimerQueue) set this on Wait() entry and Scheduler
+    // clears it on Wake.
+    internal enum WaitKind : byte
+    {
+        None      = 0,    // not blocked on any wait list
+        Event     = 1,
+        Semaphore = 2,
+        Mutex     = 3,
+        Address   = 4,    // WaitOnAddress
+        Timer     = 5,    // Sleep / timed wait
+    }
+
+    // Phase E9.c step 102 -- wait state per docs/threading-architecture.md
+    // §3. Currently inline-by-value on Thread; SMP (E13+) swaps Thread
+    // to hold `WaitBlock* CurrentWait` for atomic CAS-swap. Field names
+    // and grouping are the spec shape -- pointer-swap is a mechanical
+    // migration when SMP scheduler lock lands.
+    //
+    // A thread is on AT MOST ONE wait list at a time, so the queue
+    // links (Next + TimerNext) double up safely:
+    //   Next       -- linked list of waiters on an Event/Semaphore/
+    //                 Mutex/AddressWait queue. Head lives on the
+    //                 primitive (e.g. Event._waitHead).
+    //   TimerNext  -- separate list for TimerQueue, sorted by Deadline.
+    //                 Thread can be in BOTH (timer + primitive) if a
+    //                 future finite-timeout wait lands; today only one.
+    //   Address    -- for WaitOnAddress: the user-memory address the
+    //                 thread is parked on (identifies bucket entry).
+    //   Deadline   -- HPET tick value at which Sleep should expire.
+    //                 0 means no deadline (pure wait).
+    //   Kind       -- which primitive this wait belongs to. Future
+    //                 cancel paths (CancelSynchronousIo, timeout) read
+    //                 this to know which queue to unlink from.
+    internal unsafe struct WaitBlock
+    {
+        public Thread? Next;
+        public Thread? TimerNext;
+        public void* Address;
+        public ulong Deadline;
+        public WaitKind Kind;
+    }
+
+    // Phase E9.b step 102 -- thread "kind" tag per docs/threading-
+    // architecture.md §3. Distinguishes scheduling-policy-relevant
+    // thread origins. Today all three follow the same Scheduler /
+    // CoopSwitch path (cooperative single-CPU); the enum exists so
+    // SMP / preemption (Phase E13+) can apply per-kind policy
+    // (e.g. CoreCLR threads need GC barrier at suspend, Kernel
+    // threads do not).
+    internal enum ThreadKind : byte
+    {
+        Kernel  = 0,    // Scheduler.Spawn directly (kernel C# code)
+        AotApp  = 1,    // ELF-app thread (Phase E8 -- deferred)
+        CoreClr = 2,    // SpawnHosted (CoreCLR CreateThread -> SharpOSHost_*)
+    }
+
+    // Phase E9.b step 102 -- separated CoreCLR binding per §3 spec.
+    // Holds the "managed side" state that the kernel scheduler never
+    // touches: the opaque CoreCLR Thread*, the CRT-side thread proc,
+    // exit reporting, and the Join wakeup event. Non-null iff
+    // Thread.Kind == CoreClr.
+    //
+    // Boundary convention (type-enforced once SMP-time C refactor
+    // pointer-indirects WaitBlock): kernel scheduler only reads
+    // Thread.{Id,State,Kind,Next,ContextBlock,Stack*,GuardPage,Teb,
+    // Entry,Wait*,DeadlineTicks,Owner*}. CoreCLR-touched code only
+    // reads Thread.Binding.{...}. Mixing both in one file is OK as
+    // long as the call site stays on its side of the boundary.
+    internal unsafe class ManagedThreadBinding
+    {
+        // Opaque CoreCLR Thread* (vm/threads.h). Passed back to the
+        // CRT entry function as its lpParameter. Kernel NEVER
+        // dereferences -- treats as void*.
+        public void* ClrThreadOpaquePtr;
+
+        // C-side thread entry from Thread::CreateNewOSThread
+        // (KickOffThread or one of the runtime-internal start procs).
+        // Win64 ABI: DWORD WINAPI fn(LPVOID). Null after the
+        // trampoline has invoked it; left null on a CreateThread that
+        // hit HandleTable exhaustion (trampoline early-exits).
+        public delegate* unmanaged<void*, uint> HostedEntry;
+
+        // Exit code returned by HostedEntry -- surfaced via
+        // SharpOSHost_GetExitCodeThread (once that PAL surface lands).
+        public uint HostedExitCode;
+
+        // Joiners block on this until HasExited becomes true.
+        // Manual-reset so multiple Join() calls all unblock at exit.
+        public Event? JoinEvent;
+        public bool HasExited;
+    }
+
     // Phase E4 cooperative-switch thread. One CPU; no preemption.
     // Field layout is irrelevant for the switch shellcode — that
     // operates only on the ContextBlock (raw byte buffer with a fixed
@@ -17,6 +111,7 @@ namespace OS.Kernel.Threading
     {
         public int Id;
         public ThreadState State;
+        public ThreadKind Kind;
 
         // Singly-linked runnable queue. null when not enqueued.
         public Thread? Next;
@@ -36,25 +131,34 @@ namespace OS.Kernel.Threading
         public byte* StackTop;
         public uint StackBytes;
 
+        // Phase E9.b step 102 -- guard page below StackBase (4 KiB,
+        // marked non-present in the active page tables). A stack
+        // overflow that walks past StackBase #PFs cleanly with CR2
+        // inside [GuardPage, GuardPage+4096); the trap handler
+        // recognises the range and halts with an identifiable
+        // thread / overflow message instead of silently corrupting
+        // adjacent GC heap. Null on the boot thread (UEFI stack;
+        // no guard reserved by us).
+        public byte* GuardPage;
+
         // TEB pointer. Phase E4 leaves this null on kernel-only threads
         // (no gs base swap yet); E5+ wires per-thread TEBs.
         public byte* Teb;
 
-        // Entry function for spawned threads. Null for the boot-thread
-        // wrapper.
+        // Entry function for spawned kernel threads. Null for the
+        // boot-thread wrapper and for hosted threads (those use
+        // Binding.HostedEntry via HostedTrampoline).
         public delegate* unmanaged<void> Entry;
 
-        // Phase E5 — wait/timer linkage. A thread is on AT MOST ONE
-        // wait list at a time (either TimerQueue or one Event/Semaphore
-        // wait queue), so two single-linked next-pointers are enough:
-        //
-        //   TimerNext      — next entry in TimerQueue (sorted by Deadline).
-        //   WaitNext       — next entry on an Event/Semaphore wait list.
-        //   DeadlineTicks  — HPET tick value at which Sleep should expire.
-        //                    0 means no deadline (pure wait).
-        public Thread? TimerNext;
-        public Thread? WaitNext;
-        public ulong DeadlineTicks;
+        // Phase E5 / E9.c step 102 -- wait state grouped under WaitBlock
+        // per docs/threading-architecture.md §3. Currently inline by
+        // value (one struct slot on Thread). At E13 SMP this is the
+        // exact field that gets swapped to `WaitBlock* CurrentWait`
+        // pointer (stack-allocated per Wait() call frame) so the entire
+        // wait state can be atomically CAS-swapped. All current
+        // consumers already access via `t.Wait.X` -- the migration is
+        // a one-line per call site change.
+        public WaitBlock Wait;
 
         // Phase E7 — Process ownership. Threads owned by a Process are
         // linked via NextInProcess (head at Process.FirstThread).
@@ -63,27 +167,9 @@ namespace OS.Kernel.Threading
         public Process? OwnerProcess;
         public Thread? NextInProcess;
 
-        // Phase E9 — hosted thread state. When a thread is spawned via
-        // SharpOSHost_CreateThread (Win32-style PAL bridge), the entry
-        // signature is `uint(void*)` rather than our `void()` Scheduler
-        // ABI. A managed trampoline reads these fields and invokes the
-        // real entry. Null on threads spawned directly via Scheduler.Spawn.
-        public delegate* unmanaged<void*, uint> HostedEntry;
-        public void* HostedParam;
-        public uint HostedExitCode;
-
-        // Phase E9 — Win32 thread handle bookkeeping. The Thread object's
-        // identity in HandleTable plus a Join-waiters event so
-        // WaitForSingleObject can block until ExitThread.
-        public Event? JoinEvent;
-        public bool HasExited;
-
-        // Phase E9.c — WaitOnAddress state. When this thread is blocked
-        // in `SharpOSHost_WaitOnAddress`, `WaitAddress` holds the user-
-        // memory address it's parked on (used by WakeByAddress* to
-        // match the bucket). Null when not in a WaitOnAddress wait.
-        // The thread can be on AT MOST ONE wait list at a time
-        // (TimerQueue OR Event/Semaphore/Mutex OR WaitOnAddress).
-        public void* WaitAddress;
+        // Phase E9.b step 102 -- CoreCLR-side state, separated from
+        // kernel scheduling state per §3. Non-null iff Kind == CoreClr;
+        // kernel scheduler never reads through this pointer.
+        public ManagedThreadBinding? Binding;
     }
 }

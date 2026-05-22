@@ -57,6 +57,41 @@ namespace OS.Boot.EH
         // halts on unhandled (per our current Dispatch behavior).
         public static void DispatchTrap(InterruptFrame* frame)
         {
+            // Phase E9.b step 102 -- guard-page stack-overflow detection.
+            // Each hosted/kernel thread (other than the UEFI boot thread)
+            // reserves an unmapped 4 KiB page below StackBase. A #PF
+            // whose CR2 lands inside that range = stack overflow on the
+            // CURRENT thread. Report cleanly + halt; without this the
+            // overflow would corrupt the adjacent GC-heap allocation
+            // and surface as a mysterious downstream fault.
+            if (frame->Vector == 14)
+            {
+                var curr = OS.Kernel.Threading.Scheduler.Current;
+                if (curr != null && curr.GuardPage != null)
+                {
+                    ulong guardLo = (ulong)curr.GuardPage;
+                    ulong guardHi = guardLo + 4096UL;
+                    if (frame->Cr2 >= guardLo && frame->Cr2 < guardHi)
+                    {
+                        Console.Write("\r\n*** STACK OVERFLOW thread.Id=");
+                        Console.WriteUIntRaw((uint)curr.Id);
+                        Console.Write(" guard=[0x");
+                        Console.WriteHexRaw(guardLo, 16);
+                        Console.Write("..0x");
+                        Console.WriteHexRaw(guardHi, 16);
+                        Console.Write(") CR2=0x");
+                        Console.WriteHexRaw(frame->Cr2, 16);
+                        Console.Write(" RIP=0x");
+                        Console.WriteHexRaw(frame->Rip, 16);
+                        Console.Write(" ***\r\n");
+                        // No clean recovery path yet (Phase E only halts);
+                        // future work: kill thread, signal Join, return
+                        // to scheduler.
+                        while (true) { }
+                    }
+                }
+            }
+
             // Allocate context + ExInfo on local stack. They live для
             // lifetime of dispatch (which never returns normally).
             PalLimitedContext pal = default;

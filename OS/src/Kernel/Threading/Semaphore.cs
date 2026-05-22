@@ -37,7 +37,8 @@ namespace OS.Kernel.Threading
             Thread? curr = Scheduler.Current;
             if (curr == null) return;
 
-            curr.WaitNext = _waitHead;
+            curr.Wait.Next = _waitHead;
+            curr.Wait.Kind = WaitKind.Semaphore;
             _waitHead = curr;
             curr.State = ThreadState.Waiting;
 
@@ -55,8 +56,9 @@ namespace OS.Kernel.Threading
             while (n > 0 && _waitHead != null)
             {
                 Thread t = _waitHead;
-                _waitHead = t.WaitNext;
-                t.WaitNext = null;
+                _waitHead = t.Wait.Next;
+                t.Wait.Next = null;
+                t.Wait.Kind = WaitKind.None;
                 // The waiter consumes one permit on wake — we don't
                 // bump Count for this slot.
                 Scheduler.WakeFromWait(t);

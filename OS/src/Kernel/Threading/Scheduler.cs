@@ -79,7 +79,8 @@ namespace OS.Kernel.Threading
             byte* ctx = AllocateContextBlock();
             if (ctx == null) return null;
 
-            byte* stack = AllocateStack(stackBytes);
+            byte* guard;
+            byte* stack = AllocateStack(stackBytes, out guard);
             if (stack == null) return null;
 
             byte* stackTop = stack + stackBytes;
@@ -108,10 +109,12 @@ namespace OS.Kernel.Threading
             {
                 Id = s_nextId++,
                 State = startRunnable ? ThreadState.Runnable : ThreadState.New,
+                Kind = ThreadKind.Kernel,
                 ContextBlock = ctx,
                 StackBase = stack,
                 StackTop = stackTop,
                 StackBytes = stackBytes,
+                GuardPage = guard,
                 Teb = null,
                 Entry = entry,
                 OwnerProcess = owner,
@@ -173,8 +176,16 @@ namespace OS.Kernel.Threading
             if (hostedEntry == null) return null;
             Thread? t = Spawn(&HostedTrampoline, stackBytes, owner, startRunnable: !suspended);
             if (t == null) return null;
-            t.HostedEntry = hostedEntry;
-            t.HostedParam = hostedParam;
+
+            // Promote to CoreCLR kind and attach binding -- the kernel
+            // trampoline reads HostedEntry/ClrThreadOpaquePtr from this
+            // box, not from inline Thread fields (boundary per
+            // docs/threading-architecture.md §3).
+            t.Kind = ThreadKind.CoreClr;
+            t.Binding = new ManagedThreadBinding {
+                HostedEntry = hostedEntry,
+                ClrThreadOpaquePtr = hostedParam,
+            };
 
             // Allocate per-thread TEB. Stack range from the kernel.Thread
             // (StackTop is HIGH addr, StackBase is LOW addr -- matches
@@ -204,29 +215,30 @@ namespace OS.Kernel.Threading
             OS.Hal.Console.WriteLine("[Tramp] entry reached");
 
             Thread? curr = s_current;
-            if (curr == null || curr.HostedEntry == null)
+            ManagedThreadBinding? bind = curr == null ? null : curr.Binding;
+            if (curr == null || bind == null || bind.HostedEntry == null)
             {
-                OS.Hal.Console.WriteLine("[Tramp] curr/HostedEntry null -- Exit");
+                OS.Hal.Console.WriteLine("[Tramp] curr/Binding/HostedEntry null -- Exit");
                 Scheduler.Exit();
                 return;
             }
 
             OS.Hal.Console.Write("[Tramp] calling entry=0x");
-            OS.Hal.Console.WriteHex((ulong)curr.HostedEntry);
+            OS.Hal.Console.WriteHex((ulong)bind.HostedEntry);
             OS.Hal.Console.Write(" param=0x");
-            OS.Hal.Console.WriteHex((ulong)curr.HostedParam);
+            OS.Hal.Console.WriteHex((ulong)bind.ClrThreadOpaquePtr);
             OS.Hal.Console.WriteLine("");
 
-            uint exitCode = curr.HostedEntry(curr.HostedParam);
+            uint exitCode = bind.HostedEntry(bind.ClrThreadOpaquePtr);
 
             OS.Hal.Console.Write("[Tramp] entry returned exitCode=");
             OS.Hal.Console.WriteUInt(exitCode);
             OS.Hal.Console.WriteLine("");
 
-            curr.HostedExitCode = exitCode;
-            curr.HasExited = true;
-            if (curr.JoinEvent != null)
-                curr.JoinEvent.Set();
+            bind.HostedExitCode = exitCode;
+            bind.HasExited = true;
+            if (bind.JoinEvent != null)
+                bind.JoinEvent.Set();
 
             OS.Hal.Console.WriteLine("[Tramp] Exit");
             Scheduler.Exit();
@@ -403,13 +415,30 @@ namespace OS.Kernel.Threading
             return p;
         }
 
-        private static byte* AllocateStack(uint stackBytes)
+        private static byte* AllocateStack(uint stackBytes, out byte* guardPage)
         {
             // Page-aligned physical allocation; identity-mapped → VA == PA.
+            // Step 102: +1 page below the stack as a non-present guard --
+            // any access past StackBase #PFs cleanly with CR2 in the
+            // guard range and the trap handler reports stack overflow
+            // (HwFaultBridge.cs) instead of letting it walk into the
+            // adjacent heap object. The boot thread's UEFI stack has
+            // no guard (we don't own that allocation).
             uint pageCount = (stackBytes + 4095) / 4096;
-            ulong phys = PhysicalMemory.AllocPages(pageCount);
-            if (phys == 0) return null;
-            return (byte*)phys;
+            uint totalPages = pageCount + 1;
+            ulong phys = PhysicalMemory.AllocPages(totalPages);
+            if (phys == 0) { guardPage = null; return null; }
+
+            guardPage = (byte*)phys;             // lowest page = guard
+            byte* stack = (byte*)phys + 4096;    // usable stack starts above
+
+            // Mark guard non-present. Page is identity-mapped, so the
+            // VA matches the physical address. Unmap clears the present
+            // bit at the leaf PTE level; the page is still owned by
+            // PhysicalMemory until thread exit (we don't free yet).
+            OS.Kernel.Paging.Pager.Unmap((ulong)guardPage);
+
+            return stack;
         }
     }
 }

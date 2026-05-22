@@ -65,7 +65,8 @@ namespace OS.Kernel.Threading
             }
 
             // Contended -- block.
-            curr.WaitNext = _waitHead;
+            curr.Wait.Next = _waitHead;
+            curr.Wait.Kind = WaitKind.Mutex;
             _waitHead = curr;
             curr.State = ThreadState.Waiting;
             Scheduler.Yield();
@@ -92,8 +93,9 @@ namespace OS.Kernel.Threading
             if (_waitHead != null)
             {
                 Thread t = _waitHead;
-                _waitHead = t.WaitNext;
-                t.WaitNext = null;
+                _waitHead = t.Wait.Next;
+                t.Wait.Next = null;
+                t.Wait.Kind = WaitKind.None;
                 Owner = t;
                 RecursionCount = 1;     // new owner starts at depth 1
                 Scheduler.WakeFromWait(t);

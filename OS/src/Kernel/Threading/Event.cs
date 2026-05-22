@@ -41,12 +41,13 @@ namespace OS.Kernel.Threading
             // Link onto wait list (LIFO; ordering doesn't matter for
             // manual-reset since all wake at once; for auto-reset we
             // wake the latest first — acceptable for E5).
-            curr.WaitNext = _waitHead;
+            curr.Wait.Next = _waitHead;
+            curr.Wait.Kind = WaitKind.Event;
             _waitHead = curr;
             curr.State = ThreadState.Waiting;
 
             Scheduler.Yield();
-            // When we return, Set woke us. WaitNext was nulled at wake time.
+            // When we return, Set woke us. Wait.Next was nulled at wake time.
         }
 
         // Signal the event. Manual-reset: wake ALL waiters, IsSet stays
@@ -60,8 +61,9 @@ namespace OS.Kernel.Threading
                 while (_waitHead != null)
                 {
                     Thread t = _waitHead;
-                    _waitHead = t.WaitNext;
-                    t.WaitNext = null;
+                    _waitHead = t.Wait.Next;
+                    t.Wait.Next = null;
+                    t.Wait.Kind = WaitKind.None;
                     Scheduler.WakeFromWait(t);
                 }
                 return;
@@ -71,8 +73,9 @@ namespace OS.Kernel.Threading
             if (_waitHead != null)
             {
                 Thread t = _waitHead;
-                _waitHead = t.WaitNext;
-                t.WaitNext = null;
+                _waitHead = t.Wait.Next;
+                t.Wait.Next = null;
+                t.Wait.Kind = WaitKind.None;
                 Scheduler.WakeFromWait(t);
                 // IsSet stays false — signal consumed by the woken waiter.
             }

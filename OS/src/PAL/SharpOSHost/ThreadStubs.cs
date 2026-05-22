@@ -91,14 +91,16 @@ namespace OS.PAL.SharpOSHost
             }
 
             // Manual-reset Event so multiple Joins all unblock at exit.
-            t.JoinEvent = new Event(manualReset: true, initialState: false);
+            // Binding was allocated by SpawnHosted; we just attach the
+            // join event here (kernel scheduler doesn't need to know).
+            t.Binding!.JoinEvent = new Event(manualReset: true, initialState: false);
 
             ulong handle = HandleTable.Alloc(t);
             if (handle == 0)
             {
                 // Out of slots. The thread is already enqueued; can't
                 // un-spawn. Mark the entry null so trampoline early-Exits.
-                t.HostedEntry = null;
+                t.Binding!.HostedEntry = null;
                 OS.Hal.Console.WriteLine("[CT] HandleTable.Alloc FAILED");
                 return 0;
             }
@@ -122,12 +124,13 @@ namespace OS.PAL.SharpOSHost
         public static void ExitThread(uint exitCode)
         {
             Thread? curr = Scheduler.Current;
-            if (curr != null)
+            ManagedThreadBinding? bind = curr == null ? null : curr.Binding;
+            if (bind != null)
             {
-                curr.HostedExitCode = exitCode;
-                curr.HasExited = true;
-                if (curr.JoinEvent != null)
-                    curr.JoinEvent.Set();
+                bind.HostedExitCode = exitCode;
+                bind.HasExited = true;
+                if (bind.JoinEvent != null)
+                    bind.JoinEvent.Set();
             }
             Scheduler.Exit();
             // unreachable
@@ -177,15 +180,19 @@ namespace OS.PAL.SharpOSHost
 
             if (target is Thread t)
             {
-                if (t.HasExited) return WAIT_OBJECT_0;
+                ManagedThreadBinding? bind = t.Binding;
+                bool exited;
+                if (bind != null) exited = bind.HasExited;
+                else              exited = (t.State == ThreadState.Exited);
+                if (exited) return WAIT_OBJECT_0;
                 if (poll) return WAIT_TIMEOUT;
-                if (t.JoinEvent != null)
+                if (bind != null && bind.JoinEvent != null)
                 {
-                    t.JoinEvent.Wait();
+                    bind.JoinEvent.Wait();
                 }
                 else
                 {
-                    while (!t.HasExited) Scheduler.Yield();
+                    while (t.State != ThreadState.Exited) Scheduler.Yield();
                 }
                 return WAIT_OBJECT_0;
             }
