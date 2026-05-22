@@ -34,9 +34,10 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class ThreadStubs
     {
         // Win32 wait result codes.
-        private const uint WAIT_OBJECT_0  = 0x00000000;
-        private const uint WAIT_TIMEOUT   = 0x00000102;
-        private const uint WAIT_FAILED    = 0xFFFFFFFF;
+        private const uint WAIT_OBJECT_0   = 0x00000000;
+        private const uint WAIT_ABANDONED  = 0x00000080;
+        private const uint WAIT_TIMEOUT    = 0x00000102;
+        private const uint WAIT_FAILED     = 0xFFFFFFFF;
 
         // Win32 CreateThread dwCreationFlags bits we honor (E9.a/b).
         private const uint CREATE_SUSPENDED = 0x00000004;
@@ -203,7 +204,29 @@ namespace OS.PAL.SharpOSHost
                 return WAIT_OBJECT_0;
             }
 
-            // Unknown handle type for E9.a (Mutex / IOCP / file handle / ...).
+            if (target is Win32Mutex m)
+            {
+                // Poll: unowned or owned-by-current = signaled.
+                if (poll)
+                {
+                    Thread? curr = Scheduler.Current;
+                    if (m.Owner == null || m.Owner == curr)
+                    {
+                        uint rc = m.Wait();
+                        return rc == 2 ? WAIT_ABANDONED : WAIT_OBJECT_0;
+                    }
+                    if (m.Owner.State == ThreadState.Exited)
+                    {
+                        uint rc = m.Wait();
+                        return rc == 2 ? WAIT_ABANDONED : WAIT_OBJECT_0;
+                    }
+                    return WAIT_TIMEOUT;
+                }
+                uint code = m.Wait();
+                return code == 2 ? WAIT_ABANDONED : WAIT_OBJECT_0;
+            }
+
+            // Unknown handle type for E9.b (IOCP / file handle / ...).
             return WAIT_FAILED;
         }
 
