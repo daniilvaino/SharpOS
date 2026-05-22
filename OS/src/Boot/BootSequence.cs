@@ -318,6 +318,10 @@ namespace OS.Boot
             // (pre-EBS vs post-EBS) eventually runs.
             OS.PAL.SharpOSHost.HandleTable.Init();
 
+            // Phase E9.c -- AddressWait bucket table for WaitOnAddress /
+            // WakeByAddress*. Same idempotency contract.
+            OS.Kernel.Threading.AddressWait.Init();
+
             // Pre-EBS CoreCLR (loads \sharpos\* via UEFI FS). Skipped
             // when the post-EBS experiment is on — there CoreCLR runs
             // AFTER ExitBootServices, loading from our own FAT instead

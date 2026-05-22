@@ -77,5 +77,13 @@ namespace OS.Kernel.Threading
         // WaitForSingleObject can block until ExitThread.
         public Event? JoinEvent;
         public bool HasExited;
+
+        // Phase E9.c — WaitOnAddress state. When this thread is blocked
+        // in `SharpOSHost_WaitOnAddress`, `WaitAddress` holds the user-
+        // memory address it's parked on (used by WakeByAddress* to
+        // match the bucket). Null when not in a WaitOnAddress wait.
+        // The thread can be on AT MOST ONE wait list at a time
+        // (TimerQueue OR Event/Semaphore/Mutex OR WaitOnAddress).
+        public void* WaitAddress;
     }
 }
