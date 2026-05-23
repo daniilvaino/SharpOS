@@ -413,6 +413,7 @@ namespace OS.Boot.EH
             ClassifyWord("RAX", frame->Rax);
             ClassifyWord("RCX", frame->Rcx);
 
+
             // BigStack.RunOn swaps RSP into a buffer that intentionally
             // lives inside the same conventional-RAM span as the GC heap
             // (see Memory/BigStack.cs header). Without this check, every
