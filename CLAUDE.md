@@ -96,3 +96,11 @@ Exception типы (`Exception`, `InvalidOperationException` и пр.) есть 
 - Перед коммитом — `done/stepNN.md` с полным writeup: контекст, архитектура, lessons learned, файлы, что откладываем, next step.
 - Формат co-author trailer — `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` (для коммитов сделанных мной).
 - User пушит сам — я не делаю `git push`.
+
+### Ритуал перед коммитом — не пропускать
+
+1. **`done/stepNN.md` создан** — даже если step маленький. Иначе done-папка отстаёт от commits (как это случилось со step100/101/102 — пришлось retroactively заполнять). Если step нетривиальный — writeup полный; если cleanup — три абзаца тоже OK.
+2. **Не коммитить мелочи отдельно** — one-line trivial cleanup идёт bundle'ом со следующим meaningful work, а не как standalone commit. История чище. См. memory `feedback_no_micro_commits`.
+3. **Limits-таблицы синхронизированы** — `docs/coreclr-hosted-limits.md` (для CoreCLR-hosted tier) и `docs/nativeaot-nostd-kernel-limits.md` (для kernel-AOT / ELF-app tier). Если step открыл/закрыл/деградировал поверхность — соответствующая строка должна обновиться **в том же коммите**, не позже. Та же логика для `README.md` comparative table если изменилась user-facing capability.
+
+Эти три проверки — не nice-to-have. Их пропуск ломает основной workflow: `done/` теряется как источник истины, `git log` зашумляется trivia, и `limits.md` становится бесполезен после нескольких пропусков (нельзя доверять "FAIL" статусу если он давно).

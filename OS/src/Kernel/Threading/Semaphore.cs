@@ -25,6 +25,17 @@ namespace OS.Kernel.Threading
             Max = max;
         }
 
+        // Non-blocking attempt: consume a permit if available, else return false.
+        public bool TryAcquire()
+        {
+            if (Count > 0)
+            {
+                Count--;
+                return true;
+            }
+            return false;
+        }
+
         // Block until at least 1 permit is available, then consume it.
         public void Wait()
         {

@@ -51,6 +51,27 @@ agent-memory `project_string_as_methodtable_shared_root`,
   nullable, `DateTime`/`TimeSpan` арифметика, `Guid`, `record`/`with`,
   рекурсия, `checked`-overflow, **`yield`/итераторы** (state-machine
   codegen — не зависит от threading-PAL).
+  > ⚠️ **Generic `as T` / `(T)x` с `where T : class` НЕ работает** даже
+  > в hosted-tier'е (step103-доказано пробой `generic `as T` cast`):
+  > `[FAIL] PAL-STUB/SEH: External component has thrown an exception.`
+  > Корень не RhTypeCast (тот вызов работает) — корень в **трансляции
+  > C++ msc throws (code 0xE06D7363) в managed**: на TARGET_UNIX/SHARPOS
+  > `PAL_TRY/PAL_CATCH` оборачивает C++ throw как `SEHException`, и
+  > `GetThrowableFromException` в `clrex.cpp:615` для SEHException
+  > branch не имеет case для msc magic → возвращает managed
+  > `System.Runtime.InteropServices.SEHException` вместо проброса
+  > оригинального `EEMessageException::m_kind`. Inner
+  > `catch (InvalidCastException)` мимо, outer `catch (SEHException)`
+  > ловит. **Тот же корень — позднее `TerminateProcess(COR_E_EXECUTIONENGINE)`
+  > на Regex/Culture probes**: `CreateThrowable.GetThrowableMessage()`
+  > пытается грузить `mscorrc.dll` → not found → throw → cascade →
+  > fatal. Подробно — `nativeaot-nostd-kernel-limits.md` §2 + agent-memory
+  > [[reference_msc_throw_becomes_sehexception]].
+  > **Workaround в user-code:** ловить `Exception` (или дополнительно
+  > `SEHException` после specific) — managed-side fix.
+  > **Полный fix:** добавить в `clrex.cpp:615` SEHException branch
+  > case `0xE06D7363` который парсит ThrowInfo и возвращает оригинальный
+  > CLRException-derived throwable.
 - **Exceptions**: `try/catch/finally/throw`, фильтры, rethrow,
   multi-frame, native-origin (`COMPlusThrow`), HW-fault→`catch`,
   `StackTrace` — сквозь JIT-кадры.

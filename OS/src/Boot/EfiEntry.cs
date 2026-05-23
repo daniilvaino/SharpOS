@@ -26,8 +26,21 @@ namespace OS.Boot
         {
             BootInfo bootInfo = UefiBootInfoBuilder.Build(context);
             Platform.Init(bootInfo);
-            KernelMain.Start(bootInfo);
-            Platform.Shutdown();
+
+            // step104: switch off the UEFI-provided boot stack onto our
+            // own .bss-resident BootStackPool BEFORE anything allocates
+            // physical pages. Otherwise PhysicalMemory.Init would mark
+            // the still-active boot stack region as "Usable" and hand
+            // its pages out to KernelHeap / GC, leading to silent
+            // overwrites of GC object m_pMT fields. See
+            // done/step104.md (BootStackSwitch) and pal-minimal-audit.md.
+            //
+            // Activate() never returns — the continuation calls
+            // KernelMain.Start and then Platform.Shutdown/Halt on the
+            // owned stack.
+            BootStackSwitch.Activate();
+
+            // unreachable
             Platform.Halt();
         }
     }

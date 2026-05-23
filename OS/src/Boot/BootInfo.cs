@@ -55,6 +55,16 @@ namespace OS.Boot
         public void* AsmExecBuffer;
         public uint AsmExecBufferSize;
 
+        // Dedicated EfiLoaderCode buffer for BigStack's 32-byte RSP-switch
+        // shellcode. Lives separately from ExecStubBuffer because the
+        // InterfaceDispatchBridge claims [128..512) of ExecStubBuffer and
+        // BigStack's old layout (offset 128, 32 bytes) silently overwrote
+        // the first 32 bytes of the bridge — every CoreCLR interface call
+        // then hijacked into BigStack's `mov rsp, rcx`, corrupting memory
+        // until GC walked into the garbage and faulted (step105).
+        public void* BigStackStubBuffer;
+        public uint BigStackStubBufferSize;
+
         // Pointer to the live UEFI System Table. Needed by Acpi.Init to
         // walk EFI_CONFIGURATION_TABLE for the ACPI 2.0 RSDP. Set by
         // UefiBootInfoBuilder; null only if firmware path isn't UEFI.

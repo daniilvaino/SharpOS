@@ -146,7 +146,11 @@ ELF — тестовая площадка (ILC через WSL/Ubuntu, `linux-x64
   PAL-stub, не EH-баг
 - `SEHException` («External component has thrown an exception») —
   ловимое; PAL trap-stub поднял native SEH, доехал до managed как
-  generic
+  generic. **После step103c** msc-throws (`0xE06D7363` от
+  `COMPlusThrow*`) больше НЕ оборачиваются в SEHException — раскрываются
+  в исходный specific тип (`InvalidCastException`,
+  `EntryPointNotFoundException`, ...). SEHException остаётся только для
+  редких raw SEH без managed-throwable.
 
 ### Применённые локальные фиксы
 
@@ -159,6 +163,205 @@ ELF — тестовая площадка (ILC через WSL/Ubuntu, `linux-x64
 - `GetStackSlot` (GC): RBP-фикс при чтении managed-кадра во время
   pause/scan + рост гостевого стека `128 KiB → 16 MiB` (для reflection
   / `System.Text.Json`).
+
+### Жизненный путь исключения в Tier C
+
+Tier C сложнее A потому что у CoreCLR **два уровня типов** (native C++ Exception
+hierarchy + managed BCL `System.Exception` hierarchy), **четыре кода SEH**
+которыми могут прийти, и **два пути конвертации** между ними. Без этой
+карты мы постоянно ошибаемся какой указатель что значит и где
+ищется message.
+
+#### Native (C++) иерархия в форке (`vm/clrex.h`, `inc/ex.h`)
+
+```
+Exception                         базовый PAL-класс
+└── CLRException                  c_type='CLR ' (0x434C5220) — несёт m_throwableHandle
+    ├── EEException               c_type='EE  ' (0x45452020) — несёт m_kind: RuntimeExceptionKind
+    │   ├── EEMessageException    + m_hr, m_resID, m_arg1..6 (InlineSString/SString)
+    │   ├── EEResourceException   + m_resourceName
+    │   ├── EECOMException        + m_ED (ExceptionData)
+    │   ├── EEFieldException      + pFD/szDemangledMessage
+    │   ├── EEMethodException     + pMD/szDemangledMessage
+    │   ├── EEArgumentException   + m_argumentName/m_resourceName
+    │   ├── EETypeLoadException   + класс/namespace/assembly
+    │   └── EEFileLoadException   + path/m_hr
+    ├── CLRLastThrownObjectException  bridge для случая "throwable уже в Thread::LastThrownObject"
+    ├── ObjrefException           обёртка вокруг OBJECTREF
+    └── EHRangeTreeNode...
+SEHException                      несёт m_exception: EXCEPTION_RECORD (raw SEH запись)
+HRException                       несёт m_hr; родитель COMException и т.д.
+OutOfMemoryException              отдельный prealloc'нутый singleton
+```
+
+`new EEMessageException(kInvalidCastException, IDS_EE_INVALIDCAST_FROM_TO,
+W("Foo"), W("Bar"))` — это **C++ объект**, который кидается через
+`PAL_CPP_THROW` (= MSVC `throw <ptr>;`). В EXCEPTION_RECORD попадает
+указатель на него (см. §«msc throw layout» ниже).
+
+#### Managed (BCL) иерархия
+
+`System.Exception` → `SystemException` → `InvalidCastException` /
+`CultureNotFoundException` / `EntryPointNotFoundException` / etc. Это
+то, что **видит managed user code** в `catch (T)`. **Не путать** с C++
+типом: один `EEMessageException(m_kind = kInvalidCastException)`
+**конструирует** managed `InvalidCastException` через
+`CoreLibBinder::GetException(m_kind)` → `AllocateObject(pMT)` →
+`CallDefaultConstructor` → `SetMessage(...)`. См. блок «CreateThrowable».
+
+#### Коды SEH с которыми приходит exception
+
+| Код | Источник | Где throwable | Кто конвертирует в managed |
+|---|---|---|---|
+| `EXCEPTION_COMPLUS` (`0xE0434352`) | managed-side `throw` из JIT-кода (`RaiseTheExceptionInternalOnly`) | заранее в `Thread::LastThrownObject` | `case EXCEPTION_COMPLUS` в обоих местах ниже — просто `return pThread->LastThrownObject()` |
+| `MSC_EXCEPTION` (`0xE06D7363`) | native-side `throw new EEMessageException(...)` через `PAL_CPP_THROW` (т.е. **любой `COMPlusThrow*` из C++**) | сам бросаемый C++ объект, доступный через `ExceptionInformation[1]` (см. layout) | **step103-fix**: distinct deref + cast в `CLRException`/`EEException` → `GetThrowable()`. Без фикса попадал в default `MapWin32FaultToCOMPlusException` → kSEHException ⇒ потеря типа. |
+| `STATUS_ACCESS_VIOLATION` etc. | HW-fault, dereference NULL | нет; синтезируется | `MapWin32FaultToCOMPlusException` → kNullReferenceException/kAccessViolationException + `EEException::CreateThrowable` |
+| `STATUS_STACK_OVERFLOW`, `STATUS_NO_MEMORY` | OOM/SO | preallocated singletons (`GetBestOutOfMemoryException`/`GetPreallocatedStackOverflowException`) | special-cases в `CreateCOMPlusExceptionObject` |
+
+#### msc throw layout (для `0xE06D7363`)
+
+```
+ExceptionInformation[0] = magic       (0x19930520 / 0x19930521 / 0x19930522)
+ExceptionInformation[1] = void**      ── адрес слота хранящего бросаемый указатель
+                                         для `throw new T(...)` (тип throw-выражения — pointer)
+                                         **Нужен один extra deref** чтобы получить сам объект:
+                                            Exception* pE = *(Exception**)ExceptionInformation[1];
+                                         (для `throw T(...)` без new — слот хранит сам value, один deref
+                                          и так не нужен; в CoreCLR практически всегда `throw new`)
+ExceptionInformation[2] = ThrowInfo*  ── RTTI: CatchableTypeArray с mangled именами иерархии
+ExceptionInformation[3] = imageBase   ── RVA-база для RTTI
+```
+
+**Ловушка**: ранее `step103` пытался читать `(Exception*)einfo[1]` напрямую
+— получал «vtable» которая на самом деле адрес объекта, виртуальный
+вызов халтил. Двойной deref решает (step103c, 2026-05-22).
+
+#### Точки конвертации native → managed
+
+Два места, оба надо держать в синхроне:
+
+1. **`CLRException::GetThrowableFromException(Exception* pE)`**
+   ([`clrex.cpp:586`](../dotnet-runtime-sharpos/src/coreclr/vm/clrex.cpp)).
+   Принимает C++ Exception*. Используется когда вокруг — `EX_CATCH`
+   и есть инстанс. Идёт по веткам `IsType(CLRException)`/
+   `IsType(EEException)`/`IsType(SEHException)`. Для SEHException
+   ветка `case EXCEPTION_COMPLUS` возвращает LastThrownObject;
+   step103-fix добавляет **msc-throw recovery** перед switch'ем.
+
+2. **`CreateCOMPlusExceptionObject(Thread*, EXCEPTION_RECORD*, BOOL)`**
+   ([`excep.cpp:5567`](../dotnet-runtime-sharpos/src/coreclr/vm/excep.cpp)).
+   Принимает raw EXCEPTION_RECORD. Используется когда мы внутри
+   personality routine и есть только запись (`ExInfo::CreateThrowable`,
+   `exceptionhandling.cpp:809`). По умолчанию идёт
+   `MapWin32FaultToCOMPlusException` → строит `EEException(kind)`.
+   step103-fix добавляет ту же msc-throw recovery в начале для кода
+   `0xE06D7363`.
+
+Не дублировать оригинальный C++ объект; **только взять managed throwable** —
+он уже корректно построен (`m_kind`, `m_hr`, args) и его `GetThrowable()`
+вернёт managed object с правильным MethodTable.
+
+#### CreateThrowable (где формируется managed exception)
+
+`EEException::CreateThrowable()` ([`clrex.cpp:998`](../dotnet-runtime-sharpos/src/coreclr/vm/clrex.cpp)):
+
+```
+pMT = CoreLibBinder::GetException(m_kind)        // RuntimeExceptionKind → MethodTable*
+throwable = AllocateObject(pMT)                  // managed alloc
+CallDefaultConstructor(throwable)
+throwable.SetHResult(GetHR())                    // virtual override
+SString msg;
+if (GetThrowableMessage(msg))                    // ← КЛЮЧЕВАЯ точка
+    throwable.SetMessage(NewString(msg))
+```
+
+`GetThrowableMessage` — **virtual**, перегружен в каждом
+EEException-производном:
+
+| Класс | Что делает |
+|---|---|
+| `EEMessageException` | Если `m_resID != 0` → `GetResourceMessage` → `StackSString::LoadResource(CCompRC::Error, m_resID)` → **mscorrc.dll** lookup (PE-resource). Иначе fallback на `EEException::GetThrowableMessage`. |
+| `EEResourceException` | `LoadString(m_resourceName)` из сборки указанной в m_resourceAssembly. |
+| `EEException` (base, line 945) | fallback: пустой message, BCL-конструктор положит default ("Specified cast is not valid", etc. — берётся из managed-side в `Exception` constructor). |
+| `EEArgumentException`, `EEMethodException`, ... | свои источники (m_argumentName + resource lookup). |
+
+**Где живут messages:**
+- **mscorrc.dll** (CoreCLR shared resource DLL) — большинство templates,
+  ключатся по UINT `m_resID` (см. `corerror.h`/`mscorrc.rc`). У нас
+  **НЕ сбандлена** → `LoadResource` → throw → recursion → fatal
+  `TerminateProcess(COR_E_EXECUTIONENGINE)`. Это поверхность Regex/Path/
+  Reflection probes, см. `coreclr-hosted-limits.md`.
+- **mscorlib (System.Private.CoreLib)** — defaults из `Exception(string?)`
+  конструктора по умолчанию (когда `SetMessage(NULL)`). Текст вшит в
+  `SR.resx` → managed RVA → ловится pinned strings. Этот путь не
+  требует mscorrc.
+- **System.Globalization.dll** (в invariant mode) — `CultureNotFoundException`
+  собирает свой message сам ("Only the invariant culture is supported in
+  globalization-invariant mode... ru-ru is an invalid culture identifier")
+  не дёргая `EEException::CreateThrowable`. Поэтому она у нас работает
+  без mscorrc.
+
+**Следствие step103c**: до фикса все msc-throws оборачивались как
+SEHException → `EEException::GetThrowableMessage` для kSEHException не
+шёл в mscorrc → безопасно. После фикса корректный m_kind открывает
+правильный resource path → mscorrc cascade на отсутствие. **Не
+регрессия EH-машины, а смежная PAL-проблема (mscorrc bundle).**
+Закрывается либо bundling mscorrc, либо guard'ом в
+`GetThrowableMessage` (`EX_TRY` + пустой message на failure).
+
+#### Диаграмма (минимальный путь для `throw new EEMessageException(kInvalidCast, ...)`)
+
+```
+managed code: (Bar)foo
+   │
+   ▼ JIT CORINFO_HELP_CHKCASTANY → CastHelpers.cpp
+ThrowInvalidCastException()
+   │
+   ▼ COMPlusThrow(kInvalidCastException, IDS_EE_CANNOTCASTSOURCE_TO_DEST, srcN, dstN)
+EX_THROW(EEMessageException, (kInvalidCastException, IDS_..., srcN, dstN))
+   │
+   ▼ PAL_CPP_THROW = MSVC `throw <ptr>;`
+RaiseException(code=0xE06D7363, args=[magic, &pObj, pThrowInfo, imgBase])
+   │  args[1] = void** (адрес локального слота с указателем)
+   │
+   ▼ наш SehDispatch.cs:RaiseExceptionImpl
+   ├── search pass — walk frames через personalities
+   │       ProcessCLRException вызывается на JIT-кадрах
+   │           └── ExInfo::CreateThrowable
+   │                   └── CreateCOMPlusExceptionObject ← step103c фикс ЗДЕСЬ
+   │                          │ exceptionCode == 0xE06D7363, double-deref einfo[1]:
+   │                          │   pE = *(Exception**)einfo[1];
+   │                          │   if (pE->IsType(EEException)) return ((EEException*)pE)->GetThrowable();
+   │                          │   → CreateThrowable()
+   │                          │       → AllocateObject(InvalidCastException MT)
+   │                          │       → SetHResult(COR_E_INVALIDCAST)
+   │                          │       → GetThrowableMessage(): m_resID != 0 →
+   │                          │           LoadResource(CCompRC::Error, m_resID)
+   │                          │           ↘ mscorrc.dll: not bundled → fatal cascade
+   │                          │             (для CultureNotFound managed-side даёт message
+   │                          │              сам, mscorrc lookup не нужен — работает)
+   │                          └── на success: managed throwable пинится в Thread::ThrowableObject
+   ├── unwind pass — выполняет destructors + jump в catch funclet
+   ▼
+managed user code: catch (InvalidCastException ex) { ... }   ← теперь СРАБАТЫВАЕТ
+```
+
+#### Сводка: что почему ломалось/чинилось в Tier C на пути msc-throw
+
+| Симптом | Когда | Корень | Где фикс |
+|---|---|---|---|
+| `string-as-MethodTable` halt | step 71 | `ExInfo::UpdateNonvolatileRegisters` затирал RBP resume-контекста | `SehUnwind.CallCatchFunclet` save/restore RBP |
+| `catch (T)` мимо, ловится только `(SEHException)` | до step103c | `CreateCOMPlusExceptionObject` для 0xE06D7363 шёл в default `MapWin32FaultToCOMPlusException` → kSEHException | excep.cpp + clrex.cpp double-deref msc recovery |
+| Сначала «vtable» с мусором, halt на `IsType` | step103b | пытались `(Exception*)einfo[1]` без extra deref — `einfo[1]` это `void**`, не сам объект | step103c: один лишний deref |
+| `TerminateProcess(COR_E_EXECUTIONENGINE)` на Regex/Path probes | после step103c | `EEMessageException::GetThrowableMessage` дёргает mscorrc.dll → not bundled → throw в `CreateThrowable` → cascade | TBD: либо bundle mscorrc, либо `EX_TRY` в `GetThrowableMessage` с пустым результатом |
+
+#### Открытые вопросы (после step103c)
+
+- **mscorrc bundle vs guard.** Решить какой подход. Guard минимально-инвазивный (~5 строк EX_TRY), bundle честный.
+- **Frame-types ещё не покрытые в TryActivateFrameChain.** `HelperMethodFrame`, `TransitionFrame`, `UMThunk*` — пока не триггерятся, но если потребуется — добавление ветки по `frameId`.
+- **threading cohort hard-panic.** `new Thread().Start()`, `ThreadPool`, `Task.Run`, `Timer` — phase E (threading-PAL), не EH-вопрос.
+
+---
 
 ### EH-фронтир §11 — закрыт (step 90) ✅
 
@@ -190,7 +393,10 @@ Phase E, остаётся отложенным).
 
 **Покрыто**: `InlinedCallFrame` (P/Invoke / reflection invoke /
 helper-method transitions). Census-cohort Socket / OpenSSL /
-P/Invoke trap'ы — теперь catchable `SEHException`.
+P/Invoke trap'ы — catchable. **После step103c** ловятся как
+specific тип (`EntryPointNotFoundException`, `InvalidCastException`
+и т.д.), а не общий `SEHException` — см. секцию «Жизненный путь
+исключения в Tier C» ниже.
 **Не покрыто** (если потребуется в будущем): `HelperMethodFrame`,
 `TransitionFrame`, `UMThunk*` и т.д. — добавление ветки в
 TryActivateFrameChain по `frameId`. В текущем census не триггерятся.

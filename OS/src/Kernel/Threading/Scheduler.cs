@@ -46,14 +46,29 @@ namespace OS.Kernel.Threading
             // thread (post-yield) restores something valid.
             X64Asm.Fxsave(ctx + FxsaveAreaOffset);
 
+            // step104: if BootStackSwitch ran, the boot thread now lives
+            // on our owned BootStackPool — register its bounds here so
+            // HwFaultBridge can report "RSP within bounds, used=..."
+            // instead of "no owned stack". Pre-switch boots (failure
+            // mode) leave the fields null as before.
+            byte* sBase = null;
+            byte* sTop  = null;
+            uint  sLen  = 0;
+            if (OS.Boot.BootStackSwitch.IsDone)
+            {
+                sBase = OS.Boot.BootStackSwitch.OwnedStackBase;
+                sTop  = OS.Boot.BootStackSwitch.OwnedStackTop;
+                sLen  = OS.Boot.BootStackSwitch.OwnedStackBytes;
+            }
+
             Thread t = new Thread
             {
                 Id = s_nextId++,
                 State = ThreadState.Running,
                 ContextBlock = ctx,
-                StackBase = null,
-                StackTop = null,
-                StackBytes = 0,
+                StackBase = sBase,
+                StackTop = sTop,
+                StackBytes = sLen,
                 Teb = null,
                 Entry = null,
             };

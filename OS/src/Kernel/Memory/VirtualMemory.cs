@@ -96,6 +96,22 @@ namespace OS.Kernel.Memory
             if (end > WindowBase + WindowSize) return null;   // window exhausted
             s_cursor = end;
             s_reservedBytes += (end - va);
+            // Phase E10 path-B: EVERY JIT-VA reserve is registered as a stub
+            // range. The kernel SEH walker's LookupFunctionEntry tries JIT/R2R
+            // proper unwind first; only when those miss does StubRangeLookup
+            // synthesize a leaf RUNTIME_FUNCTION (pop [rsp]→Rip, no codes) so
+            // exception unwind can step past CoreCLR's call-counting / precode
+            // / VSD / dynamic-helper thunks that have no .pdata. Direct
+            // registration here (not just from ExecutableAllocator::Reserve)
+            // catches reserves that bypass the fork's ExecutableAllocator —
+            // notably GC arena, LoaderAllocator's big reserve (which contains
+            // m_pStubHeap), and any other VirtualAlloc(MEM_RESERVE) path.
+            // Diagnostic line stays gated by counters via the export — drop
+            // after acceptance.
+            Console.Write("[vm-reserve] va=0x"); Console.WriteHex(va);
+            Console.Write(" len=0x");            Console.WriteHex(end - va);
+            Console.WriteLine("");
+            OS.PAL.SharpOSHost.SehUnwind.RegisterStubRange(va, end - va);
             return (void*)va;
         }
 

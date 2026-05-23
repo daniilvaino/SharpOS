@@ -19,11 +19,12 @@ namespace OS.Kernel.Memory
     // of the kernel is unaffected (scoped switch). Same byte-array
     // shellcode mechanism as GcStackSpill / JumpStub (invariant 1).
     //
-    // Layout in the shared ExecStubBuffer (512 B): Cr3Accessor [0,64),
-    // GcStackSpill [64,128), BigStack [128,160).
+    // step105: lives in a DEDICATED 64-byte EfiLoaderCode pool
+    // (BootInfo.BigStackStubBuffer). Previously sharing ExecStubBuffer
+    // at offset 128 silently overwrote InterfaceDispatchBridge's first
+    // 32 bytes, hijacking every interface call into `mov rsp, rcx`.
     internal static unsafe class BigStack
     {
-        private const uint StubOffset = 128;
         private const uint StubSize = 32;
 
         private static bool s_initialized;
@@ -59,10 +60,10 @@ namespace OS.Kernel.Memory
         {
             if (s_initialized)
                 return true;
-            if (execBuffer == null || execBufferSize < StubOffset + StubSize)
+            if (execBuffer == null || execBufferSize < StubSize)
                 return false;
 
-            byte* stub = (byte*)execBuffer + StubOffset;
+            byte* stub = (byte*)execBuffer;
             WriteShellcode(stub);
 
             s_run = (delegate* unmanaged<void*, delegate* unmanaged<void>, void>)stub;

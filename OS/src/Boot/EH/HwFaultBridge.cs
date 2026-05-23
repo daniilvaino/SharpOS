@@ -1,6 +1,9 @@
 using System.Runtime.InteropServices;
 using OS.Hal;
 using OS.Hal.Idt;
+using OS.Kernel.Memory;
+using OS.Kernel.Threading;
+using OS.PAL.SharpOSHost;
 using SharpOS.Std.NoRuntime;
 
 namespace OS.Boot.EH
@@ -248,12 +251,106 @@ namespace OS.Boot.EH
             // (EfiLoaderCode, R+X) to host the STI shellcode stub.
             OS.Hal.X64Asm.Sti();
 
+            // step106: AV / #PF first try PAL SEH dispatcher — it knows
+            // __C_specific_handler for C++ EX_TRY frames (e.g.
+            // Object::ValidateInner's AVInRuntimeImplOkayHolder). Our
+            // own DispatchEx.Dispatch uses CoffEhDecoder (NativeAOT EH
+            // only) and silently steps past C++ frames, so a defensive
+            // AV inside CoreCLR runtime leaks out as unhandled.
+            // DispatchFromHwFault returns only when no handler matched —
+            // then we fall through to the NativeAOT path which still
+            // catches null-derefs in our own managed kernel code.
+            if (frame->Vector == 13 || frame->Vector == 14)
+            {
+                // C# requires `fixed` scope to take address-of of a managed
+                // static field. Our static fields live in .bss and never
+                // move under SharpOS's non-moving GC, but the compiler
+                // doesn't know that — `fixed` makes it happy at zero cost.
+                fixed (ExceptionRecord* rec = &s_hwRec)
+                fixed (Context*         ctx = &s_hwCtx)
+                {
+                    BuildHwExceptionRecord(rec, frame);
+                    BuildContextFromInterruptFrame(ctx, frame);
+                    SehDispatch.DispatchFromHwFault(rec, ctx);
+                    // Returned — PAL SEH didn't find a handler. Fall through.
+                }
+            }
+
             // Hand off к managed dispatcher. Does not return on success.
             DispatchEx.Dispatch(exceptionPtr, &exInfo);
 
             // If we get here, Dispatch failed (unhandled). Halt.
             Console.Write("\r\n*** HwFaultBridge: Dispatch returned (unhandled HW exception) ***\r\n");
             while (true) { }
+        }
+
+        // step106: pre-allocated record + context for the PAL SEH path.
+        // Avoids GcHeap alloc (which RaiseExceptionImpl uses) — the fault
+        // handler must not depend on GcHeap state being sane (corruption
+        // can be the very reason we're here). Single-threaded fault
+        // handling means no re-entry concerns.
+        private static ExceptionRecord s_hwRec;
+        private static Context s_hwCtx;
+
+        private static void BuildHwExceptionRecord(ExceptionRecord* rec, InterruptFrame* frame)
+        {
+            // Zero the struct (no Span here — kernel-aot, no Buffer.MemoryCopy).
+            byte* p = (byte*)rec;
+            for (int i = 0; i < sizeof(ExceptionRecord); i++) p[i] = 0;
+
+            const uint STATUS_ACCESS_VIOLATION = 0xC0000005;
+            rec->ExceptionCode = STATUS_ACCESS_VIOLATION;
+            rec->ExceptionFlags = 0;
+            rec->ExceptionAddress = (void*)frame->Rip;
+            // Win64 #PF/#GP ExceptionInformation:
+            //   [0] = 0 read / 1 write / 8 DEP-violation (instruction fetch)
+            //   [1] = faulting VA (CR2 on #PF; we reuse RIP-target if available)
+            rec->NumberParameters = 2;
+            if (frame->Vector == 14)
+            {
+                // #PF — ErrorCode bit 1 = write, bit 4 = instruction fetch.
+                ulong info0 = 0;
+                if ((frame->ErrorCode & 0x10) != 0) info0 = 8;       // instr fetch (DEP)
+                else if ((frame->ErrorCode & 0x02) != 0) info0 = 1;  // write
+                rec->ExceptionInformation[0] = info0;
+                rec->ExceptionInformation[1] = frame->Cr2;
+            }
+            else
+            {
+                // #GP — no CR2; report read-style access of unknown target.
+                rec->ExceptionInformation[0] = 0;
+                rec->ExceptionInformation[1] = 0;
+            }
+        }
+
+        private static void BuildContextFromInterruptFrame(Context* ctx, InterruptFrame* frame)
+        {
+            // Zero the entire 1232-byte struct.
+            byte* p = (byte*)ctx;
+            for (int i = 0; i < sizeof(Context); i++) p[i] = 0;
+
+            ctx->ContextFlags = Context.CONTEXT_FULL;
+            ctx->SegCs = (ushort)frame->Cs;
+            ctx->SegSs = (ushort)frame->Ss;
+            ctx->EFlags = (uint)frame->Rflags;
+
+            ctx->Rax = frame->Rax;
+            ctx->Rcx = frame->Rcx;
+            ctx->Rdx = frame->Rdx;
+            ctx->Rbx = frame->Rbx;
+            ctx->Rsp = frame->Rsp;
+            ctx->Rbp = frame->Rbp;
+            ctx->Rsi = frame->Rsi;
+            ctx->Rdi = frame->Rdi;
+            ctx->R8  = frame->R8;
+            ctx->R9  = frame->R9;
+            ctx->R10 = frame->R10;
+            ctx->R11 = frame->R11;
+            ctx->R12 = frame->R12;
+            ctx->R13 = frame->R13;
+            ctx->R14 = frame->R14;
+            ctx->R15 = frame->R15;
+            ctx->Rip = frame->Rip;
         }
 
         // ---- Sage-2 frontier discriminator (step 71) ------------------------
@@ -316,18 +413,105 @@ namespace OS.Boot.EH
             ClassifyWord("RAX", frame->Rax);
             ClassifyWord("RCX", frame->Rcx);
 
+            // BigStack.RunOn swaps RSP into a buffer that intentionally
+            // lives inside the same conventional-RAM span as the GC heap
+            // (see Memory/BigStack.cs header). Without this check, every
+            // CoreCLR-hosted fault would trip [SO-SUSPECT] as a false
+            // positive. Real overflow OFF the BigStack ends up below
+            // s_activeLo → rspInBigStack=false + rspInHeap=true → the
+            // original [SO-SUSPECT] verdict still fires correctly.
+            ulong bsLo = 0, bsHi = 0;
+            bool rspInBigStack = BigStack.TryGetActiveBounds(frame->Rsp, out bsLo, out bsHi);
+
             // Frontier-A discriminator: faulting RSP inside a managed heap
             // segment is the literal "stack ran into the heap" — a near-
             // certain stack-overflow verdict that needs no stack bounds.
-            bool rspInHeap = GcHeap.IsInitialized &&
-                GcHeap.FindSegmentContaining((nint)frame->Rsp) != null;
+            GcSegmentHeader* rspSeg = GcHeap.IsInitialized
+                ? GcHeap.FindSegmentContaining((nint)frame->Rsp)
+                : null;
+            bool rspInHeap = rspSeg != null;
             Log.Begin(LogLevel.Info);
-            if (rspInHeap)
+            if (rspInBigStack)
+            {
+                Console.Write("  [BIGSTACK] RSP inside active BigStack buffer [0x");
+                Console.WriteHex(bsLo);
+                Console.Write("..0x");
+                Console.WriteHex(bsHi);
+                Console.Write(") — CoreCLR-hosted run, RSP swapped by BigStack.RunOn");
+            }
+            else if (rspInHeap)
                 Console.Write("  [SO-SUSPECT] RSP is INSIDE a GC heap segment "
                     + "— stack descended into managed heap (frontier A: SO)");
             else
                 Console.Write("  RSP not in GC heap (frontier-A SO not confirmed by this signal)");
             Log.EndLine();
+
+            // Step104 discriminator: print current thread stack bounds AND
+            // the GC segment that contains RSP (if any), so we can tell
+            // whether RSP fell below StackBase (true overflow into adjacent
+            // memory) vs RSP is normal but stack/heap address ranges OVERLAP
+            // (allocation bug — stack and GC segment reserved at same VA).
+            Thread? curr = Scheduler.Current;
+            if (curr != null)
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("  [STK] thread Id=");
+                Console.WriteUIntRaw((uint)curr.Id);
+                Console.Write(" StackBase=0x"); Console.WriteHex((ulong)curr.StackBase);
+                Console.Write(" StackTop=0x");  Console.WriteHex((ulong)curr.StackTop);
+                Console.Write(" StackBytes=0x"); Console.WriteHex((ulong)curr.StackBytes);
+                Console.Write(" GuardPage=0x"); Console.WriteHex((ulong)curr.GuardPage);
+                Log.EndLine();
+
+                ulong rsp = frame->Rsp;
+                ulong sbase = (ulong)curr.StackBase;
+                ulong stop  = (ulong)curr.StackTop;
+                Log.Begin(LogLevel.Info);
+                if (rspInBigStack)
+                {
+                    Console.Write("  [STK] wrapper bounds shown above — execution actually on BigStack");
+                }
+                else if (sbase == 0 || stop == 0)
+                {
+                    Console.Write("  [STK] thread has no owned stack (boot/wrapped thread)");
+                }
+                else if (rsp < sbase)
+                {
+                    Console.Write("  [STK] RSP BELOW StackBase by 0x");
+                    Console.WriteHex(sbase - rsp);
+                }
+                else if (rsp >= stop)
+                {
+                    Console.Write("  [STK] RSP ABOVE StackTop by 0x");
+                    Console.WriteHex(rsp - stop);
+                }
+                else
+                {
+                    Console.Write("  [STK] RSP within bounds, used=0x");
+                    Console.WriteHex(stop - rsp);
+                    Console.Write(" of 0x");
+                    Console.WriteHex(stop - sbase);
+                }
+                Log.EndLine();
+            }
+            else
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("  [STK] Scheduler.Current == null (no thread context)");
+                Log.EndLine();
+            }
+
+            if (rspSeg != null)
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("  [GC-SEG] RSP-containing segment: Start=0x");
+                Console.WriteHex((ulong)rspSeg->Start);
+                Console.Write(" End=0x");
+                Console.WriteHex((ulong)rspSeg->End);
+                Console.Write(" size=0x");
+                Console.WriteHex((ulong)(rspSeg->End - rspSeg->Start));
+                Log.EndLine();
+            }
 
             // ASCII-spray extent: a long contiguous run of one ASCII qword up
             // the stack is the overrun/spray fingerprint (frontier A). Scan is

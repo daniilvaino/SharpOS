@@ -49,6 +49,58 @@ namespace OS.PAL.SharpOSHost
 
         private static void RaiseExceptionImpl(uint code, uint flags, uint nParams, ulong* args)
         {
+            // Phase E11 throw-type diagnostic: unconditional one-liner per
+            // throw -- code + (for C++ throws) first type-chain entry +
+            // (for HRException family) m_hr from object at offset 0x14.
+            // NOT Trace-gated (Trace=true spams per-frame info). Drop
+            // after Phase E11 acceptance.
+            Console.Write("[seh] throw code=0x"); Console.WriteHex(code);
+            if (code == ExceptionRecord.EH_EXCEPTION_NUMBER && nParams >= 4 && args != null)
+            {
+                ulong throwInfoVa = args[2];
+                ulong imgBase     = args[3];
+                if (throwInfoVa != 0 && imgBase != 0)
+                {
+                    byte* img = (byte*)imgBase;
+                    uint catchableArrRva = *(uint*)(throwInfoVa + 0x0C);
+                    if (catchableArrRva != 0)
+                    {
+                        uint* arr = (uint*)(img + catchableArrRva);
+                        uint nTypes = arr[0];
+                        if (nTypes > 0)
+                        {
+                            uint ctRva = arr[1];
+                            uint pTypeRva = *(uint*)(img + ctRva + 4);
+                            byte* mangledName = img + pTypeRva + 16;
+                            Console.Write(" type=");
+                            while (*mangledName != 0)
+                            {
+                                Console.WriteChar((char)*mangledName);
+                                mangledName++;
+                            }
+                        }
+                    }
+                }
+            }
+            Console.WriteLine("");
+            // Object qword dump -- step-71 memory had m_hr at 0x14, but
+            // EEMessageException adds m_kind (from EEException) above
+            // m_hr so the offset shifts. Dumping 16 qwords gives a clear
+            // pattern (vtable @0, throwable @8, kind/hr/resID following).
+            if (code == ExceptionRecord.EH_EXCEPTION_NUMBER && nParams >= 4 && args != null)
+            {
+                ulong objVa = args[1];
+                if (objVa != 0)
+                {
+                    Console.Write("[seh] exc obj:");
+                    for (int q = 0; q < 16; q++)
+                    {
+                        Console.Write(" +"); Console.WriteHex((ulong)(q * 8), 2);
+                        Console.Write("=");  Console.WriteHex(*(ulong*)(objVa + (ulong)(q * 8)));
+                    }
+                    Console.WriteLine("");
+                }
+            }
             if (Trace) {
             Console.Write("[seh] RaiseException code=0x"); Console.WriteHex(code);
             Console.Write(" nParams="); Console.WriteInt((int)nParams);
@@ -152,6 +204,21 @@ namespace OS.PAL.SharpOSHost
             // Should not return — if we get here, no handler matched.
             Console.WriteLine("[SehDispatch] no handler matched — HALT");
             Panic.Fail("unhandled exception");
+        }
+
+        // step106: HW-fault entry point. Skips CaptureCurrentContext +
+        // UnwindOneFrame — caller (HwFaultBridge) provides the explicit
+        // fault context built from the InterruptFrame, so the walk
+        // starts at the actual faulting C++ method, not at this PAL
+        // function's prologue. Reuses the same DispatchException
+        // machinery (__C_specific_handler for C++ EX_TRY frames,
+        // ProcessCLRException for JIT frames, FrameChain walker).
+        //
+        // Returns only on unhandled — DispatchException transfers
+        // control via RtlUnwind if a handler matches.
+        internal static void DispatchFromHwFault(ExceptionRecord* rec, Context* ctx)
+        {
+            DispatchException(rec, ctx);
         }
 
         // _CxxThrowException — MSVC-emitted entry for `throw obj;`.
@@ -343,6 +410,9 @@ namespace OS.PAL.SharpOSHost
 
                 if (!IsValidIp(controlPc))
                 {
+                    Console.Write("[seh] !IsValidIp controlPc=0x"); Console.WriteHex(controlPc);
+                    Console.Write(" InDynamicRange=");             Console.WriteInt(SehUnwind.InDynamicRange(controlPc) ? 1 : 0);
+                    Console.WriteLine("");
                     // Phase D iteration 3 — before bailing, try FrameChain
                     // skip-through (see TryActivateFrameChain). Same hook
                     // is mirrored in RtlUnwind's second-pass walker.
@@ -441,15 +511,61 @@ namespace OS.PAL.SharpOSHost
 
                 if (newFrame == 0 || newFrame == establisherFrame)
                 {
-                    // No progress — bail.
+                    Console.Write("[seh] exit: no SP progress newFrame=0x"); Console.WriteHex(newFrame);
+                    Console.Write(" estab=0x");                              Console.WriteHex(establisherFrame);
+                    Console.Write(" Rip=0x");                                Console.WriteHex(searchCtx->Rip);
+                    Console.WriteLine("");
                     break;
                 }
                 establisherFrame = newFrame;
-                if (searchCtx->Rip == 0) break;
+                if (searchCtx->Rip == 0)
+                {
+                    Console.WriteLine("[seh] exit: Rip == 0");
+                    break;
+                }
             }
 
             if (matchedHandler == null)
             {
+                // Diagnostic: dump exception code + (if C++ throw) type chain
+                // so we can see WHY no handler matched. Permanent — fires once
+                // per uncaught throw, no Trace gate.
+                Console.Write("[seh] uncaught code=0x"); Console.WriteHex(rec->ExceptionCode);
+                Console.Write(" nParams=");             Console.WriteInt((int)rec->NumberParameters);
+                Console.WriteLine("");
+                if (rec->ExceptionCode == ExceptionRecord.EH_EXCEPTION_NUMBER &&
+                    rec->NumberParameters >= 4)
+                {
+                    ulong throwInfoVa = rec->ExceptionInformation[2];
+                    ulong imgBase     = rec->ExceptionInformation[3];
+                    if (throwInfoVa != 0 && imgBase != 0)
+                    {
+                        byte* img = (byte*)imgBase;
+                        uint catchableArrRva = *(uint*)(throwInfoVa + 0x0C);
+                        if (catchableArrRva != 0)
+                        {
+                            uint* arr = (uint*)(img + catchableArrRva);
+                            uint nTypes = arr[0];
+                            Console.Write("[seh] throw types (");
+                            Console.WriteInt((int)nTypes);
+                            Console.WriteLine("):");
+                            for (uint i = 0; i < nTypes && i < 6; i++)
+                            {
+                                uint ctRva = arr[1 + i];
+                                uint pTypeRva = *(uint*)(img + ctRva + 4);
+                                byte* mangledName = img + pTypeRva + 16;
+                                Console.Write("  - ");
+                                while (*mangledName != 0)
+                                {
+                                    Console.WriteChar((char)*mangledName);
+                                    mangledName++;
+                                }
+                                Console.WriteLine("");
+                            }
+                        }
+                    }
+                }
+
                 // No C++/SEH handler caught the throw. For C++ HRException
                 // throws CoreCLR expects the host to translate to HRESULT
                 // return. Our caller is C# (CoreClrProbe.Run). Walk again
@@ -910,47 +1026,156 @@ namespace OS.PAL.SharpOSHost
         private static extern void SharpOSHost_SetCurrentFrame(void* newFrame);
 
         private const ulong FrameTopSentinel = ulong.MaxValue;
-        private const ulong FrameId_InlinedCallFrame = 1UL;
+        // Frame identifier enum values mirror vm/FrameTypes.h with our
+        // build defines (FEATURE_HIJACK + DEBUGGING_SUPPORTED +
+        // FEATURE_COMINTEROP all ON). InlinedCallFrame=1; the
+        // TransitionFrame-derived family (PrestubMethodFrame and below)
+        // all share m_pTransitionBlock layout at offset +16 -> single
+        // branch covers them.
+        private const ulong FrameId_InlinedCallFrame        = 1UL;
+        private const ulong FrameId_PInvokeCalliFrame       = 10UL;
+        private const ulong FrameId_PrestubMethodFrame      = 12UL;
+        private const ulong FrameId_CallCountingHelperFrame = 13UL;
+        private const ulong FrameId_StubDispatchFrame       = 14UL;
+        private const ulong FrameId_ExternalMethodFrame     = 15UL;
+        private const ulong FrameId_DynamicHelperFrame      = 16UL;
+
+        // Try to extract (CallerRA, CallSiteSP, CalleeSavedFP) from a Frame
+        // box `f` based on its FrameIdentifier. Returns true if the Frame
+        // type is known. CallerRA can still be 0 / invalid -- caller
+        // filters those.
+        private static bool TryExtractFrameContext(ulong* f, ulong frameId,
+                                                    out ulong callerRA,
+                                                    out ulong callSiteSP,
+                                                    out ulong calleeSavedFP)
+        {
+            callerRA = 0; callSiteSP = 0; calleeSavedFP = 0;
+
+            if (frameId == FrameId_InlinedCallFrame)
+            {
+                callerRA      = f[4];
+                callSiteSP    = f[3];
+                calleeSavedFP = f[5];
+                return true;
+            }
+            if (frameId >= FrameId_PrestubMethodFrame &&
+                frameId <= FrameId_DynamicHelperFrame)
+            {
+                ulong tbAddr = f[2];
+                if (tbAddr == 0 || tbAddr < 0x10000UL) return false;
+                // Windows AMD64 TransitionBlock layout (72 bytes total):
+                //   offset 0:  Rdi
+                //   offset 8:  Rsi
+                //   offset 16: Rbx
+                //   offset 24: Rbp
+                //   offset 32: R12
+                //   offset 40: R13
+                //   offset 48: R14
+                //   offset 56: R15
+                //   offset 64: m_ReturnAddress
+                // CalleeSavedRegisters has 8 fields on Windows AMD64
+                // (Rdi/Rsi are non-volatile here), NOT 6 as in Unix AMD64.
+                // See vm/amd64/cgencpu.h ENUM_CALLEE_SAVED_REGISTERS for
+                // the !UNIX_AMD64_ABI block.
+                ulong* tb = (ulong*)tbAddr;
+                callerRA      = tb[8];          // m_ReturnAddress
+                callSiteSP    = tbAddr + 72UL;  // sizeof(TransitionBlock)
+                calleeSavedFP = tb[3];          // Rbp
+                return true;
+            }
+            return false;
+        }
 
         private static bool TryActivateFrameChain(Context* ctx)
         {
             void* fpVoid = SharpOSHost_GetCurrentFrame();
             ulong fp = (ulong)fpVoid;
             // Empty chain or FRAME_TOP sentinel — nothing to do.
-            if (fp == 0 || fp == FrameTopSentinel || fp < 0x10000UL) return false;
+            if (fp == 0 || fp == FrameTopSentinel || fp < 0x10000UL)
+            {
+                Console.Write("[fchain] bail head=0x"); Console.WriteHex(fp);
+                Console.Write(" Rsp=0x");               Console.WriteHex(ctx->Rsp);
+                Console.Write(" Rip=0x");               Console.WriteHex(ctx->Rip);
+                Console.WriteLine("");
+                return false;
+            }
 
+            // Phase E10 step 103: iterate the Frame chain, skipping Frames
+            // whose CallerRA resolves to an unregistered code region
+            // (LoaderAllocator stub heaps -- precode / VSD / call-counting
+            // thunks -- never call RtlInstallFunctionTableCallback). We
+            // bound the iteration at 16 hops to avoid runaway on a
+            // corrupt chain.
             ulong* f = (ulong*)fp;
-            ulong frameId = f[0];
-            if (frameId != FrameId_InlinedCallFrame) return false;
+            int hops = 0;
+            while (hops < 16 && f != null && (ulong)f != FrameTopSentinel && (ulong)f >= 0x10000UL)
+            {
+                ulong frameId = f[0];
+                if (!TryExtractFrameContext(f, frameId,
+                        out ulong callerRA, out ulong callSiteSP, out ulong calleeSavedFP))
+                {
+                    Console.Write("[fchain] unhandled frameId=0x");
+                    Console.WriteHex(frameId);
+                    Console.Write(" fp=0x");
+                    Console.WriteHex((ulong)f);
+                    Console.WriteLine("");
+                    // Unknown Frame type: try next.
+                    ulong nxt = f[1];
+                    if (nxt == FrameTopSentinel || nxt == 0 || nxt < 0x10000UL) return false;
+                    f = (ulong*)nxt;
+                    hops++;
+                    continue;
+                }
 
-            ulong callerRA      = f[4];   // +32 m_pCallerReturnAddress
-            if (callerRA == 0 || callerRA < 0x10000UL) return false;  // inactive ICF
-            ulong callSiteSP    = f[3];   // +24 m_pCallSiteSP
-            ulong calleeSavedFP = f[5];   // +40 m_pCalleeSavedFP
+                // Validity filters: CallerRA must be non-zero, above the
+                // VA noise floor, and resolve to a registered code region
+                // (JIT dynamic table or R2R static .pdata). Frames with
+                // CallerRA in an unregistered stub heap fail this filter
+                // and we advance to m_Next.
+                bool validRa = (callerRA != 0 && callerRA >= 0x10000UL)
+                             && SehUnwind.InDynamicRange(callerRA - 1UL);
+                bool spOk    = callSiteSP > ctx->Rsp;
 
-            // Anti-reactivation guard: an ICF is only meaningful when the
-            // walker is still *below* its call site SP. After we activate
-            // it, walker's Rsp jumps to CallSiteSP — so any subsequent
-            // re-entry into this routine (e.g. another stub frame deeper)
-            // won't re-fire on the same ICF. This same guard makes the
-            // routine safe to call from both search and unwind walkers
-            // without needing to pop the frame (which the unwind pass'
-            // personality routine handles via CleanUpForSecondPass).
-            if (callSiteSP <= ctx->Rsp) return false;
+                if (validRa && spOk)
+                {
+                    Console.Write("[fchain] activate id=0x");        Console.WriteHex(frameId);
+                    Console.Write(" CallerRA=0x");                   Console.WriteHex(callerRA);
+                    Console.Write(" CallSiteSP=0x");                 Console.WriteHex(callSiteSP);
+                    Console.Write(" Rbp=0x");                        Console.WriteHex(calleeSavedFP);
+                    Console.Write(" hops=");                         Console.WriteUInt((uint)hops);
+                    Console.WriteLine("");
 
-            Console.Write("[fchain] activate ICF: CallerRA=0x"); Console.WriteHex(callerRA);
-            Console.Write(" CallSiteSP=0x");                     Console.WriteHex(callSiteSP);
-            Console.Write(" CalleeSavedFP=0x");                  Console.WriteHex(calleeSavedFP);
+                    ctx->Rip = callerRA;
+                    ctx->Rsp = callSiteSP;
+                    ctx->Rbp = calleeSavedFP;
+                    return true;
+                }
+
+                // Skip this frame: either CallerRA is invalid (no
+                // registered region), or anti-reactivation guard tripped
+                // (callSiteSP <= ctx->Rsp -- we've already moved past it).
+                Console.Write("[fchain] skip id=0x");        Console.WriteHex(frameId);
+                Console.Write(" CallerRA=0x");               Console.WriteHex(callerRA);
+                Console.Write(" CallSiteSP=0x");             Console.WriteHex(callSiteSP);
+                Console.Write(" validRA=");                  Console.WriteInt(validRa ? 1 : 0);
+                Console.Write(" spOk=");                     Console.WriteInt(spOk ? 1 : 0);
+                Console.Write(" hops=");                     Console.WriteUInt((uint)hops);
+                Console.WriteLine("");
+                ulong next = f[1];
+                if (next == FrameTopSentinel || next == 0 || next < 0x10000UL)
+                {
+                    Console.Write("[fchain] chain exhausted next=0x");
+                    Console.WriteHex(next);
+                    Console.WriteLine("");
+                    return false;
+                }
+                f = (ulong*)next;
+                hops++;
+            }
+            Console.Write("[fchain] hop-limit reached hops=");
+            Console.WriteUInt((uint)hops);
             Console.WriteLine("");
-
-            ctx->Rip = callerRA;
-            ctx->Rsp = callSiteSP;
-            ctx->Rbp = calleeSavedFP;
-            // CallerRA is a *post-call* IP (the return-to location in the
-            // managed JIT method). Walker's controlPc = Rip-1 correctly
-            // lands on the call instruction → finds the surrounding EH
-            // clause. Do NOT mark this as a throw-site.
-            return true;
+            return false;
         }
 
         // mov reg, [rcx + disp].

@@ -81,7 +81,15 @@ namespace OS.PAL.SharpOSHost
                 // 2) R2R image static .pdata (RtlAddFunctionTable) — e.g.
                 //    System.Private.CoreLib precompiled code mapped into the
                 //    VM window. peimagelayout.cpp registers it under SHARPOS.
-                return StaticTableLookup(controlPc, pImageBase);
+                RuntimeFunction* stat = StaticTableLookup(controlPc, pImageBase);
+                if (stat != null) return stat;
+                // 3) Stub heap (Phase E10 Path B): LoaderAllocator's precode /
+                //    call-counting / VSD / dynamic-helper heaps. CoreCLR
+                //    doesn't emit .pdata for these — they're leaf-style
+                //    thunks (call helper; ret). Return a synthetic leaf
+                //    RUNTIME_FUNCTION so the unwinder pops [rsp] and steps
+                //    past the thunk to the caller (JIT method).
+                return StubRangeLookup(controlPc, pImageBase);
             }
 
             // CoffMethodLookup returns CurrentRuntimeFunction (which may be
@@ -144,7 +152,8 @@ namespace OS.PAL.SharpOSHost
                     if (pc >= b && pc < b + e[1]) return true;
                 }
             }
-            return InStaticRange(pc);   // also accept R2R static .pdata regions
+            // Static R2R .pdata regions OR stub heaps (leaf-unwind synthetic).
+            return InStaticRange(pc) || InStubRange(pc);
         }
 
         // controlPc in a registered JIT region → invoke CoreCLR's callback
@@ -226,6 +235,122 @@ namespace OS.PAL.SharpOSHost
                 }
             }
             return false;
+        }
+
+        // ─── Stub heaps (Phase E10 Path B) ──────────────────────────────────
+        // LoaderAllocator stub heaps (m_pStubHeap, m_pNewStubPrecodeHeap,
+        // m_pDynamicHelpersHeap, VSD stubs, m_pExecutableHeap) hold tiny
+        // thunks that CoreCLR emits at runtime but never registers with
+        // RtlInstallFunctionTableCallback. The thunks are leaf-style
+        // (typically `call helper; ret` — see CallCountingHelperFrame
+        // path through HELPER_METHOD_FRAME). We register these heaps as
+        // "leaf-unwind ranges": any RIP in such a range gets a synthetic
+        // RUNTIME_FUNCTION + UNWIND_INFO with countOfCodes=0, so
+        // VirtualUnwind just pops [rsp] into Rip and steps past the
+        // thunk to the caller (JIT method or another stub).
+        //
+        // This mirrors the Windows-CoreCLR architecture where each code
+        // heap is covered by GetRuntimeFunctionCallback which synthesizes
+        // RUNTIME_FUNCTIONs on demand, paired with personality routines
+        // that consult Thread::m_pFrame. Our walker already activates
+        // the Frame chain (TryActivateFrameChain in SehDispatch); the
+        // missing piece was unwinding through the thunk that comes
+        // immediately after the Frame is popped — that's what this
+        // synthetic leaf entry provides.
+        // 1024 entries x 2 ulongs (base, len) = 16 KiB. Each VM-level reserve
+        // adds one entry; budget covers many JIT/stub heaps + GC arena +
+        // duplicate registrations from fork-side hooks (defense in depth).
+        private const int StubMax = 1024;
+        private struct StubTab { public fixed ulong S[StubMax * 2]; }
+        private static StubTab s_stubs;
+        private static int s_stubCount;
+
+        // Synthetic leaf metadata. UNWIND_INFO is 4 zero bytes
+        // (Version=0/Flags=0/SizeOfProlog=0/CountOfCodes=0/FrameRegister=0);
+        // ApplyUnwindInfo reads countOfCodes=0 → no codes → pops [rsp] →
+        // Rip = next return address, Rsp += 8. RUNTIME_FUNCTION has
+        // BeginAddress=0, EndAddress=0x7FFFFFFF (covers any RVA), and
+        // UnwindInfoAddress=0 — combined with our pImageBase trick
+        // (set to address of s_leafUw) this makes
+        // unwindInfo = imageBase + UnwindInfoAddress = &s_leafUw.
+        private struct LeafUw
+        {
+            public byte B0, B1, B2, B3;
+        }
+        private static LeafUw s_leafUw;
+        private static RuntimeFunction s_leafRf;
+        private static bool s_leafReady;
+
+        // Managed entry point — callable from C# (e.g. VirtualMemory.Reserve
+        // registers every JIT-VA reserve here to ensure 100% coverage even
+        // for paths that bypass the fork's ExecutableAllocator::Reserve).
+        public static void RegisterStubRange(ulong baseAddr, ulong length)
+        {
+            if (baseAddr == 0 || length == 0) return;
+            // Phase E10 path-B diagnostic: NOT gated by Verbose — proves
+            // registration is reached. Remove after acceptance verified.
+            Console.Write("[stub-reg] #"); Console.WriteInt(s_stubCount);
+            Console.Write(" base=0x");   Console.WriteHex(baseAddr);
+            Console.Write(" len=0x");    Console.WriteHex(length);
+            Console.WriteLine("");
+            int i = s_stubCount;
+            if (i >= StubMax) return;
+            fixed (ulong* p = s_stubs.S)
+            {
+                ulong* e = p + (i * 2);
+                e[0] = baseAddr;
+                e[1] = length;
+            }
+            s_stubCount = i + 1;
+        }
+
+        // Unmanaged entry point — called from fork-side
+        // SharpOSRegisterStubHeap wrapper (crt_imp_stubs.cpp) which hooks
+        // ExecutableAllocator::Reserve + AllocateThunksFromTemplate +
+        // ReserveWithinRange + ReserveAt. Redundant against the VM-level
+        // catch but kept for defense-in-depth.
+        [RuntimeExport("SharpOSHost_RegisterStubRange")]
+        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegisterStubRange")]
+        public static void RegisterStubRangeExport(ulong baseAddr, ulong length)
+            => RegisterStubRange(baseAddr, length);
+
+        private static bool InStubRange(ulong pc)
+        {
+            int n = s_stubCount;
+            fixed (ulong* p = s_stubs.S)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    ulong* e = p + (i * 2);
+                    ulong b = e[0];
+                    if (pc >= b && pc < b + e[1]) return true;
+                }
+            }
+            return false;
+        }
+
+        private static RuntimeFunction* StubRangeLookup(ulong controlPc, ulong* pImageBase)
+        {
+            if (!InStubRange(controlPc)) return null;
+            // Lazy-init leaf metadata. UNWIND_INFO bytes stay zero; only
+            // RUNTIME_FUNCTION needs EndAddress=large (zero would fail any
+            // mid-prolog check and confuse callers that compute address
+            // ranges from it).
+            if (!s_leafReady)
+            {
+                s_leafRf.BeginAddress = 0;
+                s_leafRf.EndAddress = 0x7FFFFFFF;
+                s_leafRf.UnwindInfoAddress = 0;
+                s_leafReady = true;
+            }
+            // Static value-type field addresses are stable (image .data,
+            // never moves); Unsafe.AsPointer hands out a raw pointer
+            // without the GC-pinning that `fixed` is for.
+            if (pImageBase != null)
+            {
+                *pImageBase = (ulong)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_leafUw);
+            }
+            return (RuntimeFunction*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_leafRf);
         }
 
         // controlPc in a registered R2R image → binary-search its sorted

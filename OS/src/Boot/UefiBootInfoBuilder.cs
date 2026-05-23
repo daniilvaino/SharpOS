@@ -54,6 +54,23 @@ namespace OS.Boot
                     info.ExecStubBufferSize = ExecStubSize;
                 }
 
+                // BigStack RSP-switch shellcode (step105): a dedicated
+                // 64-byte EfiLoaderCode pool. Previously BigStack reused
+                // ExecStubBuffer at offset 128, but InterfaceDispatchBridge
+                // owns [128..512) there and BigStack silently overwrote its
+                // first 32 bytes -> every interface call hijacked into
+                // BigStack's `mov rsp, rcx`. 64 bytes = 32 for shellcode +
+                // padding/headroom.
+                const uint BigStackStubSize = 64;
+                void* bigStackStubAlloc = null;
+                ulong bsStatus = systemTable->BootServices->AllocatePool(
+                    EFI_MEMORY_TYPE.EfiLoaderCode, BigStackStubSize, &bigStackStubAlloc);
+                if (bsStatus == 0 && bigStackStubAlloc != null)
+                {
+                    info.BigStackStubBuffer = bigStackStubAlloc;
+                    info.BigStackStubBufferSize = BigStackStubSize;
+                }
+
                 // JumpStub: shellcode called under firmware CR3 (before CR3 switch).
                 // Needs page alignment for Pager.Map → allocate 4096+4095 and align up.
                 const uint JumpStubRawSize = 4096 + 4095;

@@ -360,14 +360,44 @@ namespace OS.Boot
         {
             const uint BigStackSize = 16u * 1024u * 1024u;
             void* bigBuf = GcHeap.AllocateRaw(BigStackSize);
+
+            // step105 diag: walk our kernel-side GC segments + print BigStack
+            // bounds, so we can compare with CoreCLR's view (printed from
+            // the fork side in GcEnumObject one-shot).
+            DumpGcAndBigStack(bigBuf, BigStackSize);
+
             bool ranBig = false;
+            // step105: BigStack now uses its own dedicated stub pool
+            // (BootInfo.BigStackStubBuffer), not the shared ExecStubBuffer
+            // which is owned by InterfaceDispatchBridge above offset 128.
             if (bigBuf != null &&
-                BigStack.TryInitialize(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize))
+                BigStack.TryInitialize(bootInfo.BigStackStubBuffer, bootInfo.BigStackStubBufferSize))
             {
                 ranBig = BigStack.RunOn(bigBuf, BigStackSize, &CoreClrProbe.RunOnBigStackThunk);
             }
             if (!ranBig)
                 CoreClrProbe.Run();
+        }
+
+        private static void DumpGcAndBigStack(void* bigBuf, uint bigSize)
+        {
+            Console.Write("[OURGC] BigStack alloc base=0x"); Console.WriteHex((ulong)bigBuf);
+            Console.Write(" top=0x"); Console.WriteHex((ulong)bigBuf + bigSize);
+            Console.Write(" size=0x"); Console.WriteHex(bigSize);
+            Console.WriteLine("");
+
+            GcSegmentHeader* seg = GcHeap.FirstSegment;
+            uint segIdx = 0;
+            while (seg != null)
+            {
+                Console.Write("[OURGC] seg #"); Console.WriteUInt(segIdx);
+                Console.Write(" start=0x"); Console.WriteHex((ulong)seg->Start);
+                Console.Write(" end=0x"); Console.WriteHex((ulong)seg->End);
+                Console.Write(" size=0x"); Console.WriteHex((ulong)(seg->End - seg->Start));
+                Console.WriteLine("");
+                seg = seg->Next;
+                segIdx++;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────
