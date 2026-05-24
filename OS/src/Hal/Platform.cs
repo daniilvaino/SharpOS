@@ -4,6 +4,8 @@ namespace OS.Hal
 {
     internal static unsafe class Platform
     {
+        private const uint TimedReadThresholdBytes = 1024 * 1024;
+
         private static BootInfo s_bootInfo;
         private static bool s_initialized;
 
@@ -20,6 +22,22 @@ namespace OS.Hal
         public static bool HasCapability(PlatformCapabilities capability)
         {
             return (Capabilities & capability) == capability;
+        }
+
+        private static ulong NowTicks()
+            => Timer.Hpet.IsInitialized ? Timer.Hpet.ReadCounter() : 0;
+
+        private static ulong ElapsedTicks(ulong start, ulong end)
+        {
+            if (start == 0 || end < start) return 0;
+            return end - start;
+        }
+
+        private static ulong TicksToMs(ulong ticks)
+        {
+            ulong hz = Timer.Hpet.FrequencyHz;
+            if (hz == 0) return 0;
+            return ticks * 1000UL / hz;
         }
 
         // Post-ExitBootServices: UEFI ConOut is dead, so the kernel
@@ -206,14 +224,58 @@ namespace OS.Hal
             // pool one.
             if (Fs.Current != null)
             {
+                ulong probeStart = NowTicks();
                 int probe = Fs.Current.ReadFile(path, null, 0, out uint fsz);
+                ulong probeEnd = NowTicks();
                 if (probe < 0 || fsz == 0)
                     return false;
+
+                bool trace = fsz >= TimedReadThresholdBytes;
+                ulong cmd0 = Ahci.ReadCommands;
+                ulong sec0 = Ahci.ReadSectors;
+                ulong ioTicks0 = Ahci.ReadTicks;
+                if (trace)
+                {
+                    Console.Write("[fsread] start path=\"");
+                    Console.Write(path);
+                    Console.Write("\" sz=");
+                    Console.WriteUInt(fsz);
+                    Console.Write(" probe_ms=");
+                    Console.WriteULong(TicksToMs(ElapsedTicks(probeStart, probeEnd)));
+                    Console.WriteLine("");
+                }
+
+                ulong allocStart = NowTicks();
                 void* buf = SharpOS.Std.NoRuntime.GcHeap.AllocateRaw(fsz);
+                ulong allocEnd = NowTicks();
                 if (buf == null)
                     return false;
-                if (Fs.Current.ReadFile(path, (byte*)buf, (int)fsz, out fsz) < 0)
+
+                ulong readStart = NowTicks();
+                int read = Fs.Current.ReadFile(path, (byte*)buf, (int)fsz, out fsz);
+                ulong readEnd = NowTicks();
+                if (read < 0)
                     return false;
+
+                if (trace)
+                {
+                    Console.Write("[fsread] done sz=");
+                    Console.WriteUInt(fsz);
+                    Console.Write(" alloc_ms=");
+                    Console.WriteULong(TicksToMs(ElapsedTicks(allocStart, allocEnd)));
+                    Console.Write(" read_ms=");
+                    Console.WriteULong(TicksToMs(ElapsedTicks(readStart, readEnd)));
+                    Console.Write(" total_ms=");
+                    Console.WriteULong(TicksToMs(ElapsedTicks(probeStart, readEnd)));
+                    Console.Write(" ahci_cmds=");
+                    Console.WriteULong(Ahci.ReadCommands - cmd0);
+                    Console.Write(" sectors=");
+                    Console.WriteULong(Ahci.ReadSectors - sec0);
+                    Console.Write(" ahci_ms=");
+                    Console.WriteULong(TicksToMs(Ahci.ReadTicks - ioTicks0));
+                    Console.WriteLine("");
+                }
+
                 buffer = buf;
                 size = fsz;
                 return true;

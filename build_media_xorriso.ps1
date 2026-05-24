@@ -4,10 +4,11 @@ param(
     [switch]$NoBuild,
     [string]$EspSource = (Join-Path $PSScriptRoot "OS\.qemu\esp"),
     [string]$OutputDir = (Join-Path $PSScriptRoot "OS\.qemu\media"),
-    [int]$EspImageSizeMb = 64,
-    [int]$VhdDiskSizeMb = 128,
+    [int]$EspImageSizeMb = 128,
+    [int]$VhdDiskSizeMb = 256,
     [int]$VhdEspStartLba = 2048,
-    [int]$IsoBootImageSizeMb = 16,
+    [int]$IsoBootImageSizeMb = 96,
+    [switch]$NoIso,
     [string]$VhdPath,
     [ValidateSet("dynamic", "fixed")]
     [string]$VhdSubformat = "dynamic",
@@ -296,8 +297,8 @@ function Build-IsoFromEsp {
     Remove-Item -LiteralPath $isoRoot -Recurse -Force
 }
 
-if (-not (Test-Path -LiteralPath $EspSource)) {
-    throw "ESP source path not found: $EspSource"
+if ($NoBuild -and -not (Test-Path -LiteralPath $EspSource)) {
+    throw "ESP source path not found: $EspSource (and -NoBuild was passed, so it won't be created)"
 }
 
 if ([string]::IsNullOrWhiteSpace($VhdPath)) {
@@ -345,6 +346,10 @@ if (-not $NoBuild) {
     }
 }
 
+if (-not (Test-Path -LiteralPath $EspSource)) {
+    throw "ESP source path not found after build: $EspSource"
+}
+
 $rawPath = Join-Path $OutputDir "sharpos-esp.raw"
 $isoBootPath = Join-Path $OutputDir "sharpos-efiboot.img"
 $diskRawPath = Join-Path $OutputDir "sharpos-disk.raw"
@@ -352,8 +357,10 @@ $diskRawPath = Join-Path $OutputDir "sharpos-disk.raw"
 Write-Host "Creating FAT ESP image..."
 Build-FatEspImage -RawPath $rawPath -SourceDir $EspSource -SizeMb $EspImageSizeMb -MformatExe $mformatExe -McopyExe $mcopyExe
 
-Write-Host "Creating FAT EFI boot image for ISO..."
-Build-FatEspImage -RawPath $isoBootPath -SourceDir $EspSource -SizeMb $IsoBootImageSizeMb -MformatExe $mformatExe -McopyExe $mcopyExe
+if (-not $NoIso) {
+    Write-Host "Creating FAT EFI boot image for ISO..."
+    Build-FatEspImage -RawPath $isoBootPath -SourceDir $EspSource -SizeMb $IsoBootImageSizeMb -MformatExe $mformatExe -McopyExe $mcopyExe
+}
 
 Write-Host "Resolving VPC-compatible virtual disk size..."
 $normalizedDiskBytes = Resolve-VpcVirtualSizeBytes -QemuImgExe $qemuImgExe -OutputDirPath $OutputDir -RequestedMb $VhdDiskSizeMb -Subformat $VhdSubformat
@@ -365,8 +372,13 @@ Build-RawDiskWithGptEsp -EspRawPath $rawPath -DiskRawPath $diskRawPath -DiskSize
 Write-Host "Creating VHD..."
 Build-VhdFromDiskRaw -DiskRawPath $diskRawPath -VhdOutPath $VhdPath -QemuImgExe $qemuImgExe -Subformat $VhdSubformat
 
-Write-Host "Creating ISO..."
-Build-IsoFromEsp -IsoOutPath $IsoPath -EspSourceDir $EspSource -EfiBootImagePath $isoBootPath -XorrisoExe $xorrisoExe -VolumeLabel $IsoVolumeLabel
+if (-not $NoIso) {
+    Write-Host "Creating ISO..."
+    Build-IsoFromEsp -IsoOutPath $IsoPath -EspSourceDir $EspSource -EfiBootImagePath $isoBootPath -XorrisoExe $xorrisoExe -VolumeLabel $IsoVolumeLabel
+}
+else {
+    Write-Host "Skipping ISO build (-NoIso)."
+}
 
 if (-not $KeepRawImage) {
     if (Test-Path -LiteralPath $rawPath) {
@@ -384,4 +396,6 @@ if (-not $KeepRawImage) {
 
 Write-Host "Done."
 Write-Host "VHD: $VhdPath"
-Write-Host "ISO: $IsoPath"
+if (-not $NoIso) {
+    Write-Host "ISO: $IsoPath"
+}

@@ -28,6 +28,10 @@ namespace OS.Kernel.Diagnostics
                 Console.WriteHex(Fat32.DiagPart0Type);
                 Console.Write(" p0lba=");
                 Console.WriteUInt(Fat32.DiagPart0Lba);
+                Console.Write(" gptEnt=");
+                Console.WriteUInt(Fat32.DiagGptEntries);
+                Console.Write(" gptLba=");
+                Console.WriteUInt((uint)Fat32.DiagGptFirstLba);
                 Console.WriteLine(" FAIL");
                 return;
             }
@@ -37,6 +41,13 @@ namespace OS.Kernel.Diagnostics
 
             Console.Write("[fat] mount=Y ");
             Console.Write(Fat32.IsFat32 ? "FAT32" : "FAT16");
+            Console.Write(" bps=");
+            Console.WriteUInt(Fat32.BytesPerSector);
+            Console.Write(" spc=");
+            Console.WriteUInt(Fat32.SectorsPerCluster);
+            Console.Write(" bulk=");
+            Console.WriteUInt(Fat32.BulkReadBytes / 1024);
+            Console.Write("K");
             Console.Write(" 8.3:BOOTX64.EFI sz=");
             Console.WriteUInt(sz83);
             Console.Write(" mz=");
@@ -46,22 +57,6 @@ namespace OS.Kernel.Diagnostics
             Console.Write(" mz=");
             Console.Write(mzLfn ? "Y" : "N");
             Console.WriteLine(mz83 && mzLfn ? " PASS" : " FAIL");
-
-            // The REAL host seam: SharpOSHost_FileOpen / ELF launcher
-            // go through Platform.TryReadFile. With Fs.Current set it
-            // must now serve the full file from our FAT (not UEFI) —
-            // read all 23 MB of CoreLib via 16-sector chunks.
-            bool plat = Platform.TryReadFile(
-                "/sharpos/System.Private.CoreLib.dll", out void* hb, out uint hsz);
-            bool platMz = plat && hb != null && hsz > 1
-                          && ((byte*)hb)[0] == (byte)'M' && ((byte*)hb)[1] == (byte)'Z';
-            Console.Write("[fatbridge] Platform.TryReadFile via FAT ok=");
-            Console.Write(plat ? "Y" : "N");
-            Console.Write(" sz=");
-            Console.WriteUInt(hsz);
-            Console.Write(" mz=");
-            Console.Write(platMz ? "Y" : "N");
-            Console.WriteLine(platMz ? " PASS" : " FAIL");
 
             // EnumDir cheap-detector: what does \EFI\BOOT actually
             // enumerate via our FAT (diagnoses the launcher's empty

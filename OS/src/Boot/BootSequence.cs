@@ -359,7 +359,15 @@ namespace OS.Boot
         internal static void RunCoreClrSession(BootInfo bootInfo)
         {
             const uint BigStackSize = 16u * 1024u * 1024u;
-            void* bigBuf = GcHeap.AllocateRaw(BigStackSize);
+            void* bigBuf = AllocateBigStack(BigStackSize);
+            if (bigBuf != null)
+            {
+                Console.Write("[bigstack] buf=0x");
+                Console.WriteHex((ulong)bigBuf);
+                Console.Write(" size=0x");
+                Console.WriteHex(BigStackSize);
+                Console.WriteLine("");
+            }
 
             bool ranBig = false;
             // step105: BigStack now uses its own dedicated stub pool
@@ -372,6 +380,27 @@ namespace OS.Boot
             }
             if (!ranBig)
                 CoreClrProbe.Run();
+        }
+
+        private static void* AllocateBigStack(uint size)
+        {
+            const ulong PageSize = 4096UL;
+            if (size < 0x10000)
+                return null;
+
+            ulong bytes = ((ulong)size + PageSize - 1) & ~(PageSize - 1);
+            ulong phys = PhysicalMemory.AllocPages((uint)(bytes / PageSize));
+            if (phys == 0)
+                return null;
+
+            if (!VirtualMemory.MapFixed((void*)phys, phys, bytes, exec: false))
+                return null;
+
+            byte* p = (byte*)phys;
+            for (ulong i = 0; i < bytes; i++)
+                p[i] = 0;
+
+            return p;
         }
 
         // ─────────────────────────────────────────────────────────────────

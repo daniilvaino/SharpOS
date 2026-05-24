@@ -26,6 +26,9 @@ namespace OS.Hal
 {
     internal static unsafe class Ahci
     {
+        private const uint GhcAhciEnable = 1u << 31;
+        private const uint GhcInterruptEnable = 1u << 1;
+
         [System.Runtime.InteropServices.StructLayout(
             System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 1)]
         public struct HBA
@@ -102,6 +105,32 @@ namespace OS.Hal
         public static HBA* Controller = null;
         public static SATADevice Device = null;
 
+        private static ulong s_readCommands;
+        private static ulong s_readSectors;
+        private static ulong s_readTicks;
+        private static ulong s_readFailures;
+
+        public static ulong ReadCommands => s_readCommands;
+        public static ulong ReadSectors => s_readSectors;
+        public static ulong ReadTicks => s_readTicks;
+        public static ulong ReadFailures => s_readFailures;
+
+        private static void DisableInterrupts(HBA* controller, HBAPort* port)
+        {
+            if (controller != null)
+            {
+                controller->GlobalHostControl =
+                    (controller->GlobalHostControl | GhcAhciEnable) & ~GhcInterruptEnable;
+                unchecked { controller->InterruptStatus = (uint)-1; }
+            }
+
+            if (port != null)
+            {
+                port->InterruptEnable = 0;
+                unchecked { port->InterruptStatus = (uint)-1; }
+            }
+        }
+
         // DMA page(s): physical from PhysicalMemory, identity-mapped so
         // virt==phys (the HBA reads/writes these by physical address),
         // zero-filled. Low RAM => 32-bit-safe.
@@ -126,6 +155,26 @@ namespace OS.Hal
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static uint Rd(uint* p) => *p;
 
+        private static ulong NowTicks()
+            => global::OS.Hal.Timer.Hpet.IsInitialized
+                ? global::OS.Hal.Timer.Hpet.ReadCounter()
+                : 0;
+
+        private static ulong ElapsedTicks(ulong start)
+        {
+            if (start == 0) return 0;
+            ulong end = NowTicks();
+            return end >= start ? end - start : 0;
+        }
+
+        private static void RecordRead(uint sectors, ulong start, bool ok)
+        {
+            s_readCommands++;
+            s_readSectors += sectors;
+            s_readTicks += ElapsedTicks(start);
+            if (!ok) s_readFailures++;
+        }
+
         public static bool Initialize()
         {
             if (Device != null) return true;          // idempotent
@@ -142,11 +191,13 @@ namespace OS.Hal
             if (!VirtualMemory.MapFixed((void*)abar, abar, 0x2000, exec: false))
                 return false;
             Controller = (HBA*)abar;
+            DisableInterrupts(Controller, null);
 
             for (int k = 0; k < 32; k++)
             {
                 if ((Controller->PortsImplemented & (1u << k)) == 0) continue;
                 HBAPort* port = &(&Controller->Ports)[k];
+                DisableInterrupts(Controller, port);
                 SATAPortType type = CheckPortType(port);
                 if (type != SATAPortType.SATA && type != SATAPortType.ATAPI) continue;
 
@@ -235,7 +286,9 @@ namespace OS.Hal
 
             public bool Configure()
             {
+                DisableInterrupts(Controller, Port);
                 if (!StopCMD()) return false;
+                DisableInterrupts(Controller, Port);
 
                 ulong clb = AllocDma(1);
                 if (clb == 0) return false;
@@ -254,7 +307,9 @@ namespace OS.Hal
                     cmdhdr[i].CommandTableBaseAddress = ct;
                 }
 
-                return StartCMD();
+                bool started = StartCMD();
+                DisableInterrupts(Controller, Port);
+                return started;
             }
 
             // Bounded busy-wait by REAL TIME (HPET), not iteration
@@ -307,25 +362,32 @@ namespace OS.Hal
             public const int SectorSize = 512;
 
             public override bool Read(ulong sector, uint count, byte* p)
-                => ReadOrWrite(sector, (ushort)count, p, false);
+            {
+                ulong start = NowTicks();
+                bool ok = ReadOrWrite(sector, (ushort)count, p, false);
+                RecordRead(count, start, ok);
+                return ok;
+            }
 
             public override bool Write(ulong sector, uint count, byte* p)
                 => ReadOrWrite(sector, (ushort)count, p, true);
 
             private bool ReadOrWrite(ulong Sector, ushort Count, byte* Buffer, bool Write)
             {
-                if (Count >= 512) return false;
+                if (Count == 0 || Count >= 512) return false;
                 if (PortType == SATAPortType.ATAPI && Write) return false;
-                unchecked { Port->InterruptStatus = (uint)-1; }
+                DisableInterrupts(Controller, Port);
                 int Slot = FindSlot();
                 if (Slot == -1) return false;
 
+                ushort totalCount = Count;
+                ushort remaining = Count;
                 HBACommandHeader* hdr = (HBACommandHeader*)Port->CommandListBase;
                 hdr += Slot;
                 hdr->CommandFISLength = (byte)(sizeof(FIS_REG_H2D) / sizeof(uint));
                 hdr->Write = Write;
                 hdr->ClearBusy = true;
-                hdr->PRDTLength = (ushort)(((Count - 1) >> 4) + 1);
+                hdr->PRDTLength = (ushort)(((totalCount - 1) >> 4) + 1);
 
                 HBACommandTable* table = (HBACommandTable*)hdr->CommandTableBaseAddress;
                 byte* zt = (byte*)table;
@@ -338,13 +400,13 @@ namespace OS.Hal
                 {
                     (&table->PRDTEntry)[i].DataBaseAddress = (ulong)Buffer;
                     (&table->PRDTEntry)[i].ByteCount = 8 * 1024 - 1;
-                    (&table->PRDTEntry)[i].InterruptOnCompletion = true;
-                    Buffer += 4 * 1024;
-                    Count -= 16;
+                    (&table->PRDTEntry)[i].InterruptOnCompletion = false;
+                    Buffer += 8 * 1024;
+                    remaining = (ushort)(remaining - 16);
                 }
                 (&table->PRDTEntry)[i].DataBaseAddress = (ulong)Buffer;
-                (&table->PRDTEntry)[i].ByteCount = (uint)((Count << 9) - 1);
-                (&table->PRDTEntry)[i].InterruptOnCompletion = true;
+                (&table->PRDTEntry)[i].ByteCount = (uint)((remaining << 9) - 1);
+                (&table->PRDTEntry)[i].InterruptOnCompletion = false;
 
                 FIS_REG_H2D* FIS = (FIS_REG_H2D*)table->CommandFIS;
                 FIS->FISType = 0x27;
@@ -357,7 +419,7 @@ namespace OS.Hal
                 FIS->LBA4 = (byte)((Sector >> 32) & 0xFF);
                 FIS->LBA5 = (byte)((Sector >> 40) & 0xFF);
                 FIS->DeviceRegister = 1 << 6;
-                FIS->Count = Count;
+                FIS->Count = totalCount;
 
                 // Wait device-ready, issue, wait completion. All polls
                 // read MMIO through Rd() (no compile-time hoist) and
@@ -383,6 +445,7 @@ namespace OS.Hal
                 dl = Deadline(2000); sp = FallbackSpins;
                 while (Rd(&Port->CommandIssue) != 0)
                     if (Expired(dl, ref sp)) return false;
+                DisableInterrupts(Controller, Port);
                 return true;
             }
 

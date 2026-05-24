@@ -90,6 +90,11 @@ namespace OS.Boot
             }
 
             // 4. POST-EBS. UEFI is gone. No Boot Services from here.
+            // Hardware IRQs must not keep using the firmware-owned IDT tail
+            // copied pre-EBS. Until SharpOS installs its own IRQ/APIC stack,
+            // all post-EBS drivers are polling-based.
+            X64Asm.Cli();
+
             // Self-checking oracle that the OWN substrate is bit-for-bit
             // alive without firmware — headless-deterministic.
             Console.WriteLine("[ebs] ExitBootServices OK -- POST-EBS substrate LIVE");

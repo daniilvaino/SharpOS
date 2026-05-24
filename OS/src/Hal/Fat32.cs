@@ -5,12 +5,20 @@
 // FatFs ff.h (BSD-1-clause) for diligence — no code copied from
 // either; this is an independent minimal implementation.
 //
+// Mount understands three on-disk container shapes:
+//   1. superfloppy        — LBA0 is the BPB itself (QEMU VVFAT default).
+//   2. legacy MBR         — 4 entries at LBA0+0x1BE, scan by starting LBA.
+//   3. GPT                — "EFI PART" header at LBA1, walk entry array.
+// GPT field offsets cross-checked against UEFI 2.10 §5.3 and
+// DiscUtils.Core/Partitions/GptHeader.cs (MIT) — no code copied.
+//
 // Sits on OS.Hal.Disk. Disk.Read DMAs into the *physical* address of
-// the destination pointer, so all reads go through an Ahci.AllocDma
-// scratch sector (virt==phys), never a heap/VM-window pointer. One
-// sector at a time — simple and slow, fine for boot file access.
-// 8.3 names only (the paths we need — \EFI\BOOT\BOOTX64.EFI etc. —
-// are 8.3; LFN deferred).
+// the destination pointer, so reads go through Ahci.AllocDma scratch
+// buffers (virt==phys), never heap/VM-window pointers. Directory and
+// FAT metadata use a sector scratch buffer; file data uses bounded
+// cluster-run bulk reads.
+
+using System.Runtime.CompilerServices;
 
 namespace OS.Hal
 {
@@ -18,7 +26,11 @@ namespace OS.Hal
     {
         private static Disk s_disk;
         private static byte* s_sec;          // DMA scratch, 1 sector
-        private const int BulkBytes = 8192;  // 16x512 — single-PRDT path
+        // 128 sectors × 512 = 64 KiB per AHCI command: eight 8 KiB PRDT
+        // entries. This keeps DMA tables small while cutting tiny-cluster
+        // FAT32 images from ~23k commands for CoreLib to a few hundred
+        // when the file is laid out contiguously.
+        private const int BulkBytes = 64 * 1024;
         private static byte* s_bulk;         // DMA scratch, bulk data reads
         private static uint s_bps;           // bytes per sector
         private static uint s_spc;           // sectors per cluster
@@ -31,12 +43,25 @@ namespace OS.Hal
         private static bool s_isFat32;
         private static bool s_mounted;
 
+        // FAT-sector cache: a single FAT sector covers 128 (FAT32) or 256
+        // (FAT16) cluster entries. Reading a 23 MB file walks ~5750
+        // sequential clusters but touches only ~45 distinct FAT sectors,
+        // so caching the last one collapses the 5705 redundant AHCI
+        // commands. s_fatCachedLba == ulong.MaxValue means "no cache".
+        private static byte* s_fatCache;
+        private static ulong s_fatCachedLba = ulong.MaxValue;
+
         public static bool Mounted => s_mounted;
         public static bool IsFat32 => s_isFat32;
+        public static uint BytesPerSector => s_bps;
+        public static uint SectorsPerCluster => s_spc;
+        public static uint BulkReadBytes => BulkBytes;
 
         private static ushort RdU16(byte* p, int o) => (ushort)(p[o] | (p[o + 1] << 8));
         private static uint RdU32(byte* p, int o)
             => (uint)(p[o] | (p[o + 1] << 8) | (p[o + 2] << 16) | (p[o + 3] << 24));
+        private static ulong RdU64(byte* p, int o)
+            => (ulong)RdU32(p, o) | ((ulong)RdU32(p, o + 4) << 32);
 
         private static bool ReadAbs(ulong lba)
             => s_disk != null && s_disk.Read(lba, 1, s_sec);
@@ -47,7 +72,9 @@ namespace OS.Hal
         public static ushort DiagBpsLba0;
         public static byte DiagPart0Type;
         public static uint DiagPart0Lba;
-        public static int DiagPath;                  // 1=superfloppy 2=mbr 0=none
+        public static int DiagPath;                  // 1=superfloppy 2=mbr 3=gpt 0=none
+        public static uint DiagGptEntries;           // NumberOfPartitionEntries from GPT header
+        public static ulong DiagGptFirstLba;         // FirstLba of first non-empty GPT entry
 
         // A sector is a plausible FAT BPB if bytes/sector is one of
         // 512/1024/2048/4096, sec/clus is a power of two 1..128, FAT
@@ -110,8 +137,11 @@ namespace OS.Hal
             if (disk == null) return false;
             s_sec = (byte*)Ahci.AllocDma(1);
             if (s_sec == null) return false;
-            s_bulk = (byte*)Ahci.AllocDma(BulkBytes / 4096);   // 2 pages, contiguous
+            s_bulk = (byte*)Ahci.AllocDma((BulkBytes + 4095) / 4096);
             if (s_bulk == null) return false;
+            s_fatCache = (byte*)Ahci.AllocDma(1);
+            if (s_fatCache == null) return false;
+            s_fatCachedLba = ulong.MaxValue;
 
             if (!ReadAbs(0)) return false;
             DiagJmp0 = s_sec[0]; DiagJmp1 = s_sec[1];
@@ -138,11 +168,66 @@ namespace OS.Hal
                 if (ParseBpbAt(starts[i]))
                 { DiagPath = 2; s_mounted = true; return true; }
             }
+
+            // 3. GPT: protective MBR carries a single 0xEE entry. The real
+            //    table lives at LBA1 ("EFI PART" magic), entries start at
+            //    PartitionEntryLba. Walk entries, skip empty ones (type
+            //    GUID = all-zero), try ParseBpbAt(FirstLba) on each — the
+            //    one with a valid BPB is our ESP. We deliberately do NOT
+            //    filter by partition-type GUID; ParseBpbAt itself is the
+            //    test, same as the MBR branch above.
+            if (!ReadAbs(1)) return false;
+            // "EFI PART" magic = 45 46 49 20 50 41 52 54
+            if (s_sec[0] != 0x45 || s_sec[1] != 0x46 || s_sec[2] != 0x49 || s_sec[3] != 0x20 ||
+                s_sec[4] != 0x50 || s_sec[5] != 0x41 || s_sec[6] != 0x52 || s_sec[7] != 0x54)
+                return false;
+            ulong entriesLba = RdU64(s_sec, 72);
+            uint entryCount = RdU32(s_sec, 80);
+            uint entrySize  = RdU32(s_sec, 84);
+            DiagGptEntries = entryCount;
+            // Sanity: typical layout is 128 entries × 128 bytes. Cap to
+            // protect against a corrupt header turning into a billion-LBA
+            // scan that would hang the boot.
+            if (entrySize < 128 || entrySize > 512 || entryCount == 0 || entryCount > 256)
+                return false;
+            // GPT is defined on 512-byte LBAs for our targets (UEFI
+            // 4Kn would change this, not in scope). s_bps belongs to
+            // the FAT volume, not the partition table, so use 512.
+            uint perSec = 512u / entrySize;
+            if (perSec == 0) perSec = 1;
+            for (uint i = 0; i < entryCount; i++)
+            {
+                ulong lba = entriesLba + (i / perSec);
+                if (!ReadAbs(lba)) return false;
+                byte* e = s_sec + (int)((i % perSec) * entrySize);
+                // Skip empty: PartitionTypeGuid all-zero across 16 bytes.
+                bool empty = true;
+                for (int k = 0; k < 16; k++) if (e[k] != 0) { empty = false; break; }
+                if (empty) continue;
+                ulong firstLba = RdU64(e, 32);
+                if (firstLba == 0) continue;
+                if (DiagGptFirstLba == 0) DiagGptFirstLba = firstLba;
+                if (ParseBpbAt(firstLba))
+                { DiagPath = 3; s_mounted = true; return true; }
+            }
             return false;
         }
 
         private static ulong ClusterLba(uint cluster)
             => s_dataLba + (ulong)(cluster - 2) * s_spc;
+
+        // Read one FAT sector, satisfied from a 1-sector cache so a
+        // sequential cluster walk doesn't re-issue 128 redundant AHCI
+        // commands per FAT sector. Uses a dedicated DMA buffer so it
+        // never collides with s_sec (which the caller may still be
+        // looking at — e.g. directory walks).
+        private static bool ReadFatSector(ulong lba)
+        {
+            if (lba == s_fatCachedLba) return true;
+            if (!s_disk.Read(lba, 1, s_fatCache)) return false;
+            s_fatCachedLba = lba;
+            return true;
+        }
 
         // Next cluster in the chain, or 0 at end / bad.
         private static uint FatNext(uint cluster)
@@ -152,8 +237,8 @@ namespace OS.Hal
                 ulong byteOff = (ulong)cluster * 4UL;
                 ulong lba = s_fatLba + byteOff / s_bps;
                 uint o = (uint)(byteOff % s_bps);
-                if (!ReadAbs(lba)) return 0;
-                uint v = RdU32(s_sec, (int)o) & 0x0FFFFFFFu;
+                if (!ReadFatSector(lba)) return 0;
+                uint v = RdU32(s_fatCache, (int)o) & 0x0FFFFFFFu;
                 return v >= 0x0FFFFFF8u ? 0 : v;
             }
             else
@@ -161,8 +246,8 @@ namespace OS.Hal
                 ulong byteOff = (ulong)cluster * 2UL;
                 ulong lba = s_fatLba + byteOff / s_bps;
                 uint o = (uint)(byteOff % s_bps);
-                if (!ReadAbs(lba)) return 0;
-                uint v = RdU16(s_sec, (int)o);
+                if (!ReadFatSector(lba)) return 0;
+                uint v = RdU16(s_fatCache, (int)o);
                 return v >= 0xFFF8u ? 0 : v;
             }
         }
@@ -417,34 +502,55 @@ namespace OS.Hal
                 return -1;
             fileSize = size;
 
-            // Bulk: read up to BulkBytes worth of sectors per AHCI
-            // command (chunk <= 16 sectors @512 = single-PRDT proven
-            // path), then memcpy out — ~16x fewer commands than the
-            // sector-at-a-time path (matters for 20+ MB assemblies).
+            // Bulk: coalesce a physically-contiguous FAT cluster run, then
+            // read up to BulkBytes per AHCI command. This avoids issuing
+            // one command per tiny FAT32 cluster on the default ESP image.
             uint maxChunk = (uint)(BulkBytes / s_bps);
             if (maxChunk == 0) maxChunk = 1;
+            uint maxRunClusters = maxChunk / s_spc;
+            if (maxRunClusters == 0) maxRunClusters = 1;
 
             int copied = 0;
             uint cluster = clus;
             uint remain = size;
             while (cluster != 0 && copied < cap && remain > 0)
             {
-                uint si = 0;
-                while (si < s_spc && copied < cap && remain > 0)
+                uint runClusters = 1;
+                uint lastCluster = cluster;
+                uint nextCluster = FatNext(lastCluster);
+                while (runClusters < maxRunClusters &&
+                       nextCluster != 0 &&
+                       nextCluster == lastCluster + 1)
                 {
-                    uint chunk = s_spc - si;
+                    lastCluster = nextCluster;
+                    runClusters++;
+                    nextCluster = FatNext(lastCluster);
+                }
+
+                uint runSectors = runClusters * s_spc;
+                uint byteBudget = remain;
+                uint capLeft = (uint)(cap - copied);
+                if (byteBudget > capLeft) byteBudget = capLeft;
+                uint sectorsNeeded = (byteBudget + s_bps - 1) / s_bps;
+                if (runSectors > sectorsNeeded) runSectors = sectorsNeeded;
+
+                uint si = 0;
+                while (si < runSectors && copied < cap && remain > 0)
+                {
+                    uint chunk = runSectors - si;
                     if (chunk > maxChunk) chunk = maxChunk;
                     if (!s_disk.Read(ClusterLba(cluster) + si, chunk, s_bulk))
                         return copied;
                     ulong bytes = (ulong)chunk * s_bps;
-                    for (ulong i = 0; i < bytes && copied < cap && remain > 0; i++)
-                    {
-                        dst[copied++] = s_bulk[i];
-                        remain--;
-                    }
+                    ulong take = bytes;
+                    if (take > (ulong)(cap - copied)) take = (ulong)(cap - copied);
+                    if (take > remain) take = remain;
+                    Unsafe.CopyBlock(dst + copied, s_bulk, (uint)take);
+                    copied += (int)take;
+                    remain -= (uint)take;
                     si += chunk;
                 }
-                cluster = FatNext(cluster);
+                cluster = nextCluster;
             }
             return copied;
         }

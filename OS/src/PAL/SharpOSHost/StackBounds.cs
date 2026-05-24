@@ -56,10 +56,11 @@ namespace OS.PAL.SharpOSHost
             // Phase E9 -- if the calling thread is a hosted thread spawned
             // by Scheduler with its own allocated stack, return the TRUE
             // stack range (StackBase..StackTop). Without this every hosted
-            // thread inherits the bounds of whatever UEFI memory region
-            // its allocated stack happens to fall inside (the ~419 MB
-            // GcHeap region), and CoreCLR's m_CacheStackLimit ends up
-            // hundreds of MB below the actual stack base -- a #PF inside
+            // thread inherits the bounds of whatever large UEFI usable
+            // memory region its allocated stack happens to fall inside
+            // (often also the source of heap pages), and CoreCLR's
+            // m_CacheStackLimit ends up hundreds of MB below the actual
+            // stack base -- a #PF inside
             // HasStarted/SetStackLimits when probing bytes beyond the
             // real stack but inside the bogus huge "stack" range. Verify
             // the current SP actually lies inside [StackBase, StackTop)
@@ -81,13 +82,13 @@ namespace OS.PAL.SharpOSHost
             }
 
             // Frontier-C: when CoreCLR runs on the BigStack buffer, the
-            // UEFI region containing it is the ~419 MB conventional-RAM
-            // span (GcHeap) — the region heuristic below would hand
-            // CoreCLR a 419 MB "stack", disabling its SO guard so a
-            // too-deep recursion silently runs off the buffer into other
-            // heap → triple fault. Return the TRUE active buffer bounds
-            // so m_CacheStackLimit is the real buffer bottom (clean,
-            // detectable SO at the limit instead of silent corruption).
+            // memory-map region containing it can be much larger than the
+            // dedicated stack allocation. The region heuristic below would
+            // hand CoreCLR a bogus giant "stack", disabling its SO guard so
+            // a too-deep recursion silently runs off the buffer. Return the
+            // TRUE active buffer bounds so m_CacheStackLimit is the real
+            // buffer bottom (clean, detectable SO at the limit instead of
+            // silent corruption).
             if (OS.Kernel.Memory.BigStack.TryGetActiveBounds(sp, out ulong bsLo, out ulong bsHi))
             {
                 *outBase = bsHi;     // TOP  (high)

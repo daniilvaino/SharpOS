@@ -19,6 +19,16 @@ namespace OS.PAL.SharpOSHost
     // allocs new + copies; old block becomes garbage (GC reclaims later).
     internal static unsafe class CrtHeapStubs
     {
+        private static ulong NowTicks()
+            => OS.Hal.Timer.Hpet.IsInitialized ? OS.Hal.Timer.Hpet.ReadCounter() : 0;
+
+        private static ulong ElapsedMs(ulong start, ulong end)
+        {
+            if (start == 0 || end < start || OS.Hal.Timer.Hpet.FrequencyHz == 0)
+                return 0;
+            return (end - start) * 1000UL / OS.Hal.Timer.Hpet.FrequencyHz;
+        }
+
         [RuntimeExport("SharpOSHost_HeapAlloc")]
         [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_HeapAlloc")]
         public static void* HeapAlloc(ulong size)
@@ -173,16 +183,20 @@ namespace OS.PAL.SharpOSHost
             for (int i = 0; i < pLen; i++) Console.WriteChar(p[i]);
             Console.Write("\" ");
 
+            ulong readStart = NowTicks();
             if (!Platform.TryReadFile(path, out void* buf, out uint size))
             {
                 Console.WriteLine("→ not found");
                 return null;
             }
+            ulong readEnd = NowTicks();
             // [PEIMG] ties a loaded image to its flat buffer range. If a
             // [VH] object address falls inside one of these → it's an object
             // baked into the loaded PE image (frozen/preinit), not a kernel
             // alloc → fix = register that region with the GC.
             Console.Write("→ ok size=0x"); Console.WriteHex(size);
+            Console.Write(" read_ms=");
+            Console.WriteULong(ElapsedMs(readStart, readEnd));
             Console.Write(" [PEIMG buf=0x"); Console.WriteHex((ulong)buf);
             Console.Write(" end=0x"); Console.WriteHex((ulong)buf + size);
             Console.WriteLine("]");
@@ -196,6 +210,7 @@ namespace OS.PAL.SharpOSHost
             // protection refinement is a later phase).
             {
                 const ulong PAGE = 4096UL;
+                ulong patchStart = NowTicks();
                 ulong va = ((ulong)buf) & ~(PAGE - 1);
                 ulong end = ((ulong)buf + size + PAGE - 1) & ~(PAGE - 1);
                 int patched = 0;
@@ -206,7 +221,10 @@ namespace OS.PAL.SharpOSHost
                     va += PAGE;
                 }
                 X64PageTable.FlushTlbAll();
+                ulong patchEnd = NowTicks();
                 Console.Write("[host] FileOpen RWX patch: pages="); Console.WriteInt(patched);
+                Console.Write(" ms=");
+                Console.WriteULong(ElapsedMs(patchStart, patchEnd));
                 Console.WriteLine("");
             }
 

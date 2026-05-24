@@ -31,15 +31,13 @@ namespace OS.Kernel.Memory
         // (newStackTop, callback) -> void. Win64: rcx=newStackTop, rdx=cb.
         private static delegate* unmanaged<void*, delegate* unmanaged<void>, void> s_run;
 
-        // Active managed-stack extent while RunOn is in flight. The UEFI
-        // region containing this buffer is a ~419 MB conventional-RAM
-        // span (GcHeap lives there), so the region heuristic in
-        // SharpOSHost_GetStackBounds would tell CoreCLR it has 419 MB of
-        // stack — its SO guard then never fires and a too-deep recursion
-        // silently runs off the buffer into other heap memory → triple
-        // fault. These give the TRUE buffer bounds so CoreCLR's
-        // m_CacheStackLimit is the real buffer bottom (clean, detectable
-        // SO at the limit instead of silent corruption).
+        // Active managed-stack extent while RunOn is in flight. The caller
+        // supplies a dedicated mapped buffer (BootSequence currently uses
+        // PhysicalMemory.AllocPages + VirtualMemory.MapFixed), but the
+        // surrounding UEFI/physical memory-map region can be much larger
+        // than the buffer. These are the authoritative bounds so CoreCLR's
+        // m_CacheStackLimit is the real buffer bottom (clean, detectable SO
+        // at the limit instead of silent corruption).
         private static ulong s_activeLo;   // buffer bottom (low)
         private static ulong s_activeHi;   // buffer top (high)
 

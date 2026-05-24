@@ -414,13 +414,11 @@ namespace OS.Boot.EH
             ClassifyWord("RCX", frame->Rcx);
 
 
-            // BigStack.RunOn swaps RSP into a buffer that intentionally
-            // lives inside the same conventional-RAM span as the GC heap
-            // (see Memory/BigStack.cs header). Without this check, every
-            // CoreCLR-hosted fault would trip [SO-SUSPECT] as a false
-            // positive. Real overflow OFF the BigStack ends up below
-            // s_activeLo → rspInBigStack=false + rspInHeap=true → the
-            // original [SO-SUSPECT] verdict still fires correctly.
+            // BigStack.RunOn swaps RSP into a dedicated mapped buffer.
+            // Its active bounds are authoritative; do not classify by the
+            // larger UEFI/physical region that happens to contain the
+            // buffer. If RSP is outside those bounds and inside GcHeap, that
+            // is a real stack/heap overlap or overflow signal.
             ulong bsLo = 0, bsHi = 0;
             bool rspInBigStack = BigStack.TryGetActiveBounds(frame->Rsp, out bsLo, out bsHi);
 
