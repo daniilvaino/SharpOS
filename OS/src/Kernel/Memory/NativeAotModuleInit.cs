@@ -76,9 +76,15 @@ namespace OS.Kernel.Memory
 
         private static bool s_initialized;
         private static byte* s_typeManager;
+        private static byte* s_rtr;
+        private static ushort s_majorVersion;
+        private static ushort s_minorVersion;
 
         public static bool IsInitialized => s_initialized;
         public static byte* TypeManager => s_typeManager;
+        public static byte* ReadyToRunHeader => s_rtr;
+        public static ushort ReadyToRunMajor => s_majorVersion;
+        public static ushort ReadyToRunMinor => s_minorVersion;
 
         // Locates ReadyToRunHeader near `anchorInRdata`, allocates a
         // TypeManager, fills its DispatchMapTable field, and writes the
@@ -136,6 +142,9 @@ namespace OS.Kernel.Memory
             }
 
             s_typeManager = tm;
+            s_rtr = rtr;
+            s_majorVersion = *(ushort*)(rtr + 4);
+            s_minorVersion = *(ushort*)(rtr + 6);
             s_initialized = true;
 
             Log.Begin(LogLevel.Info);

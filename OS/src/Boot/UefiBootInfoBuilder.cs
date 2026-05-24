@@ -44,7 +44,8 @@ namespace OS.Boot
                 //   64..127   GcStackSpill (callee-saved register push/pop trampoline)
                 //   128..511  InterfaceDispatch bridge shellcode
                 //             (null check + single-slot cache fast path + spill/resolve/restore/jmp)
-                const uint ExecStubSize = 512;
+                //   512..1023 GcContextSpill (full CONTEXT capture for precise GC walk)
+                const uint ExecStubSize = 1024;
                 void* cr3StubAlloc = null;
                 ulong cr3Status = systemTable->BootServices->AllocatePool(
                     EFI_MEMORY_TYPE.EfiLoaderCode, ExecStubSize, &cr3StubAlloc);

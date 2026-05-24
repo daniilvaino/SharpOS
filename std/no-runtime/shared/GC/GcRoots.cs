@@ -124,7 +124,18 @@ namespace SharpOS.Std.NoRuntime
         // the caller and everything higher.
         public static void MarkAll()
         {
-            // Static slots first
+            MarkStaticRootsOnly();
+
+            // Stack scan — address of our own local marks the bottom
+            byte marker;
+            ScanStack((nint)(&marker));
+        }
+
+        // Static-roots half of MarkAll, exposed for precise GC walkers
+        // that supply their own stack-root discovery (e.g. via per-frame
+        // GcInfo enumeration). Skip the conservative ScanStack here.
+        public static void MarkStaticRootsOnly()
+        {
             fixed (GcRootsStorage* basePtr = &s_slots)
             {
                 nint** slots = (nint**)basePtr;
@@ -137,10 +148,6 @@ namespace SharpOS.Std.NoRuntime
                         GcMark.MarkFromRoot(value);
                 }
             }
-
-            // Stack scan — address of our own local marks the bottom
-            byte marker;
-            ScanStack((nint)(&marker));
         }
     }
 }

@@ -360,15 +360,20 @@ namespace OS.Kernel.Diagnostics
                     kTpa, kApp, kGcSrv, kGcCon, kGcHL, kGcRR, kGcRS, kGcRV, kGInv };
                 byte** values = stackalloc byte*[9] {
                     vTpa, vApp, vF,     vF,     v64,   v128,  v1m,   vT,   vT };
-                // CoreCLR is about to allocate managed objects (e.g.
-                // AppContext.s_dataStore) into the kernel GcHeap. Those are
-                // rooted only in CoreCLR's GC graph — invisible to the kernel
-                // Mark phase — so kernel sweep would reclaim/clobber them
-                // (confirmed: s_dataStore zeroed mid-run). Freeze kernel
-                // reclamation for the rest of the session (bump-backed arena;
-                // plan 5b moves CoreCLR fully off the kernel heap properly).
-                SharpOS.Std.NoRuntime.GC.ReclamationDisabled = true;
-                Console.WriteLine("[host] kernel GC reclamation frozen for CoreCLR");
+                // Step 110 Part 9 — after NativeArena moved every native
+                // blob out of kernel GcHeap (step 109) and precise GC walker
+                // landed (step 110 Parts 1-8), the original concern that
+                // motivated freezing reclamation (CoreCLR-rooted refs
+                // invisible to Mark) no longer applies: kernel GcHeap holds
+                // only true managed objects, and precise mark enumerates
+                // them via per-frame GcInfo + registered statics.
+                //
+                // Leave the flag false so KernelGC.Collect actually sweeps.
+                // If a regression surfaces (kernel managed ref leaking
+                // through NativeArena content / cross-thread state we
+                // missed), flip back to true here and audit cross-refs.
+                SharpOS.Std.NoRuntime.GC.ReclamationDisabled = false;
+                Console.WriteLine("[host] kernel GC reclamation enabled (precise walker)");
 
                 int hr = coreclr_initialize(
                     exePath,

@@ -176,5 +176,29 @@ namespace OS.Kernel.Diagnostics
         // so it runs POST-EBS only (ExitBootServicesProbe), gated by
         // ExitBootServicesExperiment. PciScan above is read-only and
         // safe pre-EBS.
+
+        // Step 110 part 1 — resolve a few known IPs to their per-method
+        // gcInfo blob via CoffMethodGcInfo.TryResolve, dump first bytes.
+        // Sanity check that .pdata + UNWIND_INFO walk lands at a plausible
+        // varint stream before we write the decoder. Headless-deterministic.
+        public const bool CoffGcInfoDump = true;
+
+        // Step 110 part 6 — synthetic-CONTEXT smoke test for the slot
+        // resolver. Builds a fake Context with sentinel values, runs
+        // resolver on Marker3 live slots, prints resolved pointer values.
+        // Headless-deterministic.
+        public const bool GcInfoResolverSmoke = true;
+
+        // Step 110 part 7 — GcContextSpill shellcode smoke. Captures real
+        // CONTEXT via shellcode, verifies Rip resolves through .pdata.
+        // First exercise of the live-CONTEXT capture path that the precise
+        // GC walker will use.
+        public const bool GcContextSpillSmoke = true;
+
+        // Step 110 part 8 — full precise GC walk + sweep. Holds a sentinel
+        // string live across CollectPrecise, verifies it survives (i.e. the
+        // walker found it and marked it before sweep ran). Headless-
+        // deterministic; flips ReclamationDisabled locally for the test.
+        public const bool KernelGcPreciseSmoke = true;
     }
 }

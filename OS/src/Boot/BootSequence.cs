@@ -181,6 +181,9 @@ namespace OS.Boot
                 if (!GcStackSpill.TryInitialize(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize))
                     Log.Write(LogLevel.Warn, "gc spill trampoline unavailable");
 
+                if (!GcContextSpill.TryInitialize(bootInfo.ExecStubBuffer, bootInfo.ExecStubBufferSize))
+                    Log.Write(LogLevel.Warn, "gc context-capture trampoline unavailable");
+
                 InstallInterfaceDispatchBridge(bootInfo);
                 InstallByRefAssignRefShellcode();
                 InstallChkstkShellcode();
@@ -314,6 +317,18 @@ namespace OS.Boot
 
             if (Probes.GcStress)
                 GcStressTest.Run();
+
+            if (Probes.CoffGcInfoDump)
+                CoffGcInfoDumpProbe.Run();
+
+            if (Probes.GcInfoResolverSmoke)
+                GcInfoResolverSmokeProbe.Run();
+
+            if (Probes.GcContextSpillSmoke)
+                GcContextSpillSmokeProbe.Run();
+
+            if (Probes.KernelGcPreciseSmoke)
+                KernelGcPreciseSmokeProbe.Run();
 
             if (Probes.NativeAotFeatures)
                 NativeAotProbe.Run();

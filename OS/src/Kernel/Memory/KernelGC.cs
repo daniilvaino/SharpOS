@@ -11,10 +11,24 @@ namespace OS.Kernel.Memory
     // we fall back to the plain MarkAll — less precise, still functional.
     internal static unsafe class KernelGC
     {
+        // Default Collect: use the precise walker (step 110) when its
+        // infrastructure is up — .pdata mounted, ExecStubBuffer claimed
+        // GcContextSpill at offset 512. Falls back to the legacy
+        // conservative path (GcStackSpill register-push + ScanStack
+        // bottom-up dereference) for very early boot when those aren't
+        // wired yet. The conservative path remains compiled in because
+        // KernelHeapSmokeTest and the unit GcStressTest invoke Collect
+        // from CaptureStackTop-bounded callers where it's intentionally
+        // safe.
         public static void Collect()
         {
-            GcMark.Begin();
+            if (KernelGcPreciseWalk.IsAvailable)
+            {
+                CollectPrecise();
+                return;
+            }
 
+            GcMark.Begin();
             if (GcStackSpill.IsInitialized)
             {
                 delegate* unmanaged<void> markFn = &GcRoots.MarkAllUnmanaged;
@@ -24,7 +38,31 @@ namespace OS.Kernel.Memory
             {
                 GcRoots.MarkAll();
             }
+            GcSweep.Run();
+        }
 
+        // Step 110 Part 8 — precise alternative to Collect(). Replaces the
+        // conservative ScanStack (which dereferences any stack qword that
+        // happens to fall inside a GcHeap segment, with the wild-walker
+        // bit-flip risk documented in §10 of kernel-limits doc) with a
+        // per-frame walk driven by NativeAOT's precise GcInfo blobs.
+        //
+        // Pipeline (Parts 1-7):
+        //   1. GcContextSpill shellcode captures current GP regs + RSP + RIP
+        //   2. KernelGcPreciseWalk loops frames via SehUnwind.VirtualUnwind
+        //   3. Per frame: CoffGcInfoDecoder gives live tracked + untracked
+        //      slot indices; CoffGcInfoResolver gives each slot's pointer
+        //      value; MarkFromRoot processes them with its existing range
+        //      and MT sanity checks.
+        //
+        // Safe to call from any context (no CaptureStackTop dance needed)
+        // because precise enumeration never deref's stack words it doesn't
+        // already know are managed slots.
+        public static void CollectPrecise()
+        {
+            GcMark.Begin();
+            GcRoots.MarkStaticRootsOnly();
+            KernelGcPreciseWalk.RunFromCurrentFrame();
             GcSweep.Run();
         }
     }
