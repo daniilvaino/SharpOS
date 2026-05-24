@@ -187,10 +187,21 @@ ThreadPool/Task/Timer на E10-E11.
   (`MakeRunnable`). `Join` → `WaitForSingleObject` → `JoinEvent.Wait`.
 - ✅ `Thread.Sleep(1)` — через `SharpOSHost_Sleep` →
   `Scheduler.Sleep` (TimerQueue + HPET).
-- ⏳ `ThreadPool.QueueUserWorkItem` — Phase E10.
-- ⏳ `Task.Run` / `Task.Delay` — Phase E11 (async/await JIT helpers).
+- ✅ `ThreadPool.QueueUserWorkItem` — step103+ (LocalAlloc + CondVar +
+  GetSystemTimes + IOCP shim landed).
+- ✅ `Task.Run + .Result` — step103+ через ThreadPool + Task continuation.
+- ❌ `Task.Delay(1).Wait` — **SKIPPED в censure** (hangs весь boot).
+  Empirically: и `Task.Delay(1).Wait()` и `Task.Delay(1).Wait(TimeSpan.
+  FromSeconds(2))` оба зависают. Это значит **два** независимых gap'а:
+  1. TimerQueue.Portable's worker dispatch не подключен к нашему
+     IOCP/HPET wheel → timer callback не fire'ит, Task не completes.
+  2. ManualResetEventSlim.Wait(timeout) → WaitOnAddress(addr, deadline)
+     PAL forwarder не honours deadline → blocks forever.
+  Обе проблемы нужно починить до того как Task.Delay даже можно
+  regression-probe'ить безопасно. Это **отдельный фронт** для Phase G
+  (нужно для async-Roslyn workloads).
 - ⏳ `Timer (1ms)` — Phase E10 (нужен dedicated timer thread или
-  IOCP-style wheel).
+  IOCP-style wheel). step103: hard-halts kernel, deferred.
 
 NB: `yield`/итераторы — **НЕ** threading (см. §0, ✅). Не путать.
 
