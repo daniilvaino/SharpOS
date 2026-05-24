@@ -1,5 +1,5 @@
 using OS.Hal;
-using SharpOS.Std.NoRuntime;
+using OS.Kernel.Memory;
 
 namespace OS.Kernel.Threading
 {
@@ -39,7 +39,7 @@ namespace OS.Kernel.Threading
             if (stackBase <= stackLimit)
                 return null;  // Base must be > Limit (stack grows down)
 
-            byte* teb = (byte*)GcHeap.AllocateRaw(TebSize);
+            byte* teb = (byte*)NativeArena.Allocate(TebSize);
             if (teb == null) return null;
 
             *(ulong*)(teb + OffsetStackBase)  = stackBase;

@@ -3,20 +3,22 @@ using System.Runtime;
 using System.Runtime.InteropServices;
 using OS.Hal;
 using OS.Kernel;
+using OS.Kernel.Memory;
 using OS.Kernel.Paging;
-using SharpOS.Std.NoRuntime;
 
 namespace OS.PAL.SharpOSHost
 {
     // CRT heap forwarders — fork-side `malloc`/`free`/`realloc` in
     // winapi_shim.cpp dispatch to these (per D9: CoreCLR memory routed
-    // through SharpOSHost). Real allocation goes via SharpOS managed
-    // GC heap (`GcHeap.AllocateRaw`).
+    // through SharpOSHost). Real allocation goes via NativeArena —
+    // page-backed bump arena, dedicated to non-managed native blobs
+    // (memory-ownership.md §3 / §7.1 / M1).
     //
-    // Phase 6.1.b note: conservative GC stack scan does see C++ frames'
-    // registers/stack — pointers held by CoreCLR native code remain
-    // alive. `free` is no-op (GC sweeps unreachable blocks). `realloc`
-    // allocs new + copies; old block becomes garbage (GC reclaims later).
+    // `free` is no-op (NativeArena is bump-only, lifetime = forever).
+    // `realloc` allocs new + copies; old block leaks the same way it
+    // did when this lived in GcHeap. Matches the existing contract
+    // CoreCLR was already relying on. When/if cleanup matters, swap
+    // arena for a freelist/slab without touching callers.
     internal static unsafe class CrtHeapStubs
     {
         private static ulong NowTicks()
@@ -39,10 +41,9 @@ namespace OS.PAL.SharpOSHost
             {
                 // C runtime semantics: malloc(0) should return a unique
                 // non-null pointer (caller may free it). Allocate 1 byte.
-                return GcHeap.AllocateRaw(1);
+                return NativeArena.Allocate(1);
             }
-            if (size > uint.MaxValue) return null;
-            return GcHeap.AllocateRaw((uint)size);
+            return NativeArena.Allocate(size);
         }
 
         [RuntimeExport("SharpOSHost_HeapFree")]
@@ -58,8 +59,7 @@ namespace OS.PAL.SharpOSHost
         public static void* HeapRealloc(void* old, ulong size)
         {
             if (size == 0) return null;
-            if (size > uint.MaxValue) return null;
-            void* fresh = GcHeap.AllocateRaw((uint)size);
+            void* fresh = NativeArena.Allocate(size);
             if (fresh != null && old != null)
             {
                 // No header — no way to know original size. Copy `size`
@@ -228,7 +228,7 @@ namespace OS.PAL.SharpOSHost
                 Console.WriteLine("");
             }
 
-            FileState* state = (FileState*)GcHeap.AllocateRaw((uint)sizeof(FileState));
+            FileState* state = (FileState*)NativeArena.Allocate((ulong)sizeof(FileState));
             if (state == null) return null;
             state->Buffer = buf;
             state->Size = size;

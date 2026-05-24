@@ -1,4 +1,5 @@
 using OS.Boot;
+using OS.Kernel.Memory;
 
 namespace OS.Hal
 {
@@ -34,7 +35,7 @@ namespace OS.Hal
                 *buffer = null; *size = 0;
                 return (uint)BootFileStatus.NotFound;
             }
-            void* buf = SharpOS.Std.NoRuntime.GcHeap.AllocateRaw(fsz);
+            void* buf = NativeArena.Allocate(fsz);
             if (buf == null) return (uint)BootFileStatus.DeviceError;
             if (Fs.Current.ReadFile(p, (byte*)buf, (int)fsz, out fsz) < 0)
                 return (uint)BootFileStatus.NotFound;

@@ -1,4 +1,5 @@
 using OS.Boot;
+using OS.Kernel.Memory;
 
 namespace OS.Hal
 {
@@ -246,7 +247,7 @@ namespace OS.Hal
                 }
 
                 ulong allocStart = NowTicks();
-                void* buf = SharpOS.Std.NoRuntime.GcHeap.AllocateRaw(fsz);
+                void* buf = NativeArena.Allocate(fsz);
                 ulong allocEnd = NowTicks();
                 if (buf == null)
                     return false;

@@ -2,7 +2,7 @@ using System.Runtime;
 using System.Runtime.InteropServices;
 using OS.Hal;
 using OS.Kernel;
-using SharpOS.Std.NoRuntime;
+using OS.Kernel.Memory;
 
 namespace OS.PAL.SharpOSHost
 {
@@ -494,9 +494,8 @@ namespace OS.PAL.SharpOSHost
         [UnmanagedCallersOnly(EntryPoint = "_malloc_dbg")]
         public static void* MallocDbg(ulong size, int blockType, byte* filename, int line)
         {
-            if (size == 0) return GcHeap.AllocateRaw(1);
-            if (size > uint.MaxValue) return null;
-            return GcHeap.AllocateRaw((uint)size);
+            if (size == 0) return NativeArena.Allocate(1);
+            return NativeArena.Allocate(size);
         }
 
         [RuntimeExport("_free_dbg")]
@@ -511,10 +510,9 @@ namespace OS.PAL.SharpOSHost
         public static void* CallocDbg(ulong num, ulong size, int blockType, byte* filename, int line)
         {
             ulong total = num * size;
-            if (total == 0 || total > uint.MaxValue) return null;
-            void* p = GcHeap.AllocateRaw((uint)total);
-            // GcHeap.AllocateRaw already zero-fills.
-            return p;
+            if (total == 0) return null;
+            // NativeArena.Allocate already zero-fills.
+            return NativeArena.Allocate(total);
         }
 
         [RuntimeExport("_realloc_dbg")]
@@ -522,8 +520,7 @@ namespace OS.PAL.SharpOSHost
         public static void* ReallocDbg(void* old, ulong size, int blockType, byte* filename, int line)
         {
             if (size == 0) return null;
-            if (size > uint.MaxValue) return null;
-            void* fresh = GcHeap.AllocateRaw((uint)size);
+            void* fresh = NativeArena.Allocate(size);
             if (fresh != null && old != null)
             {
                 byte* dst = (byte*)fresh;

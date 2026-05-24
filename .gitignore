@@ -68,6 +68,9 @@ nunit-*.xml
 # qemu
 **/.qemu/
 
+# VirtualBox
+**/.vbox/
+
 # OVMF firmware binaries (build with .\ovmf\build.ps1)
 ovmf/*.fd
 

@@ -1,7 +1,7 @@
 using System.Runtime;
 using System.Runtime.InteropServices;
 using OS.Kernel.Crypto;
-using SharpOS.Std.NoRuntime;
+using OS.Kernel.Memory;
 
 namespace OS.PAL.SharpOSHost
 {
@@ -27,7 +27,7 @@ namespace OS.PAL.SharpOSHost
         [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_Sha256_Create")]
         public static Sha256State* Create()
         {
-            Sha256State* state = (Sha256State*)GcHeap.AllocateRaw((uint)sizeof(Sha256State));
+            Sha256State* state = (Sha256State*)NativeArena.Allocate((ulong)sizeof(Sha256State));
             if (state == null) return null;
             Sha256.Init(state);
             return state;

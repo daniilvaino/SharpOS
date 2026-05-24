@@ -193,12 +193,12 @@ $results += Get-ProbeStatus -Cat 'PhaseE' -Name 'ThreadSemaphore' `
 
 $results += Get-ProbeStatus -Cat 'PhaseE' -Name 'AllocStress' `
     -Detect 'alloc stress probe start' `
-    -Status 'alloc stress probe:.*?corruption=\d+.*?--\s+(ok|FAIL)' `
+    -Status 'alloc stress probe:[\s\S]{0,500}?corruption=\d+[\s\S]{0,200}?--\s+(ok|FAIL)' `
     -ExpectRe '^ok$'
 
 $results += Get-ProbeStatus -Cat 'PhaseE' -Name 'ProcessSpawn' `
     -Detect 'process probe start' `
-    -Status 'process probe:.*?iters=\d+/\d+\s+--\s+(ok|FAIL)' `
+    -Status 'process probe:[\s\S]{0,500}?--\s+(ok|FAIL)' `
     -ExpectRe '^ok$'
 
 # Drivers (Phase 4 sub).

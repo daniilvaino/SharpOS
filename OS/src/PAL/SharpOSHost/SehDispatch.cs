@@ -4,7 +4,7 @@ using OS.Boot;
 using OS.Boot.EH;
 using OS.Hal;
 using OS.Kernel;
-using SharpOS.Std.NoRuntime;
+using OS.Kernel.Memory;
 
 namespace OS.PAL.SharpOSHost
 {
@@ -174,11 +174,11 @@ namespace OS.PAL.SharpOSHost
             // (no guard page) and corrupts adjacent heap. The crash dump
             // showed RSP migrated to a GcHeap region filled with 0xAF
             // pattern — classic stack-bottom-falls-into-heap pattern.
-            ExceptionRecord* rec = (ExceptionRecord*)GcHeap.AllocateRaw((uint)sizeof(ExceptionRecord));
-            Context* ctx = (Context*)GcHeap.AllocateRaw((uint)sizeof(Context));
+            ExceptionRecord* rec = (ExceptionRecord*)NativeArena.Allocate((ulong)sizeof(ExceptionRecord));
+            Context* ctx = (Context*)NativeArena.Allocate((ulong)sizeof(Context));
             if (rec == null || ctx == null)
             {
-                Console.WriteLine("[seh] GcHeap alloc failed");
+                Console.WriteLine("[seh] NativeArena alloc failed");
                 Panic.Fail("seh alloc");
                 return;
             }
@@ -366,10 +366,10 @@ namespace OS.PAL.SharpOSHost
         // comment).
         private static void DispatchException(ExceptionRecord* rec, Context* ctx)
         {
-            DispatcherContext* dc = (DispatcherContext*)GcHeap.AllocateRaw((uint)sizeof(DispatcherContext));
-            Context* startCtx  = (Context*)GcHeap.AllocateRaw((uint)sizeof(Context));
-            Context* searchCtx = (Context*)GcHeap.AllocateRaw((uint)sizeof(Context));
-            Context* unwindCtx = (Context*)GcHeap.AllocateRaw((uint)sizeof(Context));
+            DispatcherContext* dc = (DispatcherContext*)NativeArena.Allocate((ulong)sizeof(DispatcherContext));
+            Context* startCtx  = (Context*)NativeArena.Allocate((ulong)sizeof(Context));
+            Context* searchCtx = (Context*)NativeArena.Allocate((ulong)sizeof(Context));
+            Context* unwindCtx = (Context*)NativeArena.Allocate((ulong)sizeof(Context));
             if (dc == null || startCtx == null || searchCtx == null || unwindCtx == null)
             {
                 Console.WriteLine("[seh] dispatch GcHeap alloc failed");
@@ -588,7 +588,7 @@ namespace OS.PAL.SharpOSHost
                     {
                         uint hr = *(uint*)(objVa + 0x14);
 
-                        Context* resumeCtx = (Context*)GcHeap.AllocateRaw((uint)sizeof(Context));
+                        Context* resumeCtx = (Context*)NativeArena.Allocate((ulong)sizeof(Context));
                         if (resumeCtx == null) return;
                         byte* rdst = (byte*)resumeCtx;
                         byte* rsrc = (byte*)startCtx;
@@ -730,13 +730,13 @@ namespace OS.PAL.SharpOSHost
         public static void RtlUnwind(void* targetFrame, void* targetIp,
                                      ExceptionRecord* excRec, void* returnValue)
         {
-            DispatcherContext* dc = (DispatcherContext*)GcHeap.AllocateRaw((uint)sizeof(DispatcherContext));
-            Context* uc = (Context*)GcHeap.AllocateRaw((uint)sizeof(Context));
+            DispatcherContext* dc = (DispatcherContext*)NativeArena.Allocate((ulong)sizeof(DispatcherContext));
+            Context* uc = (Context*)NativeArena.Allocate((ulong)sizeof(Context));
             ExceptionRecord* rec = excRec;
             if (dc == null || uc == null) { Panic.Fail("RtlUnwind alloc"); return; }
             if (rec == null)
             {
-                rec = (ExceptionRecord*)GcHeap.AllocateRaw((uint)sizeof(ExceptionRecord));
+                rec = (ExceptionRecord*)NativeArena.Allocate((ulong)sizeof(ExceptionRecord));
                 if (rec == null) { Panic.Fail("RtlUnwind rec alloc"); return; }
                 rec->ExceptionCode = 0xC0000027;   // STATUS_UNWIND
             }

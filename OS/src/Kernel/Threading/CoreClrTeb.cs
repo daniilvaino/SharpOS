@@ -1,6 +1,6 @@
 using OS.Boot.EH;
 using OS.Kernel.Diagnostics;
-using SharpOS.Std.NoRuntime;
+using OS.Kernel.Memory;
 
 namespace OS.Kernel.Threading
 {
@@ -91,12 +91,12 @@ namespace OS.Kernel.Threading
         {
             if (!EnsureTemplate()) return null;
 
-            byte* teb = (byte*)GcHeap.AllocateRaw(TebSize);
-            byte* slots = (byte*)GcHeap.AllocateRaw(TlsSlotsSize);
-            byte* tlsBlock = (byte*)GcHeap.AllocateRaw(s_tlsBlockSize);
+            byte* teb = (byte*)NativeArena.Allocate(TebSize);
+            byte* slots = (byte*)NativeArena.Allocate(TlsSlotsSize);
+            byte* tlsBlock = (byte*)NativeArena.Allocate(s_tlsBlockSize);
             if (teb == null || slots == null || tlsBlock == null) return null;
 
-            // Copy TLS template (initialized portion). GcHeap returns
+            // Copy TLS template (initialized portion). NativeArena returns
             // zeroed memory; zero-fill portion is already 0.
             for (uint i = 0; i < s_tlsRawSize; i++) tlsBlock[i] = s_templateSrc[i];
 

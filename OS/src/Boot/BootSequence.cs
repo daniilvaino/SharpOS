@@ -43,11 +43,70 @@ namespace OS.Boot
                 return;
             }
 
-            Phase1_Memory(bootInfo);
-            Phase2_Runtime(bootInfo);
-            Phase3_Platform(bootInfo);
-            Phase4_Probes(bootInfo);
-            Phase5_Apps(bootInfo);
+            Phase1_Memory(bootInfo);    PhaseReport("phase1");
+            Phase2_Runtime(bootInfo);   PhaseReport("phase2");
+            Phase3_Platform(bootInfo);  PhaseReport("phase3");
+            Phase4_Probes(bootInfo);    PhaseReport("phase4");
+            Phase5_Apps(bootInfo);      PhaseReport("phase5");
+        }
+
+        // Snapshot kernel-side allocators after each phase. Prints kheap
+        // (managed kernel objects) and NativeArena (CoreCLR-facing native
+        // blobs) on one line. Delta from previous phase shows per-phase
+        // growth — useful capacity-planning signal.
+        //
+        // Deliberately does NOT call KernelGC.Collect. The kernel GC
+        // uses conservative stack scan, bounded by a one-shot
+        // GcRoots.CaptureStackTop() that callers (smoke/stress tests)
+        // invoke immediately before Collect to keep the scan window
+        // narrow. Invoking Collect from PhaseReport — which has no
+        // control over what is on the boot-thread stack at that point —
+        // means the scan would walk popped frames' garbage; pointer-
+        // shaped qwords there can trip the conservative MT walker into
+        // wild reads / bit-flips on arbitrary memory. Observed: RIP
+        // corruption (0xD0…001CA1CB) on Phase5 ELF launcher after Phase4
+        // PhaseReport called Collect. See docs/nativeaot-nostd-kernel-
+        // limits.md "Kernel GC sweep".
+        private static ulong s_prevKheapUsed;
+        private static ulong s_prevArenaTotal;
+        private static void PhaseReport(string name)
+        {
+            KernelHeap.GetSummary(out HeapSummary kh);
+            ulong arena = NativeArena.TotalBytes;
+
+            long dKh = (long)kh.UsedBytes - (long)s_prevKheapUsed;
+            long dAr = (long)arena - (long)s_prevArenaTotal;
+            s_prevKheapUsed = kh.UsedBytes;
+            s_prevArenaTotal = arena;
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("["); Console.Write(name); Console.Write(" done] kheap used=");
+            Console.WriteULongRaw(kh.UsedBytes >> 10); Console.Write("KiB (");
+            WriteSignedKiB(dKh); Console.Write(") free=");
+            Console.WriteULongRaw(kh.FreeBytes >> 10); Console.Write("KiB blocks=");
+            Console.WriteUIntRaw(kh.BlockCount);
+            Console.Write(" | arena total=");
+            Console.WriteULongRaw(arena >> 10); Console.Write("KiB (");
+            WriteSignedKiB(dAr); Console.Write(") chunks=");
+            Console.WriteUIntRaw(NativeArena.ChunkCount); Console.Write(" direct=");
+            Console.WriteUIntRaw(NativeArena.DirectCount); Console.Write(" allocs=");
+            Console.WriteUIntRaw(NativeArena.AllocCount);
+            Log.EndLine();
+        }
+
+        private static void WriteSignedKiB(long deltaBytes)
+        {
+            if (deltaBytes >= 0)
+            {
+                Console.Write("+");
+                Console.WriteULongRaw((ulong)deltaBytes >> 10);
+            }
+            else
+            {
+                Console.Write("-");
+                Console.WriteULongRaw((ulong)(-deltaBytes) >> 10);
+            }
+            Console.Write("KiB");
         }
 
         // ─────────────────────────────────────────────────────────────────

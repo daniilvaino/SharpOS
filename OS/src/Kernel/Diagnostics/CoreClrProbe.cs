@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using OS.Boot;
 using OS.Boot.EH;
 using OS.Hal;
+using OS.Kernel.Memory;
 using OS.PAL.SharpOSHost;
 using SharpOS.Std.NoRuntime;
 
@@ -324,7 +325,7 @@ namespace OS.Kernel.Diagnostics
             if (Platform.TryReadFile("\\sharpos\\tpa.txt", out void* tpaBuf, out uint tpaSize)
                 && tpaBuf != null && tpaSize > 0)
             {
-                byte* nt = (byte*)GcHeap.AllocateRaw(tpaSize + 1);
+                byte* nt = (byte*)NativeArena.Allocate(tpaSize + 1);
                 if (nt != null)
                 {
                     byte* src = (byte*)tpaBuf;
