@@ -62,8 +62,14 @@ namespace OS.Kernel.Threading
         }
 
         // Returns true on signal-driven wake (or no-wait fast path),
-        // false on timeout. timeoutMs == 0xFFFFFFFF means infinite;
-        // finite timeouts degrade to infinite for now.
+        // false on timeout. timeoutMs == 0xFFFFFFFF means infinite.
+        // Finite timeouts use a HPET-deadline yield-poll on the value at
+        // `addr` (same pattern as ThreadStubs.WaitForSingleObject for
+        // Event/Semaphore): re-check memcmp on every Yield, return false
+        // when deadline passes. Less efficient than a real composite
+        // address+timer wait, but it works without needing cancel-on-wake
+        // plumbing through WakeByAddress*. SP1-class composite wait is a
+        // future Phase F task.
         public static bool WaitOnAddress(void* addr, void* cmpAddr, uint size, uint timeoutMs)
         {
             if (addr == null || cmpAddr == null || size == 0) return true;
@@ -76,19 +82,45 @@ namespace OS.Kernel.Threading
             Thread? curr = Scheduler.Current;
             if (curr == null) return true;
 
-            // Park the thread. Bucket head insertion (LIFO).
-            int b = BucketOf(addr);
-            curr.Wait.Address = addr;
-            curr.Wait.Kind = WaitKind.Address;
-            curr.Wait.Next = s_buckets[b];
-            s_buckets[b] = curr;
-            curr.State = ThreadState.Waiting;
+            bool infinite = (timeoutMs == 0xFFFFFFFFu);
+            if (infinite)
+            {
+                // Infinite — park on bucket and wait for WakeByAddress*.
+                int b = BucketOf(addr);
+                curr.Wait.Address = addr;
+                curr.Wait.Kind = WaitKind.Address;
+                curr.Wait.Next = s_buckets[b];
+                s_buckets[b] = curr;
+                curr.State = ThreadState.Waiting;
+                Scheduler.Yield();
+                return true;
+            }
 
-            Scheduler.Yield();
-
-            // On wake, WakeByAddress* has already unlinked us and
-            // nulled WaitAddress / WaitNext. Return signaled.
-            return true;
+            // Finite — HPET-deadline poll-yield. We don't park on the
+            // bucket because WakeByAddress* doesn't cancel timers; instead
+            // we observe value changes directly by re-reading memory.
+            ulong freq = OS.Hal.Timer.Hpet.FrequencyHz;
+            if (freq == 0)
+            {
+                // No HPET — fall back to infinite wait behaviour.
+                int b = BucketOf(addr);
+                curr.Wait.Address = addr;
+                curr.Wait.Kind = WaitKind.Address;
+                curr.Wait.Next = s_buckets[b];
+                s_buckets[b] = curr;
+                curr.State = ThreadState.Waiting;
+                Scheduler.Yield();
+                return true;
+            }
+            ulong ticksPerMs = freq / 1000UL;
+            if (ticksPerMs == 0UL) ticksPerMs = 1UL;
+            ulong deadline = OS.Hal.Timer.Hpet.ReadCounter() + (ulong)timeoutMs * ticksPerMs;
+            while (true)
+            {
+                if (!MemEq(addr, cmpAddr, size)) return true;          // signaled
+                if (OS.Hal.Timer.Hpet.ReadCounter() >= deadline) return false;  // timed out
+                Scheduler.Yield();
+            }
         }
 
         public static void WakeByAddressSingle(void* addr)

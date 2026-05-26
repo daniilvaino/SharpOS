@@ -1,5 +1,6 @@
 using System.Runtime;
 using System.Runtime.InteropServices;
+using OS.Hal.Timer;
 using OS.Kernel.Threading;
 
 namespace OS.PAL.SharpOSHost
@@ -35,6 +36,7 @@ namespace OS.PAL.SharpOSHost
     {
         // Win32 wait result codes.
         private const uint WAIT_OBJECT_0   = 0x00000000;
+        private const uint INFINITE        = 0xFFFFFFFFu;
         private const uint WAIT_ABANDONED  = 0x00000080;
         private const uint WAIT_TIMEOUT    = 0x00000102;
         private const uint WAIT_FAILED     = 0xFFFFFFFF;
@@ -173,10 +175,17 @@ namespace OS.PAL.SharpOSHost
                 return WAIT_OBJECT_0;
             }
 
-            // Win32 semantics: ms == 0 is a poll, ms == INFINITE blocks.
-            // Finite ms in between: not yet supported -- degrade to
-            // infinite (TODO: plumb TimerQueue cancel-on-set).
+            // Win32 semantics: ms == 0 is a poll, ms == INFINITE blocks
+            // until signaled, finite ms in between blocks up to that many
+            // milliseconds. Finite timeouts use a HPET-deadline yield-poll
+            // (cooperative-friendly — same pattern as Iocp.Wait): we
+            // re-check IsSet on every Yield and exit either on signal or
+            // when the deadline has passed. Less efficient than a real
+            // composite Event+Timer wait, but it doesn't need cancel-on-
+            // set plumbing across all primitives. SP1-class composite wait
+            // is a future Phase F task.
             bool poll = (timeoutMs == 0);
+            bool infinite = (timeoutMs == INFINITE);
 
             if (target is Thread t)
             {
@@ -186,29 +195,51 @@ namespace OS.PAL.SharpOSHost
                 else              exited = (t.State == ThreadState.Exited);
                 if (exited) return WAIT_OBJECT_0;
                 if (poll) return WAIT_TIMEOUT;
-                if (bind != null && bind.JoinEvent != null)
+                if (infinite)
                 {
-                    bind.JoinEvent.Wait();
+                    if (bind != null && bind.JoinEvent != null) bind.JoinEvent.Wait();
+                    else while (t.State != ThreadState.Exited) Scheduler.Yield();
+                    return WAIT_OBJECT_0;
                 }
-                else
+                // Finite: yield-poll until exited or deadline.
+                ulong deadlineT = ComputeDeadline(timeoutMs);
+                while (true)
                 {
-                    while (t.State != ThreadState.Exited) Scheduler.Yield();
+                    bool nowExited = bind != null ? bind.HasExited : (t.State == ThreadState.Exited);
+                    if (nowExited) return WAIT_OBJECT_0;
+                    if (DeadlinePassed(deadlineT)) return WAIT_TIMEOUT;
+                    Scheduler.Yield();
                 }
-                return WAIT_OBJECT_0;
             }
 
             if (target is Event e)
             {
                 if (poll) return e.IsSet ? WAIT_OBJECT_0 : WAIT_TIMEOUT;
-                e.Wait();
-                return WAIT_OBJECT_0;
+                if (infinite) { e.Wait(); return WAIT_OBJECT_0; }
+                ulong deadlineE = ComputeDeadline(timeoutMs);
+                while (true)
+                {
+                    if (e.IsSet)
+                    {
+                        if (!e.IsManualReset) e.IsSet = false;
+                        return WAIT_OBJECT_0;
+                    }
+                    if (DeadlinePassed(deadlineE)) return WAIT_TIMEOUT;
+                    Scheduler.Yield();
+                }
             }
 
             if (target is Semaphore s)
             {
                 if (poll) return s.Count > 0 ? WAIT_OBJECT_0 : WAIT_TIMEOUT;
-                s.Wait();
-                return WAIT_OBJECT_0;
+                if (infinite) { s.Wait(); return WAIT_OBJECT_0; }
+                ulong deadlineS = ComputeDeadline(timeoutMs);
+                while (true)
+                {
+                    if (s.TryAcquire()) return WAIT_OBJECT_0;
+                    if (DeadlinePassed(deadlineS)) return WAIT_TIMEOUT;
+                    Scheduler.Yield();
+                }
             }
 
             if (target is Win32Mutex m)
@@ -229,12 +260,49 @@ namespace OS.PAL.SharpOSHost
                     }
                     return WAIT_TIMEOUT;
                 }
-                uint code = m.Wait();
-                return code == 2 ? WAIT_ABANDONED : WAIT_OBJECT_0;
+                if (infinite)
+                {
+                    uint code = m.Wait();
+                    return code == 2 ? WAIT_ABANDONED : WAIT_OBJECT_0;
+                }
+                // Finite: yield-poll for acquire-or-deadline. Mutex.Wait is
+                // blocking-acquire, so we just retry the poll branch above
+                // until we either own it or time out.
+                ulong deadlineM = ComputeDeadline(timeoutMs);
+                while (true)
+                {
+                    Thread? curr = Scheduler.Current;
+                    if (m.Owner == null || m.Owner == curr
+                        || m.Owner.State == ThreadState.Exited)
+                    {
+                        uint rc = m.Wait();
+                        return rc == 2 ? WAIT_ABANDONED : WAIT_OBJECT_0;
+                    }
+                    if (DeadlinePassed(deadlineM)) return WAIT_TIMEOUT;
+                    Scheduler.Yield();
+                }
             }
 
             // Unknown handle type for E9.b (IOCP / file handle / ...).
             return WAIT_FAILED;
+        }
+
+        // HPET-tick deadline for `timeoutMs` from now. Returns 0 if HPET
+        // isn't initialised — the caller must treat 0 as "no deadline
+        // measurement available" and fall back to infinite blocking.
+        private static ulong ComputeDeadline(uint timeoutMs)
+        {
+            ulong freq = Hpet.FrequencyHz;
+            if (freq == 0) return 0;
+            ulong ticksPerMs = freq / 1000UL;
+            if (ticksPerMs == 0UL) ticksPerMs = 1UL;
+            return Hpet.ReadCounter() + (ulong)timeoutMs * ticksPerMs;
+        }
+
+        private static bool DeadlinePassed(ulong deadline)
+        {
+            if (deadline == 0) return false;   // no HPET → never time out
+            return Hpet.ReadCounter() >= deadline;
         }
 
         [RuntimeExport("SharpOSHost_CloseHandle")]

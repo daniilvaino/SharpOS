@@ -33,7 +33,21 @@ namespace OS.PAL.SharpOSHost
                 return 0;
             long days = DaysSince1970(s.Year, s.Month, s.Day) + 134774;
             long secs = days * 86400L + s.Hour * 3600L + s.Minute * 60L + s.Second;
-            return secs * 10_000_000L;
+            // Mix in HPET sub-second offset (100-ns resolution) so callers
+            // observing FILETIME at sub-second cadence still see monotonic
+            // forward progress. RTC alone is 1 Hz; QPC/Stopwatch consumers
+            // (ProcessorIdCache.ProcessorNumberSpeedCheck, SpinWait, timer
+            //  scheduling) would otherwise spin until the next RTC tick.
+            long fileTime = secs * 10_000_000L;
+            ulong hz = OS.Hal.Timer.Hpet.FrequencyHz;
+            if (hz != 0)
+            {
+                ulong c = OS.Hal.Timer.Hpet.ReadCounter();
+                // sub-second portion in 100-ns ticks
+                ulong subSec = (c % hz) * 10_000_000UL / hz;
+                fileTime += (long)subSec;
+            }
+            return fileTime;
         }
 
         // Fill a Win32 SYSTEMTIME (8 × WORD: Year, Month, DayOfWeek, Day,
