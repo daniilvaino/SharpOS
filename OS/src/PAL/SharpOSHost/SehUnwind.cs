@@ -419,7 +419,7 @@ namespace OS.PAL.SharpOSHost
             ulong* establisherFrame,
             void* contextPointers)
             => VirtualUnwind(handlerType, imageBase, controlPc, functionEntry,
-                             context, handlerData, establisherFrame);
+                             context, handlerData, establisherFrame, contextPointers);
 
         public static void* VirtualUnwind(
             uint handlerType,
@@ -428,7 +428,8 @@ namespace OS.PAL.SharpOSHost
             RuntimeFunction* functionEntry,
             Context* context,
             void** handlerData,
-            ulong* establisherFrame)
+            ulong* establisherFrame,
+            void* contextPointers = null)
         {
             if (functionEntry == null || context == null) return null;
 
@@ -436,7 +437,33 @@ namespace OS.PAL.SharpOSHost
             byte* unwindInfo = image + functionEntry->UnwindInfoAddress;
 
             return ApplyUnwindInfo(handlerType, image, controlPc, functionEntry,
-                                   unwindInfo, context, handlerData, establisherFrame);
+                                   unwindInfo, context, handlerData, establisherFrame,
+                                   contextPointers);
+        }
+
+        // step112: record the address of a spilled non-volatile register
+        // into the caller-supplied KNONVOLATILE_CONTEXT_POINTERS struct.
+        // GcInfoDecoder reads OBJECTREF roots from these addresses (see
+        // gcinfodecoder.cpp:1486 `&pRD->pCurrentContextPointers->Rax`);
+        // if the struct is left unfilled the decoder reads from stale /
+        // uninitialized memory and synthesizes phantom OBJECTREFs that
+        // point into the managed heap range but at zeroed bytes, which
+        // GCHeap::Relocate then attempts to walk -- causing the
+        // Object::ValidateInner assert and (after our containment guard)
+        // a stack-buffer-overrun fail-fast when relocate writes garbage
+        // back into a stack slot it shouldn't touch.
+        //
+        // Layout (winnt.h KNONVOLATILE_CONTEXT_POINTERS, AMD64): first
+        // 0x80 bytes are 16 × M128A* (Xmm0..Xmm15); GP register pointers
+        // start at offset 0x80 in processor-encoding order:
+        //   +0x80=Rax  +0x88=Rcx  +0x90=Rdx  +0x98=Rbx
+        //   +0xA0=Rsp  +0xA8=Rbp  +0xB0=Rsi  +0xB8=Rdi
+        //   +0xC0=R8 .. +0xF8=R15
+        private static void RecordSpill(void* ctxPtrs, int regId, ulong* slotAddr)
+        {
+            if (ctxPtrs == null) return;
+            ulong** gp = (ulong**)((byte*)ctxPtrs + 0x80);
+            gp[regId] = slotAddr;
         }
 
         // Recursive worker — chases UNW_FLAG_CHAININFO to parent fragments.
@@ -448,7 +475,8 @@ namespace OS.PAL.SharpOSHost
             byte* unwindInfo,
             Context* context,
             void** handlerData,
-            ulong* establisherFrame)
+            ulong* establisherFrame,
+            void* contextPointers = null)
         {
             byte verFlags = unwindInfo[0];
             byte version  = (byte)(verFlags & 0x07);
@@ -488,7 +516,7 @@ namespace OS.PAL.SharpOSHost
                 }
                 else
                 {
-                    slotsConsumed = ApplyCode(op, info, codes + i, context, frameReg, frameOffset);
+                    slotsConsumed = ApplyCode(op, info, codes + i, context, frameReg, frameOffset, contextPointers);
                 }
                 if (TraceUnwind) TuCode(op, info, codeOffsetInProlog, skipped, slotsConsumed, context);
                 if (slotsConsumed < 0)
@@ -515,7 +543,8 @@ namespace OS.PAL.SharpOSHost
                 // Walk parent fragment too. Note: chained fragments don't
                 // have their own handler; if parent has one, we want that.
                 return ApplyUnwindInfo(handlerType, image, controlPc, parent,
-                                       parentUnwindInfo, context, handlerData, establisherFrame);
+                                       parentUnwindInfo, context, handlerData, establisherFrame,
+                                       contextPointers);
             }
 
             // SP now points at saved return address. Pop it into RIP, then
@@ -556,13 +585,15 @@ namespace OS.PAL.SharpOSHost
         //   PUSH_MACHFRAME:   pops machine frame (interrupt-style)
         //   EPILOG:           Win8+ marker — no register effect, consumed for slot accounting
         private static int ApplyCode(int op, int info, ushort* code, Context* ctx,
-                                     int frameReg, int frameOffset)
+                                     int frameReg, int frameOffset, void* ctxPtrs = null)
         {
             switch (op)
             {
                 case UnwindOp.UWOP_PUSH_NONVOL:
                 {
-                    ulong val = *(ulong*)ctx->Rsp;
+                    ulong* slot = (ulong*)ctx->Rsp;
+                    RecordSpill(ctxPtrs, info, slot);
+                    ulong val = *slot;
                     WriteReg(ctx, info, val);
                     ctx->Rsp += 8;
                     return 1;
@@ -597,8 +628,9 @@ namespace OS.PAL.SharpOSHost
                 case UnwindOp.UWOP_SAVE_NONVOL:
                 {
                     uint slotOffset = code[1];   // *8 = bytes
-                    ulong val = *(ulong*)(ctx->Rsp + slotOffset * 8u);
-                    WriteReg(ctx, info, val);
+                    ulong* slot = (ulong*)(ctx->Rsp + slotOffset * 8u);
+                    RecordSpill(ctxPtrs, info, slot);
+                    WriteReg(ctx, info, *slot);
                     return 2;
                 }
                 case UnwindOp.UWOP_SAVE_NONVOL_FAR:
@@ -606,8 +638,9 @@ namespace OS.PAL.SharpOSHost
                     uint lo = code[1];
                     uint hi = code[2];
                     uint offset = lo | (hi << 16);
-                    ulong val = *(ulong*)(ctx->Rsp + offset);
-                    WriteReg(ctx, info, val);
+                    ulong* slot = (ulong*)(ctx->Rsp + offset);
+                    RecordSpill(ctxPtrs, info, slot);
+                    WriteReg(ctx, info, *slot);
                     return 3;
                 }
                 case UnwindOp.UWOP_EPILOG:
