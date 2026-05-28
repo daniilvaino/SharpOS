@@ -79,10 +79,51 @@ static double lm_sqrt(double x){
 - `tools/walk_stack.ps1` (new) — сканер return-адресов + частотный/cyclic анализ.
 
 ### Docs
-- `docs/open-symptoms.md` — SYM-001/SYM-002 закрыты (перенесены сюда).
+- `docs/open-symptoms.md` — SYM-001/SYM-002 закрыты; добавлен SYM-003.
+
+## Followup — step72 RBP override УДАЛЁН (подтверждённо избыточен)
+
+Воспользовавшись моментом, проверили отложенный вопрос: нужен ли ещё
+SharpOS-only override в `gcinfodecoder.cpp` (step72), который для
+`GC_FRAMEREG_REL` слотов возвращал `pCurrentContext->Rbp + spOffset`
+вместо `*pCurrentContextPointers->Rbp + spOffset`.
+
+**Процесс (с поучительной ошибкой):**
+1. Отключил override + добавил пробу `GC FRAMEREG_REL refs across Collect`
+   (рекурсия со string-ref'ами + `GC.Collect()` + `WaitForPendingFinalizers`).
+   Повисло. Поспешно заключил «override load-bearing».
+2. **Ошибка вскрыта:** проба была confounded — `WaitForPendingFinalizers()`
+   виснет НЕЗАВИСИМО (наш finalizer-поток не доводит completion — новый
+   SYM-003). RIP сэмплился по `GCHolderBase::EnterInternalCoop` (coop-wait),
+   не FRAMEREG-misreport.
+3. Убрал `WaitForPendingFinalizers` из пробы → прошла ✅ (с override ON).
+4. **Валидный single-variable тест:** отключил override + чистая проба →
+   ✅. Плюс добавил **точный оригинальный step72-триггер** —
+   `System.Text.Json roundtrip (reflection)` — тоже ✅ с override OFF.
+
+**Вывод:** override **избыточен после step112**. Правильный fill
+`KNONVOLATILE_CONTEXT_POINTERS->Rbp` в SehUnwind (step112) перекрыл и
+FRAMEREG-случай — `GetRegisterSlot` теперь даёт корректный slot. step72
+был локальным band-aid'ом того же корня что step112 закрыл системно.
+Override удалён, upstream `GetRegisterSlot` path восстановлен.
+
+**Урок:** проба должна изолировать ОДНУ переменную. Confounded проба
+(FRAMEREG + finalizer wait разом) дала ложный «load-bearing» вывод;
+поймал только потому что RIP-сэмплинг показал finalizer-wait, а не
+FRAMEREG. Целевой триггер (Json reflection) + изоляция переменной =
+честный результат. Связь с [[feedback_cheap_detector_before_acting_on_unproven_hypothesis]].
+
+## Открытый SYM-003
+
+`GC.WaitForPendingFinalizers()` виснет — finalizer-поток не сигналит
+completion. Залогировано в docs/open-symptoms.md. Не критический путь.
 
 ## Следующий step
 
-- Быстрый аудит `__builtin_*` в `lm_*` (см. отложенный аудит)
-- Или назад к ранее запланированному: (b) удалить step72 RBP override в gcinfodecoder.cpp; IST для #PF/#DF (proper panic вместо triple fault — всё ещё стоит сделать, чтобы будущие stack-overflow'ы печатали диагностику)
-- Limits-таблицы: ThreadPool stress / hill-climbing теперь стабильны; обновить если была отдельная строка
+- **IST для #PF/#DF** — proper panic вместо silent triple fault для
+  будущих stack overflow'ов (механизм всё ещё дырявый; step113 убрал
+  один триггер, не сам triple-fault-on-overflow).
+- SYM-003 finalizer thread — когда понадобится IDisposable/finalize-heavy
+  код.
+- Limits-таблицы: ThreadPool stress / hill-climbing / Json-reflection
+  стабильны; обновить если меняет user-facing поверхность.
