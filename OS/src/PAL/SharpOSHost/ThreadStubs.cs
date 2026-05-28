@@ -50,10 +50,17 @@ namespace OS.PAL.SharpOSHost
         // by convention. Our Scheduler.Spawn default is 64 KiB which is
         // plenty for our kernel test threads but well below what CoreCLR
         // and managed user code (recursive parsers, async state machine
-        // capture, etc.) typically use. Hosted threads get 1 MiB to
-        // match the platform convention; the original WinAPI CreateThread
-        // dwStackSize argument from CoreCLR is ignored for now (fork
-        // currently doesn't forward it; a future pass plumbs it through).
+        // capture, etc.) typically use. Hosted threads get 1 MiB.
+        //
+        // NB (step113): 1 MiB once looked too small -- a ThreadPool
+        // hill-climbing run triple-faulted with the whole stack exhausted.
+        // Bumping to 4/8 MiB did NOT help: the real root was an infinite
+        // sqrt<->lm_sqrt recursion in the Debug fork build (see
+        // crt_imp_stubs.cpp lm_sqrt), not legitimate depth. 1 MiB is fine.
+        //
+        // The original WinAPI CreateThread dwStackSize argument from
+        // CoreCLR is ignored for now (fork currently doesn't forward it;
+        // a future pass plumbs it through).
         private const uint HostedDefaultStackBytes = 1 * 1024 * 1024;
 
         // CoreCLR-side LPTHREAD_START_ROUTINE = DWORD(WINAPI*)(LPVOID).
