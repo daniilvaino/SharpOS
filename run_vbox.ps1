@@ -34,6 +34,13 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
 
+    # CoreCLR fork build to link/ship (Debug|Release). Forwarded through
+    # build_media_xorriso.ps1 -> run_build.ps1. Default Debug; pass Release
+    # to ship the Release CoreCLR (must be built first via
+    # dotnet-runtime-sharpos\build_clr_sharpos.ps1 -Configuration Release).
+    [ValidateSet("Debug", "Release")]
+    [string]$ForkConfig = "Debug",
+
     [string]$VmName = "SharpOS",
 
     # Skip calling build_images.ps1 entirely and reuse the existing VHD/ISO.
@@ -449,6 +456,7 @@ else {
 
     $buildArgs = @{
         Configuration = $Configuration
+        ForkConfig    = $ForkConfig
         OutputDir     = $OutputDir
         VhdPath       = $VhdPath
         IsoPath       = $IsoPath

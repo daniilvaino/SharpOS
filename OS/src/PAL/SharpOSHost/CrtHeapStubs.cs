@@ -43,7 +43,20 @@ namespace OS.PAL.SharpOSHost
                 // non-null pointer (caller may free it). Allocate 1 byte.
                 return NativeArena.Allocate(1);
             }
-            return NativeArena.Allocate(size);
+            void* p = NativeArena.Allocate(size);
+            if (p == null)
+            {
+                // step113 Release bring-up: diagnose bad_alloc source.
+                // Print the failing request size + arena totals (ungated).
+                // Bogus-huge size => codegen/underflow; reasonable size =>
+                // genuine PhysicalMemory exhaustion.
+                OS.Hal.Console.Write("[HeapAlloc NULL] size=0x");
+                OS.Hal.Console.WriteHex(size);
+                OS.Hal.Console.Write(" arenaTotal=0x");
+                OS.Hal.Console.WriteHex(NativeArena.TotalBytes);
+                OS.Hal.Console.WriteLine("");
+            }
+            return p;
         }
 
         [RuntimeExport("SharpOSHost_HeapFree")]

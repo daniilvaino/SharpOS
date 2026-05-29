@@ -332,15 +332,10 @@ namespace OS.PAL.SharpOSHost
         // L5 / L4 — EH/std debug stubs.
         // ---------------------------------------------------------------
 
-        // __CxxFrameHandler4 — newer MSVC C++ EH personality (used by libcmtd
-        // в newer VC). Same fatal stub semantics as __CxxFrameHandler3.
-        [RuntimeExport("__CxxFrameHandler4")]
-        [UnmanagedCallersOnly(EntryPoint = "__CxxFrameHandler4")]
-        public static int CxxFrameHandler4(void* record, void* frame, void* context, void* dispatcher)
-        {
-            Panic.Fail("__CxxFrameHandler4 fired (Phase 6.1.0b stub)");
-            return 1;
-        }
+        // __CxxFrameHandler4 — newer MSVC C++ EH personality (Release /Ox
+        // compact FH4 tables). Implemented in CxxFrameHandler4.cs
+        // (CxxFrameHandler4.FrameHandler4) which owns the single
+        // [RuntimeExport("__CxxFrameHandler4")]. No stub here.
 
         // bool __uncaught_exception(void) — std lib internal, returns true if в throw
         [RuntimeExport("__uncaught_exception")]

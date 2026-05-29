@@ -1,6 +1,10 @@
 param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
+    # CoreCLR fork build to link/ship (Debug|Release). Forwarded to
+    # run_build.ps1; default Debug. See run_build.ps1 -ForkConfig.
+    [ValidateSet("Debug", "Release")]
+    [string]$ForkConfig = "Debug",
     [switch]$NoBuild,
     [string]$EspSource = (Join-Path $PSScriptRoot "OS\.qemu\esp"),
     [string]$OutputDir = (Join-Path $PSScriptRoot "OS\.qemu\media"),
@@ -340,7 +344,7 @@ Write-Host "sfdisk: $sfdiskExe"
 
 if (-not $NoBuild) {
     Write-Host "Building SharpOS (NoRun)..."
-    & (Join-Path $PSScriptRoot "run_build.ps1") -Configuration $Configuration -NoRun
+    & (Join-Path $PSScriptRoot "run_build.ps1") -Configuration $Configuration -ForkConfig $ForkConfig -NoRun
     if ($LASTEXITCODE -ne 0) {
         throw "run_build.ps1 failed with exit code $LASTEXITCODE"
     }

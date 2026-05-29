@@ -1,6 +1,12 @@
 param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
+    # step113-followup: which CoreCLR fork build the kernel links + ships.
+    # Debug = _DEBUG asserts + unoptimized (what we stabilized on).
+    # Release = no asserts, optimized, closer to shipping .NET. Must have
+    # been built first: .\dotnet-runtime-sharpos\build_clr_sharpos.ps1 -Configuration Release
+    [ValidateSet("Debug", "Release")]
+    [string]$ForkConfig = "Debug",
     [switch]$NoRun,
     [switch]$Stop,
     [int]$QmpPort = 4444,
@@ -451,7 +457,7 @@ if (Test-Path -LiteralPath $tagFile) {
 Write-Host "Building OS ($Configuration, BuildId=$buildId)..."
 Push-Location $efiProjectDir
 try {
-    & dotnet publish $projectFile -c $Configuration -r win-x64 "/p:BuildId=$buildId"
+    & dotnet publish $projectFile -c $Configuration -r win-x64 "/p:BuildId=$buildId" "/p:CoreClrForkConfig=$ForkConfig"
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE"
     }
@@ -478,7 +484,7 @@ Copy-Item -LiteralPath $builtEfi -Destination $bootx64 -Force
 # (our Path.GetFullPath prepends "\sharpos\" to relative paths). Place the DLL there
 # on the EFI partition so CreateFileW -> SharpOSHost_FileOpen -> Platform.TryReadFile
 # via UEFI SimpleFileSystem can find it.
-$spcDll = Join-Path "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\coreclr\windows.x64.Debug" "System.Private.CoreLib.dll"
+$spcDll = Join-Path "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\coreclr\windows.x64.$ForkConfig" "System.Private.CoreLib.dll"
 $espSharpOSDir = Join-Path $qemuWorkDir "esp\sharpos"
 if (Test-Path -LiteralPath $spcDll) {
     New-Item -ItemType Directory -Force -Path $espSharpOSDir | Out-Null

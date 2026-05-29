@@ -336,20 +336,19 @@ namespace OS.PAL.SharpOSHost
             }
         }
 
-        // Sanity check: a candidate Rip must be canonical and в our image
-        // range. Walker stops when this fails.
+        // Sanity check: a candidate Rip must be canonical and resolvable by
+        // one of our unwind registries. A broad "inside imageBase+N" check is
+        // not enough: CoreCLR heap / NativeArena pointers often sit close to
+        // the relocated kernel image and can otherwise be mistaken for code.
         private static bool IsValidIp(ulong rip)
         {
             // Canonical x64: bits 47..63 must all match bit 47 (sign-extended).
             // 0xAFAF... pattern obviously not canonical.
             if (rip == 0) return false;
             if ((rip >> 48) != 0 && (rip >> 48) != 0xFFFF) return false;
-            // Kernel image (static .pdata): Rip in [base, base+16 MiB).
-            if (CoffRuntimeFunctionTable.IsInitialized)
-            {
-                ulong baseAddr = (ulong)CoffRuntimeFunctionTable.ImageBase;
-                if (rip >= baseAddr && rip - baseAddr <= 0x10000000UL) return true;
-            }
+            // Kernel image static .pdata. This deliberately rejects addresses
+            // inside the broad PE reservation but outside any RUNTIME_FUNCTION.
+            if (CoffMethodLookup.TryFindMethod((byte*)rip, out _)) return true;
             // JIT code in a registered dynamic function-table region — unwind
             // info is resolvable via DynamicLookup (Step 1). Must NOT reject
             // it here, else the walker stops before consulting the registry.
@@ -394,6 +393,9 @@ namespace OS.PAL.SharpOSHost
             HandlerType* matchedClause = null;
             ulong matchedTargetIp = 0;
             ulong matchedFrame = 0;
+            CxxFrameHandler4.CatchTransfer matchedFh4 = default;
+            bool matchedHasFh4 = false;
+            ulong matchedImageBase = 0;
 
             int frameLimit = 64;
             bool isThrowSite = true;
@@ -431,6 +433,10 @@ namespace OS.PAL.SharpOSHost
                     Console.Write("[seh] walked out of image at Rip=0x");
                     Console.WriteHex(controlPc);
                     Console.WriteLine("");
+                    if (TryActivateFrameChain(searchCtx))
+                    {
+                        continue;
+                    }
                     break;
                 }
 
@@ -478,8 +484,11 @@ namespace OS.PAL.SharpOSHost
                         (delegate* unmanaged<ExceptionRecord*, void*, Context*, DispatcherContext*, int>)personality;
                     // step 89 sec11 diag — does personality redirect dispatch via dc/searchCtx?
                     // Compare ctx delta around the call (Rip/Rsp/Rbp).
+                    matchedFh4 = default;
+                    dc->HistoryTable = &matchedFh4;
                     ulong preRip = searchCtx->Rip, preRsp = searchCtx->Rsp, preRbp = searchCtx->Rbp;
                     int disp = fn(rec, (void*)newFrame, searchCtx, dc);
+                    dc->HistoryTable = null;
                     if (preRip != searchCtx->Rip || preRsp != searchCtx->Rsp || preRbp != searchCtx->Rbp)
                     {
                         Console.Write("[seh]   pers MUTATED ctx: rip 0x"); Console.WriteHex(preRip);
@@ -497,6 +506,8 @@ namespace OS.PAL.SharpOSHost
                         matchedClause = (HandlerType*)dc->HandlerData;
                         matchedTargetIp = dc->TargetIp;
                         matchedFrame = newFrame;
+                        matchedHasFh4 = matchedFh4.DispOfHandler != 0;
+                        matchedImageBase = ib;
                         if (Trace) {
                         Console.Write("[seh] match at frame 0x");
                         Console.WriteHex(newFrame);
@@ -655,13 +666,28 @@ namespace OS.PAL.SharpOSHost
                 ulong rawRipU = unwindCtx->Rip;
                 ulong controlPc = isUnwindThrowSite ? rawRipU : rawRipU - 1;
                 isUnwindThrowSite = false;
-                if (!IsValidIp(controlPc)) break;
+                if (!IsValidIp(controlPc))
+                {
+                    if (TryActivateFrameChain(unwindCtx))
+                    {
+                        continue;
+                    }
+                    break;
+                }
                 ulong ib;
                 RuntimeFunction* rf = SehUnwind.LookupFunctionEntry(controlPc, &ib);
-                if (rf == null) break;
+                if (rf == null)
+                {
+                    if (TryActivateFrameChain(unwindCtx))
+                    {
+                        continue;
+                    }
+                    break;
+                }
 
                 void* handlerData = null;
                 ulong newFrame = 0;
+                ulong preUnwindRsp = unwindCtx->Rsp;
                 void* personality = SehUnwind.VirtualUnwind(
                     UnwindFlags.UNW_FLAG_UHANDLER,
                     ib, rawRipU, rf, unwindCtx,
@@ -689,6 +715,22 @@ namespace OS.PAL.SharpOSHost
 
                 if (newFrame == matchedFrame)
                 {
+                    if (matchedHasFh4 && matchedFh4.Continuation0 != 0)
+                    {
+                        // FH4 catch handlers are funclets, not plain resume
+                        // targets. Enter them as if the parent frame had
+                        // called the funclet: [RSP] is the catch continuation,
+                        // shadow space starts at the parent's body RSP, and
+                        // RDX carries the parent frame pointer used by MSVC's
+                        // `mov rbp, rdx` prologue.
+                        ulong catchEntryRsp = preUnwindRsp - 8UL;
+                        *(ulong*)catchEntryRsp = matchedImageBase + matchedFh4.Continuation0;
+                        unwindCtx->Rsp = catchEntryRsp;
+                        unwindCtx->Rdx = preUnwindRsp;
+                        if (rec->NumberParameters >= 2)
+                            unwindCtx->Rcx = rec->ExceptionInformation[1];
+                    }
+
                     // Reached catching frame — set RIP к handler entry и resume.
                     unwindCtx->Rip = matchedTargetIp;
                     // Restore via asm helper. Never returns.
@@ -770,7 +812,14 @@ namespace OS.PAL.SharpOSHost
                 }
                 ulong ib;
                 RuntimeFunction* rf = SehUnwind.LookupFunctionEntry(controlPc, &ib);
-                if (rf == null) break;
+                if (rf == null)
+                {
+                    if (TryActivateFrameChain(uc))
+                    {
+                        continue;
+                    }
+                    break;
+                }
 
                 void* handlerData = null;
                 ulong newFrame = 0;

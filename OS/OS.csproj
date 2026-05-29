@@ -38,7 +38,13 @@
        Initial integration attempt — expect massive unresolved cascade.
        Each error class will need targeted handling per L1-L5 strategy. -->
   <PropertyGroup>
-    <CoreClrForkObj>$(MSBuildThisFileDirectory)..\dotnet-runtime-sharpos\artifacts\obj\coreclr\windows.x64.Debug</CoreClrForkObj>
+    <!-- step113-followup: fork build config (Debug or Release). Default Debug.
+         Override from run_build.ps1 via -p:CoreClrForkConfig=Release to link
+         a Release CoreCLR (no _DEBUG asserts, builtin sqrt inlined, thinner
+         frames, closer to real shipping .NET). SPC in run_build.ps1 must
+         match this config. -->
+    <CoreClrForkConfig Condition="'$(CoreClrForkConfig)' == ''">Debug</CoreClrForkConfig>
+    <CoreClrForkObj>$(MSBuildThisFileDirectory)..\dotnet-runtime-sharpos\artifacts\obj\coreclr\windows.x64.$(CoreClrForkConfig)</CoreClrForkObj>
   </PropertyGroup>
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <LinkerArg Include="&quot;$(CoreClrForkObj)\dlls\mscoree\coreclr\coreclr_static.lib&quot;" />

@@ -95,7 +95,13 @@ dotnet-runtime-vanilla-wsl/
 # Build/test output trees, transient logs & MSBuild caches — regenerable,
 # never source. (f715a32 accidentally committed 838 of these — 334k lines,
 # 75 MB pdb; see done/step068.md / memory feedback-never-commit-build-artifacts.)
-work/
+# Ignore everything under work/ EXCEPT the normal-hello probe harness
+# source (the byte-for-byte stock .NET program we host on bare metal --
+# our CoreCLR-hosted census/regression suite). bin/obj stay ignored.
+work/*
+!work/normal-hello/
+work/normal-hello/bin/
+work/normal-hello/obj/
 hello/
 last_build.log
 *.lscache
