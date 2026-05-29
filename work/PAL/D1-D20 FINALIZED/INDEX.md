@@ -1,4 +1,9 @@
-# SharpOS D-decisions — Final State (Round 7)
+# SharpOS D-decisions — archived Round 7 record
+
+**Archive status (2026-05-29):** this directory is no longer an active
+roadmap. The surviving D1-D20 outcomes have been collapsed into
+`plan.md` §3. Keep these files as historical reasoning/evidence only; do
+not add new active work here.
 
 Дата сборки: 2026-05-09
 

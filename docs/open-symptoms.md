@@ -47,10 +47,11 @@ thread to make progress that never comes.
 
 **Important context (confounding cleared):** this was initially
 mis-attributed to the step72 RBP override during a "is the override
-redundant?" experiment. The probe was confounded -- it tested FRAMEREG
-slot reporting AND WaitForPendingFinalizers at once. The hang is the
-finalizer wait; the override question remains UNTESTED cleanly (override
-left ON, as it has been since step72 -- working, not touched further).
+redundant?" experiment. The first probe was confounded -- it tested
+FRAMEREG slot reporting AND WaitForPendingFinalizers at once. The hang is
+the finalizer wait. A later clean single-variable probe removed the
+step72 RBP override successfully (see `done/step113.md`); this symptom is
+only about finalizer completion.
 
 **To investigate (when picked up):**
 - Does the finalizer thread get created at CoreCLR startup? Grep for

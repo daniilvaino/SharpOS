@@ -1,5 +1,12 @@
 # Threading architecture (Phase E)
 
+**Status note (2026-05-29):** this is the detailed Phase E design trail,
+not the current roadmap. The current consolidated roadmap is `plan.md`.
+Several E items described below as planned are now implemented and green
+in the Release CoreCLR baseline (threads, waits, ThreadPool, Task,
+Timer). Keep this file for architecture detail; update `plan.md` for
+active direction.
+
 Canonical decision document for SharpOS cooperative threading. **Decisions
 locked here are not re-negotiable mid-implementation** — deviations must
 be justified by what's actually encountered in code, not by preference.

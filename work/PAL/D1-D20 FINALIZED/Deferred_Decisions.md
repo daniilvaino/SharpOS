@@ -1,5 +1,10 @@
 # Deferred Decisions
 
+**Archive note (2026-05-29):** superseded by `plan.md`. D6 and D8 are no
+longer read from this file as active deferred decisions: D6 is resolved
+as split ownership, D8 moved to hosted CoreCLR production/GC work. This
+file remains only as Round-7 historical context.
+
 ## D6 — Thread state ownership (vm/ vs host)
 - **Reason**: нет threads на spike (D5 = ABORT_FATAL, Zero GC, finalizer skipped)
 - **Reopen when**: Phase 6.2 (после Phase 3 + D5 переоткрыт)
