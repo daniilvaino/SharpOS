@@ -28,7 +28,7 @@ namespace OS.PAL.SharpOSHost
     //   3. Set CONTEXT.Rip = catch handler entry
     //   4. RtlRestoreContext (custom asm helper) — load registers from
     //      CONTEXT и jump.
-    internal static unsafe class SehDispatch
+    internal static unsafe partial class SehDispatch
     {
         // Permanent mainline hygiene (Phase A clean-freeze). Managed-EH
         // pillar CLOSED (steps 70/71); this per-frame SEH raise/search +
@@ -887,6 +887,11 @@ namespace OS.PAL.SharpOSHost
         // BootInfo.AsmExecBuffer. Layout: capture at offset 0x80, restore
         // at offset 0x100 (past X64Asm STI/CLI/HLT 0..63 and GS-base
         // wrmsr stub from CoreClrProbe at 64..82).
+        //
+        // step 115 follow-up: parallel-emit via Iced + byte-compare gate.
+        // Iced writes to the LIVE buffer (capCode/resCode), legacy
+        // byte-emitter writes to a scratch on our stack. Bytes must match
+        // exactly — any drift panics with offset + expected/got.
         private static void EnsureShellcode()
         {
             if (s_shellcodeReady) return;
@@ -899,9 +904,24 @@ namespace OS.PAL.SharpOSHost
             // restore shellcode at 0x200 (~140 bytes → 0x28C).
             // Buffer is 1024 — comfortably fits with no overlap.
             byte* capCode = buf + 0x80;
-            EmitCapture(capCode);
             byte* resCode = buf + 0x200;
-            EmitRestore(resCode);
+
+            const int kScratchCap = 256;
+            byte* legacyScratch = stackalloc byte[kScratchCap];
+
+            int icedCapLen = EmitCaptureIced(capCode, kScratchCap);
+            int legacyCapLen = EmitCapture(legacyScratch);
+            CompareOrPanic("EmitCapture", capCode, legacyScratch, icedCapLen, legacyCapLen);
+
+            int icedResLen = EmitRestoreIced(resCode, kScratchCap);
+            int legacyResLen = EmitRestore(legacyScratch);
+            CompareOrPanic("EmitRestore", resCode, legacyScratch, icedResLen, legacyResLen);
+
+            Console.Write("[shellcode] iced=legacy OK cap=0x");
+            Console.WriteHex((ulong)icedCapLen);
+            Console.Write(" res=0x");
+            Console.WriteHex((ulong)icedResLen);
+            Console.WriteLine("");
 
             s_capture = (delegate* unmanaged<Context*, void>)capCode;
             s_restore = (delegate* unmanaged<Context*, void>)resCode;
@@ -919,7 +939,10 @@ namespace OS.PAL.SharpOSHost
         //   mov [rcx+0x98], rax       ; caller's Rsp
         //   pushfq; pop rax; mov [rcx+0x44], eax
         //   ret
-        private static void EmitCapture(byte* p)
+        // Returns final byte count for optional diagnostics / Iced parity
+        // experiments. The production EH path ignores it and stays
+        // allocation-free.
+        private static int EmitCapture(byte* p)
         {
             int o = 0;
             // movl $0x100003, 0x30(%rcx)
@@ -957,6 +980,7 @@ namespace OS.PAL.SharpOSHost
             p[o++] = 0x89; p[o++] = 0x41; p[o++] = 0x44;
             // ret
             p[o++] = 0xC3;
+            return o;
         }
 
         // mov [rcx + disp8 or disp32], r64.
@@ -993,7 +1017,10 @@ namespace OS.PAL.SharpOSHost
         //   mov rsp, [rcx+0x98]
         //   sub rsp, 8
         //   ret                    ; jumps к pre-placed Rip
-        private static void EmitRestore(byte* p)
+        // Returns final byte count for optional diagnostics / Iced parity
+        // experiments. The production EH path ignores it and stays
+        // allocation-free.
+        private static int EmitRestore(byte* p)
         {
             int o = 0;
             // Pre-place return target so we can use rsp's `ret` to transfer.
@@ -1036,6 +1063,7 @@ namespace OS.PAL.SharpOSHost
             EmitMovCtxToReg(p, ref o, 0x01 /*rcx*/, 0x80);
             // ret    — pops [rsp] (= our pre-placed target Rip) into Rip
             p[o++] = 0xC3;
+            return o;
         }
 
         // ─── Phase D iteration 3: FrameChain skip-through ──────────────────

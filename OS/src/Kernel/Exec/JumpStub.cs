@@ -1,9 +1,10 @@
+using OS.Hal;
 using OS.Kernel.Paging;
 using OS.Kernel.Util;
 
 namespace OS.Kernel.Exec
 {
-    internal static unsafe class JumpStub
+    internal static unsafe partial class JumpStub
     {
         private const ulong PageSize = X64PageTable.PageSize;
         private const uint StubPageSize = 4096;
@@ -77,8 +78,24 @@ namespace OS.Kernel.Exec
                 return false;
 
             OS.Kernel.Util.Memory.Zero((void*)stubVirtual, StubPageSize);
-            if (!TryWriteStub((byte*)stubVirtual))
-                return false;
+
+            // step 115 follow-up #2: parallel-emit Iced into the live stub
+            // page, legacy byte-emitter into a stack scratch, byte-compare.
+            // Mismatch panics with offset (visible at boot, not as a wild
+            // jump later). Identity keeps the live Iced bytes — actual
+            // migration, not back-stop. After a few green boots the legacy
+            // emitter + the compare gate come out.
+            byte* dst = (byte*)stubVirtual;
+            const int kScratchCap = 256;
+            byte* legacyScratch = stackalloc byte[kScratchCap];
+
+            int icedLen = EmitStubIced(dst, kScratchCap);
+            int legacyLen = EmitStubLegacy(legacyScratch);
+            CompareOrPanic("JumpStub", dst, legacyScratch, icedLen, legacyLen);
+
+            Console.Write("[stub] jumpstub iced=legacy OK len=0x");
+            Console.WriteHex((ulong)icedLen);
+            Console.WriteLine("");
 
             s_stubPhysicalAddress = stubPhysical;
             s_stubVirtualAddress = stubVirtual;
@@ -149,11 +166,11 @@ namespace OS.Kernel.Exec
             return true;
         }
 
-        private static bool TryWriteStub(byte* destination)
+        // step 115 follow-up #2: returns final byte count so TryInitialize
+        // can length-compare against the Iced emitter result. Null-check
+        // dropped — caller always passes a freshly allocated page.
+        private static int EmitStubLegacy(byte* destination)
         {
-            if (destination == null)
-                return false;
-
             // Windows x64 ABI:
             // rcx = entry address, rdx = stack top, r8 = startup block pointer,
             // r9 = pager CR3.
@@ -210,7 +227,7 @@ namespace OS.Kernel.Exec
             destination[57] = 0x41; destination[58] = 0x5C;
             destination[59] = 0x4C; destination[60] = 0x89; destination[61] = 0xD0;
             destination[62] = 0xC3;
-            return true;
+            return 63;
         }
     }
 }

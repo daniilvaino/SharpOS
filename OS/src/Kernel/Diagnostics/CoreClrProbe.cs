@@ -6,6 +6,7 @@ using OS.Hal;
 using OS.Kernel.Memory;
 using OS.PAL.SharpOSHost;
 using SharpOS.Std.NoRuntime;
+using static Iced.Intel.AssemblerRegisters;
 
 namespace OS.Kernel.Diagnostics
 {
@@ -517,13 +518,34 @@ namespace OS.Kernel.Diagnostics
             }
 
             byte* code = (byte*)bi.AsmExecBuffer + 64;
-            code[0] = 0x48; code[1] = 0x89; code[2] = 0xC8;          // mov rax, rcx
-            code[3] = 0x48; code[4] = 0x89; code[5] = 0xCA;          // mov rdx, rcx
-            code[6] = 0x48; code[7] = 0xC1; code[8] = 0xEA; code[9] = 0x20;
-            code[10] = 0xB9;
-            code[11] = 0x01; code[12] = 0x01; code[13] = 0x00; code[14] = 0xC0;
-            code[15] = 0x0F; code[16] = 0x30;
-            code[17] = 0xC3;
+            // step 115 follow-up #5: wrmsr GS_BASE stub emitted via Iced.
+            // RCX in = TEB address; split into EDX:EAX (high:low 32 bits)
+            // and write MSR 0xC0000101 (MSR_GS_BASE).
+            //
+            //   mov  rax, rcx
+            //   mov  rdx, rcx
+            //   shr  rdx, 0x20      ; rdx = high 32 bits of TEB
+            //   mov  ecx, 0xC0000101 ; MSR_GS_BASE
+            //   wrmsr
+            //   ret
+            // 18 bytes legacy. Iced may pick a slightly fatter encoding
+            // (cf. #3 BigStack: +4 bytes, semantically OK) — print length
+            // for visibility; 128-byte slot has comfortable headroom.
+            {
+                var a = new Iced.Intel.Assembler(64);
+                a.mov(rax, rcx);
+                a.mov(rdx, rcx);
+                a.shr(rdx, 0x20);
+                a.mov(ecx, 0xC0000101);
+                a.wrmsr();
+                a.ret();
+
+                var w = new GsBaseStubBufWriter(code, 64);
+                a.Assemble(w, 0);
+                Console.Write("  [gsbase] stub len=0x");
+                Console.WriteHex((ulong)w.Count);
+                Console.WriteLine("");
+            }
 
             delegate* unmanaged<ulong, void> setGsBase = (delegate* unmanaged<ulong, void>)code;
             setGsBase((ulong)teb);
@@ -539,6 +561,23 @@ namespace OS.Kernel.Diagnostics
             }
 
             Console.WriteLine("  GS_BASE = TEB via wrmsr OK; main Scheduler.Current.Teb wired");
+        }
+
+        // Local Iced CodeWriter for the wrmsr GS_BASE stub. Same shape as
+        // SehDispatch / JumpStub / BigStack writers — kept inline since
+        // CoreClrProbe owns its single tiny stub and the dependency cone
+        // stays narrow that way.
+        private sealed class GsBaseStubBufWriter : Iced.Intel.CodeWriter
+        {
+            private readonly byte* _p;
+            private readonly int _cap;
+            private int _i;
+            public GsBaseStubBufWriter(byte* p, int capacity) { _p = p; _cap = capacity; _i = 0; }
+            public int Count => _i;
+            public override void WriteByte(byte value)
+            {
+                if (_i < _cap) _p[_i++] = value;
+            }
         }
     }
 }

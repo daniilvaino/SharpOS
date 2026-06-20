@@ -39,9 +39,12 @@ namespace System
             nint srcObj = *(nint*)Unsafe.AsPointer(ref src);
             nint dstObj = *(nint*)Unsafe.AsPointer(ref dst);
 
-            // ComponentSize at offset 0 of MT. Zero for non-component-sized
-            // types, in which case Copy is a no-op here.
-            ushort elemSize = *(ushort*)srcObj;
+            // ComponentSize lives at offset 0 of the array MethodTable. The
+            // array object itself starts with an MT pointer, so dereference
+            // object[0] first; reading from srcObj directly would interpret
+            // the low bytes of the MT pointer as an element size.
+            nint srcMt = *(nint*)srcObj;
+            ushort elemSize = *(ushort*)srcMt;
             if (elemSize == 0) return;
 
             byte* srcStart = (byte*)srcObj + 16 + (uint)sourceIndex * elemSize;

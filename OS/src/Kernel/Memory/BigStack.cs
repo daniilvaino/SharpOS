@@ -1,3 +1,6 @@
+using OS.Hal;
+using static Iced.Intel.AssemblerRegisters;
+
 namespace OS.Kernel.Memory
 {
     // step 72 / Frontier-C — run CoreCLR on a large stack.
@@ -94,26 +97,51 @@ namespace OS.Kernel.Memory
         }
 
         // Win64 ABI, entry RSP ≡ 8 (mod 16) (after the C# `call s_run`):
-        //   55              push rbp            ; rsp: 8 -> 0 (mod 16)
-        //   48 89 E5        mov  rbp, rsp       ; rbp = saved-rbp slot
-        //   48 89 CC        mov  rsp, rcx       ; switch (rcx=newStackTop, 16-aligned → rsp%16==0)
-        //   48 83 EC 20     sub  rsp, 0x20      ; Win64 shadow; rsp%16==0 kept
-        //   FF D2           call rdx            ; rsp%16==0 before call → callee entry %16==8 ✓
-        //   48 89 EC        mov  rsp, rbp       ; restore to saved-rbp slot
-        //   5D              pop  rbp            ; restore rbp; rsp → entry rsp
-        //   C3              ret
+        //   push rbp           ; rsp: 8 -> 0 (mod 16)
+        //   mov  rbp, rsp      ; rbp = saved-rbp slot
+        //   mov  rsp, rcx      ; switch (rcx=newStackTop, 16-aligned → rsp%16==0)
+        //   sub  rsp, 0x20     ; Win64 shadow; rsp%16==0 kept
+        //   call rdx           ; rsp%16==0 before call → callee entry %16==8 ✓
+        //   mov  rsp, rbp      ; restore to saved-rbp slot
+        //   pop  rbp           ; restore rbp; rsp → entry rsp
+        //   ret
         // 14 bytes. newStackTop must be 16-aligned (caller masks ~0xF).
+        //
+        // step 115 follow-up #3: emitted via Iced. Smallest of the three
+        // shellcode migrations (8 instructions, 14 bytes) — compare-gate
+        // dropped after #1/#2 confirmed byte parity on representative
+        // patterns. If Iced silently produces 0 bytes the length print
+        // will show it; any real divergence breaks Phase3 boot loudly.
         private static void WriteShellcode(byte* p)
         {
-            int i = 0;
-            p[i++] = 0x55;                                              // push rbp
-            p[i++] = 0x48; p[i++] = 0x89; p[i++] = 0xE5;               // mov rbp, rsp
-            p[i++] = 0x48; p[i++] = 0x89; p[i++] = 0xCC;               // mov rsp, rcx
-            p[i++] = 0x48; p[i++] = 0x83; p[i++] = 0xEC; p[i++] = 0x20; // sub rsp, 0x20
-            p[i++] = 0xFF; p[i++] = 0xD2;                               // call rdx
-            p[i++] = 0x48; p[i++] = 0x89; p[i++] = 0xEC;               // mov rsp, rbp
-            p[i++] = 0x5D;                                              // pop rbp
-            p[i++] = 0xC3;                                              // ret
+            var a = new Iced.Intel.Assembler(64);
+            a.push(rbp);
+            a.mov(rbp, rsp);
+            a.mov(rsp, rcx);
+            a.sub(rsp, 0x20);
+            a.call(rdx);
+            a.mov(rsp, rbp);
+            a.pop(rbp);
+            a.ret();
+
+            var w = new BigStackBufWriter(p, (int)StubSize);
+            a.Assemble(w, 0);
+            Console.Write("[bigstack] stub len=0x");
+            Console.WriteHex((ulong)w.Count);
+            Console.WriteLine("");
+        }
+
+        private sealed class BigStackBufWriter : Iced.Intel.CodeWriter
+        {
+            private readonly byte* _p;
+            private readonly int _cap;
+            private int _i;
+            public BigStackBufWriter(byte* p, int capacity) { _p = p; _cap = capacity; _i = 0; }
+            public int Count => _i;
+            public override void WriteByte(byte value)
+            {
+                if (_i < _cap) _p[_i++] = value;
+            }
         }
     }
 }

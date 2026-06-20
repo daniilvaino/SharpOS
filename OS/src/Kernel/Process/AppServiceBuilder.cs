@@ -15,7 +15,7 @@ namespace OS.Kernel.Process
     // + marshalling with no readability gain. Path composition that
     // stays on our side (TryBuildAbiManifestPath) uses managed
     // string.Concat; the copy-back loop at the ABI edge is unavoidable.
-    internal static unsafe class AppServiceBuilder
+    internal static unsafe partial class AppServiceBuilder
     {
         private const int MaxWriteStringBytes = 512;
         private const uint MaxPathChars = 260;
@@ -399,11 +399,67 @@ namespace OS.Kernel.Process
             return false;
         }
 
+        // step 115 follow-up #4: Iced-driven thunk emitters with a
+        // byte-compare gate against the legacy byte-streams. Iced writes
+        // to the LIVE destination (this is the actual migration), legacy
+        // writes to a stack scratch — bytes must match exactly or
+        // CompareOrPanic halts with offset + iced/legacy values. Each
+        // thunk slot is 64 bytes (ServiceThunkSlotSize); thunk bodies are
+        // 21 / 24 bytes, so the scratch has plenty of headroom. First
+        // successful emit per shape prints one [thunk] line; subsequent
+        // emits are silent but still gated (24+ calls per boot).
         private static bool TryWriteWin64OneArgThunk(byte* destination, ulong target)
         {
             if (destination == null || target == 0)
                 return false;
 
+            byte* scratch = stackalloc byte[64];
+            int icedLen = EmitWin64OneArgThunkIced(destination, 64, target);
+            int legacyLen = EmitWin64OneArgThunkLegacy(scratch, target);
+            CompareOrPanic("Win64OneArgThunk", destination, scratch, icedLen, legacyLen);
+
+            if (!s_win64GateLogged)
+            {
+                s_win64GateLogged = true;
+                Console.Write("[thunk] win64-onearg iced=legacy OK len=0x");
+                Console.WriteHex((ulong)icedLen);
+                Console.WriteLine("");
+            }
+            return true;
+        }
+
+        private static bool TryWriteWin64NoArgThunk(byte* destination, ulong target)
+        {
+            return TryWriteWin64OneArgThunk(destination, target);
+        }
+
+        private static bool TryWriteSystemVOneArgThunk(byte* destination, ulong target)
+        {
+            if (destination == null || target == 0)
+                return false;
+
+            byte* scratch = stackalloc byte[64];
+            int icedLen = EmitSystemVOneArgThunkIced(destination, 64, target);
+            int legacyLen = EmitSystemVOneArgThunkLegacy(scratch, target);
+            CompareOrPanic("SystemVOneArgThunk", destination, scratch, icedLen, legacyLen);
+
+            if (!s_sysVGateLogged)
+            {
+                s_sysVGateLogged = true;
+                Console.Write("[thunk] sysv-onearg iced=legacy OK len=0x");
+                Console.WriteHex((ulong)icedLen);
+                Console.WriteLine("");
+            }
+            return true;
+        }
+
+        private static bool s_win64GateLogged;
+        private static bool s_sysVGateLogged;
+
+        // ---- Legacy byte-stream emitters (return length for compare). ----
+
+        private static int EmitWin64OneArgThunkLegacy(byte* destination, ulong target)
+        {
             // mov rax, target
             destination[0] = 0x48;
             destination[1] = 0xB8;
@@ -423,19 +479,11 @@ namespace OS.Kernel.Process
             destination[19] = 0x28;
             // ret
             destination[20] = 0xC3;
-            return true;
+            return 21;
         }
 
-        private static bool TryWriteWin64NoArgThunk(byte* destination, ulong target)
+        private static int EmitSystemVOneArgThunkLegacy(byte* destination, ulong target)
         {
-            return TryWriteWin64OneArgThunk(destination, target);
-        }
-
-        private static bool TryWriteSystemVOneArgThunk(byte* destination, ulong target)
-        {
-            if (destination == null || target == 0)
-                return false;
-
             // mov rcx, rdi
             destination[0] = 0x48;
             destination[1] = 0x89;
@@ -459,7 +507,7 @@ namespace OS.Kernel.Process
             destination[22] = 0x28;
             // ret
             destination[23] = 0xC3;
-            return true;
+            return 24;
         }
 
         private static bool TryWriteSystemVNoArgThunk(byte* destination, ulong target)
