@@ -4,9 +4,10 @@
 
 Все шесть hand-rolled byte-emitter'ов в kernel-AOT мигрированы на
 **runtime codegen через Iced** (запечённый в step 115). На всех — parallel-emit
-с byte-compare gate против legacy, на 5 из 6 байт-в-байт совпадение, на
-1 (BigStack) — semantic-only с дельтой +4 байта, требующей форензики
-(см. ниже, на пост-commit пас).
+с byte-compare gate против legacy, **на всех 6 байт-в-байт совпадение**
+(пост-коммит форензика BigStack подтвердила что комментарий "14 bytes" в
+legacy был ложным — реальная запись была 18 байт всё это время; см.
+ниже).
 
 Подтверждено что AssemblerRegisters cctor materialization готова уже
 на Phase3 (раньше первого Probe_IcedEncode), значит Iced **годится для
@@ -18,7 +19,7 @@ runtime shellcode в любой точке kernel boot'а** post-Phase2.
 |---|---|---|---|---|---|
 | 1 | EmitCapture / EmitRestore | `PAL/SharpOSHost/SehDispatch.cs` | EH-dispatch (lazy) | 138 / 137 | 138 / 137 ✅ |
 | 2 | JumpStub | `Kernel/Exec/JumpStub.cs` | 5 (ELF launch) | 63 | 63 ✅ |
-| 3 | BigStack | `Kernel/Memory/BigStack.cs` | 3 (CoreCLR boot) | 18 | 14 (см. ниже) |
+| 3 | BigStack | `Kernel/Memory/BigStack.cs` | 3 (CoreCLR boot) | 18 | 18 ✅ (legacy комментарий ложно говорил "14") |
 | 4 | Win64/SysV thunks | `Kernel/Process/AppServiceBuilder.cs` | 5 | 21 / 24 | 21 / 24 ✅ |
 | 5 | wrmsr GS_BASE | `Kernel/Diagnostics/CoreClrProbe.cs` | 4 | 18 | 18 ✅ |
 | 6 | Cr3 read/write stubs | `Kernel/Paging/Cr3Accessor.cs` | 3 (earliest!) | 4 / 7 | 4 / 7 ✅ |
@@ -50,12 +51,30 @@ runtime shellcode в любой точке kernel boot'а** post-Phase2.
   в kernel-AOT не показывал баг. Fix landed в Array.cs (см. step 115
   amendment).
 
-## Что под вопросом — BigStack +4 байт
+## Форензика BigStack — комментарий "14 bytes" был ложным
 
-Iced даёт 18 байт, легаси-комментарий говорит "14 bytes". Подозрение:
-комментарий протух / посчитан неверно — фактическая запись могла быть
-18 байт всё это время. Форензику делаем после фиксации этого коммита
-(см. следующий пас на ветке).
+Iced даёт `len=0x12 = 18`. Постзачёт по реальному byte-count'у в legacy
+(`git show 2f5f271:OS/src/Kernel/Memory/BigStack.cs`):
+
+| Инструкция | Байты | Кол-во |
+|---|---|---|
+| `push rbp` | `55` | 1 |
+| `mov rbp, rsp` | `48 89 E5` | 3 |
+| `mov rsp, rcx` | `48 89 CC` | 3 |
+| `sub rsp, 0x20` | `48 83 EC 20` | 4 |
+| `call rdx` | `FF D2` | 2 |
+| `mov rsp, rbp` | `48 89 EC` | 3 |
+| `pop rbp` | `5D` | 1 |
+| `ret` | `C3` | 1 |
+| **итого** | | **18** |
+
+`1+3+3+4+2+3+1+1 = 18`. Комментарий `// 14 bytes. newStackTop must be
+16-aligned` посчитан на глаз без учёта REX.W префиксов на четырёх
+mov-инструкциях. Iced выбрал ту же каноничную форму — **byte-identical**,
+не "semantic-only".
+
+Урок: не доверять комментарию-счётчику байт; compare-gate ловит реальные
+расхождения, а форензика по git'у разоблачает протухшие комменты.
 
 ## Файлы
 
@@ -83,7 +102,8 @@ Iced даёт 18 байт, легаси-комментарий говорит "1
 2. **Iced encoder детерминирован** для каноничных x64 паттернов
    (`mov reg-reg`, `mov rax,imm64`, `call reg`, `lea` с SIB, `pushfq/popfq`,
    `cli/sti`, привилегированные `mov rax,cr3` / `mov cr3,r9`, indirect
-   `call rcx`). Не угадывает варианты — берёт каноничную форму.
+   `call rcx`). Не угадывает варианты — берёт каноничную форму. На всех
+   6 эмиттерах byte-identical с hand-rolled — ноль расхождений.
 
 3. **AssemblerRegisters cctor materialization готова на Phase3.** Это
    значит весь kernel boot post-Phase2 — safe zone для Iced runtime emit.
