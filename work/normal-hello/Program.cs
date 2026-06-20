@@ -405,6 +405,73 @@ Probe("GZipStream", () =>
     if (ms.Length == 0) throw new Exception("empty gzip");
 });
 
+// ── 7. MANAGED DELEGATES / LAMBDAS ────────────────────────────────────
+// Confirms what the README feature table claims (CoreCLR-hosted ✅
+// tentative): full Delegate.InitializeClosedInstance + _target +
+// _functionPointer + Invoke pipeline alive on bare metal. AOT tiers
+// (kernel / ELF-app) HALT-trap any lambda — that's why this set lives
+// only here, not in NativeAotProbe. Each sub-probe targets a distinct
+// codegen path so a partial regression isolates to one cell.
+Sec("7. DELEGATES / LAMBDAS  (kernel-AOT cannot run these)");
+
+// Static lambda (no capture) — Roslyn emits cached delegate over a
+// compiler-synthesised static method. Simplest path; if THIS fails,
+// every other delegate variant will too.
+Probe("Func<T,R> no-capture", () =>
+{
+    Func<int, int> sq = x => x * x;
+    if (sq(7) != 49) throw new Exception($"bad sq: {sq(7)}");
+});
+
+// Action with side effect — exercises void-return Invoke path.
+Probe("Action<T> side-effect", () =>
+{
+    int s = 0;
+    Action<int> add = v => s += v;
+    add(5); add(10);
+    if (s != 15) throw new Exception($"bad sum: {s}");
+});
+
+// Closure over a local — display class allocation + captured field.
+// Different IL than no-capture; touches Delegate._target on an
+// instance method of the synthesised display class.
+Probe("Func<T,R> closure", () =>
+{
+    int factor = 3;
+    Func<int, int> mul = x => x * factor;
+    if (mul(4) != 12) throw new Exception($"bad mul: {mul(4)}");
+});
+
+// Method group conversion to delegate (Func<int,int> abs = Math.Abs;)
+// — IL ldftn + newobj Func<int,int>(target=null, methodPtr).
+Probe("Func<T,R> method group", () =>
+{
+    Func<int, int> abs = Math.Abs;
+    if (abs(-7) != 7) throw new Exception($"bad abs: {abs(-7)}");
+});
+
+// Multicast — `a += b` chains invocation lists. Final invoke fires
+// both. Verifies CombineImpl + invocation-list walking.
+Probe("Action multicast", () =>
+{
+    int hits = 0;
+    Action a = () => hits++;
+    a += () => hits++;
+    a();
+    if (hits != 2) throw new Exception($"bad multicast: {hits}");
+});
+
+// Lambda passed to Array.Sort via Comparison<T> — confirms the exact
+// signature shape we ported into our AOT std (where it can't run) is
+// actually fired by Iced-style code on the hosted tier.
+Probe("Comparison<T> via Array.Sort", () =>
+{
+    var arr = new[] { 5, 2, 4, 1, 3 };
+    Array.Sort(arr, (x, y) => x - y);
+    if (arr[0] != 1 || arr[1] != 2 || arr[2] != 3 || arr[3] != 4 || arr[4] != 5)
+        throw new Exception("bad sort");
+});
+
 // ── LAST: process-creation (hard-panic candidate — after all sets) ───
 Sec("6. PROCESS CREATION  (last — likely hard-panic)");
 Probe("Process.Start(dummy)", () => { using var p = Process.Start("dummy"); });

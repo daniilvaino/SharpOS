@@ -62,6 +62,14 @@ namespace OS.Kernel.Diagnostics
             Probe_SortedList();
             Probe_Yield();
             Probe_Span();
+            Probe_CreateSpan();
+            // Delegate-dependency removed (BlockEncoder.cs lambda was
+            // inlined as insertion sort). Still depends on cctor
+            // materialisation of `static readonly AssemblerRegister64
+            // rax = new ...(...)` register tables — if GcStaticsMaterializer
+            // can't handle them, this probe halts the run in the well-known
+            // ClassConstructorRunner trap zone.
+            Probe_IcedEncode();
             Probe_StringBuilder();
             Probe_StringConcat();
             Probe_StringSplit();
@@ -949,6 +957,78 @@ namespace OS.Kernel.Diagnostics
                 sumIndexer == 150 && firstAfterWrite == 100 &&
                     sliceSum == 90 && destSum == 90 && foreachSum == 90,
                 (uint)(sumIndexer + sliceSum));
+        }
+
+        // First end-to-end use of the in-kernel Iced x86 encoder.
+        // Builds `mov rax, rcx` via Assembler API, encodes through our
+        // BufWriter, verifies the canonical 3-byte sequence 48 89 C8
+        // (REX.W + opcode 89 + ModRM 0xC8). The whole pipeline exercises
+        // the `static readonly AssemblerRegister64 rax = new ...(Register.RAX)`
+        // cctor path — if our GcStaticsMaterializer can't materialise
+        // Iced's register tables, this probe halts in the well-known
+        // ClassConstructorRunner trap zone instead of returning ok=false.
+        // Caught Exception path covers Iced's EncoderException.
+        private static void Probe_IcedEncode()
+        {
+            bool ok = false;
+            uint sig = 0;
+            try
+            {
+                var buf = new byte[16];
+                fixed (byte* p = buf)
+                {
+                    var w = new BufWriter(p, buf.Length);
+                    var a = new Iced.Intel.Assembler(64);
+                    a.mov(Iced.Intel.AssemblerRegisters.rax, Iced.Intel.AssemblerRegisters.rcx);
+                    a.Assemble(w, 0);
+
+                    int n = w.Count;
+                    // Pack first 3 bytes as a sanity signature.
+                    if (n >= 3)
+                        sig = ((uint)buf[0] << 16) | ((uint)buf[1] << 8) | buf[2];
+                    // mov rax, rcx -> REX.W 48, opcode 89, ModR/M C8
+                    ok = n == 3 && buf[0] == 0x48 && buf[1] == 0x89 && buf[2] == 0xC8;
+                }
+            }
+            catch (Exception)
+            {
+                ok = false;
+            }
+            ReportProbe("iced.encode(mov rax,rcx)", ok, sig);
+        }
+
+        // Minimal Iced.Intel.CodeWriter implementation pointing at a raw
+        // byte buffer. WriteByte is the sole abstract member; everything
+        // else (Assembler / BlockEncoder / Encoder) writes through it.
+        private sealed unsafe class BufWriter : Iced.Intel.CodeWriter
+        {
+            private readonly byte* _p;
+            private readonly int _cap;
+            private int _i;
+
+            public BufWriter(byte* p, int capacity) { _p = p; _cap = capacity; _i = 0; }
+            public int Count => _i;
+
+            public override void WriteByte(byte value)
+            {
+                if (_i < _cap) _p[_i++] = value;
+            }
+        }
+
+        // C# 12 collection-expression / RVA-literal lowering: Roslyn emits
+        // `ldtoken <rva_field> + call RuntimeHelpers.CreateSpan<T>` for both
+        // `ReadOnlySpan<byte> x = [1,2,3,...]` and the older const-folded form
+        // `new ReadOnlySpan<byte>(new byte[] { ... })`. If ILC folds the
+        // intrinsic correctly, no allocation happens — span points straight
+        // into the RData blob.
+        private static void Probe_CreateSpan()
+        {
+            ReadOnlySpan<byte> ros = new byte[] { 0x11, 0x22, 0x33, 0x44, 0x55 };
+            int sum = 0;
+            for (int i = 0; i < ros.Length; i++) sum += ros[i];   // expect 0xFF
+            bool ok = ros.Length == 5 && sum == 0xFF
+                      && ros[0] == 0x11 && ros[4] == 0x55;
+            ReportProbe("RuntimeHelpers.CreateSpan", ok, (uint)sum);
         }
 
         private static void ReportProbe(string name, bool ok, uint value)

@@ -280,7 +280,8 @@ Deferred until a Roslyn smoke exists or a concrete blocker requires it:
 - FAT32 write persistence,
 - crash dumps to disk,
 - full GUI/windowing/audio,
-- PowerShell-full.
+- PowerShell-full,
+- **Firecracker microVM drivers** — virtio-mmio (не PCI) transport + virtio-blk / virtio-net / virtio-vsock + i8042-less serial console. Цель: запуск SharpOS как guest под Firecracker (AWS microVM hypervisor) для serverless/функциональных сценариев — быстрый cold-start, минимальная attack surface. Virtio-mmio лежит ниже virtio-{blk,net} в стеке (transport-слой, не device-слой); общая часть с virtio-PCI — устройства, разное — discovery (DT/ACPI MMIO vs PCI config space) и notify path (MMIO write vs PCI BAR). Триггер: реальный use-case или законченный virtio-net по PCI.
 
 ---
 

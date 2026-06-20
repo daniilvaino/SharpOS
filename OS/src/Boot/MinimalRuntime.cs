@@ -7,13 +7,38 @@ namespace Internal.Runtime
     internal struct MethodTable { }
 }
 
+namespace System.Runtime.CompilerServices
+{
+    // Helper class for unsafe pinning / raw-address access to the payload
+    // of an arbitrary boxed object. ILC's GenericUnboxingThunk.EmitIL()
+    // looks up this exact type + the `Data` field by name in SystemModule
+    // (= OS for kernel, the app assembly for ELF apps) via
+    // `Context.SystemModule.GetKnownType("System.Runtime.CompilerServices",
+    //  "RawData").GetField("Data")` (BoxedTypes.cs:451/544). Layout:
+    // a single byte field places `Data` immediately after the inherited
+    // Object header (m_pEEType @ 0), giving thunk emitters a `ref byte`
+    // handle to the boxed value-type payload via `ldflda RawData::Data`.
+    // Upstream copy lives at
+    //   src/coreclr/nativeaot/Runtime.Base/src/System/Runtime/CompilerServices/RawData.cs
+    internal class RawData
+    {
+        public byte Data;
+    }
+}
+
 namespace System
 {
     public unsafe class Object
     {
 #pragma warning disable 169
-        // The layout of object is a contract with the compiler.
-        private IntPtr m_pMethodTable;
+        // The layout of object is a contract with the compiler. Field name
+        // is `m_pEEType` (not `m_pMethodTable`) — NativeAOT ILC's
+        // GenericUnboxingThunk.EmitIL() looks it up by exact name via
+        // GetKnownField(Object, "m_pEEType"). Trips when generic
+        // IEnumerator<T> from Iced (or any other lifted BCL with boxed
+        // enumerators) lands a `Boxed_Enumerator<__Canon>.Dispose_Unbox()`
+        // thunk into the compiled set.
+        private IntPtr m_pEEType;
 #pragma warning restore 169
 
         // Reference-equality default. Value types override with value comparison;
@@ -67,6 +92,10 @@ namespace System
 
     public struct Char : IEquatable<char>, IComparable<char>, IComparable
     {
+        // Canonical BCL values.
+        public const char MaxValue = (char)0xFFFF;
+        public const char MinValue = (char)0x00;
+
         private char _value;
         public bool Equals(char other) => _value == other;
         public override bool Equals(object obj) => obj is char c && _value == c;
@@ -77,6 +106,9 @@ namespace System
 
     public struct SByte : IEquatable<sbyte>, IComparable<sbyte>, IComparable
     {
+        public const sbyte MaxValue = (sbyte)0x7F;
+        public const sbyte MinValue = unchecked((sbyte)0x80);
+
         private sbyte _value;
         public bool Equals(sbyte other) => _value == other;
         public override bool Equals(object obj) => obj is sbyte v && _value == v;
@@ -87,6 +119,9 @@ namespace System
 
     public struct Byte : IEquatable<byte>, IComparable<byte>, IComparable
     {
+        public const byte MaxValue = (byte)0xFF;
+        public const byte MinValue = 0;
+
         private byte _value;
         public bool Equals(byte other) => _value == other;
         public override bool Equals(object obj) => obj is byte v && _value == v;
@@ -97,6 +132,9 @@ namespace System
 
     public struct Int16 : IEquatable<short>, IComparable<short>, IComparable
     {
+        public const short MaxValue = (short)0x7FFF;
+        public const short MinValue = unchecked((short)0x8000);
+
         private short _value;
         public bool Equals(short other) => _value == other;
         public override bool Equals(object obj) => obj is short v && _value == v;
@@ -107,6 +145,9 @@ namespace System
 
     public struct UInt16 : IEquatable<ushort>, IComparable<ushort>, IComparable
     {
+        public const ushort MaxValue = (ushort)0xFFFF;
+        public const ushort MinValue = 0;
+
         private ushort _value;
         public bool Equals(ushort other) => _value == other;
         public override bool Equals(object obj) => obj is ushort v && _value == v;
@@ -251,13 +292,86 @@ namespace System
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
         public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.ULongToString((ulong)_value);
     }
-    public struct Single { }
-    public struct Double { }
+    // Single / Double: ILC special-cases these primitives by namespace+name —
+    // arithmetic / cast / boxing all work without an instance _value field
+    // (same trick as Int32._value). We carry just the canonical BCL constants
+    // so `float.MinValue`, `double.NaN` etc. resolve in lifted code. Bit
+    // patterns match dotnet/runtime exactly; PositiveInfinity / NaN are
+    // compile-time-foldable per IEEE 754 in C# const context.
+    public struct Single
+    {
+        public const float MinValue = -3.40282347E+38F;
+        public const float MaxValue = 3.40282347E+38F;
+        public const float Epsilon = 1.401298E-45F;
+        public const float PositiveInfinity = (float)1.0 / (float)0.0;
+        public const float NegativeInfinity = (float)-1.0 / (float)0.0;
+        public const float NaN = (float)0.0 / (float)0.0;
+    }
+
+    public struct Double
+    {
+        public const double MinValue = -1.7976931348623157E+308;
+        public const double MaxValue = 1.7976931348623157E+308;
+        public const double Epsilon = 4.9406564584124654E-324;
+        public const double PositiveInfinity = 1.0 / 0.0;
+        public const double NegativeInfinity = -1.0 / 0.0;
+        public const double NaN = 0.0 / 0.0;
+    }
 
     public abstract class ValueType { }
     public abstract class Enum : ValueType { }
 
-    public struct Nullable<T> where T : struct { }
+    // Ported from dotnet/runtime
+    // src/libraries/System.Private.CoreLib/src/System/Nullable.cs
+    // Roslyn lowering for `T?` value-type chains (`arr?.Length ?? 0`,
+    // `int? x = ...`, `x.HasValue`) calls into specific members via
+    // `.Single(predicate)` ctor/method lookup. An empty stub here makes
+    // Roslyn crash with "Sequence contains no elements" — was the Iced
+    // AssemblerResult build trigger. [Serializable] in upstream dropped
+    // (no SerializableAttribute in our std).
+    public struct Nullable<T> where T : struct
+    {
+        private readonly bool hasValue;
+        internal T value;
+
+        public Nullable(T value)
+        {
+            this.value = value;
+            this.hasValue = true;
+        }
+
+        public readonly bool HasValue => hasValue;
+        public readonly T Value
+        {
+            get
+            {
+                if (!hasValue) ThrowNoValue();
+                return value;
+            }
+        }
+
+        public readonly T GetValueOrDefault() => value;
+        public readonly T GetValueOrDefault(T defaultValue) => hasValue ? value : defaultValue;
+
+        public override bool Equals(object other)
+        {
+            if (!hasValue) return other == null;
+            if (other == null) return false;
+            return value.Equals(other);
+        }
+
+        public override int GetHashCode() => hasValue ? value.GetHashCode() : 0;
+
+        public override string ToString() => hasValue ? value.ToString() : "";
+
+        public static implicit operator Nullable<T>(T value) => new Nullable<T>(value);
+        public static explicit operator T(Nullable<T> value) => value.Value;
+
+        private static void ThrowNoValue()
+        {
+            throw new InvalidOperationException("Nullable object must have a value.");
+        }
+    }
 
     public abstract class Type { }
     public class RuntimeType : Type { }
@@ -354,6 +468,15 @@ namespace System
         public class RuntimeHelpers
         {
             public static unsafe int OffsetToStringData => sizeof(IntPtr) + sizeof(int);
+
+            // Roslyn lowers `ReadOnlySpan<T> x = [1,2,3,...]` and similar RVA
+            // literals into `ldtoken <field> + call RuntimeHelpers.CreateSpan<T>`.
+            // [Intrinsic] tells ILC to fold the pattern into a direct span over
+            // the RData blob — the body never executes. Return default to avoid
+            // pulling in any exception type for the dead path.
+            [Intrinsic]
+            public static ReadOnlySpan<T> CreateSpan<T>(RuntimeFieldHandle fldHandle)
+                => default;
         }
 
         public static class RuntimeFeature

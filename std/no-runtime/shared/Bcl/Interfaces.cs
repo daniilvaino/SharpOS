@@ -26,6 +26,30 @@ namespace System
     {
         int CompareTo(T other);
     }
+
+    // Format-string surface. `IFormatProvider` is a culture/locale source —
+    // we never have one (invariant only), so callers pass null. Primitives
+    // implement `IFormattable` to honour spec strings like "X" (hex) / "N2"
+    // (numeric) when string.Format / StringBuilder.AppendFormat encounter
+    // `{N:fmt}`. If a type doesn't implement IFormattable, the format spec
+    // is silently ignored and ToString() is used.
+    public interface IFormatProvider
+    {
+        object GetFormat(Type formatType);
+    }
+
+    public interface IFormattable
+    {
+        string ToString(string format, IFormatProvider formatProvider);
+    }
+
+    // Delegate type for callers passing a lambda comparator (e.g.
+    // `Array.Sort(arr, (a, b) => a.X.CompareTo(b.X))`). Roslyn compiles
+    // it against MulticastDelegate base; runtime needs the Delegate
+    // machinery (target/method ptr/Invoke) to actually fire. If a real
+    // lambda survives ILC codegen on our stubs it'll work — otherwise
+    // callers should switch to the IComparer<T> overload of Sort.
+    public delegate int Comparison<in T>(T x, T y);
 }
 
 namespace System.Collections
@@ -40,6 +64,32 @@ namespace System.Collections
         object Current { get; }
         bool MoveNext();
         void Reset();
+    }
+
+    // Non-generic legacy interfaces. Needed by BCL-lifted code that
+    // implements both modern generic and legacy non-generic surface on
+    // the same type (e.g. Iced's InstructionList). Member shapes match
+    // canonical .NET — no algorithmic content, types only.
+    public interface ICollection : IEnumerable
+    {
+        int Count { get; }
+        bool IsSynchronized { get; }
+        object SyncRoot { get; }
+        void CopyTo(System.Array array, int index);
+    }
+
+    public interface IList : ICollection
+    {
+        object this[int index] { get; set; }
+        bool IsFixedSize { get; }
+        bool IsReadOnly { get; }
+        int Add(object value);
+        void Clear();
+        bool Contains(object value);
+        int IndexOf(object value);
+        void Insert(int index, object value);
+        void Remove(object value);
+        void RemoveAt(int index);
     }
 }
 

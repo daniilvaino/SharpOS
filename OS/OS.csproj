@@ -23,7 +23,40 @@
     <PublishAot>true</PublishAot>
     <!-- IlcGenerateMapFile=true was used during step 40 cctor research.
          Re-enable temporarily if investigating ILC node emission. -->
+
+    <!-- step115: Iced (x86/x64 encoder) bake-in for runtime shellcode emission.
+         Iced uses C# 12+ syntax in places; net7.0 defaults to C# 11. -->
+    <LangVersion>latest</LangVersion>
+
+    <!-- Iced compilation surface:
+           ENCODER, BLOCK_ENCODER  — emitter side only (no decoder/formatter)
+           CODE_ASSEMBLER          — fluent asm.mov(...)-style API
+           HAS_SPAN                — we have Span<T> / ReadOnlySpan<T>
+           IcedNoIVT               — strip Iced's InternalsVisibleTo to UnitTests
+           NO_EVEX                 — drop EVEX encoder path. It carries a
+                                     `static readonly TryConvertToDisp8N
+                                     tryConvertToDisp8N = ...Impl.Method;`
+                                     delegate-in-static — both halves we
+                                     can't run on the AOT tier (managed
+                                     delegates + lazy static ref init).
+         Decoder/formatter files stay in the tree but compile to empty under
+         the unset defines. -->
+    <DefineConstants>$(DefineConstants);ENCODER;BLOCK_ENCODER;CODE_ASSEMBLER;HAS_SPAN;IcedNoIVT;NO_EVEX</DefineConstants>
   </PropertyGroup>
+
+  <!-- Exclude Iced's own .csproj (it's a NuGet-style multi-target one we don't
+       use — we bake Iced sources directly into OS via SDK auto-glob). SDK
+       doesn't auto-add nested .csproj, but mark it explicitly so dotnet
+       restore / IDE don't get confused. -->
+  <ItemGroup>
+    <None Include="src\Iced\Iced.csproj" />
+  </ItemGroup>
+
+  <!-- Drop Iced files that pull in surface we deliberately don't have:
+         StreamCodeWriter — System.IO.Stream (we use our own BufWriter). -->
+  <ItemGroup>
+    <Compile Remove="src\Iced\Intel\StreamCodeWriter.cs" />
+  </ItemGroup>
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <LinkerArg Include="libcmt.lib" />
   </ItemGroup>
@@ -211,6 +244,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\CharHelpers.cs" Link="src\Std\CharHelpers.cs" />
     <Compile Include="..\std\no-runtime\shared\StringQueries.cs" Link="src\Std\StringQueries.cs" />
     <Compile Include="..\std\no-runtime\shared\StringTransforms.cs" Link="src\Std\StringTransforms.cs" />
+    <Compile Include="..\std\no-runtime\shared\StringFormat.cs" Link="src\Std\StringFormat.cs" />
     <Compile Include="..\std\no-runtime\shared\NumberFormatting.cs" Link="src\Std\NumberFormatting.cs" />
     <Compile Include="..\std\no-runtime\shared\Threading.cs" Link="src\Std\Threading.cs" />
     <Compile Include="..\std\no-runtime\shared\Exception.cs" Link="src\Std\Exception.cs" />
@@ -247,6 +281,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Bcl\Guid.cs" Link="src\Std\Bcl\Guid.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Path.cs" Link="src\Std\Bcl\Path.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Interfaces.cs" Link="src\Std\Bcl\Interfaces.cs" />
+    <Compile Include="..\std\no-runtime\shared\Bcl\DebuggerAttributes.cs" Link="src\Std\Bcl\DebuggerAttributes.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\EqualityComparer.cs" Link="src\Std\Bcl\EqualityComparer.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Comparer.cs" Link="src\Std\Bcl\Comparer.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\List.cs" Link="src\Std\Bcl\List.cs" />

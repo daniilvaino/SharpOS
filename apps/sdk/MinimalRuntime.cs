@@ -7,12 +7,24 @@ namespace Internal.Runtime
     internal struct MethodTable { }
 }
 
+namespace System.Runtime.CompilerServices
+{
+    // ILC GenericUnboxingThunk lookup target — see OS/src/Boot/MinimalRuntime.cs
+    // for the longer explanation. Same shape as upstream.
+    internal class RawData
+    {
+        public byte Data;
+    }
+}
+
 namespace System
 {
     public unsafe class Object
     {
 #pragma warning disable 169
-        private IntPtr m_pMethodTable;
+        // Field name `m_pEEType` is contract with NativeAOT ILC — see
+        // OS/src/Boot/MinimalRuntime.cs for the longer explanation.
+        private IntPtr m_pEEType;
 #pragma warning restore 169
 
         public virtual bool Equals(object obj) => ReferenceEquals(this, obj);

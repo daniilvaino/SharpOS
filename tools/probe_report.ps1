@@ -121,6 +121,16 @@ $results += Get-ProbeStatus -Cat 'Phase4' -Name 'NativeAotFeatures' `
     -Status 'nativeaot probe (end)' `
     -Expect 'end'
 
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'CreateSpanIntrinsic' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'RuntimeHelpers\.CreateSpan: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'IcedEncode' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'iced\.encode\(mov rax,rcx\): (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
 $results += Get-ProbeStatus -Cat 'Phase4' -Name 'Cctor' `
     -Detect 'cctor implicit-int-field' `
     -Status 'cctor ref-field repeat: (ok|FAIL)' `

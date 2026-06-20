@@ -16,6 +16,7 @@
 //   BCL's "ArrayTypeMismatchException" response conceptually even
 //   though we can't throw.
 
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
 namespace System
@@ -168,6 +169,319 @@ namespace System
             if (index < 0 || index + length > array.Length) return;
             int end = index + length;
             for (int i = index; i < end; i++) array[i] = default;
+        }
+
+        // ---- Sort ----
+        // Ported from dotnet/runtime
+        // src/libraries/System.Private.CoreLib/src/System/Collections/
+        // Generic/ArraySortHelper.cs (IntrospectiveSort).
+        //
+        // Introsort = quicksort with two safeguards:
+        //   - partitions ≤ 16 elements fall through to insertion sort
+        //     (best on small inputs, no recursion overhead),
+        //   - recursion depth capped at 2*log2(length); on overflow we
+        //     switch to heapsort to enforce O(n log n) worst-case (defeats
+        //     adversarial inputs that would otherwise hit quicksort O(n²)).
+        // Pivot is median-of-three (first / middle / last). Same algorithm
+        // as Array.Sort in shipping .NET — only difference is we drop the
+        // ThrowHelper.ThrowInvalidOperationException on comparer-throws
+        // (we have no real exception unwind on the kernel tier yet).
+
+        private const int IntrosortSizeThreshold = 16;
+
+        // ---- Overload surface (matches BCL) ----
+
+        public static void Sort<T>(T[] array) where T : IComparable<T>
+        {
+            if (array == null || array.Length < 2) return;
+            ComparableIntroSort(array, 0, array.Length - 1, 2 * Log2((uint)array.Length));
+        }
+
+        public static void Sort<T>(T[] array, int index, int length) where T : IComparable<T>
+        {
+            if (array == null || length < 2) return;
+            if (index < 0 || index + length > array.Length) return;
+            ComparableIntroSort(array, index, index + length - 1, 2 * Log2((uint)length));
+        }
+
+        public static void Sort<T>(T[] array, IComparer<T> comparer)
+        {
+            if (array == null || array.Length < 2) return;
+            if (comparer == null) return;
+            ComparerIntroSort(array, 0, array.Length - 1, 2 * Log2((uint)array.Length), comparer);
+        }
+
+        public static void Sort<T>(T[] array, int index, int length, IComparer<T> comparer)
+        {
+            if (array == null || length < 2) return;
+            if (index < 0 || index + length > array.Length) return;
+            if (comparer == null) return;
+            ComparerIntroSort(array, index, index + length - 1, 2 * Log2((uint)length), comparer);
+        }
+
+        // Comparison<T> overload — wraps the delegate in an IComparer<T>
+        // adapter so the engine stays uniform. If ILC can't codegen real
+        // managed delegates yet, callers will need to switch to the
+        // IComparer<T> overload directly.
+        public static void Sort<T>(T[] array, Comparison<T> comparison)
+        {
+            if (array == null || array.Length < 2) return;
+            if (comparison == null) return;
+            var cmp = new ComparisonAdapter<T>(comparison);
+            ComparerIntroSort(array, 0, array.Length - 1, 2 * Log2((uint)array.Length), cmp);
+        }
+
+        // ---- log2 (integer) ----
+
+        private static int Log2(uint n)
+        {
+            int k = 0;
+            while ((n >>= 1) != 0) k++;
+            return k;
+        }
+
+        // ---- IComparer<T> engine ----
+
+        private static void ComparerIntroSort<T>(T[] keys, int lo, int hi, int depthLimit, IComparer<T> comparer)
+        {
+            while (hi > lo)
+            {
+                int partitionSize = hi - lo + 1;
+                if (partitionSize <= IntrosortSizeThreshold)
+                {
+                    if (partitionSize == 1) return;
+                    if (partitionSize == 2)
+                    {
+                        ComparerSwapIfGreater(keys, comparer, lo, hi);
+                        return;
+                    }
+                    if (partitionSize == 3)
+                    {
+                        ComparerSwapIfGreater(keys, comparer, lo, hi - 1);
+                        ComparerSwapIfGreater(keys, comparer, lo, hi);
+                        ComparerSwapIfGreater(keys, comparer, hi - 1, hi);
+                        return;
+                    }
+                    ComparerInsertionSort(keys, lo, hi, comparer);
+                    return;
+                }
+
+                if (depthLimit == 0)
+                {
+                    ComparerHeapSort(keys, lo, hi, comparer);
+                    return;
+                }
+                depthLimit--;
+
+                int p = ComparerPickPivotAndPartition(keys, lo, hi, comparer);
+                ComparerIntroSort(keys, p + 1, hi, depthLimit, comparer);
+                hi = p - 1;
+            }
+        }
+
+        private static int ComparerPickPivotAndPartition<T>(T[] keys, int lo, int hi, IComparer<T> comparer)
+        {
+            int middle = lo + ((hi - lo) >> 1);
+            // median-of-three: arrange lo ≤ middle ≤ hi
+            ComparerSwapIfGreater(keys, comparer, lo, middle);
+            ComparerSwapIfGreater(keys, comparer, lo, hi);
+            ComparerSwapIfGreater(keys, comparer, middle, hi);
+
+            T pivot = keys[middle];
+            Swap(keys, middle, hi - 1);
+            int left = lo, right = hi - 1;
+
+            while (left < right)
+            {
+                while (comparer.Compare(keys[++left], pivot) < 0) { }
+                while (comparer.Compare(pivot, keys[--right]) < 0) { }
+                if (left >= right) break;
+                Swap(keys, left, right);
+            }
+            if (left != hi - 1) Swap(keys, left, hi - 1);
+            return left;
+        }
+
+        private static void ComparerHeapSort<T>(T[] keys, int lo, int hi, IComparer<T> comparer)
+        {
+            int n = hi - lo + 1;
+            for (int i = n / 2; i >= 1; i--) ComparerDownHeap(keys, i, n, lo, comparer);
+            for (int i = n; i > 1; i--)
+            {
+                Swap(keys, lo, lo + i - 1);
+                ComparerDownHeap(keys, 1, i - 1, lo, comparer);
+            }
+        }
+
+        private static void ComparerDownHeap<T>(T[] keys, int i, int n, int lo, IComparer<T> comparer)
+        {
+            T d = keys[lo + i - 1];
+            while (i <= n / 2)
+            {
+                int child = 2 * i;
+                if (child < n && comparer.Compare(keys[lo + child - 1], keys[lo + child]) < 0) child++;
+                if (comparer.Compare(d, keys[lo + child - 1]) >= 0) break;
+                keys[lo + i - 1] = keys[lo + child - 1];
+                i = child;
+            }
+            keys[lo + i - 1] = d;
+        }
+
+        private static void ComparerInsertionSort<T>(T[] keys, int lo, int hi, IComparer<T> comparer)
+        {
+            for (int i = lo; i < hi; i++)
+            {
+                int j = i;
+                T t = keys[i + 1];
+                while (j >= lo && comparer.Compare(t, keys[j]) < 0)
+                {
+                    keys[j + 1] = keys[j];
+                    j--;
+                }
+                keys[j + 1] = t;
+            }
+        }
+
+        private static void ComparerSwapIfGreater<T>(T[] keys, IComparer<T> comparer, int a, int b)
+        {
+            if (a != b && comparer.Compare(keys[a], keys[b]) > 0)
+            {
+                T tmp = keys[a];
+                keys[a] = keys[b];
+                keys[b] = tmp;
+            }
+        }
+
+        // ---- IComparable<T> engine (no comparer indirection — direct call) ----
+        // Duplicated to keep the IComparable<T> path comparer-free; lets
+        // primitive-element sorts avoid a virtual call per compare and
+        // dodges the IComparer<T> wrapper allocation for the no-arg
+        // Sort<T>(T[]) overload entirely.
+
+        private static void ComparableIntroSort<T>(T[] keys, int lo, int hi, int depthLimit) where T : IComparable<T>
+        {
+            while (hi > lo)
+            {
+                int partitionSize = hi - lo + 1;
+                if (partitionSize <= IntrosortSizeThreshold)
+                {
+                    if (partitionSize == 1) return;
+                    if (partitionSize == 2)
+                    {
+                        ComparableSwapIfGreater(keys, lo, hi);
+                        return;
+                    }
+                    if (partitionSize == 3)
+                    {
+                        ComparableSwapIfGreater(keys, lo, hi - 1);
+                        ComparableSwapIfGreater(keys, lo, hi);
+                        ComparableSwapIfGreater(keys, hi - 1, hi);
+                        return;
+                    }
+                    ComparableInsertionSort(keys, lo, hi);
+                    return;
+                }
+
+                if (depthLimit == 0)
+                {
+                    ComparableHeapSort(keys, lo, hi);
+                    return;
+                }
+                depthLimit--;
+
+                int p = ComparablePickPivotAndPartition(keys, lo, hi);
+                ComparableIntroSort(keys, p + 1, hi, depthLimit);
+                hi = p - 1;
+            }
+        }
+
+        private static int ComparablePickPivotAndPartition<T>(T[] keys, int lo, int hi) where T : IComparable<T>
+        {
+            int middle = lo + ((hi - lo) >> 1);
+            ComparableSwapIfGreater(keys, lo, middle);
+            ComparableSwapIfGreater(keys, lo, hi);
+            ComparableSwapIfGreater(keys, middle, hi);
+
+            T pivot = keys[middle];
+            Swap(keys, middle, hi - 1);
+            int left = lo, right = hi - 1;
+
+            while (left < right)
+            {
+                while (keys[++left].CompareTo(pivot) < 0) { }
+                while (pivot.CompareTo(keys[--right]) < 0) { }
+                if (left >= right) break;
+                Swap(keys, left, right);
+            }
+            if (left != hi - 1) Swap(keys, left, hi - 1);
+            return left;
+        }
+
+        private static void ComparableHeapSort<T>(T[] keys, int lo, int hi) where T : IComparable<T>
+        {
+            int n = hi - lo + 1;
+            for (int i = n / 2; i >= 1; i--) ComparableDownHeap(keys, i, n, lo);
+            for (int i = n; i > 1; i--)
+            {
+                Swap(keys, lo, lo + i - 1);
+                ComparableDownHeap(keys, 1, i - 1, lo);
+            }
+        }
+
+        private static void ComparableDownHeap<T>(T[] keys, int i, int n, int lo) where T : IComparable<T>
+        {
+            T d = keys[lo + i - 1];
+            while (i <= n / 2)
+            {
+                int child = 2 * i;
+                if (child < n && keys[lo + child - 1].CompareTo(keys[lo + child]) < 0) child++;
+                if (d.CompareTo(keys[lo + child - 1]) >= 0) break;
+                keys[lo + i - 1] = keys[lo + child - 1];
+                i = child;
+            }
+            keys[lo + i - 1] = d;
+        }
+
+        private static void ComparableInsertionSort<T>(T[] keys, int lo, int hi) where T : IComparable<T>
+        {
+            for (int i = lo; i < hi; i++)
+            {
+                int j = i;
+                T t = keys[i + 1];
+                while (j >= lo && t.CompareTo(keys[j]) < 0)
+                {
+                    keys[j + 1] = keys[j];
+                    j--;
+                }
+                keys[j + 1] = t;
+            }
+        }
+
+        private static void ComparableSwapIfGreater<T>(T[] keys, int a, int b) where T : IComparable<T>
+        {
+            if (a != b && keys[a].CompareTo(keys[b]) > 0)
+            {
+                T tmp = keys[a];
+                keys[a] = keys[b];
+                keys[b] = tmp;
+            }
+        }
+
+        private static void Swap<T>(T[] keys, int i, int j)
+        {
+            T tmp = keys[i];
+            keys[i] = keys[j];
+            keys[j] = tmp;
+        }
+
+        // Adapter from Comparison<T> delegate to IComparer<T>. Used only
+        // by the Sort(T[], Comparison<T>) overload so that the engine
+        // stays parametrised on IComparer<T> alone.
+        private sealed class ComparisonAdapter<T> : IComparer<T>
+        {
+            private readonly Comparison<T> _comparison;
+            public ComparisonAdapter(Comparison<T> comparison) { _comparison = comparison; }
+            public int Compare(T x, T y) => _comparison(x, y);
         }
     }
 }
