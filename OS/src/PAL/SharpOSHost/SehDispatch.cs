@@ -906,28 +906,24 @@ namespace OS.PAL.SharpOSHost
             byte* capCode = buf + 0x80;
             byte* resCode = buf + 0x200;
 
-            const int kScratchCap = 256;
-            byte* legacyScratch = stackalloc byte[kScratchCap];
-
-            int icedCapLen = EmitCaptureIced(capCode, kScratchCap);
-            int legacyCapLen = EmitCapture(legacyScratch);
-            CompareOrPanic("EmitCapture", capCode, legacyScratch, icedCapLen, legacyCapLen);
-
-            int icedResLen = EmitRestoreIced(resCode, kScratchCap);
-            int legacyResLen = EmitRestore(legacyScratch);
-            CompareOrPanic("EmitRestore", resCode, legacyScratch, icedResLen, legacyResLen);
-
-            Console.Write("[shellcode] iced=legacy OK cap=0x");
-            Console.WriteHex((ulong)icedCapLen);
-            Console.Write(" res=0x");
-            Console.WriteHex((ulong)icedResLen);
-            Console.WriteLine("");
+            // step 118 — compile-time codegen via BootAsm.Generator. Both
+            // EmitCaptureCompileTime and EmitRestoreCompileTime are
+            // partial methods that CopyTo a pre-baked template from .rdata
+            // into the live shellcode buffer.
+            EmitCaptureCompileTime(capCode);
+            EmitRestoreCompileTime(resCode);
 
             s_capture = (delegate* unmanaged<Context*, void>)capCode;
             s_restore = (delegate* unmanaged<Context*, void>)resCode;
             s_shellcodeReady = true;
         }
 
+        // step 118 — legacy EmitCapture/EmitRestore preserved as REFERENCE.
+        // The live code now goes through EmitCaptureCompileTime /
+        // EmitRestoreCompileTime in SehDispatch.BootAsm.cs (compile-time
+        // codegen via BootAsm.Generator + Iced). Build excludes these via
+        // `#if false`.
+#if false
         // Capture context shellcode: same idea как RtlCaptureContext в fork's
         // crt_imp_stubs.cpp. RCX = ctx ptr (Win64 arg1).
         //   mov [rcx+0x30], 0x100003  ; ContextFlags
@@ -1065,6 +1061,7 @@ namespace OS.PAL.SharpOSHost
             p[o++] = 0xC3;
             return o;
         }
+#endif
 
         // ─── Phase D iteration 3: FrameChain skip-through ──────────────────
         //

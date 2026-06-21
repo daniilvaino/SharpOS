@@ -13,7 +13,7 @@ namespace OS.Hal
     //   STI/CLI — RFLAGS.IF manipulation (e.g., re-enable interrupts after
     //             HW fault catch path bypasses IRETQ).
     //   HLT — halt CPU to wait for next interrupt.
-    internal static unsafe class X64Asm
+    internal static unsafe partial class X64Asm
     {
         private const uint StiOffset = 0;
         private const uint CliOffset = 16;
@@ -146,20 +146,14 @@ namespace OS.Hal
             return true;
         }
 
-        // Emit:
+        // step 118 Wave 4 — body now compile-time emitted via
+        // EmitXsetbvBootAsm (BootAsm.Generator + Iced). See X64Asm.BootAsm.cs.
+        // Original byte sequence preserved here as reference:
         //   48 89 D0        mov rax, rdx        ; EAX = low 32 of value
         //   48 C1 EA 20     shr rdx, 32         ; EDX = high 32 of value
         //   0F 01 D1        xsetbv              ; XCR[ECX] = EDX:EAX
         //   C3              ret
-        // RCX (selector) already in ECX — xsetbv reads ECX directly.
-        private static void EmitXsetbv(byte* p)
-        {
-            int i = 0;
-            p[i++] = 0x48; p[i++] = 0x89; p[i++] = 0xD0;       // mov rax, rdx
-            p[i++] = 0x48; p[i++] = 0xC1; p[i++] = 0xEA; p[i++] = 0x20; // shr rdx, 32
-            p[i++] = 0x0F; p[i++] = 0x01; p[i++] = 0xD1;       // xsetbv
-            p[i++] = 0xC3;                                      // ret
-        }
+        private static void EmitXsetbv(byte* p) => EmitXsetbvBootAsm(p);
 
         // Read CR4. Use to gate features that depend on CR4 bits — e.g.
         // bit 18 (OSXSAVE) controls whether xsetbv is legal. Returns false
@@ -172,8 +166,7 @@ namespace OS.Hal
             if (!s_readCr4Ready)
             {
                 byte* p = (byte*)s_execBuffer + ReadCr4Offset;
-                // mov rax, cr4 ; ret    →    0F 20 E0 C3
-                p[0] = 0x0F; p[1] = 0x20; p[2] = 0xE0; p[3] = 0xC3;
+                EmitReadCr4BootAsm(p);            // mov rax, cr4 ; ret
                 s_readCr4 = (delegate* unmanaged<ulong>)p;
                 s_readCr4Ready = true;
             }
@@ -192,10 +185,7 @@ namespace OS.Hal
             if (!s_readGsQwordReady)
             {
                 byte* p = (byte*)s_execBuffer + ReadGsQwordOffset;
-                // 65 48 8B 01   mov rax, qword ptr gs:[rcx]
-                // C3            ret
-                p[0] = 0x65; p[1] = 0x48; p[2] = 0x8B; p[3] = 0x01;
-                p[4] = 0xC3;
+                EmitReadGsQwordBootAsm(p);        // gs: mov rax, [rcx] ; ret
                 s_readGsQword = (delegate* unmanaged<ulong, ulong>)p;
                 s_readGsQwordReady = true;
             }
@@ -212,19 +202,7 @@ namespace OS.Hal
             if (!s_writeGsBaseMsrReady)
             {
                 byte* p = (byte*)s_execBuffer + WriteGsBaseMsrOffset;
-                // RCX = value (Win64 arg1). Split RCX into EDX:EAX for wrmsr.
-                // 48 89 C8        mov rax, rcx
-                // 48 89 CA        mov rdx, rcx
-                // 48 C1 EA 20     shr rdx, 32
-                // B9 01 01 00 C0  mov ecx, 0xC0000101  (IA32_GS_BASE)
-                // 0F 30           wrmsr
-                // C3              ret
-                p[0]  = 0x48; p[1]  = 0x89; p[2]  = 0xC8;
-                p[3]  = 0x48; p[4]  = 0x89; p[5]  = 0xCA;
-                p[6]  = 0x48; p[7]  = 0xC1; p[8]  = 0xEA; p[9]  = 0x20;
-                p[10] = 0xB9; p[11] = 0x01; p[12] = 0x01; p[13] = 0x00; p[14] = 0xC0;
-                p[15] = 0x0F; p[16] = 0x30;
-                p[17] = 0xC3;
+                EmitWriteGsBaseMsrBootAsm(p);     // IA32_GS_BASE := rcx
                 s_writeGsBaseMsr = (delegate* unmanaged<ulong, void>)p;
                 s_writeGsBaseMsrReady = true;
             }
@@ -243,16 +221,7 @@ namespace OS.Hal
             if (!s_readGsBaseMsrReady)
             {
                 byte* p = (byte*)s_execBuffer + ReadGsBaseMsrOffset;
-                // B9 01 01 00 C0  mov ecx, 0xC0000101
-                // 0F 32           rdmsr             ; EDX:EAX = MSR[ECX]
-                // 48 C1 E2 20     shl rdx, 32       ; high 32 → upper RDX
-                // 48 09 D0        or  rax, rdx     ; RAX = (EDX<<32) | EAX
-                // C3              ret
-                p[0]  = 0xB9; p[1]  = 0x01; p[2]  = 0x01; p[3]  = 0x00; p[4]  = 0xC0;
-                p[5]  = 0x0F; p[6]  = 0x32;
-                p[7]  = 0x48; p[8]  = 0xC1; p[9]  = 0xE2; p[10] = 0x20;
-                p[11] = 0x48; p[12] = 0x09; p[13] = 0xD0;
-                p[14] = 0xC3;
+                EmitReadGsBaseMsrBootAsm(p);      // RAX := IA32_GS_BASE
                 s_readGsBaseMsr = (delegate* unmanaged<ulong>)p;
                 s_readGsBaseMsrReady = true;
             }
@@ -278,9 +247,7 @@ namespace OS.Hal
             if (!s_cmpXchg64Ready)
             {
                 byte* p = (byte*)s_execBuffer + CmpXchg64Offset;
-                p[0] = 0x4C; p[1] = 0x89; p[2] = 0xC0;             // mov rax, r8
-                p[3] = 0xF0; p[4] = 0x48; p[5] = 0x0F; p[6] = 0xB1; p[7] = 0x11; // lock cmpxchg [rcx], rdx
-                p[8] = 0xC3;
+                EmitCmpXchg64BootAsm(p);          // mov rax,r8 ; lock cmpxchg [rcx],rdx
                 s_cmpXchg64 = (delegate* unmanaged<ulong*, ulong, ulong, ulong>)p;
                 s_cmpXchg64Ready = true;
             }
@@ -301,9 +268,7 @@ namespace OS.Hal
             if (!s_xchg64Ready)
             {
                 byte* p = (byte*)s_execBuffer + Xchg64Offset;
-                p[0] = 0x48; p[1] = 0x87; p[2] = 0x11;             // xchg [rcx], rdx
-                p[3] = 0x48; p[4] = 0x89; p[5] = 0xD0;             // mov rax, rdx
-                p[6] = 0xC3;
+                EmitXchg64BootAsm(p);             // xchg [rcx],rdx ; mov rax,rdx
                 s_xchg64 = (delegate* unmanaged<ulong*, ulong, ulong>)p;
                 s_xchg64Ready = true;
             }
@@ -324,8 +289,7 @@ namespace OS.Hal
             if (!s_memoryBarrierReady)
             {
                 byte* p = (byte*)s_execBuffer + MemoryBarrierOffset;
-                p[0] = 0x0F; p[1] = 0xAE; p[2] = 0xF0;             // mfence
-                p[3] = 0xC3;
+                EmitMemoryBarrierBootAsm(p);      // mfence ; ret
                 s_memoryBarrier = (delegate* unmanaged<void>)p;
                 s_memoryBarrierReady = true;
             }
@@ -347,8 +311,7 @@ namespace OS.Hal
             if (!s_fxsaveReady)
             {
                 byte* p = (byte*)s_execBuffer + FxsaveOffset;
-                p[0] = 0x0F; p[1] = 0xAE; p[2] = 0x01;             // fxsave [rcx]
-                p[3] = 0xC3;
+                EmitFxsaveBootAsm(p);             // fxsave [rcx] ; ret
                 s_fxsave = (delegate* unmanaged<byte*, void>)p;
                 s_fxsaveReady = true;
             }
@@ -407,52 +370,10 @@ namespace OS.Hal
             if (!s_coopSwitchReady)
             {
                 byte* p = (byte*)s_execBuffer + CoopSwitchOffset;
-                int i = 0;
-                // push rbx/rbp/rsi/rdi
-                p[i++] = 0x53;
-                p[i++] = 0x55;
-                p[i++] = 0x56;
-                p[i++] = 0x57;
-                // push r12/r13/r14/r15
-                p[i++] = 0x41; p[i++] = 0x54;
-                p[i++] = 0x41; p[i++] = 0x55;
-                p[i++] = 0x41; p[i++] = 0x56;
-                p[i++] = 0x41; p[i++] = 0x57;
-                // fxsave [rcx + 0x10]
-                p[i++] = 0x0F; p[i++] = 0xAE; p[i++] = 0x41; p[i++] = 0x10;
-                // mov [rcx], rsp
-                p[i++] = 0x48; p[i++] = 0x89; p[i++] = 0x21;
-                // mov rsp, [rdx]
-                p[i++] = 0x48; p[i++] = 0x8B; p[i++] = 0x22;
-                // fxrstor [rdx + 0x10]
-                p[i++] = 0x0F; p[i++] = 0xAE; p[i++] = 0x4A; p[i++] = 0x10;
-                // --- Phase E9.b: gs-base swap if next.Teb != 0 ---
-                // mov rax, [rdx + 8]
-                p[i++] = 0x48; p[i++] = 0x8B; p[i++] = 0x42; p[i++] = 0x08;
-                // test rax, rax
-                p[i++] = 0x48; p[i++] = 0x85; p[i++] = 0xC0;
-                // jz .skip_gs (rel8 = +14: mov+shr+mov+wrmsr = 3+4+5+2 = 14)
-                p[i++] = 0x74; p[i++] = 0x0E;
-                // mov rdx, rax
-                p[i++] = 0x48; p[i++] = 0x89; p[i++] = 0xC2;
-                // shr rdx, 32
-                p[i++] = 0x48; p[i++] = 0xC1; p[i++] = 0xEA; p[i++] = 0x20;
-                // mov ecx, 0xC0000101 (IA32_GS_BASE)
-                p[i++] = 0xB9; p[i++] = 0x01; p[i++] = 0x01; p[i++] = 0x00; p[i++] = 0xC0;
-                // wrmsr
-                p[i++] = 0x0F; p[i++] = 0x30;
-                // .skip_gs: pop r15/r14/r13/r12
-                p[i++] = 0x41; p[i++] = 0x5F;
-                p[i++] = 0x41; p[i++] = 0x5E;
-                p[i++] = 0x41; p[i++] = 0x5D;
-                p[i++] = 0x41; p[i++] = 0x5C;
-                // pop rdi/rsi/rbp/rbx
-                p[i++] = 0x5F;
-                p[i++] = 0x5E;
-                p[i++] = 0x5D;
-                p[i++] = 0x5B;
-                // ret
-                p[i++] = 0xC3;
+                // step 119 Wave 5 — compile-time codegen via BootAsm.Generator
+                // (walker now supports labels for the `jz .skip_gs` forward
+                // jump). See X64Asm.BootAsm.cs.
+                EmitCoopSwitchBootAsm(p);
                 s_coopSwitch = (delegate* unmanaged<byte*, byte*, void>)p;
                 s_coopSwitchReady = true;
             }
@@ -481,47 +402,14 @@ namespace OS.Hal
             return true;              // unreachable
         }
 
-        // Emit: 14× `mov <gpr>,[rcx+disp32]`, `lea rsp,[rcx+0x90]`,
-        // `mov rcx,[rcx+0x10]`, `iretq`. RCX = frame* (Win64 arg0).
+        // step 118 Wave 4 — body now compile-time emitted via
+        // EmitResumeBootAsm (BootAsm.Generator + Iced). See X64Asm.BootAsm.cs.
+        // 14× `mov reg, [rcx+disp]`, `lea rsp, [rcx+0x90]`, restore Rcx, iretq.
+        // Iced picks disp8 for offsets <128 → resulting stub is shorter than
+        // the original force-disp32 form; same semantics. RCX = frame*.
         private static void EmitResume(byte* p)
         {
-            int i = 0;
-
-            // mov reg,[rcx+disp32]: REX(0x48 / 0x4C) 8B modrm(10 reg 001) disp32
-            void Mov(byte rex, byte modrm, uint disp)
-            {
-                p[i++] = rex; p[i++] = 0x8B; p[i++] = modrm;
-                p[i++] = (byte)(disp & 0xFF);
-                p[i++] = (byte)((disp >> 8) & 0xFF);
-                p[i++] = (byte)((disp >> 16) & 0xFF);
-                p[i++] = (byte)((disp >> 24) & 0xFF);
-            }
-
-            Mov(0x48, 0x81,   8);   // mov rax,[rcx+8]
-            Mov(0x48, 0x91,  24);   // mov rdx,[rcx+24]
-            Mov(0x48, 0x99,  32);   // mov rbx,[rcx+32]
-            Mov(0x48, 0xB1,  40);   // mov rsi,[rcx+40]
-            Mov(0x48, 0xB9,  48);   // mov rdi,[rcx+48]
-            Mov(0x48, 0xA9,  56);   // mov rbp,[rcx+56]
-            Mov(0x4C, 0x81,  64);   // mov r8 ,[rcx+64]
-            Mov(0x4C, 0x89,  72);   // mov r9 ,[rcx+72]
-            Mov(0x4C, 0x91,  80);   // mov r10,[rcx+80]
-            Mov(0x4C, 0x99,  88);   // mov r11,[rcx+88]
-            Mov(0x4C, 0xA1,  96);   // mov r12,[rcx+96]
-            Mov(0x4C, 0xA9, 104);   // mov r13,[rcx+104]
-            Mov(0x4C, 0xB1, 112);   // mov r14,[rcx+112]
-            Mov(0x4C, 0xB9, 120);   // mov r15,[rcx+120]
-
-            // lea rsp,[rcx+0x90]  (REX.W 8D modrm=10 100 001 disp32=144)
-            p[i++] = 0x48; p[i++] = 0x8D; p[i++] = 0xA1;
-            p[i++] = 0x90; p[i++] = 0x00; p[i++] = 0x00; p[i++] = 0x00;
-
-            // mov rcx,[rcx+0x10]  (last use of frame base → restore Rcx)
-            Mov(0x48, 0x89, 16);
-
-            // iretq  (REX.W CF)
-            p[i++] = 0x48; p[i++] = 0xCF;
-
+            EmitResumeBootAsm(p);
             s_resume = (delegate* unmanaged<void*, void>)p;
             s_resumeReady = true;
         }
@@ -537,17 +425,10 @@ namespace OS.Hal
             // Zero only the slots we use (avoid touching unrelated memory).
             for (int i = 0; i < (int)MinBufferSize; i++) stub[i] = 0;
 
-            // STI; RET — sets RFLAGS.IF, returns.
-            stub[StiOffset + 0] = 0xFB;
-            stub[StiOffset + 1] = 0xC3;
-
-            // CLI; RET — clears RFLAGS.IF, returns.
-            stub[CliOffset + 0] = 0xFA;
-            stub[CliOffset + 1] = 0xC3;
-
-            // HLT; RET — halts CPU until next interrupt, returns.
-            stub[HltOffset + 0] = 0xF4;
-            stub[HltOffset + 1] = 0xC3;
+            // step 119 Wave 5 — compile-time codegen via BootAsm.Generator.
+            EmitStiBootAsm(stub + StiOffset);
+            EmitCliBootAsm(stub + CliOffset);
+            EmitHltBootAsm(stub + HltOffset);
 
             s_sti = (delegate* unmanaged<void>)(stub + StiOffset);
             s_cli = (delegate* unmanaged<void>)(stub + CliOffset);

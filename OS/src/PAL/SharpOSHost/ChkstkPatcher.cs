@@ -7,7 +7,7 @@ namespace OS.PAL.SharpOSHost
     //
     // Same pattern as ByRefAssignRefPatcher / RethrowPatcher: runs under
     // firmware CR3 where the kernel image is mapped RWX on OVMF.
-    internal static unsafe class ChkstkPatcher
+    internal static unsafe partial class ChkstkPatcher
     {
         private static bool s_installed;
 
@@ -20,11 +20,11 @@ namespace OS.PAL.SharpOSHost
             byte* target = (byte*)ChkstkStub.GetMethodAddress();
             if (target == null) return false;
 
-            // ret — pops return address into RIP, leaves RSP +8. Caller's
-            // subsequent `sub rsp, rax` performs the actual stack allocation.
-            target[0] = 0xC3;
-
-            if (target[0] != 0xC3) return false;
+            // step 118 — compile-time codegen via BootAsm.Generator. Writes
+            // the 1-byte template (`0xC3` = ret) into the first byte of the
+            // managed __chkstk body.
+            int compileLen = Emit(target);
+            if (compileLen != 1 || target[0] != 0xC3) return false;
 
             s_installed = true;
             return true;

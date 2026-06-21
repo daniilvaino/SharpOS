@@ -21,7 +21,7 @@ namespace OS.Boot.EH
     //   4C 89 71 48                mov  [rcx + 0x48], r14
     //   4C 89 79 50                mov  [rcx + 0x50], r15
     //   C3                         ret
-    internal static unsafe class CaptureContextPatcher
+    internal static unsafe partial class CaptureContextPatcher
     {
         private static bool s_installed;
 
@@ -34,38 +34,12 @@ namespace OS.Boot.EH
             byte* target = (byte*)CaptureContextStub.GetMethodAddress();
             if (target == null) return false;
 
-            int i = 0;
-            // mov rax, [rsp]
-            target[i++] = 0x48; target[i++] = 0x8B; target[i++] = 0x04; target[i++] = 0x24;
-            // mov [rcx+0x00], rax
-            target[i++] = 0x48; target[i++] = 0x89; target[i++] = 0x01;
-            // lea rax, [rsp+8]
-            target[i++] = 0x48; target[i++] = 0x8D; target[i++] = 0x44; target[i++] = 0x24; target[i++] = 0x08;
-            // mov [rcx+0x08], rax
-            target[i++] = 0x48; target[i++] = 0x89; target[i++] = 0x41; target[i++] = 0x08;
-            // mov [rcx+0x10], rbp
-            target[i++] = 0x48; target[i++] = 0x89; target[i++] = 0x69; target[i++] = 0x10;
-            // mov [rcx+0x18], rdi
-            target[i++] = 0x48; target[i++] = 0x89; target[i++] = 0x79; target[i++] = 0x18;
-            // mov [rcx+0x20], rsi
-            target[i++] = 0x48; target[i++] = 0x89; target[i++] = 0x71; target[i++] = 0x20;
-            // mov [rcx+0x28], rax
-            target[i++] = 0x48; target[i++] = 0x89; target[i++] = 0x41; target[i++] = 0x28;
-            // mov [rcx+0x30], rbx
-            target[i++] = 0x48; target[i++] = 0x89; target[i++] = 0x59; target[i++] = 0x30;
-            // mov [rcx+0x38], r12
-            target[i++] = 0x4C; target[i++] = 0x89; target[i++] = 0x61; target[i++] = 0x38;
-            // mov [rcx+0x40], r13
-            target[i++] = 0x4C; target[i++] = 0x89; target[i++] = 0x69; target[i++] = 0x40;
-            // mov [rcx+0x48], r14
-            target[i++] = 0x4C; target[i++] = 0x89; target[i++] = 0x71; target[i++] = 0x48;
-            // mov [rcx+0x50], r15
-            target[i++] = 0x4C; target[i++] = 0x89; target[i++] = 0x79; target[i++] = 0x50;
-            // ret
-            target[i++] = 0xC3;
+            // step 118 — compile-time codegen via BootAsm.Generator. Writes
+            // the 53-byte template into the managed CaptureContext body.
+            int compileLen = Emit(target);
 
             // Sanity check first byte and last opcode landed correctly.
-            if (target[0] != 0x48 || target[i - 1] != 0xC3)
+            if (target[0] != 0x48 || target[compileLen - 1] != 0xC3)
                 return false;
 
             s_installed = true;

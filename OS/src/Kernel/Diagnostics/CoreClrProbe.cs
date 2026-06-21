@@ -528,8 +528,6 @@ namespace OS.Kernel.Diagnostics
             //   mov  ecx, 0xC0000101 ; MSR_GS_BASE
             //   wrmsr
             //   ret
-            // 18 bytes legacy. Iced may pick a slightly fatter encoding
-            // (cf. #3 BigStack: +4 bytes, semantically OK) — print length
             // for visibility; 128-byte slot has comfortable headroom.
             {
                 var a = new Iced.Intel.Assembler(64);

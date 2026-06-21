@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Roslyn incremental source generator. Materialises early-tier
+       bootstrap shellcode stubs at OS-build time from fluent-Iced bodies
+       (see SPEC-compiletime-stub-generator.md). Loaded as <Analyzer> in
+       OS.csproj; the kernel never depends on Iced at runtime — the
+       generator emits pre-baked byte templates + patcher code.
+
+       netstandard2.0 is what Roslyn analyzer host loads. Iced needs
+       Span<T> from netstandard2.1; System.Memory NuGet backports it. -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+    <PackageReference Include="System.Memory" Version="4.5.5" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Same Iced source set as OS/. Same Compile Include shape, literally
+       duplicated 4 lines (cf. Directory.Build.props in spec §2 — we skip
+       the indirection per "simpler is better" agreement). Same defines as
+       OS so encoder behavior matches what the kernel sees. NO_EVEX kept
+       (the static-readonly delegate in EVEX TryConvertToDisp8N still hurts
+       even in the generator's load context). -->
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);ENCODER;BLOCK_ENCODER;CODE_ASSEMBLER;HAS_SPAN;IcedNoIVT;NO_EVEX</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\iced\**\*.cs"
+             Exclude="..\..\iced\Intel\StreamCodeWriter.cs"
+             LinkBase="Iced" />
+  </ItemGroup>
+
+</Project>

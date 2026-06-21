@@ -67,7 +67,7 @@ namespace OS.Hal.Idt
     //   `sub rsp, 0x28` adjusts by 5 qwords more → 28 qwords = 0 mod 16. ✓
     // ─────────────────────────────────────────────────────────────────────
 
-    internal static unsafe class IdtTrampolines
+    internal static unsafe partial class IdtTrampolines
     {
         public const uint IdtSize = 4096;                // 256 × 16
         public const uint CommonStubOffset = 4096;
@@ -94,109 +94,28 @@ namespace OS.Hal.Idt
         // dispatcherPtr is the address of the [UnmanagedCallersOnly] managed
         // dispatcher. We patch it into the rip-relative slot at end of common
         // stub so the indirect call lands there.
+        //
+        // step 119 Wave 5 — body now compile-time emitted via EmitCommonStub
+        // (BootAsm.Generator + Iced). See IdtTrampolines.BootAsm.cs.
         public static void WriteCommonStub(byte* p, void* dispatcherPtr, out uint length)
         {
-            int i = 0;
-
-            // push r15..r8 (8 regs, 2 bytes each)
-            p[i++] = 0x41; p[i++] = 0x57;   // push r15
-            p[i++] = 0x41; p[i++] = 0x56;   // push r14
-            p[i++] = 0x41; p[i++] = 0x55;   // push r13
-            p[i++] = 0x41; p[i++] = 0x54;   // push r12
-            p[i++] = 0x41; p[i++] = 0x53;   // push r11
-            p[i++] = 0x41; p[i++] = 0x52;   // push r10
-            p[i++] = 0x41; p[i++] = 0x51;   // push r9
-            p[i++] = 0x41; p[i++] = 0x50;   // push r8
-
-            // push rbp, rdi, rsi, rbx, rdx, rcx, rax (1 byte each)
-            p[i++] = 0x55;                   // push rbp
-            p[i++] = 0x57;                   // push rdi
-            p[i++] = 0x56;                   // push rsi
-            p[i++] = 0x53;                   // push rbx
-            p[i++] = 0x52;                   // push rdx
-            p[i++] = 0x51;                   // push rcx
-            p[i++] = 0x50;                   // push rax
-
-            // mov rax, cr2 ; push rax
-            // Encoding: 0F 20 /r where reg field = CRn. ModRM D0 = 11 010 000:
-            // mod=11, reg=010 (CR2), rm=000 (RAX). The earlier D8 was reg=011
-            // (CR3) — wrong source; produced misleading dumps where "CR2" was
-            // actually CR3 (kernel page-table physical address).
-            p[i++] = 0x0F; p[i++] = 0x20; p[i++] = 0xD0;
-            p[i++] = 0x50;
-
-            // mov rcx, rsp     ; arg1 = frame*
-            p[i++] = 0x48; p[i++] = 0x89; p[i++] = 0xE1;
-
-            // sub rsp, 0x28
-            p[i++] = 0x48; p[i++] = 0x83; p[i++] = 0xEC; p[i++] = 0x28;
-
-            // mov rax, [rip + dispOffset]   — disp32 patched after we know offset
-            p[i++] = 0x48; p[i++] = 0x8B; p[i++] = 0x05;
-            int dispRelOffsetSlot = i;       // disp32 lives here
-            p[i++] = 0x00; p[i++] = 0x00; p[i++] = 0x00; p[i++] = 0x00;
-
-            // call rax
-            p[i++] = 0xFF; p[i++] = 0xD0;
-
-            // 1: hlt ; jmp 1b
-            int haltLoopStart = i;
-            p[i++] = 0xF4;
-            p[i++] = 0xEB; p[i++] = 0xFE;    // jmp -2 (back to hlt)
-
-            // 8-byte alignment for the qword pointer
-            while ((i & 7) != 0)
-                p[i++] = 0x90;               // nop
-
-            int qwordSlot = i;
-            // The disp32 in `mov rax, [rip+disp32]` is relative to the *next*
-            // instruction (i.e. the byte right after the disp32 field).
-            int dispRelEnd = dispRelOffsetSlot + 4;
-            int rel32 = qwordSlot - dispRelEnd;
-            p[dispRelOffsetSlot + 0] = (byte)(rel32 & 0xFF);
-            p[dispRelOffsetSlot + 1] = (byte)((rel32 >> 8) & 0xFF);
-            p[dispRelOffsetSlot + 2] = (byte)((rel32 >> 16) & 0xFF);
-            p[dispRelOffsetSlot + 3] = (byte)((rel32 >> 24) & 0xFF);
-
-            // Write the qword pointer itself
-            ulong dispAddr = (ulong)dispatcherPtr;
-            for (int k = 0; k < 8; k++)
-                p[qwordSlot + k] = (byte)((dispAddr >> (k * 8)) & 0xFF);
-
-            length = (uint)(qwordSlot + 8);
+            length = (uint)EmitCommonStub(p, dispatcherPtr);
         }
 
         // Write a per-vector entry stub. Stub jumps via rel32 to commonStub.
-        // `stubAddr` is the absolute address of this stub (needed to compute
-        // the rel32 displacement). `commonStubAddr` is the absolute address
-        // of the common stub.
+        // `commonStubAddr` is the absolute address of the common stub.
+        //
+        // step 119 Wave 6 — compile-time codegen via BootAsm.Generator using
+        // PushImm32Hole (vector #) + JmpRelHole (commonStub displacement).
+        // Vector # encoded as imm32 (push imm32, 5 bytes) instead of the
+        // imm8 form — 16-byte slot still has room (12 vs 9 bytes used).
+        // Two body variants by error-code-mask: with-dummy-push vs without.
         public static void WriteVectorStub(byte* stub, int vector, byte* commonStubAddr)
         {
-            int i = 0;
-
-            if (!VectorHasErrorCode(vector))
-            {
-                // push 0 (dummy error code)
-                stub[i++] = 0x6A; stub[i++] = 0x00;
-            }
-
-            // push <vector>  (vectors 0..31 fit in imm8)
-            stub[i++] = 0x6A; stub[i++] = (byte)vector;
-
-            // jmp rel32 to common stub. rel32 is relative to the byte AFTER
-            // the disp32 field (i.e. (stub + i + 5) is the rip when the jmp
-            // takes effect).
-            stub[i++] = 0xE9;
-            byte* afterDisp = stub + i + 4;
-            long delta = (long)commonStubAddr - (long)afterDisp;
-            stub[i++] = (byte)(delta & 0xFF);
-            stub[i++] = (byte)((delta >> 8) & 0xFF);
-            stub[i++] = (byte)((delta >> 16) & 0xFF);
-            stub[i++] = (byte)((delta >> 24) & 0xFF);
-
-            // pad with NOPs to VectorStubSize
-            while (i < (int)VectorStubSize)
-                stub[i++] = 0x90;
+            if (VectorHasErrorCode(vector))
+                EmitVectorStubWithErr(stub, (uint)vector, commonStubAddr);
+            else
+                EmitVectorStubNoErr(stub, (uint)vector, commonStubAddr);
         }
     }
 }

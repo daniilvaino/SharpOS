@@ -35,7 +35,7 @@ namespace OS.Kernel.Memory
     // which together occupy 0..512 — see ExecStubBuffer layout comment in
     // UefiBootInfoBuilder). ExecStubBuffer total size bumped to 1024 in
     // step 110 Part 7 to make room.
-    internal static unsafe class GcContextSpill
+    internal static unsafe partial class GcContextSpill
     {
         private const uint StubOffset = 512;
         private const uint StubSize   = 512;
@@ -51,7 +51,9 @@ namespace OS.Kernel.Memory
             if (execBuffer == null || execBufferSize < StubOffset + StubSize) return false;
 
             byte* stub = (byte*)execBuffer + StubOffset;
-            WriteShellcode(stub);
+            // step 118 Wave 4 — compile-time codegen (BootAsm.Generator).
+            // 0 holes — args via Win64 ABI (rcx = ctx*, rdx = callback*).
+            Emit(stub);
             s_invoke = (delegate* unmanaged<Context*, delegate* unmanaged<Context*, void>, void>)stub;
             s_initialized = true;
             return true;
@@ -63,6 +65,11 @@ namespace OS.Kernel.Memory
             s_invoke(ctx, callback);
         }
 
+        // step 118 — legacy hand-rolled byte emitter preserved as REFERENCE.
+        // The live code now goes through Emit() in GcContextSpill.BootAsm.cs
+        // (compile-time codegen via BootAsm.Generator + Iced). Build excludes
+        // this via `#if false`.
+#if false
         // ---- AMD64 instruction encoding helpers ----
 
         // mov [rcx + disp32], reg64.  reg encoding follows AMD64 ModR/M
@@ -181,5 +188,6 @@ namespace OS.Kernel.Memory
             i += EmitAddRsp(p + i, 0x28);
             i += EmitRet(p + i);
         }
+#endif
     }
 }

@@ -77,7 +77,7 @@ namespace OS.Boot.EH
     //     FF E0             jmp rax               ; resume in parent method
     //
     // Total: 12 + 7 + 20 + 56 + 13 + 21 + 11 = 140 bytes.
-    internal static unsafe class CallCatchFuncletPatcher
+    internal static unsafe partial class CallCatchFuncletPatcher
     {
         private static bool s_installed;
 
@@ -92,70 +92,13 @@ namespace OS.Boot.EH
 
             byte** headAddr = ExInfoHead.GetHeadAddress();
 
-            int p = 0;
-
-            // ── Prologue: spill 8 nonvols (12 bytes) ───────────────────
-            target[p++] = 0x41; target[p++] = 0x57;          // push r15
-            target[p++] = 0x41; target[p++] = 0x56;          // push r14
-            target[p++] = 0x41; target[p++] = 0x55;          // push r13
-            target[p++] = 0x41; target[p++] = 0x54;          // push r12
-            target[p++] = 0x53;                              // push rbx
-            target[p++] = 0x56;                              // push rsi
-            target[p++] = 0x57;                              // push rdi
-            target[p++] = 0x55;                              // push rbp
-
-            // sub rsp, 0x48 (7 bytes)
-            target[p++] = 0x48; target[p++] = 0x81; target[p++] = 0xEC;
-            target[p++] = 0x48; target[p++] = 0x00; target[p++] = 0x00; target[p++] = 0x00;
-
-            // ── Save 4 args (20 bytes) ─────────────────────────────────
-            // mov [rsp+0x20], rcx  — exception
-            target[p++] = 0x48; target[p++] = 0x89; target[p++] = 0x4C; target[p++] = 0x24; target[p++] = 0x20;
-            // mov [rsp+0x28], rdx  — handler IP
-            target[p++] = 0x48; target[p++] = 0x89; target[p++] = 0x54; target[p++] = 0x24; target[p++] = 0x28;
-            // mov [rsp+0x30], r8   — REGDISPLAY*
-            target[p++] = 0x4C; target[p++] = 0x89; target[p++] = 0x44; target[p++] = 0x24; target[p++] = 0x30;
-            // mov [rsp+0x38], r9   — ExInfo*
-            target[p++] = 0x4C; target[p++] = 0x89; target[p++] = 0x4C; target[p++] = 0x24; target[p++] = 0x38;
-
-            // ── Restore parent's nonvols from REGDISPLAY (56 bytes) ────
-            // R8 still has REGDISPLAY*; restore loop only clobbers RAX.
-            // Each: mov rax, [r8+disp8]; mov reg, [rax].
-            EmitNonvolRestore(target, ref p, regOpcode: 0x18, isExtended: false, disp: 0x18);  // pRbx → rbx
-            EmitNonvolRestore(target, ref p, regOpcode: 0x28, isExtended: false, disp: 0x20);  // pRbp → rbp
-            EmitNonvolRestore(target, ref p, regOpcode: 0x30, isExtended: false, disp: 0x28);  // pRsi → rsi
-            EmitNonvolRestore(target, ref p, regOpcode: 0x38, isExtended: false, disp: 0x30);  // pRdi → rdi
-            EmitNonvolRestore(target, ref p, regOpcode: 0x20, isExtended: true,  disp: 0x58);  // pR12 → r12
-            EmitNonvolRestore(target, ref p, regOpcode: 0x28, isExtended: true,  disp: 0x60);  // pR13 → r13
-            EmitNonvolRestore(target, ref p, regOpcode: 0x30, isExtended: true,  disp: 0x68);  // pR14 → r14
-            EmitNonvolRestore(target, ref p, regOpcode: 0x38, isExtended: true,  disp: 0x70);  // pR15 → r15
-
-            // ── Handler call setup + call (13 bytes) ───────────────────
-            // mov rcx, [r8+0x78]  — arg1 = REGDISPLAY.SP (establisher SP)
-            target[p++] = 0x49; target[p++] = 0x8B; target[p++] = 0x48; target[p++] = 0x78;
-            // mov rdx, [rsp+0x20] — arg2 = exception
-            target[p++] = 0x48; target[p++] = 0x8B; target[p++] = 0x54; target[p++] = 0x24; target[p++] = 0x20;
-            // call qword ptr [rsp+0x28] — call handler
-            target[p++] = 0xFF; target[p++] = 0x54; target[p++] = 0x24; target[p++] = 0x28;
-
-            // ── Pop ExInfo head: s_head = exInfo->PrevExInfo (21 bytes) ─
-            // mov r8, [rsp+0x38]  — reload ExInfo* (R8 was clobbered by call)
-            target[p++] = 0x4C; target[p++] = 0x8B; target[p++] = 0x44; target[p++] = 0x24; target[p++] = 0x38;
-            // mov r9, [r8]        — r9 = exInfo->PrevExInfo (offset 0x00)
-            target[p++] = 0x4D; target[p++] = 0x8B; target[p++] = 0x08;
-            // mov r10, &s_head    — placeholder (10 bytes)
-            target[p++] = 0x49; target[p++] = 0xBA;
-            WriteUInt64(target, ref p, (ulong)(nuint)headAddr);
-            // mov [r10], r9       — *s_head = prev
-            target[p++] = 0x4D; target[p++] = 0x89; target[p++] = 0x0A;
-
-            // ── Non-local transfer (11 bytes) ──────────────────────────
-            // mov r8, [rsp+0x30]  — reload REGDISPLAY*
-            target[p++] = 0x4C; target[p++] = 0x8B; target[p++] = 0x44; target[p++] = 0x24; target[p++] = 0x30;
-            // mov rsp, [r8+0x78]  — rsp = REGDISPLAY.SP (DESTROYS our frame!)
-            target[p++] = 0x49; target[p++] = 0x8B; target[p++] = 0x60; target[p++] = 0x78;
-            // jmp rax             — resume in parent method's continuation IP
-            target[p++] = 0xFF; target[p++] = 0xE0;
+            // step 118 Wave 2 — compile-time codegen (BootAsm.Generator).
+            // Emit() writes the ~137-byte template with one MovHole patched
+            // at install time with &s_head. No compare-gate: Iced picks
+            // shorter sub-rsp form (imm8 4B vs imm32 7B) so bytes differ
+            // by encoding, not semantics. Runtime EH probes / first throw
+            // is the validation oracle.
+            int p = Emit(target, (void**)headAddr);
 
             // Sanity check first byte (push r15) and last byte (jmp rax tail).
             if (target[0] != 0x41 || target[p - 1] != 0xE0)
@@ -170,42 +113,6 @@ namespace OS.Boot.EH
 
             s_installed = true;
             return true;
-        }
-
-        // Emits a 7-byte sequence:
-        //   mov rax, [r8+disp8]    ; 49 8B 40 disp
-        //   mov reg, [rax]         ; 48/4C 8B regOpcode
-        //
-        // regOpcode is the ModR/M byte for `mov reg, [rax]` where:
-        //   - mod=00, r/m=000 (RAX with no displacement)
-        //   - reg field encodes destination
-        // For low GPRs (rbx/rbp/rsi/rdi): regOpcode = 0x18/0x28/0x30/0x38, REX = 0x48
-        // For r12-r15: regOpcode = 0x20/0x28/0x30/0x38, REX = 0x4C
-        private static void EmitNonvolRestore(byte* dst, ref int p,
-            byte regOpcode, bool isExtended, byte disp)
-        {
-            // mov rax, [r8+disp8]: 49 8B 40 <disp>
-            dst[p++] = 0x49;
-            dst[p++] = 0x8B;
-            dst[p++] = 0x40;
-            dst[p++] = disp;
-
-            // mov reg, [rax]: REX 8B regOpcode
-            dst[p++] = isExtended ? (byte)0x4C : (byte)0x48;
-            dst[p++] = 0x8B;
-            dst[p++] = regOpcode;
-        }
-
-        private static void WriteUInt64(byte* dst, ref int p, ulong val)
-        {
-            dst[p++] = (byte)(val);
-            dst[p++] = (byte)(val >> 8);
-            dst[p++] = (byte)(val >> 16);
-            dst[p++] = (byte)(val >> 24);
-            dst[p++] = (byte)(val >> 32);
-            dst[p++] = (byte)(val >> 40);
-            dst[p++] = (byte)(val >> 48);
-            dst[p++] = (byte)(val >> 56);
         }
     }
 }

@@ -66,7 +66,7 @@ namespace OS.Kernel.Memory
     // 0 mod 16, satisfying Win64 alignment for the inner `call`.
     // -----------------------------------------------------------------------
 
-    internal static unsafe class InterfaceDispatchBridge
+    internal static unsafe partial class InterfaceDispatchBridge
     {
         // Offsets inside the exec-stub buffer (layout documented in
         // UefiBootInfoBuilder.cs): 128..511 is the 384-byte window we own.
@@ -90,7 +90,11 @@ namespace OS.Kernel.Memory
             if (resolver == null || failHandler == null) return false;
 
             byte* p0 = (byte*)execBuffer + StubOffset;
-            int written = WriteShellcode(p0, (nint)resolver, (nint)failHandler);
+            // step 119 Wave 5 — compile-time codegen via BootAsm.Generator.
+            // resolverSlot/failSlot are 8-byte data slots (DataSlotHole) at
+            // end of stub; runtime patches them with the absolute addresses
+            // of the managed resolver and fail-handler.
+            int written = Emit(p0, (void*)resolver, (void*)failHandler);
             if (written < 0 || (uint)written > MaxStubSize) return false;
 
             s_shellcodeStart = p0;
@@ -98,10 +102,11 @@ namespace OS.Kernel.Memory
             return true;
         }
 
-        // Writes the full shellcode sequence to `buf`, returns byte count.
-        // Patches all rel32 / rip-relative displacements as we go. Pointer
-        // slots (resolverPtr, failPtr) are filled with the concrete addresses
-        // passed in.
+        // Pre-step-119 manual byte emitter. Kept here as REFERENCE only —
+        // the live code now goes through Emit() in
+        // InterfaceDispatchBridge.BootAsm.cs (compile-time codegen via
+        // BootAsm.Generator + Iced). Build excludes it via `#if false`.
+#if false
         private static int WriteShellcode(byte* buf, nint resolverAddr, nint failAddr)
         {
             int o = 0;
@@ -264,5 +269,6 @@ namespace OS.Kernel.Memory
             for (int i = 0; i < 8; i++)
                 buf[offset + i] = (byte)(value >> (i * 8));
         }
+#endif
     }
 }

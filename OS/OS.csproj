@@ -24,6 +24,13 @@
     <!-- IlcGenerateMapFile=true was used during step 40 cctor research.
          Re-enable temporarily if investigating ILC node emission. -->
 
+    <!-- Persist Roslyn source-generator output to disk so we can see what
+         BootAsm.Generator actually emitted. Lands under
+         obj/<Config>/<TFM>/generated/<Generator>/<GeneratorType>/*.g.cs.
+         No effect on build output — analyzer DLLs aren't shipped (per
+         OutputItemType=Analyzer + ReferenceOutputAssembly=false). -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+
     <!-- step115: Iced (x86/x64 encoder) bake-in for runtime shellcode emission.
          Iced uses C# 12+ syntax in places; net7.0 defaults to C# 11. -->
     <LangVersion>latest</LangVersion>
@@ -44,18 +51,30 @@
     <DefineConstants>$(DefineConstants);ENCODER;BLOCK_ENCODER;CODE_ASSEMBLER;HAS_SPAN;IcedNoIVT;NO_EVEX</DefineConstants>
   </PropertyGroup>
 
-  <!-- Exclude Iced's own .csproj (it's a NuGet-style multi-target one we don't
-       use — we bake Iced sources directly into OS via SDK auto-glob). SDK
-       doesn't auto-add nested .csproj, but mark it explicitly so dotnet
-       restore / IDE don't get confused. -->
+  <!-- Compile-time stub generator (BootAsm). Roslyn analyzer that emits
+       byte templates + patcher code at OS-build time from fluent-Iced
+       bodies (see SPEC-compiletime-stub-generator.md). OutputItemType=
+       Analyzer + ReferenceOutputAssembly=false means the generator runs
+       at compile time only — no runtime dependency on the analyzer DLL. -->
   <ItemGroup>
-    <None Include="src\Iced\Iced.csproj" />
+    <ProjectReference Include="..\bootasm\BootAsm.Generator\BootAsm.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <!-- Drop Iced files that pull in surface we deliberately don't have:
-         StreamCodeWriter — System.IO.Stream (we use our own BufWriter). -->
+  <!-- Iced lives at repo-root /iced/ (sibling to OS/, std/, apps/) so the
+       future compile-time stub generator can reference the same source
+       set via the same <Compile Include> shape. Since Iced is outside the
+       OS project tree, SDK auto-glob doesn't pick it up — explicit Include
+       below. Exclude StreamCodeWriter.cs (needs System.IO.Stream which we
+       don't ship). LinkBase keeps IDE navigation grouping. The original
+       Iced.csproj (NuGet-style multi-target one) is marked as None so
+       dotnet restore / IDE ignore it. -->
   <ItemGroup>
-    <Compile Remove="src\Iced\Intel\StreamCodeWriter.cs" />
+    <Compile Include="..\iced\**\*.cs"
+             Exclude="..\iced\Intel\StreamCodeWriter.cs"
+             LinkBase="Iced" />
+    <None Include="..\iced\Iced.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <LinkerArg Include="libcmt.lib" />
