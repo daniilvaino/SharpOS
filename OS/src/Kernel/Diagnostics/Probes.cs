@@ -28,6 +28,11 @@ namespace OS.Kernel.Diagnostics
         public const bool GcHeapSmoke = true;
         public const bool GcStress = true;
         public const bool NativeAotFeatures = true;
+        // Late-boot NativeAOT probes — run AFTER Phase E threading is up.
+        // Tests thread-handoff with GC mid-transfer + OOM deterministic
+        // behavior. Separate toggle so threading regressions don't mask
+        // early-boot feature probes.
+        public const bool NativeAotFeaturesLate = true;
         public const bool Cctor = true;
 
         // EH probe gradient — flip each level on independently. L1+L2+L4

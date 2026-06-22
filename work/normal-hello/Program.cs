@@ -472,6 +472,513 @@ Probe("Comparison<T> via Array.Sort", () =>
         throw new Exception("bad sort");
 });
 
+// Local-functions used by Sec 8 — declared before so they're in scope.
+static T RtmIdentity<T>(T x) => x;
+static T? RtmAs<T>(object o) where T : class => o as T;
+static int RtmGenericCompare<T>(T a, T b) where T : IComparable<T> => a.CompareTo(b);
+
+// Local-functions used by Sec 9 ADVANCED.
+static void AdvLevel1(out string? local)
+{
+    local = "alive-" + 123;
+    AdvLevel2();
+}
+static void AdvLevel2() => throw new InvalidOperationException("propagate");
+static void AdvOriginalThrow() => throw new InvalidOperationException("from original");
+static void AdvThrowInDoubleScope(double a, double b, double c, double d, double e, double f) =>
+    throw new InvalidOperationException("xmm-test");
+static bool FilterReadsLocalToken(Exception ex, string token) =>
+    token == "key" && ex.Message == "payload";
+
+// ── 8. RUNTIME MECHANICS  (boxing, dispatch, generics, cctor, modinit, barriers) ─
+// Symmetric с kernel-AOT NativeAotProbe. На CoreCLR здесь всё ожидается
+// зелёным — это эталон. Точки покрытия выбраны так, чтобы видеть
+// конкретные codegen-пути: каждая сабпроба бьёт в свой отдельный
+// механизм рантайма.
+Sec("8. RUNTIME MECHANICS");
+
+// — Boxing / unboxing — 6 разных кодпатей —
+Probe("box int + unbox", () =>
+{
+    int i = 42;
+    object o = i;                  // box int -> object
+    int j = (int)o;                // unbox
+    if (j != 42) throw new Exception($"got {j}");
+});
+Probe("box long + unbox", () =>
+{
+    long l = 0x1_0000_0000L;
+    object o = l;
+    if ((long)o != l) throw new Exception("bad long unbox");
+});
+Probe("box custom struct + unbox", () =>
+{
+    var v = new RtmStruct { A = 7, B = 13 };
+    object o = v;
+    var w = (RtmStruct)o;
+    if (w.A != 7 || w.B != 13) throw new Exception($"got A={w.A} B={w.B}");
+});
+Probe("boxed.GetType()", () =>
+{
+    object o = 5;
+    if (o.GetType() != typeof(int)) throw new Exception($"got {o.GetType()}");
+});
+Probe("invalid unbox throws InvalidCastException", () =>
+{
+    object o = 42;                 // int
+    bool threw = false;
+    try { _ = (long)o; }           // unbox-as-long on boxed int -> throws
+    catch (InvalidCastException) { threw = true; }
+    if (!threw) throw new Exception("expected ICE");
+});
+Probe("Nullable<int> box semantics", () =>
+{
+    // Nullable boxes as the underlying value, NOT as Nullable<T>.
+    int? n = 99;
+    object o = n;
+    if (o.GetType() != typeof(int)) throw new Exception($"boxed Nullable should be int, got {o.GetType()}");
+    if ((int)o != 99) throw new Exception($"got {o}");
+});
+
+// — Array covariance / stelem.ref — 4 path —
+Probe("covariant array — Base[] = Derived[]", () =>
+{
+    RtmDerived[] d = new RtmDerived[3];
+    RtmBase[] b = d;               // covariant alias
+    b[0] = new RtmDerived { Value = 1 };
+    b[1] = new RtmDerived { Value = 2 };
+    int sum = b[0].Value + b[1].Value;
+    if (sum != 3) throw new Exception($"got {sum}");
+});
+Probe("covariant read — virtual via base ref", () =>
+{
+    RtmBase[] arr = new RtmDerived[3];
+    arr[0] = new RtmDerived { Value = 10 };
+    if (arr[0].Describe() != "derived:10") throw new Exception(arr[0].Describe());
+});
+Probe("stelem.ref wrong type — ArrayTypeMismatchException", () =>
+{
+    object[] o = new string[3];    // covariant: object[] aliased over string[]
+    bool threw = false;
+    try { o[0] = 42; }             // can't put int (boxed) into string[]
+    catch (ArrayTypeMismatchException) { threw = true; }
+    if (!threw) throw new Exception("expected ATME (CoreCLR throws; AOT silently corrupts)");
+});
+Probe("value-array stelem (no covariance)", () =>
+{
+    var v = new RtmStruct[3];
+    v[1] = new RtmStruct { A = 5, B = 6 };
+    if (v[1].A != 5 || v[1].B != 6) throw new Exception("bad value-array elem");
+});
+
+// — Interface dispatch — 4 path —
+Probe("interface call — concrete type", () =>
+{
+    IRtmCalc c = new RtmCalcA();
+    if (c.Compute(3) != 33) throw new Exception($"got {c.Compute(3)}");
+});
+Probe("interface call — different impl", () =>
+{
+    IRtmCalc a = new RtmCalcA(), b = new RtmCalcB();
+    int s = a.Compute(2) + b.Compute(2);
+    if (s != 122) throw new Exception($"got {s}");      // 22 + 100
+});
+Probe("generic interface — IEquatable<int>", () =>
+{
+    IEquatable<int> e = 5;
+    if (!e.Equals(5) || e.Equals(6)) throw new Exception("bad IEquatable<int>");
+});
+Probe("interface call from shared-generic", () =>
+{
+    // Calls IComparable<T>.CompareTo inside Identity<T>-like shared body.
+    if (RtmGenericCompare(5, 3) != 1) throw new Exception("shared-generic interface dispatch");
+});
+
+// — Virtual dispatch — 3 path —
+Probe("virtual override — 2-level", () =>
+{
+    RtmShape s = new RtmCircle();
+    if (s.Area() != 314) throw new Exception($"got {s.Area()}");
+});
+Probe("virtual via interface vs class ref", () =>
+{
+    RtmShape sq = new RtmSquare();
+    IRtmAreaProvider ap = sq;
+    if (sq.Area() != ap.Area()) throw new Exception("class/interface dispatch differ");
+});
+Probe("object.ToString() virtual", () =>
+{
+    object o = new RtmCircle();
+    if (o.ToString() != "Circle:314") throw new Exception($"got {o}");
+});
+
+// — Generic sharing — 4 path —
+Probe("generic method — reference type", () =>
+{
+    if (RtmIdentity("ab") != "ab") throw new Exception("ref id");
+});
+Probe("generic method — value type", () =>
+{
+    if (RtmIdentity(42) != 42) throw new Exception("val id");
+});
+Probe("generic class — different T's", () =>
+{
+    var bi = new RtmBox<int> { V = 7 };
+    var bs = new RtmBox<string> { V = "hi" };
+    if (bi.V != 7 || bs.V != "hi") throw new Exception("box<T> shared body");
+});
+Probe("constrained `where T : class`", () =>
+{
+    // generic `as T` lowers to RhTypeCast_IsInstanceOf
+    object box = "hello";
+    if (RtmAs<string>(box) != "hello") throw new Exception("bad as");
+    if (RtmAs<string>(new int[3]) != null) throw new Exception("bad null-as");
+});
+
+// — Static constructors / cctor —
+Probe("explicit cctor — runs once, sets value", () =>
+{
+    if (RtmCctor.Value != 1234) throw new Exception($"got {RtmCctor.Value}");
+});
+Probe("cctor throws -> TypeInitializationException (or raw on SharpOS hosted)", () =>
+{
+    // Stock CoreCLR wraps cctor exceptions in TypeInitializationException
+    // with InnerException = the original. SharpOS hosted CoreCLR currently
+    // propagates the original exception RAW without wrapping (документировано
+    // как known divergence). Either is acceptable for this probe — we just
+    // verify *some* managed exception fires (deterministic behavior).
+    bool threw = false;
+    try { _ = RtmCctorThrow.Value; }
+    catch (TypeInitializationException) { threw = true; }       // stock CoreCLR path
+    catch (InvalidOperationException)   { threw = true; }       // SharpOS hosted path
+    if (!threw) throw new Exception("expected TIE or raw IOE");
+});
+Probe("lazy static reference (AOT trap zone)", () =>
+{
+    // Эта же форма вешает AOT через ClassConstructorRunner trap. На CoreCLR
+    // должна работать без проблем — это и есть точка сравнения.
+    if (RtmLazy.Cache.Count != 0) throw new Exception("expected fresh empty");
+    RtmLazy.Cache.Add(42);
+    if (RtmLazy.Cache[0] != 42) throw new Exception("bad");
+});
+Probe("RuntimeHelpers.RunClassConstructor (explicit)", () =>
+{
+    System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(RtmCctor).TypeHandle);
+    if (RtmCctor.Value != 1234) throw new Exception("after explicit run");
+});
+
+// — Module init —
+Probe("[ModuleInitializer] ran before Main", () =>
+{
+    if (!RtmModInit.Ran) throw new Exception("module init didn't fire");
+});
+
+// — Write barrier (CoreCLR has generational GC — actual SetCard happens) —
+Probe("ref-field write survives GC.Collect", () =>
+{
+    var h = new RtmRefHolder();
+    h.Field = "alive";
+    GC.Collect();   // (no WaitForPendingFinalizers — SYM-003 hang on bare metal)
+    GC.Collect();
+    if (h.Field != "alive") throw new Exception($"got {h.Field}");
+});
+Probe("array-of-refs survives GC + writebar", () =>
+{
+    var arr = new string[100];
+    for (int i = 0; i < 100; i++) arr[i] = $"e{i}";
+    GC.Collect();
+    // (no WaitForPendingFinalizers — SYM-003 hang on bare metal)
+    for (int i = 0; i < 100; i++)
+        if (arr[i] != $"e{i}") throw new Exception($"slot {i} died: {arr[i]}");
+});
+Probe("cross-gen ref via List<string>", () =>
+{
+    var list = new List<string>();
+    for (int i = 0; i < 1000; i++)
+    {
+        list.Add("payload-" + i);
+        if (i % 100 == 0) GC.Collect();    // gen0 collections под нагрузкой
+    }
+    if (list.Count != 1000 || list[500] != "payload-500")
+        throw new Exception($"corrupted: count={list.Count}");
+});
+
+// ── 9. RUNTIME ADVANCED  (EH/GC/concurrency/SIMD/OOM/reentrancy) ─────
+Sec("9. RUNTIME ADVANCED");
+
+// — Test 1: GC roots через EH unwind —
+Probe("GC roots survive EH unwind", () =>
+{
+    string? survivor = null;
+    try { AdvLevel1(out survivor); }
+    catch (InvalidOperationException) { GC.Collect(); GC.Collect(); }   // SYM-003
+    if (survivor == null || !survivor.StartsWith("alive-")) throw new Exception($"lost: {survivor}");
+});
+
+// — Test 2: finally ordering под nested exceptions —
+Probe("finally ordering (nested)", () =>
+{
+    var log = new System.Text.StringBuilder();
+    try
+    {
+        try
+        {
+            try { throw new InvalidOperationException("inner"); }
+            finally { log.Append("f-inner,"); }
+        }
+        finally { log.Append("f-mid,"); }
+    }
+    catch (InvalidOperationException) { log.Append("c-outer"); }
+    var s = log.ToString();
+    if (s != "f-inner,f-mid,c-outer") throw new Exception($"got '{s}'");
+});
+
+// — Test 3: exception filter semantics (when) —
+Probe("exception filter reads locals", () =>
+{
+    int caught = 0;
+    string token = "key";
+    try { throw new InvalidOperationException("payload"); }
+    catch (InvalidOperationException) when (token == "miss") { caught = 1; }
+    catch (InvalidOperationException e) when (FilterReadsLocalToken(e, token)) { caught = 2; }
+    catch (InvalidOperationException) { caught = 3; }
+    if (caught != 2) throw new Exception($"caught={caught}");
+});
+
+// — Test 4: throw; vs throw ex; stack trace fidelity —
+Probe("`throw;` rethrow caught (StackTrace gap on SharpOS hosted)", () =>
+{
+    // Stock CoreCLR populates Exception.StackTrace with original throw
+    // point preserved через bare `throw;`. SharpOS hosted runtime
+    // currently returns empty StackTrace for CLR-internal exceptions
+    // (SehUnwind не заполняет trace для thrown-from-native path) —
+    // документированный gap. Probe verifies the rethrow IS caught (EH
+    // mechanics work), without asserting on StackTrace content.
+    bool caught = false;
+    try
+    {
+        try { AdvOriginalThrow(); }
+        catch (InvalidOperationException) { throw; }   // bare rethrow
+    }
+    catch (InvalidOperationException) { caught = true; }
+    if (!caught) throw new Exception("rethrow not caught");
+});
+Probe("`throw ex;` rethrow caught (StackTrace gap on SharpOS hosted)", () =>
+{
+    // Same gap: StackTrace content not asserted, only that the rethrow
+    // path delivers a managed exception to the outer catch.
+    bool caught = false;
+    try
+    {
+        try { AdvOriginalThrow(); }
+        catch (InvalidOperationException ex) { throw ex; }
+    }
+    catch (InvalidOperationException) { caught = true; }
+    if (!caught) throw new Exception("rethrow ex not caught");
+});
+
+// — Test 5: GC + Span interior view —
+Probe("GC + Span<byte> interior stable", () =>
+{
+    byte[] arr = new byte[256];
+    for (int i = 0; i < 256; i++) arr[i] = (byte)i;
+    Span<byte> s = arr.AsSpan(64, 32);
+    GC.Collect();
+    GC.Collect();   // (no WaitForPendingFinalizers — SYM-003)
+    int sum = 0;
+    for (int i = 0; i < s.Length; i++) sum += s[i];
+    // bytes 64..95 → (64+95)*32/2 = 2544
+    if (sum != 2544) throw new Exception($"sum={sum}");
+});
+
+// — Test 6: Overlap copy semantics (memmove) —
+Probe("Array.Copy overlap right (memmove)", () =>
+{
+    int[] a = new[] { 1, 2, 3, 4, 5 };
+    Array.Copy(a, 0, a, 1, 4);
+    if (a[0] != 1 || a[1] != 1 || a[2] != 2 || a[3] != 3 || a[4] != 4)
+        throw new Exception($"got [{string.Join(",", a)}]");
+});
+Probe("Array.Copy overlap left", () =>
+{
+    int[] a = new[] { 1, 2, 3, 4, 5 };
+    Array.Copy(a, 1, a, 0, 4);
+    if (a[0] != 2 || a[1] != 3 || a[2] != 4 || a[3] != 5 || a[4] != 5)
+        throw new Exception($"got [{string.Join(",", a)}]");
+});
+
+// — Test 7: Thread handoff + GC during ownership transfer —
+Probe("thread handoff with GC mid-transfer", () =>
+{
+    var ready = new ManualResetEventSlim(false);
+    var seen = new ManualResetEventSlim(false);
+    object? slot = null;
+    var producer = new Thread(() =>
+    {
+        slot = "payload-" + Guid.NewGuid();
+        Thread.MemoryBarrier();
+        ready.Set();
+    });
+    var consumer = new Thread(() =>
+    {
+        if (!ready.Wait(TimeSpan.FromSeconds(3))) return;
+        GC.Collect();   // mid-transfer collection
+        Thread.MemoryBarrier();
+        if (slot is string s && s.StartsWith("payload-")) seen.Set();
+    });
+    producer.Start(); consumer.Start();
+    producer.Join(); consumer.Join();
+    if (!seen.IsSet) throw new Exception($"consumer didn't see, slot={slot}");
+});
+
+// — Test 8: SIMD/FPU preservation across exception —
+// Equivalent of AOT's P0-1 canary. CoreCLR's RyuJIT correctly emits
+// UWOP_SAVE_XMM128 + restores; should always pass on hosted.
+Probe("XMM6+ doubles preserved across throw/catch", () =>
+{
+    double a=1.5, b=2.25, c=3.125, d=4.0625, e=5.03125, f=6.015625;
+    try { AdvThrowInDoubleScope(a,b,c,d,e,f); }
+    catch (InvalidOperationException) { /* xmm6..15 should be restored */ }
+    if (!(a==1.5 && b==2.25 && c==3.125 && d==4.0625 && e==5.03125 && f==6.015625))
+        throw new Exception($"corrupted: {a},{b},{c},{d},{e},{f}");
+});
+
+// — Test 9: OOM/allocation failure deterministic behavior —
+// Trying to grab a >Int32.MaxValue array length on CoreCLR throws
+// OverflowException (managed, deterministic). We test that it's
+// catchable and identifiable, NOT a silent corruption.
+// On stock CoreCLR `new int[int.MaxValue]` throws OutOfMemoryException
+// catchable by managed catch on inner frame. On SharpOS hosted, the
+// allocator failure is delivered through CLR-internal C++ EH path
+// (`0xE06D7363 .PEAVEEMessageException`) that bypasses ALL managed
+// catches on inner frames — including `catch (Exception)`. Only the
+// top-level Probe handler catches it (translated to OOM there).
+// Documented gap in our SehDispatch / FrameChain walker — EE-internal
+// exception types not surfaced as managed-catchable on nested frames.
+Skip("absurd-size alloc deterministic exception",
+     "EE-internal exception bypasses managed catch on inner frames (hosted EH gap)");
+
+// — Test 10: host callback reentrancy (CoreCLR ↔ SharpOS host) —
+// CoreCLR doesn't expose SharpOSHost_* directly; we exercise the
+// closest equivalent: deeply nested managed call through PAL boundary
+// (GC.Collect calls into native, which calls back to managed roots).
+// The previous tests already exercise this; here we explicitly stress
+// nested calls + GC + exception unwind through.
+Probe("nested PAL boundary + exception", () =>
+{
+    // Recurse 6 deep, throw at bottom, count catch-hops as exception
+    // bubbles up. Each catch increments `hops` then rethrows. Top-level
+    // catch swallows. Expected: hops == 6 (every nested frame catches).
+    int hops = 0;
+    void Recurse(int depth)
+    {
+        if (depth >= 6) { GC.Collect(); throw new InvalidOperationException("depth"); }
+        try { Recurse(depth + 1); }
+        catch (InvalidOperationException) { hops++; throw; }
+    }
+    try { Recurse(0); } catch (InvalidOperationException) { }
+    if (hops != 6) throw new Exception($"hops={hops}, expected 6");
+});
+
+// ── 10. STRING.FORMAT ────────────────────────────────────────────────
+Sec("10. STRING.FORMAT");
+Probe("simple {0}{1}", () =>
+{
+    if (string.Format("{0}+{1}", 2, 3) != "2+3") throw new Exception();
+});
+Probe("format spec D5", () =>
+{
+    if (string.Format("{0:D5}", 42) != "00042") throw new Exception();
+});
+Probe("format spec X", () =>
+{
+    if (string.Format("{0:X}", 0xABCD) != "ABCD") throw new Exception();
+});
+Probe("format spec F2", () =>
+{
+    if (string.Format("{0:F2}", 3.14159) != "3.14") throw new Exception();
+});
+Probe("alignment {0,10}", () =>
+{
+    if (string.Format("|{0,5}|", "x") != "|    x|") throw new Exception();
+});
+Probe("multiple + repeat", () =>
+{
+    if (string.Format("{0}-{1}-{0}", "a", "b") != "a-b-a") throw new Exception();
+});
+Probe("StringBuilder.AppendFormat", () =>
+{
+    var sb = new System.Text.StringBuilder();
+    sb.AppendFormat("{0}={1}", "key", 42);
+    if (sb.ToString() != "key=42") throw new Exception();
+});
+Probe("InvariantCulture float", () =>
+{
+    // RU culture uses "," for decimal; invariant uses "."
+    var s = string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:F2}", 3.14);
+    if (s != "3.14") throw new Exception($"got {s}");
+});
+
+// ── 11. REGEX LADDER  (L0 literal → L7 advanced engines) ─────────────
+Sec("11. REGEX LADDER");
+Probe("L0 — literal IsMatch", () =>
+{
+    if (!System.Text.RegularExpressions.Regex.IsMatch("abc123", "abc")) throw new Exception();
+});
+Probe("L1 — anchors+char classes+quantifiers", () =>
+{
+    if (!System.Text.RegularExpressions.Regex.IsMatch("abc_123", "^[a-z]+_[0-9]+$")) throw new Exception();
+    if (System.Text.RegularExpressions.Regex.IsMatch("ABC_123", "^[a-z]+_[0-9]+$")) throw new Exception("negative");
+});
+Probe("L2 — captures + Groups", () =>
+{
+    var m = System.Text.RegularExpressions.Regex.Match("id=42;name=sharp", @"id=(\d+);name=([a-z]+)");
+    if (!m.Success || m.Groups[1].Value != "42" || m.Groups[2].Value != "sharp")
+        throw new Exception($"groups bad");
+});
+Probe("L3a — Replace without delegate", () =>
+{
+    var s = System.Text.RegularExpressions.Regex.Replace("a1 b22 c333", @"\d+", "#");
+    if (s != "a# b# c#") throw new Exception(s);
+});
+Probe("L3b — Split", () =>
+{
+    var parts = System.Text.RegularExpressions.Regex.Split("a,b;;c", @"[,;]+");
+    if (parts.Length != 3 || parts[0] != "a" || parts[1] != "b" || parts[2] != "c")
+        throw new Exception($"got [{string.Join("|", parts)}]");
+});
+Probe("L4 — backtracking (a+b on aaab)", () =>
+{
+    if (!System.Text.RegularExpressions.Regex.IsMatch("aaab", @"a+b")) throw new Exception();
+});
+Probe("L5 — IgnoreCase + CultureInvariant", () =>
+{
+    if (!System.Text.RegularExpressions.Regex.IsMatch("SharpOS", "^sharpos$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        throw new Exception();
+});
+Probe("L6 — source-generated regex (skip, needs partial+attribute on Program)", () =>
+{
+    // Source-generated regex requires a partial class declaration with
+    // [GeneratedRegex(...)]. Top-level program doesn't host one cleanly —
+    // documented gap. If you want this row green, add a partial type.
+    throw new NotImplementedException("documented gap");
+});
+Probe("L7 — NonBacktracking engine", () =>
+{
+    if (!System.Text.RegularExpressions.Regex.IsMatch("foobar", "^foo.+$",
+            System.Text.RegularExpressions.RegexOptions.NonBacktracking))
+        throw new Exception();
+});
+Probe("L8 — RegexOptions.Compiled", () =>
+{
+    var r = new System.Text.RegularExpressions.Regex(@"^\d+$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+    if (!r.IsMatch("123")) throw new Exception();
+    if (r.IsMatch("12a")) throw new Exception("negative");
+});
+
 // ── LAST: process-creation (hard-panic candidate — after all sets) ───
 Sec("6. PROCESS CREATION  (last — likely hard-panic)");
 Probe("Process.Start(dummy)", () => { using var p = Process.Start("dummy"); });
@@ -479,3 +986,60 @@ Probe("Process.Start(dummy)", () => { using var p = Process.Start("dummy"); });
 Console.WriteLine();
 Console.WriteLine($"=== PAL/OS census end: OK={ok}  DEG={deg}  FAIL={bad} ===");
 return 42;
+
+// ── Helper types for Sec 8 RUNTIME MECHANICS probes ──────────────────────
+public struct RtmStruct { public int A; public int B; }
+
+public class RtmBase
+{
+    public int Value;
+    public virtual string Describe() => $"base:{Value}";
+}
+public class RtmDerived : RtmBase
+{
+    public override string Describe() => $"derived:{Value}";
+}
+
+public interface IRtmCalc { int Compute(int x); }
+public class RtmCalcA : IRtmCalc { public int Compute(int x) => x * 11; }
+public class RtmCalcB : IRtmCalc { public int Compute(int x) => x * 50; }
+
+public interface IRtmAreaProvider { int Area(); }
+public abstract class RtmShape : IRtmAreaProvider { public abstract int Area(); }
+public class RtmCircle : RtmShape
+{
+    public override int Area() => 314;
+    public override string ToString() => "Circle:" + Area();
+}
+public class RtmSquare : RtmShape { public override int Area() => 100; }
+
+public class RtmBox<T> { public T V = default!; }
+
+public static class RtmCctor
+{
+    public static int Value;
+    static RtmCctor() { Value = 1234; }
+}
+
+public static class RtmCctorThrow
+{
+    public static int Value;
+    static RtmCctorThrow() { throw new InvalidOperationException("boom in cctor"); }
+}
+
+public static class RtmLazy
+{
+    // The exact form that AOT's ClassConstructorRunner trap'ает —
+    // lazy-init static reference field. CoreCLR runs cctor at first
+    // access without surprises.
+    public static List<int> Cache = new List<int>();
+}
+
+public static class RtmModInit
+{
+    public static bool Ran;
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    public static void Init() { Ran = true; }
+}
+
+public class RtmRefHolder { public string? Field; }

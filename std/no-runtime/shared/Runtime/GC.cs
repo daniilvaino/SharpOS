@@ -24,5 +24,18 @@ namespace System
             if (length < 0) SpanHelpers.Halt();
             return new T[length];
         }
+
+        // BCL parity: `GC.Collect()` triggers a full mark-sweep cycle.
+        // Forwards to our kernel-side GC implementation (mark + sweep).
+        // Overloads (generation arg, etc.) ignored — we have no
+        // generations. Used by NativeAotProbe.Probe_WriteBarrier and any
+        // BCL-ported code that explicitly forces a collection.
+        public static void Collect() => SharpOS.Std.NoRuntime.GC.Collect();
+        public static void Collect(int generation) => SharpOS.Std.NoRuntime.GC.Collect();
+        public static void Collect(int generation, GCCollectionMode mode) => SharpOS.Std.NoRuntime.GC.Collect();
     }
+
+    // Minimal enum to satisfy `GC.Collect(int, GCCollectionMode)` shape —
+    // values mirror BCL; we don't honour any of them (we just collect).
+    public enum GCCollectionMode { Default = 0, Forced = 1, Optimized = 2, Aggressive = 3 }
 }

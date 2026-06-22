@@ -383,6 +383,12 @@ namespace OS.Boot
             if (Probes.ProcessSpawn)
                 OS.Kernel.Threading.ProcessProbe.Run();
 
+            // Late-boot NativeAOT feature probes — thread handoff with
+            // GC mid-transfer + OOM deterministic exception. Needs
+            // scheduler/Event up (Phase E5+), which is true by here.
+            if (Probes.NativeAotFeaturesLate)
+                NativeAotProbe.RunLate();
+
             // Phase 6.1.a — call coreclr_initialize from kernel boot path.
             // Expected to panic at first unimplemented SharpOSHost_* /
             // CrtAndEh stub. Iterate until S_OK.

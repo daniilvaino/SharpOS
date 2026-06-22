@@ -28,6 +28,16 @@ namespace System.Runtime.CompilerServices
     // No members needed — its existence in this namespace is what the
     // compiler checks. Without it, `volatile int x;` gives CS0518.
     public static class IsVolatile { }
+
+    // C# 9 `[ModuleInitializer]` recognition by Roslyn. ILC handles the
+    // actual dispatch (module init runs before any user code touches the
+    // module). Empty attribute body suffices — Roslyn only checks for the
+    // type's existence by name. Needed to write NativeAotProbe.Probe_ModuleInit.
+    [AttributeUsage(AttributeTargets.Method, Inherited = false)]
+    public sealed class ModuleInitializerAttribute : Attribute
+    {
+        public ModuleInitializerAttribute() { }
+    }
 }
 
 namespace System.Runtime.InteropServices

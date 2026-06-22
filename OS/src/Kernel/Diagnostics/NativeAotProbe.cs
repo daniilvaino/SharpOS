@@ -84,6 +84,22 @@ namespace OS.Kernel.Diagnostics
             // the full DispatchResolve port lands. Everything above runs via
             // the shellcode fast path (pre-baked cache) or plain virtual
             // dispatch and should succeed.
+            // Runtime mechanics smoke-set — symmetric with normal-hello
+            // Sec 8 "RUNTIME MECHANICS". Documents which 8 fundamentals
+            // work in our AOT std (boxing, virtual, interface, generic
+            // sharing, cctor — already above; here we add the missing 3).
+            Probe_ArrayCovariance();
+            Probe_ModuleInit();
+            Probe_WriteBarrier();
+            Probe_GcRootsThroughEhUnwind();
+            Probe_FinallyOrderingNested();
+            Probe_ExceptionFilter();
+            Probe_RethrowStackTrace();
+            Probe_GcSpanInterior();
+            Probe_ArrayCopyOverlap();
+            Probe_XmmAcrossThrow();           // RED until P0-1 lands
+            Probe_StringFormat();
+
             Probe_InterfaceCallFromSharedGeneric();
             // Delegates (any managed `delegate T F(...)`, with or without capture) require
             // Delegate.InitializeClosedInstance + _target + _functionPointer + Invoke
@@ -1029,6 +1045,293 @@ namespace OS.Kernel.Diagnostics
             bool ok = ros.Length == 5 && sum == 0xFF
                       && ros[0] == 0x11 && ros[4] == 0x55;
             ReportProbe("RuntimeHelpers.CreateSpan", ok, (uint)sum);
+        }
+
+        // --- Array covariance + stelem.ref (positive monomorphic only) ---
+        // We deliberately don't test the throwing-negative case here: our
+        // RhpStelemRef skips the covariance check (documented в
+        // GcRuntimeExports.cs), so writing a wrong-typed object would
+        // silently corrupt rather than throw ArrayTypeMismatchException.
+        // CoreCLR-hosted side does the throwing test (see normal-hello).
+        private class CovBase { public virtual int X => 1; }
+        private class CovDerived : CovBase { public override int X => 2; }
+
+        private static void Probe_ArrayCovariance()
+        {
+            CovBase[] arr = new CovDerived[3];   // covariant alias
+            arr[0] = new CovDerived();           // monomorphic stelem.ref
+            arr[1] = new CovDerived();
+            int sum = arr[0].X + arr[1].X;       // virtual via base ref
+            ReportProbe("array covariance (stelem.ref)", sum == 4, (uint)sum);
+        }
+
+        // --- Module init ([ModuleInitializer]) ---
+        // Roslyn allows static parameterless methods marked
+        // [ModuleInitializer] to run before any other user code touches the
+        // module. ILC's loader machinery wires the dispatch. We flip a
+        // primitive bool field (primitive statics don't trigger
+        // ClassConstructorRunner). If module init didn't fire — flag stays
+        // false and probe FAILs.
+        private static bool s_moduleInitRan;
+
+        [System.Runtime.CompilerServices.ModuleInitializer]
+        public static void ModuleInit() { s_moduleInitRan = true; }
+
+        private static void Probe_ModuleInit()
+        {
+            ReportProbe("[ModuleInitializer]", s_moduleInitRan, s_moduleInitRan ? 1u : 0u);
+        }
+
+        // --- Write barrier (RhpAssignRef + GC marking) ---
+        // Smoke-tests that storing a managed ref into a heap field via
+        // RhpAssignRef + walking it across GC.Collect keeps the target
+        // alive (no premature sweep). On our non-generational mark-sweep
+        // RhpAssignRef is a plain pointer store; the actual liveness
+        // guarantee comes from GcMark following the ref via MT/GcDescSeries.
+        private class RefHolder { public string? Field; }
+
+        private static void Probe_WriteBarrier()
+        {
+            var h = new RefHolder();
+            h.Field = "alive-after-gc";          // exercises RhpAssignRef
+            GC.Collect();                        // forces mark-sweep
+            bool ok = h.Field == "alive-after-gc";
+            ReportProbe("write barrier (ref field + GC.Collect)", ok, ok ? 1u : 0u);
+        }
+
+        // --- GC roots through EH unwind ---
+        // Allocates a string in a deep call chain, throws, catches at the
+        // top, GC.Collect's, verifies the string is still alive via the
+        // catch-local reference. Tests that funclet/exception dispatch
+        // preserves managed roots correctly.
+        private static void Probe_GcRootsThroughEhUnwind()
+        {
+            string? survivor = null;
+            try
+            {
+                EhUnwindLevel1(out survivor);
+            }
+            catch (InvalidOperationException)
+            {
+                GC.Collect();
+            }
+            bool ok = survivor != null && survivor.Length > 0 && survivor.StartsWith("alive-");
+            ReportProbe("GC roots through EH unwind", ok, (uint)(survivor?.Length ?? 0));
+        }
+        private static void EhUnwindLevel1(out string? local)
+        {
+            local = "alive-" + 123;
+            EhUnwindLevel2();
+        }
+        private static void EhUnwindLevel2()
+        {
+            throw new InvalidOperationException("propagate");
+        }
+
+        // --- Finally ordering under nested exceptions ---
+        // try { try { throw } finally { log "f1" } } catch { log "c" }
+        // Expected log: "f1,c". Tests funclet ordering: inner finally
+        // runs before outer catch.
+        private static void Probe_FinallyOrderingNested()
+        {
+            var sb = new System.Text.StringBuilder();
+            try
+            {
+                try { throw new InvalidOperationException("inner"); }
+                finally { sb.Append("f1,"); }
+            }
+            catch (InvalidOperationException) { sb.Append("c"); }
+            string s = sb.ToString();
+            ReportProbe("finally ordering (nested)", s == "f1,c", (uint)s.Length);
+        }
+
+        // --- Exception filter semantics (when) ---
+        // Filter reads a local, calls a method, returns true/false. Two
+        // catches: first with filter=false (must be skipped), second
+        // catches by type. Validates filter doesn't disturb frame state.
+        private static void Probe_ExceptionFilter()
+        {
+            int caughtBy = 0;
+            int sentinel = 7;
+            try { throw new InvalidOperationException("filtered"); }
+            catch (InvalidOperationException) when (FilterFalse(sentinel)) { caughtBy = 1; }
+            catch (InvalidOperationException e) when (FilterReadLocal(e, sentinel)) { caughtBy = 2; }
+            catch (InvalidOperationException) { caughtBy = 3; }
+            ReportProbe("exception filter (when)", caughtBy == 2, (uint)caughtBy);
+        }
+        private static bool FilterFalse(int local) => local != 7 || false;
+        private static bool FilterReadLocal(Exception e, int local) =>
+            local == 7 && e.Message == "filtered";
+
+        // --- throw; vs throw ex; stack trace fidelity ---
+        // `throw;` preserves the original throw point; `throw ex;` resets
+        // the StackTrace to the rethrow location. We check that
+        // re-throwing preserves the original stack mention.
+        private static void Probe_RethrowStackTrace()
+        {
+            string? trace = null;
+            try
+            {
+                try { RethrowSource(); }
+                catch (InvalidOperationException) { throw; }   // bare rethrow
+            }
+            catch (InvalidOperationException e) { trace = e.StackTrace; }
+            // Stack trace must mention RethrowSource (the original throw point).
+            bool ok = trace != null && trace.Contains("RethrowSource");
+            ReportProbe("rethrow preserves stack trace", ok, (uint)(trace?.Length ?? 0));
+        }
+        private static void RethrowSource() => throw new InvalidOperationException("from source");
+
+        // --- GC + Span interior view ---
+        // Span<byte> over heap array; force GC.Collect; verify span still
+        // reads correctly. Critical for our non-moving GC: array payload
+        // must stay at the same address through collections.
+        private static void Probe_GcSpanInterior()
+        {
+            byte[] arr = new byte[64];
+            for (int i = 0; i < 64; i++) arr[i] = (byte)i;
+            Span<byte> s = arr.AsSpan(8, 16);   // interior slice
+            GC.Collect();                       // payload must stay put
+            int sum = 0;
+            for (int i = 0; i < s.Length; i++) sum += s[i];
+            // bytes 8..23 → sum = (8+23)*16/2 = 248
+            ReportProbe("GC + Span<byte> interior view", sum == 248, (uint)sum);
+        }
+
+        // --- Array.Copy overlap (memmove semantics) ---
+        // Shift array elements right by 1: arr[1..n-1] = arr[0..n-2].
+        // Naive memcpy gives a "0,0,0,0" smear; correct memmove gives
+        // "1,1,2,3". Tests Array.Copy's handling of overlapping src/dst.
+        private static void Probe_ArrayCopyOverlap()
+        {
+            int[] a = new[] { 1, 2, 3, 4 };
+            Array.Copy(a, 0, a, 1, 3);          // shift right
+            bool ok = a[0] == 1 && a[1] == 1 && a[2] == 2 && a[3] == 3;
+            ReportProbe("Array.Copy overlap (memmove)", ok, (uint)(a[0] + a[1] + a[2] + a[3]));
+        }
+
+        // --- XMM register preservation across throw/catch ---
+        // P0-1 bug canary: callee-saved xmm6+ holding double survives
+        // through throw → catch unwind. RyuJIT emits UWOP_SAVE_XMM128;
+        // our SehUnwind ApplyCode currently swallows opcodes 8/9 silently.
+        // EmitCapture doesn't snapshot FP/XMM, EmitRestore doesn't load.
+        // Expected RED until P0-1 lands (donext.md). When fixed, GREEN.
+        private static void Probe_XmmAcrossThrow()
+        {
+            // Forces JIT to spill these to xmm6+ across the call.
+            double a = 1.5, b = 2.25, c = 3.125, d = 4.0625, e = 5.03125, f = 6.015625;
+            try { ThrowInDoubleScope(a, b, c, d, e, f); }
+            catch (InvalidOperationException) { /* xmm6..15 should be restored */ }
+            // Use values after catch — if XMM lost, these will be garbage.
+            bool ok = a == 1.5 && b == 2.25 && c == 3.125 && d == 4.0625 && e == 5.03125 && f == 6.015625;
+            // Mix to one uint for ReportProbe channel.
+            uint mix = (uint)(a + b + c + d + e + f);  // ≈22 if intact, else garbage
+            ReportProbe("XMM regs preserved across throw [P0-1 canary]", ok, mix);
+        }
+        private static void ThrowInDoubleScope(double a, double b, double c, double d, double e, double f) =>
+            throw new InvalidOperationException("xmm-test");
+
+        // --- string.Format coverage ---
+        // Basic {N} substitution, format specifiers (D/X/F2), alignment.
+        private static void Probe_StringFormat()
+        {
+            string s1 = string.Format("{0}+{1}={2}", 2, 3, 5);
+            string s2 = string.Format("hex={0:X}", 0xABCD);
+            string s3 = string.Format("dec={0:D5}", 42);
+            string s4 = string.Format("flt={0:F2}", 3.14159);
+            string s5 = string.Format("|{0,5}|", "x");
+            bool ok = s1 == "2+3=5" &&
+                      s2 == "hex=ABCD" &&
+                      s3 == "dec=00042" &&
+                      s4 == "flt=3.14" &&
+                      s5 == "|    x|";
+            uint sig = (uint)(s1.Length + s2.Length + s3.Length + s4.Length + s5.Length);
+            ReportProbe("string.Format (basic + D/X/F2/align)", ok, sig);
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        // LATE-BOOT entry — call AFTER Phase E threading + scheduler is up
+        // (TebFacade/Atomics/ThreadPingPong/Sleep/Event/Semaphore probes
+        // all passed). Tests here need scheduler.Spawn + Event + cross-
+        // thread state which aren't ready in early Phase4.
+        // ────────────────────────────────────────────────────────────────
+        public static void RunLate()
+        {
+            Log.Write(LogLevel.Info, "---- nativeaot probe (late) begin ----");
+            Probe_ThreadHandoffWithGc();
+            Probe_OomDeterministic();
+            Log.Write(LogLevel.Info, "---- nativeaot probe (late) end ----");
+        }
+
+        // --- Thread handoff with GC mid-transfer ---
+        // Producer thread writes a ref to a shared slot + sets an event.
+        // Main thread waits, GC.Collect's, then reads — verifies ref-
+        // handoff across threads survives GC (proper roots tracking on
+        // both the producing frame's stack AND the consumer's view).
+        private static OS.Kernel.Threading.Event? s_handoffEvent;
+        private static string? s_handoffSlot;
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void HandoffProducer()
+        {
+            s_handoffSlot = "handoff-" + 12345;
+            // Memory barrier — ensure store visible to consumer.
+            System.Threading.Interlocked.MemoryBarrier();
+            s_handoffEvent!.Set();
+            OS.Kernel.Threading.Scheduler.Exit();
+        }
+
+        private static void Probe_ThreadHandoffWithGc()
+        {
+            s_handoffSlot = null;
+            s_handoffEvent = new OS.Kernel.Threading.Event(manualReset: true, initialState: false);
+
+            var producer = OS.Kernel.Threading.Scheduler.Spawn(&HandoffProducer, 0);
+            if (producer == null)
+            {
+                ReportProbe("thread handoff + GC (spawn failed)", false, 0u);
+                return;
+            }
+
+            // Wait for producer's Set + reach this point in main.
+            s_handoffEvent.Wait();
+
+            // GC.Collect mid-transfer — must not sweep s_handoffSlot's
+            // referent. Tests that the static-roots scan picks up
+            // s_handoffSlot (a private static field on this class).
+            GC.Collect();
+
+            bool ok = s_handoffSlot != null && s_handoffSlot.StartsWith("handoff-");
+            ReportProbe("thread handoff + GC mid-transfer", ok, (uint)(s_handoffSlot?.Length ?? 0));
+        }
+
+        // --- OOM deterministic behavior ---
+        // Best-effort. Our RhpNewArray returns null on size_t overflow
+        // (size64 > 0xFFFFFFFF). ILC-generated callsite typically reacts
+        // by throwing OOM via RhExceptionHandling. We try `new int[N]`
+        // where N is large enough to overflow and check what actually
+        // happens — green if any managed exception is caught, red if
+        // silent (we ran past with no exception means null deref or UB).
+        private static void Probe_OomDeterministic()
+        {
+            bool caught = false;
+            string? exType = null;
+            try
+            {
+                var huge = new int[int.MaxValue];
+                // If we got here with valid array — bizarre.
+                if (huge.Length == int.MaxValue)
+                {
+                    ReportProbe("OOM: huge alloc unexpectedly succeeded", false, (uint)huge.Length);
+                    return;
+                }
+            }
+            catch (OutOfMemoryException) { caught = true; exType = "OOM"; }
+            catch (OverflowException) { caught = true; exType = "Overflow"; }
+            catch (Exception) { caught = true; exType = "other"; }
+
+            uint sig = exType == "OOM" ? 1u : exType == "Overflow" ? 2u : caught ? 3u : 0u;
+            ReportProbe("OOM/huge-alloc -> deterministic exception", caught, sig);
         }
 
         private static void ReportProbe(string name, bool ok, uint value)
