@@ -166,11 +166,22 @@ if (target is not Iocp ev) return 0;   // ↔ RhTypeCast_IsInstanceOfClass, ли
 
 **Если generic-helper действительно нужен** (например, портируем generic-heavy BCL collection) — портировать `RhTypeCast_IsInstanceOf` / `RhTypeCast_CheckCast` из `gc-experiment/dotnet-runtime/src/coreclr/nativeaot/` по принципу [«воровать из BCL, не изобретать»](https://github.com/dotnet/runtime). Surfaced step103 → IocpBridge.
 
-**Сюрприз: hosted tier тоже падает — но не из-за RhTypeCast.** Я ожидал что CoreCLR-tier'а закрывает этот gap (полный JIT + полный runtime), но проба `generic `as T` cast (RhTypeCast_IsInstanceOf)` в `work/normal-hello/Program.cs` (step103) даёт `[FAIL] PAL-STUB/SEH: External component has thrown an exception.`
+**Hosted tier** — изначально (step 103) **тоже падал**, но не из-за
+RhTypeCast (JIT cast helper отлично делает `COMPlusThrow(kInvalidCastException)`),
+а из-за трансляции C++ msc throws (code 0xE06D7363) в managed: на
+TARGET_UNIX/SHARPOS `PAL_TRY/PAL_CATCH` оборачивал C++ throw как
+`SEHException` без сохранения `EEException::m_kind`. **Фикс — там же,
+step 103** (`reference_msc_throw_becomes_sehexception` РЕШЕНО):
+двойной deref `args[1]` в `clrex.cpp:619` + `excep.cpp:5585` извлекает
+оригинальный `EEException*`. Типизированные catches на конкретный
+тип (`InvalidCastException`, и т.п.) теперь работают как ожидается.
+В hosted tier'е generic `as T` ✅ — verified `constrained where T : class`
+в `normal-hello` Sec 8 (step 119).
 
-После диагностики (step103 [PCRE]+[CreateThrowable] traces): **корень В ДРУГОМ месте**, не в RhTypeCast. JIT cast helper отлично делает `COMPlusThrow(kInvalidCastException)`. Но на нашей build config (TARGET_UNIX/SHARPOS) `PAL_TRY/PAL_CATCH` оборачивает C++ msc throws (code 0xE06D7363) как `SEHException`, и `clrex.cpp:615` `GetThrowableFromException`'s SEHException branch не имеет case для msc magic → дефолт возвращает managed `System.Runtime.InteropServices.SEHException` вместо `EEMessageException::m_kind`-derived типа.
-
-Так что **hosted tier ограничение НЕ родственник kernel/ELF LNK2001**, а другой ROOT — теряется m_kind в C++→managed трансляции. Подробно — `docs/coreclr-hosted-limits.md` §0 + agent-memory `reference_msc_throw_becomes_sehexception`.
+То есть **AOT-tier'е (kernel/ELF) и hosted tier'е были разные корни**:
+- AOT: LNK2001 на `RhTypeCast_IsInstanceOf` / `RhTypeCast_CheckCast` —
+  generic helper не реализован → нелинкуется. Сейчас.
+- Hosted: msc-throw трансляция теряла EE-тип. Закрыто step 103.
 
 ---
 

@@ -557,16 +557,26 @@ namespace OS.PAL.SharpOSHost
     // Globals что MSVC CRT linker expects as DATA, not functions.
     internal static class CrtGlobals
     {
-        // `_fltused` — CRT linker marker that floating-point code is used.
-        // Just needs to exist with non-zero value.
-        [RuntimeExport("_fltused")]
-        public static int FltUsed = 0x9875;
+        // ---------------------------------------------------------------
+        // CRT data symbols — `__security_cookie` via CoffStub.Generator.
+        //
+        // step 121: ILC's [RuntimeExport] на static field НЕ emit'ит native
+        // data symbol — это исторический ILC gap. CoffStub.Generator
+        // (bootasm/CoffStub.Generator/) обходит gap: атрибут на C# static
+        // field → MSBuild Task материализует tiny COFF .obj с этим полем
+        // как native external data symbol, .obj автоматом в @(NativeLibrary).
+        //
+        // Закрывает kernel-side libcmt cut (step 120 fork-side merge +
+        // step 121 kernel-side managed-only).
+        //
+        // Остальные libcmt data symbols (`_fltused`, `_tls_index`) пока
+        // тащатся из libcmt'овой копии внутри merged coreclr_static.lib —
+        // OS.obj их не references (только fork C++ code). Если когда-то
+        // понадобятся kernel-side — добавим аналогичные [CoffDataSymbol]'ы.
+        // ---------------------------------------------------------------
 
-        // `__security_cookie` — CFG / GS stack protection cookie. Set к
-        // random value at process init; checked at function epilogues
-        // via __security_check_cookie. Phase 6.1.0b: static constant.
-        [RuntimeExport("__security_cookie")]
-        public static ulong SecurityCookie = 0x2B992DDFA232L;
+        [BootAsm.CoffDataSymbol("__security_cookie", Section = ".data", Alignment = 8)]
+        public static ulong SecurityCookie = 0x2B992DDFA232UL;
 
         // `__security_check_cookie` — verifies cookie matches at epilogue.
         // Phase 6.1.b: false-positive прошёл empirically на CoreCLR boot —
@@ -584,14 +594,8 @@ namespace OS.PAL.SharpOSHost
             _ = cookie;
         }
 
-        // `_tls_index` — link-time TLS module slot index. Normally assigned
-        // by linker when an image contributes к .tls section; thread_local
-        // accessors load this value and use it for `gs:[58h] + idx*8` TEB
-        // lookup. Phase 6.1.a: provide as 0 to satisfy link. Runtime
-        // access via gs:[58h] is a SEPARATE wall (no TEB setup yet) —
-        // those specific ctors (t_random, g_threadHolderTLS) will fault
-        // when reached если no TEB facade.
-        [RuntimeExport("_tls_index")]
-        public static uint TlsIndex = 0;
+        // `_tls_index` — link-time TLS module slot index. См. block-комментарий
+        // выше (CRT data symbols) почему [RuntimeExport] здесь снят.
+        // Сейчас удовлетворяется libcmt'овой копией внутри coreclr_static.lib.
     }
 }

@@ -17,6 +17,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Force MSVC toolchain (cl.exe, link.exe) to emit messages in English
+# (VSLANG=1033 = en-US). Otherwise localized CP866 messages mangle when
+# last_build.log is re-read as UTF-16LE — see "каракули" on link errors.
+$env:VSLANG = "1033"
+
 if ($Stop) {
     try {
         $client = [System.Net.Sockets.TcpClient]::new()

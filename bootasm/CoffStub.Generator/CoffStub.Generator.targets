@@ -1,0 +1,50 @@
+<Project>
+
+  <!-- step 121 — CoffStub.Generator auto-import targets.
+       Consumer (OS.csproj) imports this file via <Import Project="..." />
+       to wire up the [CoffDataSymbol] -> .obj emission pipeline. -->
+
+  <PropertyGroup>
+    <_CoffStubGeneratorDir>$(MSBuildThisFileDirectory)</_CoffStubGeneratorDir>
+    <_CoffStubGeneratorAssembly>$(_CoffStubGeneratorDir)bin\Release\netstandard2.0\CoffStub.Generator.dll</_CoffStubGeneratorAssembly>
+    <!-- Emitted .obj output (per-class COFF stubs from Task). Явный
+         $(MSBuildProjectDirectory)\obj\, потому что $(IntermediateOutputPath)
+         переопределяется NativeAOT publish'ом. -->
+    <_CoffStubOutputDir>$(MSBuildProjectDirectory)\obj\native\</_CoffStubOutputDir>
+  </PropertyGroup>
+
+  <UsingTask TaskName="BootAsm.EmitCoffStubsTask"
+             AssemblyFile="$(_CoffStubGeneratorAssembly)" />
+
+  <!-- CoffDataSymbolAttribute defn — master живёт в bootasm/, csc
+       компилит его напрямую как часть consumer'а. Никакого copy, никакого
+       .g.cs — один файл, одно место. -->
+  <ItemGroup>
+    <Compile Include="$(_CoffStubGeneratorDir)CoffDataSymbolAttribute.cs"
+             Link="bootasm/CoffDataSymbolAttribute.cs" />
+  </ItemGroup>
+
+  <!-- Run after CoreCompile (Roslyn has full semantic model available)
+       and before NativeAOT's input collection (IlcCompile). Emits per-
+       (class, section) .obj files and adds them to @(NativeLibrary). -->
+  <Target Name="EmitCoffStubs"
+          AfterTargets="CoreCompile"
+          BeforeTargets="IlcCompile"
+          Inputs="@(Compile)"
+          Outputs="$(_CoffStubOutputDir)CoffStubs.stamp">
+
+    <MakeDir Directories="$(_CoffStubOutputDir)" />
+
+    <EmitCoffStubsTask SourceFiles="@(Compile)"
+                       OutputDirectory="$(_CoffStubOutputDir)">
+      <Output TaskParameter="EmittedObjFiles" ItemName="_GeneratedCoffStubs" />
+    </EmitCoffStubsTask>
+
+    <ItemGroup>
+      <NativeLibrary Include="@(_GeneratedCoffStubs)" />
+    </ItemGroup>
+
+    <Touch Files="$(_CoffStubOutputDir)CoffStubs.stamp" AlwaysCreate="true" />
+  </Target>
+
+</Project>

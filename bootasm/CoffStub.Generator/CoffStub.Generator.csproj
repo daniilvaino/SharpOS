@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- step 121 — CoffStub.Generator: MSBuild Task assembly that scans
+       consumer C# for [CoffDataSymbol] static fields and emits tiny COFF
+       .obj files containing those fields as native data symbols. Closes
+       ILC's gap (no native data symbol emission from [RuntimeExport] on
+       static field).
+
+       netstandard2.0 — required for MSBuild Task assemblies (loaded by
+       MSBuild runtime which runs on legacy .NET Framework on Windows or
+       Mono/CoreCLR on other platforms). -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <!-- We're not a NuGet package; consumer imports .targets directly. -->
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Pure MSBuild Task assembly, не Roslyn analyzer:
+         IsRoslynComponent/EnforceExtendedAnalyzerRules не нужны и даже
+         вредны — последний банит File I/O (нужно для emission .obj). -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <!-- Suppress NU1701 about Microsoft.Build.* (built against full FW). -->
+    <NoWarn>$(NoWarn);NU1701;CS8019</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MSBuild Task base type + ITaskItem. PrivateAssets=All -> not
+         propagated to consumers (they don't reference Microsoft.Build). -->
+    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.0.0" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.Build.Framework" Version="17.0.0" PrivateAssets="All" />
+
+    <!-- Roslyn for parsing consumer .cs files (attribute discovery +
+         constant initializer evaluation via SemanticModel). -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="All" />
+  </ItemGroup>
+
+</Project>

@@ -77,8 +77,25 @@
     <None Include="..\iced\Iced.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
-    <LinkerArg Include="libcmt.lib" />
+    <!-- step 121: kernel-side libcmt cut completed via CoffStub.Generator.
+         OS.obj's единственный native ref (__security_cookie) теперь покрыт
+         compile-time-emitted .obj через [CoffDataSymbol] атрибут на C#
+         static field (см. CrtAndEhStubs.cs SecurityCookie). Никакого
+         ручного .c файла в дереве, никакого ручного cl.exe step'а.
+         /NODEFAULTLIB:libcmt — игнорировать /DEFAULTLIB:libcmt директивы
+         embedded в .obj'ах. Всё что libcmt'у нужно вложено в
+         coreclr_static.lib через fork's build_clr_sharpos.ps1 merge step. -->
+    <LinkerArg Include="/NODEFAULTLIB:libcmt.lib" />
   </ItemGroup>
+
+  <!-- CoffStub.Generator — auto-import targets для [CoffDataSymbol]
+       attribute → .obj emission pipeline. Включает attribute defn в
+       compile, регистрирует MSBuild Task, запускает emit перед
+       IlcCompile. Generator.dll должен быть pre-built:
+       cd ../bootasm/CoffStub.Generator && dotnet build -c Release -->
+  <Import Project="..\bootasm\CoffStub.Generator\CoffStub.Generator.targets"
+          Condition="Exists('..\bootasm\CoffStub.Generator\CoffStub.Generator.targets')" />
+
 
   <!-- Phase 6.1.0b: link CoreCLR guest archive bundle. На bare-metal these
        libs supply VM/GC/JIT/JIT-helpers/PAL surface. CoreCLR vm/ calls
