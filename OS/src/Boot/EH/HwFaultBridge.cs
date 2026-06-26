@@ -39,6 +39,16 @@ namespace OS.Boot.EH
         private const int VecGeneralProtection  = 0x0D;  // #GP
         private const int VecPageFault          = 0x0E;  // #PF
 
+        // step123: CoreCLR-side hardware fault entry. Returns nonzero if the
+        // fault was handled (managed catch). Defined in fork's exception-
+        // handling.cpp under TARGET_SHARPOS — wraps IsSafeToHandleHardware-
+        // Exception + HandleHardwareException for the proper RhThrowHwEx flow.
+        [System.Runtime.InteropServices.DllImport("*",
+            EntryPoint = "SharpOS_CoreCLR_TryHandleHardwareException",
+            CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern int TryCoreClrHandleHardwareException(
+            ExceptionRecord* rec, Context* ctx);
+
         // Returns true if this vector should be converted to a managed
         // exception. False means caller should panic-dump.
         public static bool IsSupported(int vector)
@@ -215,6 +225,176 @@ namespace OS.Boot.EH
             Console.Write(" R14=0x"); Console.WriteHexRaw(frame->R14, 16);
             Console.Write(" R15=0x"); Console.WriteHexRaw(frame->R15, 16);
             Log.EndLine();
+            // step 122 targeted diagnostic — fault'нулся на RIP=0?
+            // Это null-target call/jmp (publish/backpatch не дописал target,
+            // или indirect call через нулевой cell). Каллер ушёл на свой
+            // следующий IP который CPU попытался выполнить как RIP=0 → #PF.
+            // Печатаем caller с saved RA, плюс byte dump вокруг caller-N
+            // чтобы по байтам понять какой инструкцией прыгнули в null:
+            //   FF D0           call rax                  (caller-2 marker)
+            //   FF 15 ?? ?? ?? ?? call [rip+disp32]       (caller-6 marker)
+            //   FF E0           jmp rax                   (caller-2)
+            //   FF 25 ?? ?? ?? ?? jmp [rip+disp32]        (caller-6)
+            //   E8 ?? ?? ?? ?? call rel32                 (caller-5)
+            if (frame->Rip == 0 && frame->Rsp != 0)
+            {
+                ulong rsp = frame->Rsp;
+                ulong caller = *(ulong*)rsp;
+                Log.Begin(LogLevel.Info);
+                Console.Write("*** RIP=0 — saved RA from [RSP]=0x");
+                Console.WriteHexRaw(caller, 16);
+                Log.EndLine();
+                // Dump bytes caller-32..caller+16. Walk from low to high.
+                // We don't validate caller's mapping — if dump itself
+                // page-faults, recursive #PF lands в panic mode anyway.
+                if (caller >= 0x1000UL)
+                {
+                    byte* b = (byte*)(caller - 32);
+                    for (int row = 0; row < 3; row++)
+                    {
+                        Log.Begin(LogLevel.Info);
+                        Console.Write("  caller");
+                        long off = -32 + row * 16;
+                        if (off >= 0) Console.Write("+");
+                        Console.WriteInt((int)off);
+                        Console.Write(": ");
+                        for (int col = 0; col < 16; col++)
+                        {
+                            Console.WriteHex(b[row * 16 + col], 2);
+                            Console.Write(" ");
+                        }
+                        Log.EndLine();
+                    }
+                    // Classification hints by checking specific offsets.
+                    byte cm2_0 = b[30], cm2_1 = b[31];      // caller-2, caller-1
+                    byte cm3_0 = b[29];                      // caller-3 (FF /2 with disp8)
+                    byte cm6_0 = b[26];                      // caller-6
+                    byte cm5_0 = b[27];                      // caller-5
+                    Log.Begin(LogLevel.Info);
+                    Console.Write("  hint: ");
+                    if (cm2_0 == 0xFF && cm2_1 == 0xD0) Console.Write("call rax (FF D0)");
+                    else if (cm2_0 == 0xFF && cm2_1 == 0xE0) Console.Write("jmp rax (FF E0)");
+                    else if (cm6_0 == 0xFF && b[27] == 0x15) Console.Write("call [rip+disp32] (FF 15)");
+                    else if (cm6_0 == 0xFF && b[27] == 0x25) Console.Write("jmp [rip+disp32] (FF 25)");
+                    else if (cm5_0 == 0xE8) Console.Write("call rel32 (E8)");
+                    // FF 50 ?? = call [reg + disp8]; ModR/M 0x50 = mod=01 reg=2 rm=0 (RAX)
+                    // Common in interface dispatch through MethodTable slots.
+                    else if (cm3_0 == 0xFF && (cm2_0 & 0xF8) == 0x50)
+                    {
+                        Console.Write("call [r");
+                        switch (cm2_0 & 0x07)
+                        {
+                            case 0: Console.Write("ax"); break;
+                            case 1: Console.Write("cx"); break;
+                            case 2: Console.Write("dx"); break;
+                            case 3: Console.Write("bx"); break;
+                            case 5: Console.Write("bp"); break;
+                            case 6: Console.Write("si"); break;
+                            case 7: Console.Write("di"); break;
+                            default: Console.Write("sp"); break;
+                        }
+                        Console.Write("+0x"); Console.WriteHex(cm2_1, 2);
+                        Console.Write("] (FF 5x disp8 — likely virt/iface dispatch slot)");
+                        Log.EndLine();
+
+                        // step 122 — для null-call через MT slot dump RCX
+                        // (вероятно `this`), [RCX] (MT*), и слот байтов
+                        // вокруг disp8 для диагностики MT layout.
+                        // Конкретно интересны: сам failing slot (disp8) +
+                        // соседние ±16 byte вокруг него.
+                        ulong rcx = frame->Rcx;
+                        Log.Begin(LogLevel.Info);
+                        Console.Write("  this(RCX)=0x"); Console.WriteHexRaw(rcx, 16);
+                        Log.EndLine();
+                        if (rcx >= 0x10000UL)
+                        {
+                            ulong mt = *(ulong*)rcx;
+                            Log.Begin(LogLevel.Info);
+                            Console.Write("  MT=*RCX=0x"); Console.WriteHexRaw(mt, 16);
+                            Log.EndLine();
+                            if (mt >= 0x10000UL)
+                            {
+                                // Failing slot offset = disp8 в call chain. Но
+                                // для FF 5x [rax+disp], мы знаем что rax уже
+                                // = [MT+something]. Можно не угадывать конкретно;
+                                // печатаем slice MT[+0x70..+0xB0] — стандартный
+                                // CoreCLR's m_pInterfaceMap / m_pPerInstInfo /
+                                // m_pCanonMT диапазон.
+                                byte* mtp = (byte*)mt;
+                                for (int r = 0; r < 4; r++)
+                                {
+                                    Log.Begin(LogLevel.Info);
+                                    Console.Write("  MT+0x");
+                                    Console.WriteHex((ulong)(0x70 + r * 16), 2);
+                                    Console.Write(": ");
+                                    for (int c = 0; c < 16; c++)
+                                    {
+                                        Console.WriteHex(mtp[0x70 + r * 16 + c], 2);
+                                        Console.Write(" ");
+                                    }
+                                    Log.EndLine();
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Console.Write("(no recognized call pattern at caller-2/-3/-5/-6)");
+                        Log.EndLine();
+                    }
+
+                    // Step 122 follow-up: the current failure is:
+                    //   mov rax, [rbp-0x28]
+                    //   mov rax, [rax]
+                    //   mov rax, [rax+0x98]
+                    //   call qword ptr [rax+0x08]
+                    // Dump that operand chain so we can tell whether the
+                    // null came from a local/object slot, a MethodTable-like
+                    // pointer, or the +0x98 cell.
+                    if (cm3_0 == 0xFF && cm2_0 == 0x50)
+                    {
+                        ulong rbp = frame->Rbp;
+                        ulong localSlotAddr = rbp >= 0x28 ? rbp - 0x28 : 0;
+                        ulong localPtr = localSlotAddr != 0 ? *(ulong*)localSlotAddr : 0;
+                        ulong firstQword = localPtr != 0 ? *(ulong*)localPtr : 0;
+                        ulong plus98 = firstQword != 0 ? *(ulong*)(firstQword + 0x98) : 0;
+                        ulong targetSlot = plus98 != 0 ? plus98 + cm2_1 : 0;
+                        ulong target = targetSlot != 0 ? *(ulong*)targetSlot : 0;
+
+                        Log.Begin(LogLevel.Info);
+                        Console.Write("  chain: rbp-0x28=0x"); Console.WriteHexRaw(localSlotAddr, 16);
+                        Console.Write(" [slot]=0x"); Console.WriteHexRaw(localPtr, 16);
+                        Console.Write(" *slot=0x"); Console.WriteHexRaw(firstQword, 16);
+                        Log.EndLine();
+
+                        Log.Begin(LogLevel.Info);
+                        Console.Write("  chain: *slot+0x98 -> 0x"); Console.WriteHexRaw(plus98, 16);
+                        Console.Write(" targetSlot=0x"); Console.WriteHexRaw(targetSlot, 16);
+                        Console.Write(" target=0x"); Console.WriteHexRaw(target, 16);
+                        Log.EndLine();
+
+                        if (firstQword != 0)
+                        {
+                            ulong* q = (ulong*)firstQword;
+                            Log.Begin(LogLevel.Info);
+                            Console.Write("  *slot raw qwords +0x80..0xB8:");
+                            for (int i = 0x80 / 8; i <= 0xB8 / 8; i++)
+                            {
+                                Console.Write(" +0x"); Console.WriteHex((ulong)(i * 8), 2);
+                                Console.Write("=0x"); Console.WriteHexRaw(q[i], 16);
+                            }
+                            Log.EndLine();
+                        }
+                    }
+                }
+                else
+                {
+                    Log.Begin(LogLevel.Info);
+                    Console.Write("  (caller<0x1000 — bogus, не dump'ить)");
+                    Log.EndLine();
+                }
+            }
+
             // Stack top — first 32 qwords from RSP. For indirect-call
             // fault into BSS, multiple frames may be in zero-memory
             // chain. Look for first .text-range return address to find
@@ -271,6 +451,22 @@ namespace OS.Boot.EH
                 {
                     BuildHwExceptionRecord(rec, frame);
                     BuildContextFromInterruptFrame(ctx, frame);
+                    // step123: CoreCLR managed hardware fault path. For JIT-code
+                    // null deref / AV, IsSafeToHandleHardwareException + Handle-
+                    // HardwareException is the canonical route → it creates an
+                    // ExInfo(HardwareFault), sets up FaultingExceptionFrame, and
+                    // calls RhThrowHwEx to throw NRE/AVE caught by the user's
+                    // try/catch. Returns 0 if CoreCLR can't handle (init not
+                    // done yet, or fault outside managed code) — we then fall
+                    // through to the existing native-SEH walker for C++ __try
+                    // handlers inside the runtime, and finally to NativeAOT EH.
+                    if (TryCoreClrHandleHardwareException(rec, ctx) != 0)
+                    {
+                        // CoreCLR handled it — does not return on managed-catch
+                        // path; if it did return, that's "stack was fixed up,
+                        // continue execution at the (modified) context".
+                        return;
+                    }
                     SehDispatch.DispatchFromHwFault(rec, ctx);
                     // Returned — PAL SEH didn't find a handler. Fall through.
                 }

@@ -44,6 +44,22 @@ namespace OS.PAL.SharpOSHost
             }
         }
 
+        // Always-on variant: prints UTF-8 NUL-terminated regardless of Verbose.
+        // For *critical* diagnostics from fork-side that must surface even when
+        // chatter is muted (missing P/Invoke targets, missing QCALL bindings).
+        [RuntimeExport("SharpOSHost_DebugPrintForced")]
+        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugPrintForced")]
+        public static void DebugPrintForced(byte* utf8Message)
+        {
+            if (utf8Message == null) return;
+            byte* p = utf8Message;
+            while (*p != 0)
+            {
+                Console.WriteChar((char)*p);
+                p++;
+            }
+        }
+
         // Length-prefixed serial write — no NUL terminator required. Used by
         // the libSystem.Native console shim (SystemNative_Write) so managed
         // System.Console output reaches COM1 byte-exact (handles embedded

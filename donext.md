@@ -215,6 +215,89 @@ static void L19_Inner()
 
 ---
 
+---
+
+## Big bet: snocket stack → Windows IL целиком, в комплекте
+
+**Решено НЕ ходить через fake-epoll и НЕ изобретать SocketAsyncEngine для
+SharpOS.** epoll — Linux-historical wart (readiness-multiplexer вокруг
+slow `select`), для новой ОС никакой пользы не несёт: stateful kernel
+объект, ET/LT семантика, thundering herd, лишний syscall round-trip. На
+оси, которая контролирует scheduler и net-стек end-to-end, async I/O
+выражается прямо через cooperative park/unpark — без multiplexer'а.
+
+Windows-side путь (IOCP) на проде .NET'а **дозревший и стабильный**.
+Хотим взять его целиком, не выкусывая отдельные компоненты:
+
+### Что переключаем (в одном комплекте, не по частям)
+
+1. **ThreadPool IOCP-сторона** — Windows-side `PortableThreadPool` с
+   IOCP-bound completion threads. Сейчас у нас Unix-shaped, без
+   completion port'а.
+2. **OverlappedData / NativeOverlapped** — Windows-only managed типы в
+   CoreLib (`g_pOverlappedDataClass`), runtime path в CoreCLR для
+   аллокации pinned overlapped'ов и delivery callback'ов.
+3. **ThreadPool.BindHandle / UnsafeQueueNativeOverlapped** — public API
+   которое Sockets BCL зовёт для регистрации FD в pool'е.
+4. **CoreCLR IO thread bridge** — `g_IOCompletionPort`,
+   `ThreadpoolMgr::CompletionPortThreadStart`, сейчас Unix-no-op'ы.
+5. **System.Net.Sockets.dll (Windows IL)** — overlapped-based
+   `SocketAsyncEventArgs`, `WSARecv`/`WSASend`, `CancelIoEx` пути.
+   Заменяет epoll-based SocketAsyncEngine.
+6. **PAL: ws2_32 + IOCP shims** — `WSAStartup`/`WSACleanup`/
+   `WSASocketW`/`WSARecv`/`WSASend`/`closesocket`/`bind`/`listen`/
+   `accept`/`getaddrinfo`/`ioctlsocket`/`WSAGetLastError`/
+   `CreateIoCompletionPort`/`GetQueuedCompletionStatus(Ex)`/
+   `PostQueuedCompletionStatus`/`BindIoCompletionCallback`/
+   `CancelIoEx`. ~25 функций.
+7. **IOCP-эмуляция в kernel** — in-process completion queue (нашими
+   coop-нитями обслуживается естественно), привязка NIC ISR completion
+   → packet → IOCP entry → unblock waiting completion thread.
+
+### Почему именно "в комплекте"
+
+Граница "только сетка" режется по ThreadPool/Overlapped — это **не
+модуль, это runtime contract**. Если переключить только Sockets.dll, то
+первый же `ThreadPool.BindHandle` упадёт `MissingMethodException` (в
+нашей Unix-IL CoreLib его нет). Если переключить только Sockets+CoreLib
+— на load не найдут `CreateIoCompletionPort` (PAL пуст). Точки разреза
+нет. Делать одной волной.
+
+### Side benefit
+
+После этого появляется **весь Windows-side async I/O** — не только
+Sockets: pipes, file overlapped, console async. Это даёт IOCP-backend
+для всего `System.IO.Pipelines` / `FileStream` async path. Стоимость
+делится на больший surface.
+
+### Стоимость и порядок
+
+- Подготовительный этап: собрать Windows-IL варианты CoreLib + Sockets
+  + Primitives в нашем fork'е (build/clr_sharpos.ps1 — добавить ветку).
+- step125: ws2_32 PAL stubs (~25 функций, без логики, только ABI).
+- step126: IOCP emulation в нашем kernel (Windows-shaped completion
+  queue, привязка к coop-scheduler).
+- step127: CoreCLR side — `g_IOCompletionPort` activation,
+  CompletionPortThread bring-up, OverlappedData allocation path.
+- step128: ThreadPool.BindHandle / UnsafeQueueNativeOverlapped public
+  API working, simple ping pong test (no network).
+- step129: Sockets BCL Windows-IL поверх — `Socket ctor (TCP)` зелёная,
+  sync send/recv working.
+- step130: async send/recv через `SocketAsyncEventArgs` → IOCP →
+  completion thread.
+
+Реалистично: 1.5-2 недели сосредоточенной работы. Не "просто переключить
+dll".
+
+### Сейчас (step124)
+
+Пробу `Socket ctor (TCP)` **пропускаем** (отключаем в Probes.cs / probe
+list). Закрываем step124 на вехе catchable HW-exceptions + 4
+автокороткозамкнутых RSP-patch resume'а. Сетевой комплект — отдельная
+super-задача (SUPER-?, добавить в `plan.md`).
+
+---
+
 ## Ссылки
 
 - Полный аудит: [docs/eh-audit-2026-06.md](docs/eh-audit-2026-06.md)

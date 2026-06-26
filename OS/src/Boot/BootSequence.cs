@@ -237,6 +237,7 @@ namespace OS.Boot
         {
             InitializePager();
             ActivatePagerRootAndLockCpuFeatures();
+            DumpExecBuffers(bootInfo);
             RunPagerValidation();
 
             // VM manager self-test — Reserve/Commit/MapKernel produce live
@@ -640,11 +641,73 @@ namespace OS.Boot
         // automatically. If a future bring-up DOES set CR4.OSXSAVE=1
         // (e.g. to enable AVX deliberately later), the xsetbv branch fires
         // and explicitly clears XCR0 to x87+SSE so FXSAVE stays sufficient.
+        // step 123 diagnostic: log each loader-code exec buffer's [base..end)
+        // so we can confirm whether a "garbage" RIP like 0x1E169FA4 surfaced by
+        // the SEH walker belongs to one of these pools (BigStack swap thunk,
+        // JumpStub, Cr3Accessor shellcode, IDT trampolines, AsmExec helpers).
+        private static unsafe void DumpExecBuffers(BootInfo bi)
+        {
+            void DumpOne(string name, void* baseAddr, uint size)
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("[exec-pool] ");
+                Console.Write(name);
+                Console.Write(" base=0x"); Console.WriteHex((ulong)baseAddr);
+                Console.Write(" size=0x"); Console.WriteHex(size);
+                Console.Write(" end=0x"); Console.WriteHex((ulong)baseAddr + size);
+                Log.EndLine();
+            }
+            DumpOne("ExecStubBuffer    ", bi.ExecStubBuffer,    bi.ExecStubBufferSize);
+            DumpOne("JumpStubExecBuffer", bi.JumpStubExecBuffer, bi.JumpStubExecBufferSize);
+            DumpOne("IdtExecBuffer     ", bi.IdtExecBuffer,     bi.IdtExecBufferSize);
+            DumpOne("AsmExecBuffer     ", bi.AsmExecBuffer,     bi.AsmExecBufferSize);
+            DumpOne("BigStackStubBuffer", bi.BigStackStubBuffer, bi.BigStackStubBufferSize);
+
+            // step 123: register every loader-code exec pool as a "stub range"
+            // with SehUnwind so the SEH walker treats RAs inside them as
+            // frameless leaves (pop [rsp]; rsp += 8; continue with caller).
+            // Without this, when a managed thunk that lives in BigStackStub-
+            // Buffer (the SP-switch shellcode) returns into our walker, the
+            // walker sees rva-outside-image and bails — exactly what hit
+            // 0x1E169FA4 earlier in census on Release. Confirmed by exec-pool
+            // dump above (BigStackStubBuffer at 0x1E169F98..0x1E169FD8).
+            void RegOne(void* baseAddr, uint size)
+            {
+                if (baseAddr != null && size > 0)
+                    OS.PAL.SharpOSHost.SehUnwind.RegisterStubRange((ulong)baseAddr, size);
+            }
+            RegOne(bi.ExecStubBuffer,     bi.ExecStubBufferSize);
+            RegOne(bi.JumpStubExecBuffer, bi.JumpStubExecBufferSize);
+            RegOne(bi.IdtExecBuffer,      bi.IdtExecBufferSize);
+            RegOne(bi.AsmExecBuffer,      bi.AsmExecBufferSize);
+            RegOne(bi.BigStackStubBuffer, bi.BigStackStubBufferSize);
+            Log.Write(LogLevel.Info, "[exec-pool] registered with SehUnwind stub range");
+        }
+
         private static void ActivatePagerRootAndLockCpuFeatures()
         {
             if (!Pager.TryActivatePagerRoot())
                 Panic.Fail("pager root activation failed");
             Log.Write(LogLevel.Info, "pager root activated (clone CR3 live)");
+
+            // Unmap VA 0..0x1000 so null deref triggers proper #PF instead of
+            // silently reading zero. Firmware identity-maps low memory with a
+            // 2 MiB large page; X64PageTable.Unmap splits it on the way down
+            // and clears just PT[0]. CoreCLR managed semantics REQUIRE this —
+            // without it the JIT'd null check on virtual dispatch reads MT=0,
+            // walks the chunk to call 0, faulting too late (NX violation, but
+            // managed NRE never gets thrown by the JIT's emitted null check
+            // because the read succeeded). Surfaced step123 census probe
+            // `null.ToString()` HALT.
+            //
+            // Side effect: native CoreCLR paths (e.g. NativeCodeVersion::GetGC-
+            // CoverageInfo) and the KernelGcPreciseSmokeProbe were relying on
+            // page 0 returning zero. Those are targeted fixes (not "remap as
+            // readable"), tracked separately.
+            if (OS.Kernel.Paging.X64PageTable.Unmap(0))
+                Log.Write(LogLevel.Info, "VA 0 unmapped (null-deref trap)");
+            else
+                Log.Write(LogLevel.Warn, "VA 0 unmap failed — null deref may not trap");
 
             if (!X64Asm.TryReadCr4(out ulong cr4))
             {

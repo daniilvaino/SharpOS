@@ -103,6 +103,20 @@ namespace OS.Kernel.Diagnostics
 
         // UTF-8 strings as stack-allocated null-terminated byte arrays.
         // "kernel\0" — kernel boot identity (no .exe per se, just kernel image).
+        // [NoInlining] anchor: see comment at try block in Run(). NativeAOT
+        // cannot prove an arbitrary method call is throw-free, so wrapping the
+        // PInvoke here keeps the surrounding try/catch from being optimized
+        // out (no .pdata personality otherwise).
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int InvokeCoreClrInitialize(
+            byte* exePath, byte* domainName, int propertyCount,
+            byte** propertyKeys, byte** propertyValues,
+            void** hostHandle, uint* domainId)
+        {
+            return coreclr_initialize(exePath, domainName, propertyCount,
+                propertyKeys, propertyValues, hostHandle, domainId);
+        }
         private static readonly byte[] s_exePath = new byte[] { (byte)'k', (byte)'e', (byte)'r', (byte)'n', (byte)'e', (byte)'l', 0 };
         private static readonly byte[] s_domainName = new byte[] { (byte)'S', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'O', (byte)'S', 0 };
 
@@ -126,8 +140,15 @@ namespace OS.Kernel.Diagnostics
         // APP_PATHS so probing locates assemblies by name.
         private static readonly byte[] s_propKeyAppPaths = new byte[] {
             (byte)'A', (byte)'P', (byte)'P', (byte)'_', (byte)'P', (byte)'A', (byte)'T', (byte)'H', (byte)'S', 0 };
-        // \sharpos
+        // step 122 experiment: APP_PATHS = "\sharpos\pwsh;\sharpos\fx;\sharpos"
+        // CoreCLR пробует probe каталог под каждым из них (через ; разделитель)
+        // если binder не нашёл assembly через TPA. pwsh-specific первым,
+        // fx fallback, root последним.
         private static readonly byte[] s_propValAppPaths = new byte[] {
+            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s',
+            (byte)'\\', (byte)'p', (byte)'w', (byte)'s', (byte)'h', (byte)';',
+            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s',
+            (byte)'\\', (byte)'f', (byte)'x', (byte)';',
             (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', 0 };
 
         // --- GC bound config (Phase 6.2 GC-arena step 1) ---
@@ -171,7 +192,7 @@ namespace OS.Kernel.Diagnostics
         private static readonly byte[] s_v1M    = new byte[] { (byte)'0',(byte)'x',(byte)'1',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',0 };           // 1 MiB
 
         // Stage A — managed assembly path for coreclr_execute_assembly.
-        // \sharpos\NormalHello.dll  (stock `dotnet build` artifact)
+        // \sharpos\NormalHello.dll  (magistral probe-battery launcher)
         private static readonly byte[] s_normalAppPath = new byte[] {
             (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
             (byte)'N', (byte)'o', (byte)'r', (byte)'m', (byte)'a', (byte)'l',
@@ -376,14 +397,26 @@ namespace OS.Kernel.Diagnostics
                 SharpOS.Std.NoRuntime.GC.ReclamationDisabled = false;
                 Console.WriteLine("[host] kernel GC reclamation enabled (precise walker)");
 
-                int hr = coreclr_initialize(
-                    exePath,
-                    domainName,
-                    propertyCount: 9,
-                    propertyKeys: keys,
-                    propertyValues: values,
-                    hostHandle: &hostHandle,
-                    domainId: &domainId);
+                // step 123: wrap CoreCLR call in try/catch so an AV inside the
+                // runtime (E_FAIL throw / null deref) propagates as a managed
+                // exception we can log + diagnose. NativeAOT-Release proves
+                // [DllImport] PInvoke as no-throw and elides try/catch directly
+                // around it (no personality in .pdata). Workaround: route call
+                // through a [NoInlining] helper — the compiler can't prove the
+                // helper won't throw, so EH region survives.
+                int hr = unchecked((int)0x80004005);  // E_FAIL default
+                try
+                {
+                    hr = InvokeCoreClrInitialize(
+                        exePath, domainName, 9, keys, values, &hostHandle, &domainId);
+                }
+                catch (Exception ex)
+                {
+                    string msg = ex.Message ?? "<null msg>";
+                    Console.WriteLine("[host] coreclr_initialize threw — message follows");
+                    Console.WriteLine(msg);
+                    return;
+                }
 
                 Console.Write("coreclr_initialize hr=0x");
                 Console.WriteHex((ulong)(uint)hr);

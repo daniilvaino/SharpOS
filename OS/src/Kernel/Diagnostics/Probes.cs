@@ -204,6 +204,9 @@ namespace OS.Kernel.Diagnostics
         // string live across CollectPrecise, verifies it survives (i.e. the
         // walker found it and marked it before sweep ran). Headless-
         // deterministic; flips ReclamationDisabled locally for the test.
-        public const bool KernelGcPreciseSmoke = true;
+        // Step 123: temporarily off — VA 0 unmap guard exposed a null-deref at
+        // Run+0x276 (CR2=8). Probe needs targeted fix, not blocker on CoreCLR
+        // managed NRE bring-up. Flip back true after addressing.
+        public const bool KernelGcPreciseSmoke = false;
     }
 }

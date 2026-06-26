@@ -50,6 +50,16 @@ namespace OS.PAL.SharpOSHost
             return fileTime;
         }
 
+        // Stopwatch routes: System.Native's GetTimestamp asks for monotonic
+        // hi-res ticks. HPET is exactly that — fixed-freq monotonic counter.
+        [RuntimeExport("SharpOSHost_GetHpetCounter")]
+        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetHpetCounter")]
+        public static ulong GetHpetCounter() => OS.Hal.Timer.Hpet.ReadCounter();
+
+        [RuntimeExport("SharpOSHost_GetHpetFrequencyHz")]
+        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetHpetFrequencyHz")]
+        public static ulong GetHpetFrequencyHz() => OS.Hal.Timer.Hpet.FrequencyHz;
+
         // Fill a Win32 SYSTEMTIME (8 × WORD: Year, Month, DayOfWeek, Day,
         // Hour, Minute, Second, Milliseconds). DayOfWeek: 0=Sunday;
         // 1970-01-01 was a Thursday (=4).

@@ -52,6 +52,19 @@ namespace OS.PAL.SharpOSHost
         // for the actual Phase D fix.
         private const bool TraceUnwind = false;
 
+        // step124: targeted unwind tracing — fires only for specified PCs to
+        // avoid flooding. Set TraceUnwindPc1/Pc2 to RIPs of interest, then
+        // s_traceThisCall is computed at VirtualUnwind entry.
+        // For step124 we focus on Null object.ToString catchability path:
+        //   Pc1 = 0x500008628C91 — original throw IP (in JIT'd probe lambda)
+        //   Pc2 = 0x5000085D1E70 — resume PC after catch (continuation)
+        private const ulong TraceUnwindPc1 = 0x500008628C91UL;
+        private const ulong TraceUnwindPc2 = 0x5000085D1E70UL;
+        // ±range bytes around each — covers funclet calls and resume-frame
+        // walks where controlPc may be slightly shifted from above.
+        private const ulong TraceUnwindRange = 0x40UL;
+        private static bool s_traceThisCall;
+
         // Windows-API-shaped lookup. Returns pointer to RUNTIME_FUNCTION
         // (in our .pdata array) or null if IP isn't в our image.
         //
@@ -89,7 +102,18 @@ namespace OS.PAL.SharpOSHost
                 //    thunks (call helper; ret). Return a synthetic leaf
                 //    RUNTIME_FUNCTION so the unwinder pops [rsp] and steps
                 //    past the thunk to the caller (JIT method).
-                return StubRangeLookup(controlPc, pImageBase);
+                RuntimeFunction* stub = StubRangeLookup(controlPc, pImageBase);
+                if (stub != null) return stub;
+                // 4) Image-text leaf thunk: linker emits frameless trampolines
+                //    (typically `mov rcx, [rcx]; jmp [slot]` import/delay-load
+                //    helpers, 10 bytes) between real functions WITHOUT .pdata
+                //    entries. They're leaves — no prologue, no frame. Windows
+                //    SEH walker treats no-pdata RIP inside an image text range
+                //    as a frameless leaf (pop RA, advance RSP). We mirror that:
+                //    synthesize the same leaf RUNTIME_FUNCTION as StubRange.
+                //    Surfaced by `[ivip]` diagnostic in step 123 census on
+                //    Release fork (Debug had different code shape due to ICF).
+                return ImageTextGapLookup(controlPc, pImageBase);
             }
 
             // CoffMethodLookup returns CurrentRuntimeFunction (which may be
@@ -329,6 +353,99 @@ namespace OS.PAL.SharpOSHost
             return false;
         }
 
+        // Public predicate for IsValidIp — same range check as ImageTextGap-
+        // Lookup but without synthesizing the leaf RF. Returns true when
+        // controlPc sits inside the kernel image .pdata span (first .Begin ..
+        // last .End) AND isn't covered by any explicit RUNTIME_FUNCTION (caller
+        // should have already checked CoffMethodLookup.TryFindMethod).
+        public static bool IsImageTextGap(ulong controlPc)
+        {
+            if (!CoffRuntimeFunctionTable.IsInitialized) return false;
+            int count = CoffRuntimeFunctionTable.Count;
+            if (count <= 0) return false;
+            byte* imageBase = CoffRuntimeFunctionTable.ImageBase;
+            nint diff = (nint)controlPc - (nint)imageBase;
+            if (diff < 0 || (ulong)diff > 0xFFFFFFFFUL) return false;
+            uint rva = (uint)(ulong)diff;
+            global::OS.Boot.EH.RuntimeFunction* first = CoffRuntimeFunctionTable.GetRecord(0);
+            global::OS.Boot.EH.RuntimeFunction* last  = CoffRuntimeFunctionTable.GetRecord(count - 1);
+            if (first == null || last == null) return false;
+            return rva >= first->BeginAddress && rva < last->EndAddress;
+        }
+
+        private static bool s_didImageGapProbe;
+
+        // controlPc fell into a gap between two kernel-image .pdata entries
+        // (linker-emitted frameless thunk, e.g. import/delay-load `mov rcx,[rcx];
+        //  jmp [slot]`). No prologue, no frame → synthesize a leaf RF, identical
+        // shape to StubRangeLookup. Guard: must be strictly inside the first..
+        // last .pdata RVA span so we don't accept arbitrary heap/data addresses.
+        private static RuntimeFunction* ImageTextGapLookup(ulong controlPc, ulong* pImageBase)
+        {
+            if (!CoffRuntimeFunctionTable.IsInitialized) return null;
+            int count = CoffRuntimeFunctionTable.Count;
+            if (count <= 0) return null;
+            byte* imageBase = CoffRuntimeFunctionTable.ImageBase;
+            nint diff = (nint)controlPc - (nint)imageBase;
+            if (diff < 0 || (ulong)diff > 0xFFFFFFFFUL) return null;
+            uint rva = (uint)(ulong)diff;
+            // Span check: first entry's Begin .. last entry's End. Anything
+            // outside is NOT a code thunk, treat as bad IP.
+            global::OS.Boot.EH.RuntimeFunction* first = CoffRuntimeFunctionTable.GetRecord(0);
+            global::OS.Boot.EH.RuntimeFunction* last  = CoffRuntimeFunctionTable.GetRecord(count - 1);
+            if (first == null || last == null) return null;
+            if (rva < first->BeginAddress || rva >= last->EndAddress) return null;
+
+            // One-shot trace: matches mean we ACCEPTED a gap thunk; the surrounding
+            // .pdata entries tell us whether it's a real tight thunk gap (~18 bytes,
+            // adjustor / delay-load) or an oversize match suggesting our span check
+            // is too permissive (catching arbitrary data).
+            if (!s_didImageGapProbe)
+            {
+                s_didImageGapProbe = true;
+                int idx = -1;
+                uint bestBeg = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    var r = CoffRuntimeFunctionTable.GetRecord(i);
+                    if (r == null) continue;
+                    if (r->BeginAddress <= rva && r->BeginAddress > bestBeg)
+                    { bestBeg = r->BeginAddress; idx = i; }
+                }
+                Console.Write("[gaplkup] controlPc=0x"); Console.WriteHex(controlPc);
+                Console.Write(" rva=0x"); Console.WriteHex(rva);
+                if (idx >= 0)
+                {
+                    var pr = CoffRuntimeFunctionTable.GetRecord(idx);
+                    Console.Write(" prev[0x"); Console.WriteHex((ulong)idx);
+                    Console.Write("]=0x"); Console.WriteHex(pr->BeginAddress);
+                    Console.Write("..0x"); Console.WriteHex(pr->EndAddress);
+                    Console.Write(" (gap="); Console.WriteHex(rva - pr->EndAddress); Console.Write(")");
+                }
+                if (idx + 1 < count)
+                {
+                    var nr = CoffRuntimeFunctionTable.GetRecord(idx + 1);
+                    Console.Write(" next=0x"); Console.WriteHex(nr->BeginAddress);
+                    Console.Write("..0x"); Console.WriteHex(nr->EndAddress);
+                    Console.Write(" (gap="); Console.WriteHex(nr->BeginAddress - rva); Console.Write(")");
+                }
+                Console.WriteLine("");
+            }
+            // Reuse same synthetic leaf as StubRangeLookup.
+            if (!s_leafReady)
+            {
+                s_leafRf.BeginAddress = 0;
+                s_leafRf.EndAddress = 0x7FFFFFFF;
+                s_leafRf.UnwindInfoAddress = 0;
+                s_leafReady = true;
+            }
+            if (pImageBase != null)
+            {
+                *pImageBase = (ulong)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_leafUw);
+            }
+            return (RuntimeFunction*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_leafRf);
+        }
+
         private static RuntimeFunction* StubRangeLookup(ulong controlPc, ulong* pImageBase)
         {
             if (!InStubRange(controlPc)) return null;
@@ -436,9 +553,32 @@ namespace OS.PAL.SharpOSHost
             byte* image = (byte*)imageBase;
             byte* unwindInfo = image + functionEntry->UnwindInfoAddress;
 
-            return ApplyUnwindInfo(handlerType, image, controlPc, functionEntry,
-                                   unwindInfo, context, handlerData, establisherFrame,
-                                   contextPointers);
+            // step124: enable per-call trace for two specific PCs of interest.
+            ulong d1 = controlPc > TraceUnwindPc1 ? controlPc - TraceUnwindPc1 : TraceUnwindPc1 - controlPc;
+            ulong d2 = controlPc > TraceUnwindPc2 ? controlPc - TraceUnwindPc2 : TraceUnwindPc2 - controlPc;
+            s_traceThisCall = (d1 < TraceUnwindRange) || (d2 < TraceUnwindRange);
+            if (s_traceThisCall)
+            {
+                Console.Write("[TU-entry] controlPc=0x"); Console.WriteHex(controlPc);
+                Console.Write(" funcEntry beg=0x"); Console.WriteHex((ulong)functionEntry->BeginAddress);
+                Console.Write(" end=0x"); Console.WriteHex((ulong)functionEntry->EndAddress);
+                Console.Write(" uw=0x"); Console.WriteHex((ulong)functionEntry->UnwindInfoAddress);
+                Console.Write(" preRsp=0x"); Console.WriteHex(context->Rsp);
+                Console.Write(" preRbp=0x"); Console.WriteHex(context->Rbp);
+                Console.WriteLine("");
+            }
+
+            var ret = ApplyUnwindInfo(handlerType, image, controlPc, functionEntry,
+                                     unwindInfo, context, handlerData, establisherFrame,
+                                     contextPointers);
+            if (s_traceThisCall)
+            {
+                Console.Write("[TU-exit] postRsp=0x"); Console.WriteHex(context->Rsp);
+                Console.Write(" postRbp=0x"); Console.WriteHex(context->Rbp);
+                Console.Write(" postRip=0x"); Console.WriteHex(context->Rip);
+                Console.WriteLine("");
+            }
+            return ret;
         }
 
         // step112: record the address of a spilled non-volatile register
@@ -497,6 +637,17 @@ namespace OS.PAL.SharpOSHost
 
             if (TraceUnwind) TuHeader(controlPc, image, functionEntry,
                                       countOfCodes, flags, frameReg, frameOffset, progress, midProlog);
+            if (s_traceThisCall)
+            {
+                Console.Write("[TU-hdr] ver="); Console.WriteInt(version);
+                Console.Write(" prologSize="); Console.WriteHex(prologSize);
+                Console.Write(" nCodes="); Console.WriteInt(countOfCodes);
+                Console.Write(" fpReg="); Console.WriteInt(frameReg);
+                Console.Write(" fpOff="); Console.WriteHex((ulong)frameOffset * 16);
+                Console.Write(" progress="); Console.WriteHex((ulong)progress);
+                Console.Write(" midProlog="); Console.WriteInt(midProlog ? 1 : 0);
+                Console.WriteLine("");
+            }
 
             ushort* codes = (ushort*)(unwindInfo + 4);
             int i = 0;
@@ -519,6 +670,17 @@ namespace OS.PAL.SharpOSHost
                     slotsConsumed = ApplyCode(op, info, codes + i, context, frameReg, frameOffset, contextPointers);
                 }
                 if (TraceUnwind) TuCode(op, info, codeOffsetInProlog, skipped, slotsConsumed, context);
+                if (s_traceThisCall)
+                {
+                    Console.Write("[TU-op] off=0x"); Console.WriteHex((ulong)codeOffsetInProlog);
+                    Console.Write(" op="); Console.WriteInt(op);
+                    Console.Write(" info="); Console.WriteInt(info);
+                    Console.Write(" skipped="); Console.WriteInt(skipped ? 1 : 0);
+                    Console.Write(" slots="); Console.WriteInt(slotsConsumed);
+                    Console.Write(" -> Rsp=0x"); Console.WriteHex(context->Rsp);
+                    Console.Write(" Rbp=0x"); Console.WriteHex(context->Rbp);
+                    Console.WriteLine("");
+                }
                 if (slotsConsumed < 0)
                 {
                     Console.Write("[seh-unwind] unknown UNWIND_CODE op=");

@@ -89,10 +89,13 @@ namespace OS.PAL.SharpOSHost
             // pattern (vtable @0, throwable @8, kind/hr/resID following).
             if (code == ExceptionRecord.EH_EXCEPTION_NUMBER && nParams >= 4 && args != null)
             {
-                ulong objVa = args[1];
+                ulong objSlotVa = args[1];
+                ulong objVa = objSlotVa != 0 ? *(ulong*)objSlotVa : 0;
                 if (objVa != 0)
                 {
-                    Console.Write("[seh] exc obj:");
+                    Console.Write("[seh] exc obj slot=0x"); Console.WriteHex(objSlotVa);
+                    Console.Write(" obj=0x"); Console.WriteHex(objVa);
+                    Console.Write(":");
                     for (int q = 0; q < 16; q++)
                     {
                         Console.Write(" +"); Console.WriteHex((ulong)(q * 8), 2);
@@ -147,7 +150,8 @@ namespace OS.PAL.SharpOSHost
                     // as initial guess). Layout: vtable@0, ?@8 (padding or
                     // extra field), m_innerException@10, m_hr@0x18? Let me
                     // dump 24 bytes and extract HR from observed location.
-                    ulong objVa = args[1];
+                    ulong objSlotVa = args[1];
+                    ulong objVa = objSlotVa != 0 ? *(ulong*)objSlotVa : 0;
                     if (objVa != 0)
                     {
                         uint hr = *(uint*)(objVa + 0x14);
@@ -249,9 +253,16 @@ namespace OS.PAL.SharpOSHost
         //
         // Throw record params (set by _CxxThrowException / inlined throw):
         //   ExceptionInformation[0] = MAGIC (0x19930520..22)
-        //   ExceptionInformation[1] = pObject
+        //   ExceptionInformation[1] = pObject slot
         //   ExceptionInformation[2] = pThrowInfo
         //   ExceptionInformation[3] = imageBase
+        private static ulong GetCxxThrownObject(ExceptionRecord* rec)
+        {
+            if (rec->NumberParameters < 2) return 0;
+            ulong slot = rec->ExceptionInformation[1];
+            return slot != 0 ? *(ulong*)slot : 0;
+        }
+
         private static bool IsHRExceptionThrow(ExceptionRecord* rec)
         {
             if (rec->NumberParameters < 4) return false;
@@ -340,6 +351,8 @@ namespace OS.PAL.SharpOSHost
         // one of our unwind registries. A broad "inside imageBase+N" check is
         // not enough: CoreCLR heap / NativeArena pointers often sit close to
         // the relocated kernel image and can otherwise be mistaken for code.
+        private static bool s_didIvIpProbe;
+
         private static bool IsValidIp(ulong rip)
         {
             // Canonical x64: bits 47..63 must all match bit 47 (sign-extended).
@@ -353,7 +366,77 @@ namespace OS.PAL.SharpOSHost
             // info is resolvable via DynamicLookup (Step 1). Must NOT reject
             // it here, else the walker stops before consulting the registry.
             if (SehUnwind.InDynamicRange(rip)) return true;
+            // Linker-emitted frameless thunk inside kernel image .pdata span
+            // but between two RUNTIME_FUNCTION entries — SehUnwind.Lookup-
+            // FunctionEntry synthesizes a leaf RF for these, so the walker
+            // can pop the return address and step to the caller. Accepting
+            // them here is what unblocks `EECodeManager::UnwindStackFrame`
+            // thunks during CoreCLR init unwind (step 123 Release fork).
+            if (SehUnwind.IsImageTextGap(rip)) return true;
+            // Targeted diagnostic — fires ONCE on the first reject. Shows
+            // imageBase, .pdata table size, the queried RVA, and the nearest
+            // RuntimeFunction records around it. Helps confirm whether the
+            // IP IS inside a real CoreCLR native function whose .pdata entry
+            // we just can't find (e.g. ICF-folded, or out-of-table).
+            if (!s_didIvIpProbe)
+            {
+                s_didIvIpProbe = true;
+                DumpIvIpDiagnostic(rip);
+            }
             return false;
+        }
+
+        private static void DumpIvIpDiagnostic(ulong rip)
+        {
+            byte* imageBase = CoffRuntimeFunctionTable.ImageBase;
+            int count = CoffRuntimeFunctionTable.Count;
+            Console.Write("[ivip] rip=0x"); Console.WriteHex(rip);
+            Console.Write(" imageBase=0x"); Console.WriteHex((ulong)imageBase);
+            Console.Write(" pdataCount=0x"); Console.WriteHex((ulong)count);
+            Console.WriteLine("");
+            if (!CoffRuntimeFunctionTable.IsInitialized || count <= 0)
+            {
+                Console.WriteLine("[ivip]   pdata not initialized");
+                return;
+            }
+            nint diff = (nint)rip - (nint)imageBase;
+            if (diff < 0 || (ulong)diff > 0xFFFFFFFFUL)
+            {
+                Console.Write("[ivip]   rip outside image (diff=0x");
+                Console.WriteHex((ulong)(long)diff); Console.WriteLine(")");
+                return;
+            }
+            uint targetRva = (uint)(ulong)diff;
+            Console.Write("[ivip]   targetRva=0x"); Console.WriteHex(targetRva); Console.WriteLine("");
+            // Linear scan for nearest entries (slow but only once).
+            int bestBefore = -1, bestAfter = -1;
+            uint beforeBeg = 0, afterBeg = 0xFFFFFFFFu;
+            for (int i = 0; i < count; i++)
+            {
+                global::OS.Boot.EH.RuntimeFunction* rf = CoffRuntimeFunctionTable.GetRecord(i);
+                if (rf == null) continue;
+                uint b = rf->BeginAddress;
+                if (b <= targetRva && b > beforeBeg) { beforeBeg = b; bestBefore = i; }
+                if (b > targetRva && b < afterBeg)  { afterBeg = b;  bestAfter = i;  }
+            }
+            if (bestBefore >= 0)
+            {
+                global::OS.Boot.EH.RuntimeFunction* rf = CoffRuntimeFunctionTable.GetRecord(bestBefore);
+                Console.Write("[ivip]   before idx=0x"); Console.WriteHex((ulong)bestBefore);
+                Console.Write(" beg=0x"); Console.WriteHex(rf->BeginAddress);
+                Console.Write(" end=0x"); Console.WriteHex(rf->EndAddress);
+                Console.Write(" uw=0x"); Console.WriteHex(rf->UnwindInfoAddress);
+                Console.WriteLine("");
+            }
+            if (bestAfter >= 0)
+            {
+                global::OS.Boot.EH.RuntimeFunction* rf = CoffRuntimeFunctionTable.GetRecord(bestAfter);
+                Console.Write("[ivip]   after  idx=0x"); Console.WriteHex((ulong)bestAfter);
+                Console.Write(" beg=0x"); Console.WriteHex(rf->BeginAddress);
+                Console.Write(" end=0x"); Console.WriteHex(rf->EndAddress);
+                Console.Write(" uw=0x"); Console.WriteHex(rf->UnwindInfoAddress);
+                Console.WriteLine("");
+            }
         }
 
         // Core dispatch loop: walk frames upward, call each frame's
@@ -399,6 +482,7 @@ namespace OS.PAL.SharpOSHost
 
             int frameLimit = 64;
             bool isThrowSite = true;
+            ulong searchFrameCursor = 0;
             while (frameLimit-- > 0)
             {
                 ulong rawRip = searchCtx->Rip;
@@ -418,7 +502,7 @@ namespace OS.PAL.SharpOSHost
                     // Phase D iteration 3 — before bailing, try FrameChain
                     // skip-through (see TryActivateFrameChain). Same hook
                     // is mirrored in RtlUnwind's second-pass walker.
-                    if (TryActivateFrameChain(searchCtx))
+                    if (TryActivateFrameChain(searchCtx, ref searchFrameCursor))
                     {
                         continue;
                     }
@@ -433,7 +517,7 @@ namespace OS.PAL.SharpOSHost
                     Console.Write("[seh] walked out of image at Rip=0x");
                     Console.WriteHex(controlPc);
                     Console.WriteLine("");
-                    if (TryActivateFrameChain(searchCtx))
+                    if (TryActivateFrameChain(searchCtx, ref searchFrameCursor))
                     {
                         continue;
                     }
@@ -448,10 +532,23 @@ namespace OS.PAL.SharpOSHost
 
                 void* handlerData = null;
                 ulong newFrame = 0;
+                ulong preVuRsp = searchCtx->Rsp;
                 void* personality = SehUnwind.VirtualUnwind(
                     UnwindFlags.UNW_FLAG_EHANDLER,
                     ib, rawRip, rf, searchCtx,
                     &handlerData, &newFrame);
+                Console.Write("[seh-step] pc=0x");       Console.WriteHex(controlPc);
+                Console.Write(" raw=0x");                Console.WriteHex(rawRip);
+                Console.Write(" ib=0x");                 Console.WriteHex(ib);
+                Console.Write(" rf=[0x");                Console.WriteHex((ulong)rf->BeginAddress);
+                Console.Write("..0x");                   Console.WriteHex((ulong)rf->EndAddress);
+                Console.Write(" uw=0x");                 Console.WriteHex((ulong)rf->UnwindInfoAddress);
+                Console.Write("] rsp=0x");               Console.WriteHex(preVuRsp);
+                Console.Write(" -> rip=0x");             Console.WriteHex(searchCtx->Rip);
+                Console.Write(" rsp=0x");                Console.WriteHex(searchCtx->Rsp);
+                Console.Write(" frame=0x");              Console.WriteHex(newFrame);
+                Console.Write(" pers=0x");               Console.WriteHex((ulong)personality);
+                Console.WriteLine("");
 
                 if (personality != null)
                 {
@@ -489,6 +586,13 @@ namespace OS.PAL.SharpOSHost
                     ulong preRip = searchCtx->Rip, preRsp = searchCtx->Rsp, preRbp = searchCtx->Rbp;
                     int disp = fn(rec, (void*)newFrame, searchCtx, dc);
                     dc->HistoryTable = null;
+                    Console.Write("[seh-pers] pc=0x"); Console.WriteHex(controlPc);
+                    Console.Write(" pers=0x"); Console.WriteHex((ulong)personality);
+                    Console.Write(" frame=0x"); Console.WriteHex(newFrame);
+                    Console.Write(" disp="); Console.WriteInt(disp);
+                    Console.Write(" rip=0x"); Console.WriteHex(searchCtx->Rip);
+                    Console.Write(" rsp=0x"); Console.WriteHex(searchCtx->Rsp);
+                    Console.WriteLine("");
                     if (preRip != searchCtx->Rip || preRsp != searchCtx->Rsp || preRbp != searchCtx->Rbp)
                     {
                         Console.Write("[seh]   pers MUTATED ctx: rip 0x"); Console.WriteHex(preRip);
@@ -594,7 +698,7 @@ namespace OS.PAL.SharpOSHost
                     rec->NumberParameters >= 4 &&
                     IsHRExceptionThrow(rec))
                 {
-                    ulong objVa = rec->ExceptionInformation[1];
+                    ulong objVa = GetCxxThrownObject(rec);
                     if (objVa != 0)
                     {
                         uint hr = *(uint*)(objVa + 0x14);
@@ -661,6 +765,7 @@ namespace OS.PAL.SharpOSHost
             establisherFrame = 0;
             int unwindLimit = 64;
             bool isUnwindThrowSite = true;
+            ulong unwindFrameCursor = 0;
             while (unwindLimit-- > 0)
             {
                 ulong rawRipU = unwindCtx->Rip;
@@ -668,7 +773,7 @@ namespace OS.PAL.SharpOSHost
                 isUnwindThrowSite = false;
                 if (!IsValidIp(controlPc))
                 {
-                    if (TryActivateFrameChain(unwindCtx))
+                    if (TryActivateFrameChain(unwindCtx, ref unwindFrameCursor))
                     {
                         continue;
                     }
@@ -678,7 +783,7 @@ namespace OS.PAL.SharpOSHost
                 RuntimeFunction* rf = SehUnwind.LookupFunctionEntry(controlPc, &ib);
                 if (rf == null)
                 {
-                    if (TryActivateFrameChain(unwindCtx))
+                    if (TryActivateFrameChain(unwindCtx, ref unwindFrameCursor))
                     {
                         continue;
                     }
@@ -728,7 +833,7 @@ namespace OS.PAL.SharpOSHost
                         unwindCtx->Rsp = catchEntryRsp;
                         unwindCtx->Rdx = preUnwindRsp;
                         if (rec->NumberParameters >= 2)
-                            unwindCtx->Rcx = rec->ExceptionInformation[1];
+                            unwindCtx->Rcx = GetCxxThrownObject(rec);
                     }
 
                     // Reached catching frame — set RIP к handler entry и resume.
@@ -790,6 +895,7 @@ namespace OS.PAL.SharpOSHost
             ulong target = (ulong)targetFrame;
             ulong establisher = 0;
             int limit = 64;
+            ulong rtlUnwindFrameCursor = 0;
             while (limit-- > 0)
             {
                 ulong rawRip = uc->Rip;
@@ -804,7 +910,7 @@ namespace OS.PAL.SharpOSHost
                     // ChainHandler, etc.) is responsible for the eventual
                     // FrameChain pop during this second pass via
                     // CleanUpForSecondPass — we just READ here.
-                    if (TryActivateFrameChain(uc))
+                    if (TryActivateFrameChain(uc, ref rtlUnwindFrameCursor))
                     {
                         continue;
                     }
@@ -814,7 +920,7 @@ namespace OS.PAL.SharpOSHost
                 RuntimeFunction* rf = SehUnwind.LookupFunctionEntry(controlPc, &ib);
                 if (rf == null)
                 {
-                    if (TryActivateFrameChain(uc))
+                    if (TryActivateFrameChain(uc, ref rtlUnwindFrameCursor))
                     {
                         continue;
                     }
@@ -1100,19 +1206,74 @@ namespace OS.PAL.SharpOSHost
         private static extern void SharpOSHost_SetCurrentFrame(void* newFrame);
 
         private const ulong FrameTopSentinel = ulong.MaxValue;
-        // Frame identifier enum values mirror vm/FrameTypes.h with our
-        // build defines (FEATURE_HIJACK + DEBUGGING_SUPPORTED +
-        // FEATURE_COMINTEROP all ON). InlinedCallFrame=1; the
-        // TransitionFrame-derived family (PrestubMethodFrame and below)
-        // all share m_pTransitionBlock layout at offset +16 -> single
-        // branch covers them.
+        // Frame identifier enum values mirror the generated CDAC contract
+        // descriptor for this fork/build. Keep this in sync with
+        // vm/FrameTypes.h plus the actual feature defines.
         private const ulong FrameId_InlinedCallFrame        = 1UL;
-        private const ulong FrameId_PInvokeCalliFrame       = 10UL;
-        private const ulong FrameId_PrestubMethodFrame      = 12UL;
-        private const ulong FrameId_CallCountingHelperFrame = 13UL;
-        private const ulong FrameId_StubDispatchFrame       = 14UL;
-        private const ulong FrameId_ExternalMethodFrame     = 15UL;
-        private const ulong FrameId_DynamicHelperFrame      = 16UL;
+        private const ulong FrameId_FaultingExceptionFrame  = 4UL;
+        private const ulong FrameId_SoftwareExceptionFrame  = 5UL;
+        private const ulong FrameId_PInvokeCalliFrame       = 7UL;
+        private const ulong FrameId_PrestubMethodFrame      = 9UL;
+        private const ulong FrameId_CallCountingHelperFrame = 10UL;
+        private const ulong FrameId_StubDispatchFrame       = 11UL;
+        private const ulong FrameId_ExternalMethodFrame     = 12UL;
+        private const ulong FrameId_DynamicHelperFrame      = 13UL;
+
+        private const int ContextOffset_Rsp = 0x098;
+        private const int ContextOffset_Rbp = 0x0A0;
+        private const int ContextOffset_Rip = 0x0F8;
+        private const int FaultingExceptionFrame_TargetContext = 0x020;
+        private const int SoftwareExceptionFrame_ReturnAddress = 0x010;
+        private const int SoftwareExceptionFrame_ContextPointers = 0x018;
+        private const int SoftwareExceptionFrame_TargetContext = 0x120;
+        private const int ContextPointers_IntegerContext = 0x080;
+
+        private static ulong ReadU64(byte* p, int offset)
+        {
+            return *(ulong*)(p + offset);
+        }
+
+        private static ulong ReadSoftwareFrameReg(byte* frame, byte* savedCtx, int regId, int ctxOffset)
+        {
+            byte* ctxPtrs = frame + SoftwareExceptionFrame_ContextPointers;
+            ulong slot = *(ulong*)(ctxPtrs + ContextPointers_IntegerContext + regId * 8);
+            if (slot >= 0x10000UL)
+            {
+                return *(ulong*)slot;
+            }
+            return ReadU64(savedCtx, ctxOffset);
+        }
+
+        private static void ApplyExceptionFrameContext(Context* dst, ulong* f, ulong frameId)
+        {
+            if (frameId == FrameId_FaultingExceptionFrame)
+            {
+                byte* ctx = (byte*)f + FaultingExceptionFrame_TargetContext;
+                dst->Rbx = ReadU64(ctx, 0x090);
+                dst->Rbp = ReadU64(ctx, ContextOffset_Rbp);
+                dst->Rsi = ReadU64(ctx, 0x0A8);
+                dst->Rdi = ReadU64(ctx, 0x0B0);
+                dst->R12 = ReadU64(ctx, 0x0D8);
+                dst->R13 = ReadU64(ctx, 0x0E0);
+                dst->R14 = ReadU64(ctx, 0x0E8);
+                dst->R15 = ReadU64(ctx, 0x0F0);
+                return;
+            }
+
+            if (frameId == FrameId_SoftwareExceptionFrame)
+            {
+                byte* frame = (byte*)f;
+                byte* ctx = frame + SoftwareExceptionFrame_TargetContext;
+                dst->Rbx = ReadSoftwareFrameReg(frame, ctx, 3, 0x090);
+                dst->Rbp = ReadSoftwareFrameReg(frame, ctx, 5, ContextOffset_Rbp);
+                dst->Rsi = ReadSoftwareFrameReg(frame, ctx, 6, 0x0A8);
+                dst->Rdi = ReadSoftwareFrameReg(frame, ctx, 7, 0x0B0);
+                dst->R12 = ReadSoftwareFrameReg(frame, ctx, 12, 0x0D8);
+                dst->R13 = ReadSoftwareFrameReg(frame, ctx, 13, 0x0E0);
+                dst->R14 = ReadSoftwareFrameReg(frame, ctx, 14, 0x0E8);
+                dst->R15 = ReadSoftwareFrameReg(frame, ctx, 15, 0x0F0);
+            }
+        }
 
         // Try to extract (CallerRA, CallSiteSP, CalleeSavedFP) from a Frame
         // box `f` based on its FrameIdentifier. Returns true if the Frame
@@ -1132,8 +1293,38 @@ namespace OS.PAL.SharpOSHost
                 calleeSavedFP = f[5];
                 return true;
             }
-            if (frameId >= FrameId_PrestubMethodFrame &&
-                frameId <= FrameId_DynamicHelperFrame)
+            if (frameId == FrameId_FaultingExceptionFrame)
+            {
+                // FaultingExceptionFrame:
+                //   Frame(0x10) + BOOL/pad(0x8) + ReturnAddress(0x8)
+                //   => m_ctx at +0x20. See vm/amd64/asmconstants.h
+                //   SIZEOF__FaultingExceptionFrame / CDAC TargetContext.
+                byte* ctx = (byte*)f + FaultingExceptionFrame_TargetContext;
+                callerRA      = *(ulong*)(ctx + ContextOffset_Rip);
+                callSiteSP    = *(ulong*)(ctx + ContextOffset_Rsp);
+                calleeSavedFP = *(ulong*)(ctx + ContextOffset_Rbp);
+                return true;
+            }
+            if (frameId == FrameId_SoftwareExceptionFrame)
+            {
+                // SoftwareExceptionFrame carries a larger
+                // KNONVOLATILE_CONTEXT_POINTERS block before m_Context.
+                // Current CDAC descriptor: TargetContext=0x120,
+                // ReturnAddress=0x10.
+                byte* frame = (byte*)f;
+                byte* ctx = frame + SoftwareExceptionFrame_TargetContext;
+                callerRA      = *(ulong*)(ctx + ContextOffset_Rip);
+                callSiteSP    = *(ulong*)(ctx + ContextOffset_Rsp);
+                calleeSavedFP = *(ulong*)(ctx + ContextOffset_Rbp);
+                if (callerRA == 0)
+                {
+                    callerRA = *(ulong*)(frame + SoftwareExceptionFrame_ReturnAddress);
+                }
+                return true;
+            }
+            if (frameId == FrameId_PInvokeCalliFrame ||
+                (frameId >= FrameId_PrestubMethodFrame &&
+                 frameId <= FrameId_DynamicHelperFrame))
             {
                 ulong tbAddr = f[2];
                 if (tbAddr == 0 || tbAddr < 0x10000UL) return false;
@@ -1160,10 +1351,13 @@ namespace OS.PAL.SharpOSHost
             return false;
         }
 
-        private static bool TryActivateFrameChain(Context* ctx)
+        private static bool TryActivateFrameChain(Context* ctx, ref ulong frameCursor)
         {
-            void* fpVoid = SharpOSHost_GetCurrentFrame();
-            ulong fp = (ulong)fpVoid;
+            ulong fp = frameCursor;
+            if (fp == 0)
+            {
+                fp = (ulong)SharpOSHost_GetCurrentFrame();
+            }
             // Empty chain or FRAME_TOP sentinel — nothing to do.
             if (fp == 0 || fp == FrameTopSentinel || fp < 0x10000UL)
             {
@@ -1195,7 +1389,12 @@ namespace OS.PAL.SharpOSHost
                     Console.WriteLine("");
                     // Unknown Frame type: try next.
                     ulong nxt = f[1];
-                    if (nxt == FrameTopSentinel || nxt == 0 || nxt < 0x10000UL) return false;
+                    if (nxt == FrameTopSentinel || nxt == 0 || nxt < 0x10000UL)
+                    {
+                        frameCursor = nxt;
+                        return false;
+                    }
+                    frameCursor = nxt;
                     f = (ulong*)nxt;
                     hops++;
                     continue;
@@ -1208,7 +1407,9 @@ namespace OS.PAL.SharpOSHost
                 // and we advance to m_Next.
                 bool validRa = (callerRA != 0 && callerRA >= 0x10000UL)
                              && SehUnwind.InDynamicRange(callerRA - 1UL);
-                bool spOk    = callSiteSP > ctx->Rsp;
+                bool isExceptionFrame = frameId == FrameId_FaultingExceptionFrame ||
+                                        frameId == FrameId_SoftwareExceptionFrame;
+                bool spOk    = callSiteSP > ctx->Rsp || isExceptionFrame;
 
                 if (validRa && spOk)
                 {
@@ -1219,9 +1420,14 @@ namespace OS.PAL.SharpOSHost
                     Console.Write(" hops=");                         Console.WriteUInt((uint)hops);
                     Console.WriteLine("");
 
+                    frameCursor = f[1];
                     ctx->Rip = callerRA;
                     ctx->Rsp = callSiteSP;
                     ctx->Rbp = calleeSavedFP;
+                    if (isExceptionFrame)
+                    {
+                        ApplyExceptionFrameContext(ctx, f, frameId);
+                    }
                     return true;
                 }
 
@@ -1231,6 +1437,7 @@ namespace OS.PAL.SharpOSHost
                 Console.Write("[fchain] skip id=0x");        Console.WriteHex(frameId);
                 Console.Write(" CallerRA=0x");               Console.WriteHex(callerRA);
                 Console.Write(" CallSiteSP=0x");             Console.WriteHex(callSiteSP);
+                Console.Write(" CurSP=0x");                  Console.WriteHex(ctx->Rsp);
                 Console.Write(" validRA=");                  Console.WriteInt(validRa ? 1 : 0);
                 Console.Write(" spOk=");                     Console.WriteInt(spOk ? 1 : 0);
                 Console.Write(" hops=");                     Console.WriteUInt((uint)hops);
@@ -1238,11 +1445,13 @@ namespace OS.PAL.SharpOSHost
                 ulong next = f[1];
                 if (next == FrameTopSentinel || next == 0 || next < 0x10000UL)
                 {
+                    frameCursor = next;
                     Console.Write("[fchain] chain exhausted next=0x");
                     Console.WriteHex(next);
                     Console.WriteLine("");
                     return false;
                 }
+                frameCursor = next;
                 f = (ulong*)next;
                 hops++;
             }
