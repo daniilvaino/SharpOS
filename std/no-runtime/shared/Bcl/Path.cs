@@ -27,19 +27,46 @@ namespace System.IO
         public const char AltDirectorySeparatorChar = '/';
         public const char VolumeSeparatorChar = ':';
 
-        private const string CurrentDirectory = "\\sharpos\\";
+        private const string CurrentDirectory = "C:\\sharpos\\";
 
         public static bool IsPathRooted(string? path)
         {
             if (path == null || path.Length == 0) return false;
             char c = path[0];
-            return c == DirectorySeparatorChar || c == AltDirectorySeparatorChar;
+            // Path-rooted: leading separator (\ or /).
+            if (c == DirectorySeparatorChar || c == AltDirectorySeparatorChar) return true;
+            // Drive-rooted: "X:" (any drive letter followed by colon).
+            if (path.Length >= 2 && path[1] == ':' &&
+                ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))) return true;
+            return false;
+        }
+
+        // Fully qualified: drive-rooted ("X:\…") or UNC ("\\…"). Not just
+        // path-rooted ("\…" alone is drive-relative, not fully qualified).
+        public static bool IsPathFullyQualified(string? path)
+        {
+            if (path == null || path.Length < 2) return false;
+            char c0 = path[0];
+            // UNC: starts with two separators.
+            if ((c0 == DirectorySeparatorChar || c0 == AltDirectorySeparatorChar) &&
+                (path[1] == DirectorySeparatorChar || path[1] == AltDirectorySeparatorChar))
+                return true;
+            // Drive-rooted with separator after colon: "X:\…" or "X:/…".
+            if (path.Length >= 3 && path[1] == ':' &&
+                (path[2] == DirectorySeparatorChar || path[2] == AltDirectorySeparatorChar) &&
+                ((c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z')))
+                return true;
+            return false;
         }
 
         public static string GetFullPath(string path)
         {
             if (path == null || path.Length == 0)
                 return CurrentDirectory;
+            if (IsPathFullyQualified(path))
+                return Normalize(path);
+            // Path-rooted but not fully qualified (e.g. "\foo") — combine with
+            // drive root from current directory.
             if (IsPathRooted(path))
                 return Normalize(path);
             return Normalize(CurrentDirectory + path);

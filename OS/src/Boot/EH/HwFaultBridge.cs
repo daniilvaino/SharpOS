@@ -43,11 +43,17 @@ namespace OS.Boot.EH
         // fault was handled (managed catch). Defined in fork's exception-
         // handling.cpp under TARGET_SHARPOS — wraps IsSafeToHandleHardware-
         // Exception + HandleHardwareException for the proper RhThrowHwEx flow.
+#if SKIP_CORECLR
+        // Kernel-only build — no managed host. Always "not handled".
+        private static int TryCoreClrHandleHardwareException(
+            ExceptionRecord* rec, Context* ctx) { _ = rec; _ = ctx; return 0; }
+#else
         [System.Runtime.InteropServices.DllImport("*",
             EntryPoint = "SharpOS_CoreCLR_TryHandleHardwareException",
             CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
         private static extern int TryCoreClrHandleHardwareException(
             ExceptionRecord* rec, Context* ctx);
+#endif
 
         // Returns true if this vector should be converted to a managed
         // exception. False means caller should panic-dump.

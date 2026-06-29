@@ -294,6 +294,55 @@ namespace OS.PAL.SharpOSHost
             return WAIT_FAILED;
         }
 
+        // SharpOSHost_WaitForMultipleObjects — wait-any over an array of
+        // handles (bWaitAll=0 only). PowerShell ConsoleHost error reporting
+        // hits this via WaitHandle.WaitAny(new[] { writeHandle, closedHandle }).
+        //
+        // Wait-all is intentionally rejected with WAIT_FAILED: implementing it
+        // as N sequential single-waits would irreversibly consume auto-reset
+        // events / semaphores out of order. A proper atomic wait-all is a
+        // Phase F task.
+        //
+        // Wait-any algorithm (cooperative-friendly):
+        //   1. Validate all handles up front. Unknown → treat as "fake-event
+        //      signaled" (consistent with single-wait leniency for fork PAL
+        //      handles not yet routed through HandleTable).
+        //   2. Cycle through handles polling each via WaitForSingleObject(ms=0).
+        //      First one to report WAIT_OBJECT_0 / WAIT_ABANDONED → return
+        //      that index biased by WAIT_OBJECT_0 / WAIT_ABANDONED_0.
+        //   3. If nothing signaled: poll → WAIT_TIMEOUT, finite → yield-loop
+        //      against HPET deadline, infinite → yield-loop forever.
+        [RuntimeExport("SharpOSHost_WaitForMultipleObjects")]
+        public static uint WaitForMultipleObjects(uint count, ulong* handles,
+                                                   int waitAll, uint timeoutMs)
+        {
+            const uint MAXIMUM_WAIT_OBJECTS = 64;
+            const uint WAIT_ABANDONED_0     = 0x00000080;
+
+            if (count == 0 || count > MAXIMUM_WAIT_OBJECTS || handles == null)
+                return WAIT_FAILED;
+            if (waitAll != 0)
+                return WAIT_FAILED;  // WaitAll not yet supported
+
+            bool poll = (timeoutMs == 0);
+            bool infinite = (timeoutMs == INFINITE);
+            ulong deadline = (poll || infinite) ? 0UL : ComputeDeadline(timeoutMs);
+
+            while (true)
+            {
+                for (uint i = 0; i < count; i++)
+                {
+                    uint rc = WaitForSingleObject(handles[i], 0);
+                    if (rc == WAIT_OBJECT_0)  return WAIT_OBJECT_0 + i;
+                    if (rc == WAIT_ABANDONED) return WAIT_ABANDONED_0 + i;
+                    // WAIT_TIMEOUT / WAIT_FAILED → keep scanning
+                }
+                if (poll) return WAIT_TIMEOUT;
+                if (!infinite && DeadlinePassed(deadline)) return WAIT_TIMEOUT;
+                Scheduler.Yield();
+            }
+        }
+
         // HPET-tick deadline for `timeoutMs` from now. Returns 0 if HPET
         // isn't initialised — the caller must treat 0 as "no deadline
         // measurement available" and fall back to infinite blocking.

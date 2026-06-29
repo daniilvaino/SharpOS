@@ -115,7 +115,13 @@
     <CoreClrForkConfig Condition="'$(CoreClrForkConfig)' == ''">Debug</CoreClrForkConfig>
     <CoreClrForkObj>$(MSBuildThisFileDirectory)..\dotnet-runtime-sharpos\artifacts\obj\coreclr\windows.x64.$(CoreClrForkConfig)</CoreClrForkObj>
   </PropertyGroup>
-  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
+  <!-- Kernel-only build toggle: -p:SkipCoreClr=true disables CoreCLR link
+       and compiles CoreClrProbe out via SKIP_CORECLR constant. Used for
+       measuring the bare kernel image size (no managed-app host). -->
+  <PropertyGroup Condition="'$(SkipCoreClr)' == 'true'">
+    <DefineConstants>$(DefineConstants);SKIP_CORECLR</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(OS)' == 'Windows_NT' AND '$(SkipCoreClr)' != 'true'">
     <LinkerArg Include="&quot;$(CoreClrForkObj)\dlls\mscoree\coreclr\coreclr_static.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\gc\sharpos\gc_pal.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\gcinfo\gcinfo_win_x64.lib&quot;" />

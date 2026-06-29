@@ -450,6 +450,7 @@ namespace OS.Boot
                 Console.WriteLine("");
             }
 
+#if !SKIP_CORECLR
             bool ranBig = false;
             // step105: BigStack now uses its own dedicated stub pool
             // (BootInfo.BigStackStubBuffer), not the shared ExecStubBuffer
@@ -461,6 +462,10 @@ namespace OS.Boot
             }
             if (!ranBig)
                 CoreClrProbe.Run();
+#else
+            Console.WriteLine("[boot] SKIP_CORECLR build — CoreClrProbe disabled");
+            _ = bigBuf;
+#endif
         }
 
         private static void* AllocateBigStack(uint size)

@@ -1197,6 +1197,12 @@ namespace OS.PAL.SharpOSHost
         // sit on the chain without a "current call" and must not be used
         // for unwind.
 
+#if SKIP_CORECLR
+        // Kernel-only build: no CoreCLR Thread::m_pFrame chain. Return null /
+        // no-op so FrameChain walker reports "no frame" and falls through.
+        private static void* SharpOSHost_GetCurrentFrame() => null;
+        private static void SharpOSHost_SetCurrentFrame(void* newFrame) { _ = newFrame; }
+#else
         [DllImport("*", EntryPoint = "SharpOSHost_GetCurrentFrame",
                    CallingConvention = CallingConvention.Cdecl)]
         private static extern void* SharpOSHost_GetCurrentFrame();
@@ -1204,6 +1210,7 @@ namespace OS.PAL.SharpOSHost
         [DllImport("*", EntryPoint = "SharpOSHost_SetCurrentFrame",
                    CallingConvention = CallingConvention.Cdecl)]
         private static extern void SharpOSHost_SetCurrentFrame(void* newFrame);
+#endif
 
         private const ulong FrameTopSentinel = ulong.MaxValue;
         // Frame identifier enum values mirror the generated CDAC contract

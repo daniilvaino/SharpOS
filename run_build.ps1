@@ -7,6 +7,10 @@ param(
     # been built first: .\dotnet-runtime-sharpos\build_clr_sharpos.ps1 -Configuration Release
     [ValidateSet("Debug", "Release")]
     [string]$ForkConfig = "Debug",
+    # Kernel-only build: skip CoreCLR linking + CoreClrProbe compilation.
+    # Resulting BOOTX64.EFI hosts no managed app — used for measuring the
+    # bare kernel image size.
+    [switch]$SkipCoreClr,
     [switch]$NoRun,
     [switch]$Stop,
     [int]$QmpPort = 4444,
@@ -462,7 +466,8 @@ if (Test-Path -LiteralPath $tagFile) {
 Write-Host "Building OS ($Configuration, BuildId=$buildId)..."
 Push-Location $efiProjectDir
 try {
-    & dotnet publish $projectFile -c $Configuration -r win-x64 "/p:BuildId=$buildId" "/p:CoreClrForkConfig=$ForkConfig"
+    $skipArg = if ($SkipCoreClr) { "/p:SkipCoreClr=true" } else { "" }
+    & dotnet publish $projectFile -c $Configuration -r win-x64 "/p:BuildId=$buildId" "/p:CoreClrForkConfig=$ForkConfig" $skipArg
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE"
     }
@@ -499,6 +504,32 @@ if (Test-Path -LiteralPath $spcDll) {
 else {
     Write-Warning "System.Private.CoreLib.dll not found at $spcDll - CoreCLR init will fail with FILE_NOT_FOUND"
 }
+# Create directories that SharpOSHost_GetSystemString reports as existing.
+# GetTempPath → "C:\sharpos\tmp\", GetSystemDirectory → "C:\sharpos\system32".
+# PS FileSystemProvider validates these at PSDrive auto-mount; if a path is
+# reported but missing on disk, the entire PSDrive init throws and C: never
+# registers → all subsequent module discovery dies (no PSDrive to resolve
+# $PSHome\Modules against).
+New-Item -ItemType Directory -Force -Path (Join-Path $espSharpOSDir "tmp")      | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $espSharpOSDir "system32") | Out-Null
+Write-Host "Prepared empty dirs: \sharpos\tmp\ \sharpos\system32\"
+
+# Stock PowerShell module manifests: required for built-in cmdlet registration.
+# Microsoft.PowerShell.Utility (Write-Output etc.), Microsoft.PowerShell.Management
+# (Get-ChildItem etc.), Microsoft.PowerShell.Security/Diagnostics — all import via
+# Modules/<Name>/<Name>.psd1 at PS startup. Without these manifests every cmdlet
+# lookup ends in "is not recognized" — even though the .dll is in TPA.
+$stockPwshModules = "C:\Program Files\PowerShell\7\Modules"
+$espPwshModules   = Join-Path $espSharpOSDir "pwsh\Modules"
+if (Test-Path -LiteralPath $stockPwshModules) {
+    New-Item -ItemType Directory -Force -Path $espPwshModules | Out-Null
+    Copy-Item -LiteralPath $stockPwshModules -Destination (Join-Path $espSharpOSDir "pwsh") -Recurse -Force
+    $modCount = (Get-ChildItem -LiteralPath $espPwshModules -Directory).Count
+    Write-Host "Prepared pwsh modules: \sharpos\pwsh\Modules\ ($modCount modules)"
+}
+else {
+    Write-Warning "Stock PowerShell Modules dir not found at $stockPwshModules - cmdlets will not register"
+}
 
 # Stage A — byte-for-byte NORMAL dotnet program hosting.
 #
@@ -513,19 +544,39 @@ else {
 #   \sharpos\fx\*.dll                    — rest of framework (171, ex-SPC)
 #   \sharpos\NormalHello.dll             — stock dotnet build artifact
 #   \sharpos\tpa.txt                     — newline/semicolon TPA list (host reads)
-$forkFx   = "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\coreclr-pack\Debug\net10.0\linux-x64"
+# step125: Use the Windows-built BCL assemblies from the fork's
+# crossgen2_publish directory. These are the same BCL DLLs as in
+# coreclr-pack/linux-x64 BUT compiled `-os windows`, so Win32-targeted
+# types (Microsoft.Win32.Registry, System.Net.Sockets, etc.) contain
+# real implementations that talk to our advapi32/ws2_32/etc. stubs
+# instead of PNSE throw bodies.
+# Filter set comes from coreclr-pack (linux-x64) — same 171 BCL names —
+# so we don't pull tooling assemblies (ILCompiler.*, crossgen2.*) that
+# happen to live next to BCL in crossgen2_publish.
+$forkFxNames  = "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\coreclr-pack\Debug\net10.0\linux-x64"
+$forkFxWinSrc = "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\crossgen2_publish\x64\Release"
 $fxDest   = Join-Path $espSharpOSDir "fx"
 $normalProj = "C:\work\OS\work\normal-hello"
 $normalDllSrc = Join-Path $normalProj "bin\Release\net10.0\NormalHello.dll"
-if (Test-Path -LiteralPath $forkFx) {
+if (Test-Path -LiteralPath $forkFxNames) {
     New-Item -ItemType Directory -Force -Path $fxDest | Out-Null
-    # Copy all framework dlls EXCEPT SPC (we keep the proven windows SPC at
-    # \sharpos\ root; listing SPC once in TPA avoids a duplicate simple-name).
-    Get-ChildItem -LiteralPath $forkFx -Filter *.dll |
+    $copiedFromWin = 0
+    $copiedFromLinux = 0
+    Get-ChildItem -LiteralPath $forkFxNames -Filter *.dll |
         Where-Object { $_.Name -ne "System.Private.CoreLib.dll" } |
-        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $fxDest $_.Name) -Force }
+        ForEach-Object {
+            $name = $_.Name
+            $winSrc = Join-Path $forkFxWinSrc $name
+            if (Test-Path -LiteralPath $winSrc) {
+                Copy-Item -LiteralPath $winSrc -Destination (Join-Path $fxDest $name) -Force
+                $copiedFromWin++
+            } else {
+                Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $fxDest $name) -Force
+                $copiedFromLinux++
+            }
+        }
     $fxCount = (Get-ChildItem -LiteralPath $fxDest -Filter *.dll).Count
-    Write-Host "Prepared framework: \sharpos\fx\ ($fxCount dll)"
+    Write-Host "Prepared framework: \sharpos\fx\ ($fxCount dll, Win-impl=$copiedFromWin, Linux-fallback=$copiedFromLinux)"
 
     # Build the normal app (stock SDK, normal references). If project missing,
     # create a vanilla `dotnet new console`.
@@ -542,14 +593,35 @@ if (Test-Path -LiteralPath $forkFx) {
         Write-Warning "NormalHello.dll not found at $normalDllSrc"
     }
 
-    # Generate TPA list: SPC (root) + every fx dll + the app. Semicolon-sep,
-    # UEFI-style \sharpos\ paths (matches our SharpOSHost_FileOpen resolution).
+    # Generate TPA list: SPC (root) + every fx dll + every pwsh/* dll + the
+    # app. Semicolon-sep, virtual-drive C:\sharpos\ paths so BCL's
+    # Path.IsPathFullyQualified accepts them. SharpOSHost_FileOpen strips the
+    # C:\ prefix transparently.
+    #
+    # All pwsh/*.dll are added so PowerShell-internal assembly resolution
+    # finds them by NAME via TPABinder (CoreCLR picks the path from TPA).
+    # Without pwsh/* in TPA, PowerShell falls back to constructing paths
+    # itself ($PSHome + filename) and hits a Path.Join bug that doubles the
+    # prefix into "C:\sharpos\C:\sharpos\pwsh\X.dll".
     $tpa = New-Object System.Text.StringBuilder
-    [void]$tpa.Append('\sharpos\System.Private.CoreLib.dll')
+    [void]$tpa.Append('C:\sharpos\System.Private.CoreLib.dll')
+    $fxNames = @{}
     Get-ChildItem -LiteralPath $fxDest -Filter *.dll | ForEach-Object {
-        [void]$tpa.Append(';\sharpos\fx\' + $_.Name)
+        [void]$tpa.Append(';C:\sharpos\fx\' + $_.Name)
+        $fxNames[$_.Name] = $true
     }
-    [void]$tpa.Append(';\sharpos\NormalHello.dll')
+    # Add pwsh/*.dll skipping (a) the duplicate SPC and (b) any dll already
+    # provided by fx/ (169 of 300 pwsh dlls overlap with fx — those keep
+    # the fx variant; CoreCLR would honor the first TPA entry anyway).
+    $pwshDest = Join-Path $espSharpOSDir "pwsh"
+    if (Test-Path -LiteralPath $pwshDest) {
+        Get-ChildItem -LiteralPath $pwshDest -Filter *.dll | ForEach-Object {
+            if ($_.Name -eq 'System.Private.CoreLib.dll') { return }
+            if ($fxNames.ContainsKey($_.Name)) { return }
+            [void]$tpa.Append(';C:\sharpos\pwsh\' + $_.Name)
+        }
+    }
+    [void]$tpa.Append(';C:\sharpos\NormalHello.dll')
     [System.IO.File]::WriteAllText((Join-Path $espSharpOSDir "tpa.txt"), $tpa.ToString())
     Write-Host "Prepared \sharpos\tpa.txt (length=$($tpa.Length))"
 }

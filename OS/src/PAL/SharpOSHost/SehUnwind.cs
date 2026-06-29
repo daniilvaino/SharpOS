@@ -649,6 +649,44 @@ namespace OS.PAL.SharpOSHost
                 Console.WriteLine("");
             }
 
+            // Capture both Rsp and FrameRegister BEFORE applying unwind codes.
+            // Per Windows RtlVirtualUnwind ABI (mirrored in fork's unwinder.cpp:1129):
+            //   EstablisherFrame = (FrameRegister != 0 && SET_FPREG already executed)
+            //                        ? FrameReg_orig - FrameOffset*16
+            //                        : Rsp_orig
+            // FrameReg_orig and Rsp_orig come from the exception-time context
+            // (BEFORE any unwind code is reversed). FPO functions and mid-prolog
+            // (before UWOP_SET_FPREG fired) both use the original Rsp.
+            // MSVC funclets receive this in RDX and access parent locals as
+            // [RDX + compiler_offset]; wrong value → deref into garbage → #GP/#PF.
+            ulong originalRsp = context->Rsp;
+            ulong originalFrameRegValue = (frameReg != 0) ? ReadReg(context, frameReg) : 0;
+
+            // Pre-scan unwind codes for UWOP_SET_FPREG (op==3) to discover its
+            // codeOffsetInProlog. If progress >= that offset, the prolog had
+            // executed SET_FPREG by exception time → FrameReg holds the
+            // established frame value. Otherwise FrameReg still holds caller's
+            // value and is unusable as EstablisherFrame source.
+            bool fpregEstablished = (frameReg == 0) ? false : !midProlog;
+            if (frameReg != 0 && midProlog)
+            {
+                ushort* scanCodes = (ushort*)(unwindInfo + 4);
+                int si = 0;
+                while (si < countOfCodes)
+                {
+                    ushort sraw = scanCodes[si];
+                    int scodeOff = sraw & 0xFF;
+                    int sop = (sraw >> 8) & 0x0F;
+                    int sinfo = (sraw >> 12) & 0x0F;
+                    if (sop == 3 /*UWOP_SET_FPREG*/ && scodeOff <= progress)
+                    {
+                        fpregEstablished = true;
+                        break;
+                    }
+                    si += SlotCount(sop, sinfo);
+                }
+            }
+
             ushort* codes = (ushort*)(unwindInfo + 4);
             int i = 0;
             while (i < countOfCodes)
@@ -702,10 +740,17 @@ namespace OS.PAL.SharpOSHost
                 unwindSize = (unwindSize + 3) & ~3;
                 RuntimeFunction* parent = (RuntimeFunction*)(unwindInfo + unwindSize);
                 byte* parentUnwindInfo = image + parent->UnwindInfoAddress;
-                // Walk parent fragment too. Note: chained fragments don't
-                // have their own handler; if parent has one, we want that.
+                // Compute EstablisherFrame from THIS fragment's original
+                // context (before parent's unwind codes mutate it further),
+                // then pass null down so parent doesn't overwrite.
+                if (establisherFrame != null)
+                {
+                    *establisherFrame = (frameReg != 0 && fpregEstablished)
+                        ? originalFrameRegValue - (ulong)frameOffset * 16
+                        : originalRsp;
+                }
                 return ApplyUnwindInfo(handlerType, image, controlPc, parent,
-                                       parentUnwindInfo, context, handlerData, establisherFrame,
+                                       parentUnwindInfo, context, handlerData, null,
                                        contextPointers);
             }
 
@@ -713,11 +758,26 @@ namespace OS.PAL.SharpOSHost
             // advance SP by 8.
             ulong* sp = (ulong*)context->Rsp;
             if (TraceUnwind) TuFinalize(context, sp);
+
+            // EstablisherFrame computed per Windows ABI:
+            //   FP function (UNWIND_INFO.FrameRegister != 0): use the original
+            //     FrameRegister value at exception time (typically Rbp).
+            //   FPO function: use the saved-RA address (Rsp BEFORE popping it),
+            //     which equals the function's entry-Rsp.
+            // Both shapes are what MSVC funclets expect in RDX.
+            if (establisherFrame != null)
+            {
+                // Mirrors fork unwinder.cpp:1129. Compute from EXCEPTION-TIME
+                // context (originalRsp / originalFrameRegValue), never from
+                // post-unwind state — unwind codes have already been reversed
+                // and the relevant registers may now hold caller values.
+                *establisherFrame = (frameReg != 0 && fpregEstablished)
+                    ? originalFrameRegValue - (ulong)frameOffset * 16
+                    : originalRsp;
+            }
+
             context->Rip = *sp;
             context->Rsp = (ulong)(sp + 1);
-
-            if (establisherFrame != null)
-                *establisherFrame = context->Rsp;
 
             // If function has matching handler, expose it.
             bool wantHandler = (handlerType & UnwindFlags.UNW_FLAG_EHANDLER) != 0

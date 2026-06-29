@@ -52,29 +52,36 @@ namespace OS.PAL.SharpOSHost
             switch (kind)
             {
                 case KindCurrentDir:
-                    len = 8;
-                    tmp[0]=(byte)'\\'; tmp[1]=(byte)'s'; tmp[2]=(byte)'h'; tmp[3]=(byte)'a';
-                    tmp[4]=(byte)'r';  tmp[5]=(byte)'p'; tmp[6]=(byte)'o'; tmp[7]=(byte)'s';
+                    // "C:\sharpos" — must be drive-rooted absolute so BCL
+                    // Path.GetFullPath doesn't prepend it to already-absolute
+                    // paths (e.g. C:\sharpos\pwsh\X.dll → \sharpos\C:\... bug).
+                    len = 10;
+                    tmp[0]=(byte)'C'; tmp[1]=(byte)':'; tmp[2]=(byte)'\\';
+                    tmp[3]=(byte)'s'; tmp[4]=(byte)'h'; tmp[5]=(byte)'a';
+                    tmp[6]=(byte)'r'; tmp[7]=(byte)'p'; tmp[8]=(byte)'o'; tmp[9]=(byte)'s';
                     break;
                 case KindTempPath:
-                    len = 13;
-                    tmp[0]=(byte)'\\'; tmp[1]=(byte)'s'; tmp[2]=(byte)'h'; tmp[3]=(byte)'a';
-                    tmp[4]=(byte)'r';  tmp[5]=(byte)'p'; tmp[6]=(byte)'o'; tmp[7]=(byte)'s';
-                    tmp[8]=(byte)'\\'; tmp[9]=(byte)'t'; tmp[10]=(byte)'m'; tmp[11]=(byte)'p';
-                    tmp[12]=(byte)'\\';
+                    len = 15;
+                    tmp[0]=(byte)'C'; tmp[1]=(byte)':'; tmp[2]=(byte)'\\';
+                    tmp[3]=(byte)'s'; tmp[4]=(byte)'h'; tmp[5]=(byte)'a';
+                    tmp[6]=(byte)'r'; tmp[7]=(byte)'p'; tmp[8]=(byte)'o'; tmp[9]=(byte)'s';
+                    tmp[10]=(byte)'\\'; tmp[11]=(byte)'t'; tmp[12]=(byte)'m'; tmp[13]=(byte)'p';
+                    tmp[14]=(byte)'\\';
                     break;
                 case KindSystemDir:
-                    len = 17;
-                    tmp[0]=(byte)'\\'; tmp[1]=(byte)'s'; tmp[2]=(byte)'h'; tmp[3]=(byte)'a';
-                    tmp[4]=(byte)'r';  tmp[5]=(byte)'p'; tmp[6]=(byte)'o'; tmp[7]=(byte)'s';
-                    tmp[8]=(byte)'\\'; tmp[9]=(byte)'s'; tmp[10]=(byte)'y'; tmp[11]=(byte)'s';
-                    tmp[12]=(byte)'t'; tmp[13]=(byte)'e'; tmp[14]=(byte)'m';
-                    tmp[15]=(byte)'3'; tmp[16]=(byte)'2';
+                    len = 19;
+                    tmp[0]=(byte)'C'; tmp[1]=(byte)':'; tmp[2]=(byte)'\\';
+                    tmp[3]=(byte)'s'; tmp[4]=(byte)'h'; tmp[5]=(byte)'a';
+                    tmp[6]=(byte)'r'; tmp[7]=(byte)'p'; tmp[8]=(byte)'o'; tmp[9]=(byte)'s';
+                    tmp[10]=(byte)'\\'; tmp[11]=(byte)'s'; tmp[12]=(byte)'y'; tmp[13]=(byte)'s';
+                    tmp[14]=(byte)'t'; tmp[15]=(byte)'e'; tmp[16]=(byte)'m';
+                    tmp[17]=(byte)'3'; tmp[18]=(byte)'2';
                     break;
                 case KindWindowsDir:
-                    len = 8;
-                    tmp[0]=(byte)'\\'; tmp[1]=(byte)'s'; tmp[2]=(byte)'h'; tmp[3]=(byte)'a';
-                    tmp[4]=(byte)'r';  tmp[5]=(byte)'p'; tmp[6]=(byte)'o'; tmp[7]=(byte)'s';
+                    len = 10;
+                    tmp[0]=(byte)'C'; tmp[1]=(byte)':'; tmp[2]=(byte)'\\';
+                    tmp[3]=(byte)'s'; tmp[4]=(byte)'h'; tmp[5]=(byte)'a';
+                    tmp[6]=(byte)'r'; tmp[7]=(byte)'p'; tmp[8]=(byte)'o'; tmp[9]=(byte)'s';
                     break;
                 case KindMachineName:
                     len = 7;

@@ -190,6 +190,21 @@ namespace OS.PAL.SharpOSHost
                 p += 4;
                 pLen -= 4;
             }
+            // Strip virtual drive-letter prefix "C:\..." → "\..." — managed
+            // code uses C:\sharpos\* so BCL's Path.IsPathFullyQualified accepts
+            // them, but our FAT/UEFI FS root has no drive concept.
+            if (pLen >= 3 && (p[0] == 'C' || p[0] == 'c') && p[1] == ':' && p[2] == '\\')
+            {
+                p += 2;
+                pLen -= 2;
+            }
+            // Tolerate UNC form "\\sharpos\..." too (in case anything legacy
+            // still constructs it).
+            else if (pLen >= 2 && p[0] == '\\' && p[1] == '\\')
+            {
+                p += 1;
+                pLen -= 1;
+            }
             string path = String.FromUtf16(p, pLen);
 
             Console.Write("[host] FileOpen path=\"");

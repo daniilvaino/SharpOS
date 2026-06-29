@@ -52,6 +52,11 @@ namespace OS.PAL.SharpOSHost
         public static void DebugPrintForced(byte* utf8Message)
         {
             if (utf8Message == null) return;
+            // "Forced" bypasses the Verbose chatter gate but still respects
+            // Console.Quiet — the CLR-run mute. Fork-side EH/CCF traces use
+            // Forced; they're not critical enough to break user-visible
+            // PowerShell output.
+            if (Console.Quiet) return;
             byte* p = utf8Message;
             while (*p != 0)
             {

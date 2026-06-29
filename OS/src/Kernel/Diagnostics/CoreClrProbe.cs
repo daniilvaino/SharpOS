@@ -1,3 +1,4 @@
+#if !SKIP_CORECLR
 using System;
 using System.Runtime.InteropServices;
 using OS.Boot;
@@ -129,10 +130,10 @@ namespace OS.Kernel.Diagnostics
             (byte)'A', (byte)'S', (byte)'S', (byte)'E', (byte)'M', (byte)'B', (byte)'L', (byte)'I', (byte)'E', (byte)'S', 0 };
         // \sharpos\Hello.dll;\sharpos\System.Private.CoreLib.dll
         private static readonly byte[] s_propValTPA = new byte[] {
-            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
+            (byte)'C', (byte)':', (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
             (byte)'H', (byte)'e', (byte)'l', (byte)'l', (byte)'o', (byte)'.', (byte)'d', (byte)'l', (byte)'l',
             (byte)';',
-            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
+            (byte)'C', (byte)':', (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
             (byte)'S', (byte)'y', (byte)'s', (byte)'t', (byte)'e', (byte)'m', (byte)'.',
             (byte)'P', (byte)'r', (byte)'i', (byte)'v', (byte)'a', (byte)'t', (byte)'e', (byte)'.',
             (byte)'C', (byte)'o', (byte)'r', (byte)'e', (byte)'L', (byte)'i', (byte)'b', (byte)'.',
@@ -145,11 +146,11 @@ namespace OS.Kernel.Diagnostics
         // если binder не нашёл assembly через TPA. pwsh-specific первым,
         // fx fallback, root последним.
         private static readonly byte[] s_propValAppPaths = new byte[] {
-            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s',
+            (byte)'C', (byte)':', (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s',
             (byte)'\\', (byte)'p', (byte)'w', (byte)'s', (byte)'h', (byte)';',
-            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s',
+            (byte)'C', (byte)':', (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s',
             (byte)'\\', (byte)'f', (byte)'x', (byte)';',
-            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', 0 };
+            (byte)'C', (byte)':', (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', 0 };
 
         // --- GC bound config (Phase 6.2 GC-arena step 1) ---
         // Workstation, non-concurrent (single-thread, no background-GC), hard
@@ -192,11 +193,11 @@ namespace OS.Kernel.Diagnostics
         private static readonly byte[] s_v1M    = new byte[] { (byte)'0',(byte)'x',(byte)'1',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',0 };           // 1 MiB
 
         // Stage A — managed assembly path for coreclr_execute_assembly.
-        // \sharpos\NormalHello.dll  (magistral probe-battery launcher)
+        // \sharpos\pwsh\pwsh.dll  (PowerShell test launch)
         private static readonly byte[] s_normalAppPath = new byte[] {
-            (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
-            (byte)'N', (byte)'o', (byte)'r', (byte)'m', (byte)'a', (byte)'l',
-            (byte)'H', (byte)'e', (byte)'l', (byte)'l', (byte)'o', (byte)'.', (byte)'d', (byte)'l', (byte)'l', 0 };
+            (byte)'C', (byte)':', (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
+            (byte)'p', (byte)'w', (byte)'s', (byte)'h', (byte)'\\',
+            (byte)'p', (byte)'w', (byte)'s', (byte)'h', (byte)'.', (byte)'d', (byte)'l', (byte)'l', 0 };
 
         // Names for coreclr_create_delegate — Hello.dll's SharpOSHello.Program.Run.
         private static readonly byte[] s_helloAsm = new byte[] {
@@ -427,8 +428,10 @@ namespace OS.Kernel.Diagnostics
 
                     // Stage A — host a byte-for-byte stock `dotnet build` app
                     // via the normal-program entry point (runs its Main).
-                    Console.WriteLine("--- coreclr_execute_assembly(\\sharpos\\NormalHello.dll) ---");
+                    Console.WriteLine("--- coreclr_execute_assembly(\\\\sharpos\\pwsh\\pwsh.dll) ---");
                     uint exitCode = 0xFFFFFFFF;
+                    // Quiet-flag toggle DISABLED — debugging assembly-load /
+                    // ntdll resolver chain. Flip back to true once stable.
                     int xr = coreclr_execute_assembly(
                         hostHandle, domainId,
                         argc: 0, argv: null,
@@ -612,3 +615,4 @@ namespace OS.Kernel.Diagnostics
         }
     }
 }
+#endif

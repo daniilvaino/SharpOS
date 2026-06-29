@@ -20,11 +20,29 @@ namespace OS.Hal
         // если heap не готов, FastAllocateString вернёт невалидный string.Empty
         // и s.Length крашит на чтении [s+8]. Проверяем готовность heap ЯВНО.
 
-        public static void Write(string text) => Platform.Write(text);
+        // Diagnostic gate. Set to true to mute every Console.Write* call
+        // (kernel diag noise: [seh-*], [host], [stub-reg], [PCRE], [SFI], ...).
+        // PowerShell I/O bypasses this by calling Platform.WriteChar directly
+        // (ConsoleWin32.WriteConsoleW + ConsoleRead echo).
+        public static bool Quiet = true;
 
-        public static void WriteLine(string text) => Platform.WriteLine(text);
+        public static void Write(string text)
+        {
+            if (Quiet) return;
+            Platform.Write(text);
+        }
 
-        public static void WriteChar(char value) => Platform.WriteChar(value);
+        public static void WriteLine(string text)
+        {
+            if (Quiet) return;
+            Platform.WriteLine(text);
+        }
+
+        public static void WriteChar(char value)
+        {
+            if (Quiet) return;
+            Platform.WriteChar(value);
+        }
 
         public static void WriteInt(int value)
         {

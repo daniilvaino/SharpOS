@@ -47,4 +47,18 @@
     <Touch Files="$(_CoffStubOutputDir)CoffStubs.stamp" AlwaysCreate="true" />
   </Target>
 
+  <!-- Always re-register existing emitted .obj's, even when EmitCoffStubs
+       is skipped due to Inputs/Outputs being up-to-date. Without this,
+       incremental rebuilds drop CrtGlobals.CoffData.obj from @(NativeLibrary)
+       and link fails on __security_cookie. Runs only when EmitCoffStubs
+       was skipped (otherwise @(_GeneratedCoffStubs) is already registered). -->
+  <Target Name="RegisterExistingCoffStubs"
+          AfterTargets="EmitCoffStubs"
+          BeforeTargets="IlcCompile"
+          Condition="'@(_GeneratedCoffStubs)' == ''">
+    <ItemGroup>
+      <NativeLibrary Include="$(_CoffStubOutputDir)*.obj" />
+    </ItemGroup>
+  </Target>
+
 </Project>

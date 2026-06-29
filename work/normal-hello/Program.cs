@@ -142,6 +142,63 @@ Probe("Registry.LocalMachine access (pwsh-style trigger)", () =>
         throw new Exception("PNSE: " + ex.Message);
     }
 });
+// step125: empty Registry subsystem probes. All via reflection so the
+// project doesn't have a compile-time Microsoft.Win32.Registry reference.
+// Expected behaviour on SharpOS (per Registry.cs design):
+//   * Registry.LocalMachine / Registry.CurrentUser → non-null root keys
+//   * OpenSubKey("anything") → null (ERROR_FILE_NOT_FOUND surfaces as null)
+//   * GetValue("anything") on root → null
+//   * SubKeyCount / ValueCount on root → 0
+//   * GetSubKeyNames / GetValueNames → empty array
+// Any of these throwing or HALTing means PAL stub or kernel-side logic
+// drift — should be visible at probe granularity.
+Probe("Registry root keys exist (HKLM + HKCU)", () =>
+{
+    var regType = Type.GetType("Microsoft.Win32.Registry, Microsoft.Win32.Registry");
+    if (regType == null) throw new Exception("Microsoft.Win32.Registry type not loadable");
+    var hklm = regType.GetField("LocalMachine")!.GetValue(null);
+    var hkcu = regType.GetField("CurrentUser")!.GetValue(null);
+    if (hklm == null) throw new Exception("Registry.LocalMachine returned null");
+    if (hkcu == null) throw new Exception("Registry.CurrentUser returned null");
+    Console.Write($"HKLM={hklm.GetType().Name} HKCU={hkcu.GetType().Name} ");
+});
+Probe("Registry OpenSubKey(missing) returns null", () =>
+{
+    var regType = Type.GetType("Microsoft.Win32.Registry, Microsoft.Win32.Registry")!;
+    var hklm = regType.GetField("LocalMachine")!.GetValue(null)!;
+    var openSubKey = hklm.GetType().GetMethod("OpenSubKey", new[] { typeof(string) })!;
+    var result = openSubKey.Invoke(hklm, new object[] { "Software\\NonExistent\\Path" });
+    if (result != null) throw new Exception($"expected null, got {result.GetType().Name}");
+});
+Probe("Registry GetValue(missing) returns null", () =>
+{
+    var regType = Type.GetType("Microsoft.Win32.Registry, Microsoft.Win32.Registry")!;
+    var hkcu = regType.GetField("CurrentUser")!.GetValue(null)!;
+    var getValue = hkcu.GetType().GetMethod("GetValue", new[] { typeof(string) })!;
+    var result = getValue.Invoke(hkcu, new object[] { "NonExistentValue" });
+    if (result != null) throw new Exception($"expected null, got {result}");
+});
+Probe("Registry SubKeyCount on empty root = 0", () =>
+{
+    var regType = Type.GetType("Microsoft.Win32.Registry, Microsoft.Win32.Registry")!;
+    var hklm = regType.GetField("LocalMachine")!.GetValue(null)!;
+    var count = (int)hklm.GetType().GetProperty("SubKeyCount")!.GetValue(hklm)!;
+    if (count != 0) throw new Exception($"expected 0, got {count}");
+});
+Probe("Registry GetSubKeyNames = empty array", () =>
+{
+    var regType = Type.GetType("Microsoft.Win32.Registry, Microsoft.Win32.Registry")!;
+    var hklm = regType.GetField("LocalMachine")!.GetValue(null)!;
+    var names = (string[])hklm.GetType().GetMethod("GetSubKeyNames")!.Invoke(hklm, null)!;
+    if (names.Length != 0) throw new Exception($"expected empty, got {names.Length}");
+});
+Probe("Registry GetValueNames = empty array", () =>
+{
+    var regType = Type.GetType("Microsoft.Win32.Registry, Microsoft.Win32.Registry")!;
+    var hkcu = regType.GetField("CurrentUser")!.GetValue(null)!;
+    var names = (string[])hkcu.GetType().GetMethod("GetValueNames")!.Invoke(hkcu, null)!;
+    if (names.Length != 0) throw new Exception($"expected empty, got {names.Length}");
+});
 Probe("Environment.OSVersion", () => { _ = Environment.OSVersion; });
 Probe("Environment.MachineName", () => { _ = Environment.MachineName; });
 Probe("Environment.UserName", () => { _ = Environment.UserName; });
