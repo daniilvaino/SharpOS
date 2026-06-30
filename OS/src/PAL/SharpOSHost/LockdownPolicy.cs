@@ -15,8 +15,15 @@ namespace OS.PAL.SharpOSHost
     {
         public const int S_OK = 0;
 
-        // WLDP_LOCKDOWN_STATE values (wldp.h):
-        public const uint WLDP_LOCKDOWN_OFF = 0;
+        // WLDP_LOCKDOWN_STATE values (wldp.h). DEFINED_FLAG must be set so
+        // PS treats the state as "policy was successfully retrieved" rather
+        // than "couldn't determine — fail-secure to ConstrainedLanguage".
+        //   WLDP_LOCKDOWN_DEFINED_FLAG   = 0x80000000 — policy was retrieved
+        //   WLDP_LOCKDOWN_USER_MODE_FLAG = 0x00000004 — user-mode enforce
+        //   WLDP_LOCKDOWN_UMCI_AUDIT_FLAG= 0x00000010 — UMCI audit
+        // We set ONLY DEFINED_FLAG: state was determined, no enforcement.
+        public const uint WLDP_LOCKDOWN_DEFINED_FLAG = 0x80000000;
+        public const uint WLDP_LOCKDOWN_OFF_DEFINED = WLDP_LOCKDOWN_DEFINED_FLAG;
 
         // WLDP_WINDOWS_LOCKDOWN_MODE values:
         public const uint WLDP_WINDOWS_LOCKDOWN_MODE_UNLOCKED = 0;
@@ -25,7 +32,7 @@ namespace OS.PAL.SharpOSHost
         [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_WldpGetLockdownPolicy")]
         public static int GetLockdownPolicy(uint* outLockdownState)
         {
-            if (outLockdownState != null) *outLockdownState = WLDP_LOCKDOWN_OFF;
+            if (outLockdownState != null) *outLockdownState = WLDP_LOCKDOWN_OFF_DEFINED;
             return S_OK;
         }
 

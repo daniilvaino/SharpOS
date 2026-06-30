@@ -13,8 +13,12 @@ namespace OS.PAL.SharpOSHost
         public const int S_OK    = 0;
         public const int E_FAIL  = unchecked((int)0x80004005);
 
-        // SHGetKnownFolderPath: caller expects HRESULT + PWSTR allocated
-        // through CoTaskMemAlloc. We never write a path, just E_FAIL.
+        // Returning S_OK + synthetic path makes PS' SystemPolicy::
+        // GetAppLockerPolicy walk deeper into SaferIdentifyLevel and
+        // throw an uncaught SecurityException(0x80070006) → FailFast.
+        // E_FAIL is the lesser evil: PS catches it, caches CLM for the
+        // runspace, but stays alive. Real fix is to make the downstream
+        // Safer/AppLocker probe chain consistent — separate work.
         [RuntimeExport("SharpOSHost_ShellGetKnownFolderPath")]
         [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ShellGetKnownFolderPath")]
         public static int GetKnownFolderPath(void** outPathPtr)
@@ -23,8 +27,6 @@ namespace OS.PAL.SharpOSHost
             return E_FAIL;
         }
 
-        // SHGetFolderPathW: caller provides MAX_PATH buffer. We clear it
-        // and return E_FAIL.
         [RuntimeExport("SharpOSHost_ShellGetFolderPath")]
         [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ShellGetFolderPath")]
         public static int GetFolderPath(char* pszPath)

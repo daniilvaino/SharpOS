@@ -478,7 +478,16 @@ namespace OS.Hal
                             }
                             else o = Name83Out(ent, nameOut, nameCap);
                             nameLen = (uint)o;
-                            attrs = (ulong)(ent[11] & 0x10);
+                            // FAT directory entry: size in bytes at offset 28 (LE).
+                            // Pack into upper 32 bits of attrs so callers that
+                            // care (NtQueryDirectoryFile / GetFileInformationByHandleEx)
+                            // get size without an interface change; callers that
+                            // only check the dir bit (& 0x10) are unaffected.
+                            uint size = (uint)ent[28]
+                                      | ((uint)ent[29] << 8)
+                                      | ((uint)ent[30] << 16)
+                                      | ((uint)ent[31] << 24);
+                            attrs = (ulong)(ent[11] & 0x10) | ((ulong)size << 32);
                             return true;
                         }
                         seen++;

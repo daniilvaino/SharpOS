@@ -35,12 +35,19 @@ namespace OS.PAL.SharpOSHost
             LineEditor.Reset();
 
             // Blocking line-mode loop. Polls keyboard hardware until Enter
-            // pressed. No cooperative yield yet — single managed thread on
-            // entry, so a tight loop is acceptable here. (Future: yield
-            // through CooperativeScheduler.)
+            // Cooperative-friendly poll: when no scancode is ready, yield
+            // so background threads (PS telemetry sender, GC finalizer,
+            // ThreadPool workers, deferred JIT) get CPU. Without the yield
+            // the entire managed runtime stalls behind keyboard input,
+            // causing both interactive hangs (prompt never renders after a
+            // cmdlet that scheduled async work) and overall sluggishness.
             while (true)
             {
-                if (!Ps2Keyboard.TryReadScancode(out byte sc)) continue;
+                if (!Ps2Keyboard.TryReadScancode(out byte sc))
+                {
+                    OS.Kernel.Threading.Scheduler.Yield();
+                    continue;
+                }
 
                 var kind = Ps2Keyboard.Decode(sc, out char ch, out byte make);
                 if (make == 0) continue;  // ignore break events
@@ -50,7 +57,11 @@ namespace OS.PAL.SharpOSHost
                 {
                     if (kind == Ps2Keyboard.KeyKind.Backspace)
                     {
-                        // Erase last on-screen char: BS, space, BS.
+                        // Erase last on-screen char: BS-space-BS. FbTty parses
+                        // 0x08 directly via FbTty.Backspace, UART terminals
+                        // interpret it via the standard backspace handling.
+                        // Single sequence — emitting both BS and ANSI \e[D
+                        // double-erases on terminals that interpret both.
                         OS.Hal.Platform.WriteChar((char)0x08);
                         OS.Hal.Platform.WriteChar(' ');
                         OS.Hal.Platform.WriteChar((char)0x08);

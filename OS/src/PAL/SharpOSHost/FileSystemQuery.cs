@@ -151,9 +151,10 @@ namespace OS.PAL.SharpOSHost
         [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FindDirEntry")]
         public static uint FindDirEntry(byte* utf8Path, uint index,
                                          char* outName, uint outNameChars,
-                                         uint* outAttrs)
+                                         uint* outAttrs, uint* outSize)
         {
             if (outAttrs != null) *outAttrs = 0;
+            if (outSize != null) *outSize = 0;
             if (utf8Path == null || outName == null || outNameChars == 0) return 0;
 
             int len = Strlen(utf8Path);
@@ -186,10 +187,16 @@ namespace OS.PAL.SharpOSHost
                 return 0;
 
             // Map FAT attrs (low bit 0x10 = dir) to Win32; default to normal
-            // file if no dir bit set.
+            // file if no dir bit set. Size is packed in upper 32 bits of attrs
+            // (Fat32.EnumDir convention) — extract for outSize.
             uint w32 = (uint)(attrs & 0x10UL);
             if (outAttrs != null) *outAttrs = w32 != 0 ? AttrDirectory : AttrNormal;
+            if (outSize != null) *outSize = (uint)(attrs >> 32);
             return nameLen;
         }
+
+        // Drive-root synthetic "sharpos" entry already covered earlier in
+        // the function — that returns AttrDirectory + size=0, which is
+        // correct (directories have no size in NtQueryDirectoryFile output).
     }
 }

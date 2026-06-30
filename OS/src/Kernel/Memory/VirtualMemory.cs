@@ -78,9 +78,24 @@ namespace OS.Kernel.Memory
                 if (!X64PageTable.TryQueryKernel(p, out _, out _)) return false;
             }
             X64PageTable.FlushTlbAll();
+            ZeroPage(p);
             s_committedBytes += PageSize;
             s_faultCommits++;
             return true;
+        }
+
+        // Zero a freshly-committed 4 KiB page. Win32 MEM_COMMIT contract +
+        // CoreCLR LoaderHeap explicitly assume freshly-committed memory is
+        // zero-filled (see Module::m_pAvailableClasses NULL check — without
+        // zero-fill the field reads back as the previous occupant of the
+        // physical frame, e.g. 0xAFAFAFAF poison from the slab freelist,
+        // and CoreCLR derefs it as a live EEClassHashTable*).
+        // Inline 64-byte-stride writes — page table maps the VA RW before
+        // we arrive here; TLB will fetch the new PTE on first access.
+        private static void ZeroPage(ulong va)
+        {
+            ulong* p = (ulong*)va;
+            for (int i = 0; i < (int)(PageSize / 8); i++) p[i] = 0;
         }
 
         private static ulong RoundUp(ulong v, ulong a) => (v + (a - 1)) & ~(a - 1);
@@ -130,7 +145,7 @@ namespace OS.Kernel.Memory
             for (ulong p = va; p < end; p += PageSize)
             {
                 if (X64PageTable.TryQueryKernel(p, out _, out _))
-                    continue;                                  // already committed
+                    continue;                                  // already committed (preserve contents)
 
                 ulong pa = global::OS.Kernel.PhysicalMemory.AllocPage();
                 if (pa == 0) { s_commitFails++; X64PageTable.FlushTlbAll(); return false; }
@@ -141,15 +156,40 @@ namespace OS.Kernel.Memory
                     if (!X64PageTable.TryQueryKernel(p, out _, out _))
                     { s_commitFails++; X64PageTable.FlushTlbAll(); return false; }
                 }
+                // Zero the freshly-mapped page in-loop (MEM_COMMIT contract).
+                // For invalid→valid PTE transitions x86 fetches the new entry
+                // on first access without needing INVLPG, so this write
+                // resolves through the just-installed mapping.
+                ZeroPage(p);
                 s_committedBytes += PageSize;
             }
             X64PageTable.FlushTlbAll();
             return true;
         }
 
-        // RetainVM=true: keep mappings (PhysicalMemory has no reclaim anyway).
-        public static bool Decommit(void* address, ulong size) { _ = address; _ = size; return true; }
-        public static bool Release(void* address, ulong size)  { _ = address; _ = size; return true; }
+        // Walk the range, query each page's PA, unmap it, and push the PA
+        // onto the PhysicalMemory freelist. Without this, long-lived
+        // PowerShell sessions exhaust UEFI-reported usable RAM since the
+        // bump cursor only advances forward — Module loading, JIT method
+        // chunks, GC generational chunks all release VAs but never recycle
+        // physical frames. Idempotent; addresses not currently mapped are
+        // skipped silently.
+        public static bool Decommit(void* address, ulong size)
+        {
+            if (address == null || size == 0) return true;
+            ulong va  = (ulong)address & ~(PageSize - 1);
+            ulong end = ((ulong)address + size + PageSize - 1) & ~(PageSize - 1);
+            for (ulong p = va; p < end; p += PageSize)
+            {
+                if (!X64PageTable.TryQueryKernel(p, out ulong pa, out _)) continue;
+                if (!X64PageTable.Unmap(p)) continue;     // race / already unmapped
+                global::OS.Kernel.PhysicalMemory.FreePage(pa);
+                if (s_committedBytes >= PageSize) s_committedBytes -= PageSize;
+            }
+            X64PageTable.FlushTlbAll();
+            return true;
+        }
+        public static bool Release(void* address, ulong size) => Decommit(address, size);
 
         // Map a specific VA→PA range (PE sections, MMIO). flags via exec.
         public static bool MapFixed(void* va, ulong pa, ulong size, bool exec)

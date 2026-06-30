@@ -69,7 +69,7 @@ param(
     [string]$IsoPath,
     [string]$VmBaseFolder      = (Join-Path $PSScriptRoot ".vbox"),
 
-    [int]$MemoryMb = 512,
+    [int]$MemoryMb = 2048,
     [int]$CpuCount = 1,
     [int]$VramMb   = 64,
 

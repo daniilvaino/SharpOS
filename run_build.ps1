@@ -719,7 +719,7 @@ try {
         $displayArgs = @("-vga", "std", "-nographic", "-serial", "mon:stdio", "-echr", "0x1d")
     }
 
-    $qemuArgs = $machineArgs + $cpuArgs + @("-m", "512") + $displayArgs + @(
+    $qemuArgs = $machineArgs + $cpuArgs + @("-m", "2048") + $displayArgs + @(
         "-net", "none",
         "-no-reboot",
         "-qmp", "tcp:127.0.0.1:$QmpPort,server,nowait",

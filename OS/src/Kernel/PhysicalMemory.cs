@@ -4,6 +4,11 @@ namespace OS.Kernel
     {
         private const ulong PageSize = 4096;
         private const ulong MinAllocAddress = 0x00100000;
+        // Freelist capacity = 256K entries × 8 bytes = 2 MB. Covers 1 GB
+        // of freed pages — more than any realistic single-session churn.
+        // Lazily allocated on first FreePage call (skip cost if nothing
+        // ever frees, e.g. minimal kernel-only smoke tests).
+        private const int FreeListCapacity = 256 * 1024;
 
         private static MemoryRegion* s_regions;
         private static uint s_regionCount;
@@ -11,6 +16,16 @@ namespace OS.Kernel
         private static ulong s_cursor;
         private static ulong s_regionEnd;
         private static bool s_initialized;
+
+        // Page freelist — single-page allocations only (matches AllocPage
+        // callers: VirtualMemory.Commit and TryDemandCommit both loop one
+        // page at a time). Multi-page contiguous frees (AllocPages count>1)
+        // are NOT freed here; the caller must decompose them, otherwise the
+        // pages just leak back to the bump cursor's never-revisit zone.
+        private static ulong[]? s_freeList;
+        private static int s_freeListTop;     // index of NEXT free slot (== count)
+        private static ulong s_freeTotal;
+        private static ulong s_reuseTotal;
 
         public static void Init(MemoryMapInfo map)
         {
@@ -23,8 +38,28 @@ namespace OS.Kernel
             MoveToNextUsableRegion();
         }
 
+        // Push a 4K page back onto the freelist. Lazily initializes storage.
+        // Caller MUST ensure the page is no longer mapped anywhere (no VA
+        // points at it) and not currently in any other live structure.
+        public static void FreePage(ulong pa)
+        {
+            if (pa == 0) return;
+            if (s_freeList == null) s_freeList = new ulong[FreeListCapacity];
+            if (s_freeListTop >= FreeListCapacity) return;   // full — leak
+            s_freeList[s_freeListTop++] = pa & ~(PageSize - 1);
+            s_freeTotal++;
+        }
+
         public static ulong AllocPage()
         {
+            // Reuse from freelist when possible — keeps long PS sessions
+            // from racing the bump cursor past the end of usable RAM.
+            if (s_freeListTop > 0 && s_freeList != null)
+            {
+                ulong pa = s_freeList[--s_freeListTop];
+                s_reuseTotal++;
+                return pa;
+            }
             return AllocPages(1);
         }
 
