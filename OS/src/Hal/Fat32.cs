@@ -400,6 +400,22 @@ namespace OS.Hal
         public static bool Exists(string path)
             => Resolve(path, out _, out _, out _);
 
+        // Cheap existence + metadata probe: walks the directory chain
+        // exactly like Exists, but exposes the size + isDir bits that
+        // Resolve already returns. No file content is read — distinct
+        // from ReadFile, which the legacy "TryReadFile to test
+        // existence" path used. PS does hundreds of GetFileAttributes
+        // probes per assembly load; using ReadFile here is catastrophic
+        // (slurps tens of MiB per probe, blows NativeArena, drives the
+        // AHCI queue, runs us into physical OOM).
+        public static bool Stat(string path, out uint size, out bool isDir)
+        {
+            isDir = false; size = 0;
+            if (!Resolve(path, out _, out uint sz, out bool dir)) return false;
+            size = sz; isDir = dir;
+            return true;
+        }
+
         // Emit a trimmed 8.3 name ("NAME.EXT") into out[].
         private static int Name83Out(byte* ent, char* outp, uint cap)
         {
@@ -415,93 +431,221 @@ namespace OS.Hal
             return o;
         }
 
-        // Directory enumeration: the `index`-th real entry of the dir
-        // at `path` ("" / "/" = root). Writes the name (LFN if present,
-        // else 8.3) into nameOut, sets attrs (0x10 = directory).
-        // Returns false past the end / bad path.
+        // Resumable enumeration cursor — survives across EnumDir calls
+        // so a sequential FindFirstFile/FindNextFile sweep is O(N), not
+        // O(N²). Keyed by (pathHash, dirCluster, nextIndex): if the
+        // next call matches, we resume from the saved cluster / sector
+        // / offset / LFN-accumulator state instead of rescanning from
+        // entry 0. Single-slot — PS' bootstrap walks directories one
+        // at a time, so a one-slot cache hits ~100% of the work and
+        // costs nothing on mismatch (we just rescan, same as before).
+        private struct EnumCursor
+        {
+            public ulong PathHash;
+            public uint  DirCluster;       // resolved root cluster (0 = root)
+            public bool  Fat16Root;
+            public uint  NextIndex;        // index of NEXT entry to return
+            public uint  Cluster;          // current cluster being walked
+            public uint  SecInRoot;        // FAT16-root branch only
+            public uint  Si;               // sector idx within cluster/root
+            public uint  Off;              // byte offset within sector
+            public int   LfnLen;
+        }
+        private static EnumCursor s_cursor;
+        private static bool   s_cursorValid;
+        private static char*  s_cursorLfn;     // 260-char LFN accumulator (lazy)
+
+        private static ulong PathHash(string p)
+        {
+            ulong h = 0xcbf29ce484222325UL;
+            for (int i = 0; i < p.Length; i++)
+            {
+                char c = p[i];
+                if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+                h ^= c;
+                h *= 0x100000001b3UL;
+            }
+            return h;
+        }
+
         public static bool EnumDir(string path, uint index,
             char* nameOut, uint nameCap, out uint nameLen, out ulong attrs)
         {
             nameLen = 0; attrs = 0;
             if (!s_mounted) return false;
 
+            // Lazy one-shot allocation of the cursor's LFN buffer.
+            // Stays alive for the kernel lifetime — bump-only is fine.
+            if (s_cursorLfn == null)
+            {
+                s_cursorLfn = (char*)global::OS.Kernel.Memory.NativeArena.Allocate(260 * 2);
+                if (s_cursorLfn == null) return false;
+            }
+
+            ulong h = PathHash(path);
+            bool resume = s_cursorValid
+                       && s_cursor.PathHash == h
+                       && s_cursor.NextIndex == index;
+
             uint dirCluster;
             bool fat16Root;
-            // Trim leading separators; empty => root.
-            int s0 = 0; while (s0 < path.Length &&
-                (path[s0] == '/' || path[s0] == '\\')) s0++;
-            if (s0 >= path.Length)
+            uint cluster, secInRoot, si, off;
+            int lfnLen;
+            char* lfn = s_cursorLfn;
+
+            if (resume)
             {
-                fat16Root = !s_isFat32;
-                dirCluster = s_isFat32 ? s_rootClus : 0;
+                dirCluster = s_cursor.DirCluster;
+                fat16Root  = s_cursor.Fat16Root;
+                cluster    = s_cursor.Cluster;
+                secInRoot  = s_cursor.SecInRoot;
+                si         = s_cursor.Si;
+                off        = s_cursor.Off;
+                lfnLen     = s_cursor.LfnLen;
             }
             else
             {
-                if (!Resolve(path, out uint dc, out _, out bool isD) || !isD)
-                    return false;
-                fat16Root = false;
-                dirCluster = dc;
+                // Trim leading separators; empty => root.
+                int s0 = 0; while (s0 < path.Length &&
+                    (path[s0] == '/' || path[s0] == '\\')) s0++;
+                if (s0 >= path.Length)
+                {
+                    fat16Root = !s_isFat32;
+                    dirCluster = s_isFat32 ? s_rootClus : 0;
+                }
+                else
+                {
+                    if (!Resolve(path, out uint dc, out _, out bool isD) || !isD)
+                    { s_cursorValid = false; return false; }
+                    fat16Root = false;
+                    dirCluster = dc;
+                }
+                cluster   = dirCluster;
+                secInRoot = 0;
+                si        = 0;
+                off       = 0;
+                lfnLen    = 0;
+                // Fast-forward to `index` by scanning entries — same
+                // walk we used to do every call, paid once on (re)seek.
+                if (index != 0)
+                {
+                    if (!ScanTo(ref cluster, ref secInRoot, ref si, ref off,
+                                ref lfnLen, lfn, fat16Root, index))
+                    { s_cursorValid = false; return false; }
+                }
             }
 
-            char* lfn = stackalloc char[260];
-            int lfnLen = 0;
-            uint seen = 0;
-            uint cluster = dirCluster;
             uint rootSecs = fat16Root
                 ? ((s_rootEntCnt * 32u) + (s_bps - 1)) / s_bps : 0;
-            uint secInRoot = 0;
 
             while (true)
             {
                 uint secsThis = fat16Root ? rootSecs : s_spc;
-                for (uint si = 0; si < secsThis; si++)
+                while (si < secsThis)
+                {
+                    ulong lba = fat16Root
+                        ? s_rootLba + secInRoot + si
+                        : ClusterLba(cluster) + si;
+                    if (!ReadAbs(lba)) { s_cursorValid = false; return false; }
+                    while (off < s_bps)
+                    {
+                        byte* ent = s_sec + off;
+                        if (ent[0] == 0x00)                       // end of dir
+                        { s_cursorValid = false; return false; }
+                        if (ent[0] == 0xE5) { lfnLen = 0; off += 32; continue; }
+                        if ((ent[11] & 0x0F) == 0x0F)
+                        { LfnFrag(ent, lfn, ref lfnLen); off += 32; continue; }
+                        if ((ent[11] & 0x08) != 0) { lfnLen = 0; off += 32; continue; }
+
+                        // Real entry — emit, then advance state so next
+                        // call resumes immediately after.
+                        int o;
+                        if (lfnLen > 0)
+                        {
+                            o = lfnLen > (int)nameCap ? (int)nameCap : lfnLen;
+                            for (int i = 0; i < o; i++) nameOut[i] = lfn[i];
+                        }
+                        else o = Name83Out(ent, nameOut, nameCap);
+                        nameLen = (uint)o;
+                        uint sz = (uint)ent[28]
+                                | ((uint)ent[29] << 8)
+                                | ((uint)ent[30] << 16)
+                                | ((uint)ent[31] << 24);
+                        attrs = (ulong)(ent[11] & 0x10) | ((ulong)sz << 32);
+
+                        // Advance one entry for resume.
+                        off += 32;
+                        s_cursor.PathHash   = h;
+                        s_cursor.DirCluster = dirCluster;
+                        s_cursor.Fat16Root  = fat16Root;
+                        s_cursor.NextIndex  = index + 1;
+                        s_cursor.Cluster    = cluster;
+                        s_cursor.SecInRoot  = secInRoot;
+                        s_cursor.Si         = si;
+                        s_cursor.Off        = off;
+                        s_cursor.LfnLen     = 0;                  // entry consumed
+                        s_cursorValid = true;
+                        return true;
+                    }
+                    off = 0;
+                    si++;
+                }
+                if (fat16Root)
+                {
+                    secInRoot += rootSecs;
+                    s_cursorValid = false;
+                    return false;
+                }
+                cluster = FatNext(cluster);
+                if (cluster == 0) { s_cursorValid = false; return false; }
+                si = 0;
+            }
+        }
+
+        // Skip exactly `target` real entries from the current cursor
+        // position. Used to seed the resumable cursor when the caller's
+        // requested index doesn't match our cached `NextIndex` — happens
+        // on the first call to a directory, or when PS jumps around (it
+        // doesn't, but we degrade gracefully). Returns false if the dir
+        // ends before reaching `target`.
+        private static bool ScanTo(ref uint cluster, ref uint secInRoot,
+            ref uint si, ref uint off, ref int lfnLen, char* lfn,
+            bool fat16Root, uint target)
+        {
+            uint seen = 0;
+            uint rootSecs = fat16Root
+                ? ((s_rootEntCnt * 32u) + (s_bps - 1)) / s_bps : 0;
+            while (seen < target)
+            {
+                uint secsThis = fat16Root ? rootSecs : s_spc;
+                while (si < secsThis)
                 {
                     ulong lba = fat16Root
                         ? s_rootLba + secInRoot + si
                         : ClusterLba(cluster) + si;
                     if (!ReadAbs(lba)) return false;
-                    for (uint off = 0; off < s_bps; off += 32)
+                    while (off < s_bps)
                     {
                         byte* ent = s_sec + off;
-                        if (ent[0] == 0x00) return false;        // end of dir
-                        if (ent[0] == 0xE5) { lfnLen = 0; continue; }
+                        if (ent[0] == 0x00) return false;
+                        if (ent[0] == 0xE5) { lfnLen = 0; off += 32; continue; }
                         if ((ent[11] & 0x0F) == 0x0F)
-                        { LfnFrag(ent, lfn, ref lfnLen); continue; }
-                        if ((ent[11] & 0x08) != 0) { lfnLen = 0; continue; }
-                        if (seen == index)
-                        {
-                            int o;
-                            if (lfnLen > 0)
-                            {
-                                o = lfnLen > (int)nameCap ? (int)nameCap : lfnLen;
-                                for (int i = 0; i < o; i++) nameOut[i] = lfn[i];
-                            }
-                            else o = Name83Out(ent, nameOut, nameCap);
-                            nameLen = (uint)o;
-                            // FAT directory entry: size in bytes at offset 28 (LE).
-                            // Pack into upper 32 bits of attrs so callers that
-                            // care (NtQueryDirectoryFile / GetFileInformationByHandleEx)
-                            // get size without an interface change; callers that
-                            // only check the dir bit (& 0x10) are unaffected.
-                            uint size = (uint)ent[28]
-                                      | ((uint)ent[29] << 8)
-                                      | ((uint)ent[30] << 16)
-                                      | ((uint)ent[31] << 24);
-                            attrs = (ulong)(ent[11] & 0x10) | ((ulong)size << 32);
-                            return true;
-                        }
-                        seen++;
+                        { LfnFrag(ent, lfn, ref lfnLen); off += 32; continue; }
+                        if ((ent[11] & 0x08) != 0) { lfnLen = 0; off += 32; continue; }
+                        off += 32;
                         lfnLen = 0;
+                        seen++;
+                        if (seen == target) return true;
                     }
+                    off = 0;
+                    si++;
                 }
-                if (fat16Root)
-                {
-                    secInRoot += rootSecs;
-                    return false;                                // single pass
-                }
+                if (fat16Root) return false;
                 cluster = FatNext(cluster);
                 if (cluster == 0) return false;
+                si = 0;
             }
+            return true;
         }
 
         public static int ReadFile(string path, byte* dst, int cap, out uint fileSize)

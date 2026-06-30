@@ -364,6 +364,11 @@ namespace OS.Kernel.Threading
 
         private static void DrainExpiredTimers()
         {
+            // Hot path: every Yield() hits this. Skip the HPET MMIO if
+            // nothing is parked on a deadline — saves ~1us per yield on
+            // QEMU (HPET reads are slow there), and PS bootstrap fires
+            // 10⁵+ yields so the elision matters.
+            if (!TimerQueue.HasPending) return;
             if (Hpet.FrequencyHz == 0) return;
             ulong now = Hpet.ReadCounter();
             TimerQueue.DrainExpired(now);

@@ -213,6 +213,33 @@ namespace OS.Hal
             }
         }
 
+        // Cheap existence + metadata probe. Reads NO file content —
+        // PS / BCL GetFileAttributes hits this hundreds of times per
+        // assembly load. The old "TryReadFile then discard the buffer"
+        // shortcut slurped entire DLLs into NativeArena, drove the
+        // AHCI queue, and ran us into physical OOM. Always go through
+        // TryStat for existence checks; reserve TryReadFile for code
+        // that actually needs the bytes.
+        public static bool TryStat(string path, out uint size, out bool isDir)
+        {
+            size = 0; isDir = false;
+            if (Fs.Current != null)
+                return Fs.Current.Stat(path, out size, out isDir);
+
+            // Pre-mount fallback: UEFI bridge only knows "exists / not".
+            // Treat as zero-size normal file; PS rarely probes this
+            // window (we mount FAT very early in boot).
+            if (!s_initialized) return false;
+            if (!HasCapability(PlatformCapabilities.ExternalElf)) return false;
+            if (s_bootInfo.FileExists == null) return false;
+            fixed (char* p = path)
+            {
+                if (p == null || p[0] == '\0') return false;
+                if (s_bootInfo.FileExists(p) != (uint)BootFileStatus.Ok) return false;
+            }
+            return true;   // size=0, isDir=false
+        }
+
         public static bool TryReadFile(string path, out void* buffer, out uint size)
         {
             buffer = null;

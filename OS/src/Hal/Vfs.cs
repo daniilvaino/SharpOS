@@ -33,6 +33,9 @@ namespace OS.Hal
 
         public override bool Exists(string path) => Fat32.Exists(path);
 
+        public override bool Stat(string path, out uint size, out bool isDir)
+            => Fat32.Stat(path, out size, out isDir);
+
         public override bool EnumDir(string path, uint index,
             char* nameOut, uint nameCap, out uint nameLen, out ulong attrs)
             => Fat32.EnumDir(path, index, nameOut, nameCap, out nameLen, out attrs);

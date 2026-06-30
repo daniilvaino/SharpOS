@@ -17,6 +17,12 @@ namespace OS.Hal
 
         public abstract bool Exists(string path);
 
+        // Cheap metadata probe: true iff the entry exists; `size` and
+        // `isDir` reflect its on-disk metadata. NO file content is
+        // read. PS GetFileAttributes-style probes (hundreds per
+        // assembly load) MUST go through Stat, not ReadFile.
+        public abstract bool Stat(string path, out uint size, out bool isDir);
+
         // The `index`-th entry of directory `path` ("" / "/" = root).
         // name -> nameOut (nameLen chars), attrs bit 0x10 = directory.
         public abstract bool EnumDir(string path, uint index,

@@ -18,6 +18,13 @@ namespace OS.Kernel.Threading
     {
         private static Thread? s_head;
 
+        // True iff the queue has any pending deadlines. Cheap predicate
+        // so Scheduler.DrainExpiredTimers can short-circuit the HPET
+        // MMIO read when nothing is waiting on a timer — this fires
+        // every Yield(), and PS bootstrap does ~10⁵ yields, so the
+        // savings is real on QEMU where HPET reads are ~1us each.
+        public static bool HasPending => s_head != null;
+
         // Insert `t` sorted by `deadlineTicks` ascending. Caller has
         // already marked `t.State = Waiting` and set `t.DeadlineTicks`.
         public static void Schedule(Thread t, ulong deadlineTicks)

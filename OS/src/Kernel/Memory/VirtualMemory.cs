@@ -77,7 +77,11 @@ namespace OS.Kernel.Memory
                 // intermediate-table alloc failure (OOM) — already not mapped.
                 if (!X64PageTable.TryQueryKernel(p, out _, out _)) return false;
             }
-            X64PageTable.FlushTlbAll();
+            // No TLB flush needed: the faulting access tripped because the
+            // PTE was not-present, so x86 didn't cache anything for this VA.
+            // The IRETQ that resumes the fault will fetch the freshly-installed
+            // PTE on first re-execution. CR3 reload (full TLB shootdown) here
+            // was costing ~5800 calls per PS bootstrap.
             ZeroPage(p);
             s_committedBytes += PageSize;
             s_faultCommits++;
@@ -148,13 +152,12 @@ namespace OS.Kernel.Memory
                     continue;                                  // already committed (preserve contents)
 
                 ulong pa = global::OS.Kernel.PhysicalMemory.AllocPage();
-                if (pa == 0) { s_commitFails++; X64PageTable.FlushTlbAll(); return false; }
+                if (pa == 0) { s_commitFails++; return false; }
 
                 if (!X64PageTable.MapKernel(p, pa, flags))
                 {
-                    // Lost a race with an existing mapping — tolerate.
                     if (!X64PageTable.TryQueryKernel(p, out _, out _))
-                    { s_commitFails++; X64PageTable.FlushTlbAll(); return false; }
+                    { s_commitFails++; return false; }
                 }
                 // Zero the freshly-mapped page in-loop (MEM_COMMIT contract).
                 // For invalid→valid PTE transitions x86 fetches the new entry
@@ -163,7 +166,10 @@ namespace OS.Kernel.Memory
                 ZeroPage(p);
                 s_committedBytes += PageSize;
             }
-            X64PageTable.FlushTlbAll();
+            // No FlushTlbAll: every mapped page transitioned not-present →
+            // Present, and x86 doesn't cache not-present entries. First
+            // access by the caller fetches the new PTE for free. The CR3
+            // reload here used to fire ~5800 times per PS bootstrap.
             return true;
         }
 
@@ -203,10 +209,9 @@ namespace OS.Kernel.Memory
             for (ulong p = v; p < end; p += PageSize, phys += PageSize)
             {
                 if (X64PageTable.TryQueryKernel(p, out _, out _)) continue;
-                if (!X64PageTable.MapKernel(p, phys, flags))
-                { X64PageTable.FlushTlbAll(); return false; }
+                if (!X64PageTable.MapKernel(p, phys, flags)) return false;
             }
-            X64PageTable.FlushTlbAll();
+            // Fresh not-present → Present transitions don't need flushing.
             return true;
         }
 

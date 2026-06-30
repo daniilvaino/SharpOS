@@ -117,23 +117,20 @@ namespace OS.PAL.SharpOSHost
             // "\sharpos" itself.
             if (len == 8) return AttrDirectory;
 
-            // Path with file extension → probe FS to verify existence.
-            // No extension → assume directory (FindFirstFile will enumerate).
+            // Path with file extension → cheap Stat probe (no content
+            // read). PS hits this hundreds of times per assembly load —
+            // historic TryReadFile path slurped whole DLLs into
+            // NativeArena and OOM'd the box.
             if (HasFileExtension(utf8Path, len))
             {
-                // Up-cast UTF-8 bytes (ASCII paths) into a wchar stackbuf so
-                // we can build a managed string via String.FromUtf16. The
-                // probe slurps file content via Platform.TryReadFile —
-                // wasteful for large files but acceptable for PS's psd1 /
-                // ps1xml attribute probes (kilobytes each).
                 char* wbuf = stackalloc char[260];
                 int wlen = len < 259 ? len : 259;
                 for (int i = 0; i < wlen; i++) wbuf[i] = (char)utf8Path[i];
                 wbuf[wlen] = '\0';
                 string path = System.String.FromUtf16(wbuf, wlen);
-                if (Platform.TryReadFile(path, out void* _, out uint _))
-                    return AttrNormal;
-                return AttrInvalid;
+                if (!Platform.TryStat(path, out _, out bool isDir))
+                    return AttrInvalid;
+                return isDir ? AttrDirectory : AttrNormal;
             }
 
             return AttrDirectory;
