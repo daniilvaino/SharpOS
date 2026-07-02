@@ -69,6 +69,17 @@ namespace OS.Kernel.Diagnostics
         // tells us empirically what CoreCLR wants на init.
         public const bool CoreClrInit = true;
 
+        // Hosted-tier launch target selector — which managed assembly
+        // coreclr_execute_assembly runs after CoreCLR init.
+        //   true  → \sharpos\NormalHello.dll (probe/census — PAL/OS surface
+        //           coverage, ~200 probes, exits with rc=42)
+        //   false → \sharpos\PowerShellBootstrap.dll (managed shim → PS
+        //           7.5.5 ManagedPSEntry, interactive pwsh prompt)
+        // Both DLLs are always built and deployed by run_build.ps1 + added
+        // to TPA; the toggle only chooses which one execute_assembly aims
+        // at. Const bool so ILC folds the unused branch to nothing.
+        public const bool LaunchNormalHelloCensus = true;
+
         // Phase E2 — TEB facade swap. Allocates a fresh TebFacade, swaps
         // gs base to it (under CLI), reads gs:[Self] and gs:[StackLimit]
         // back, restores original gs base. Proves the per-switch primitive

@@ -24,7 +24,7 @@ namespace OS.Hal
         // (kernel diag noise: [seh-*], [host], [stub-reg], [PCRE], [SFI], ...).
         // PowerShell I/O bypasses this by calling Platform.WriteChar directly
         // (ConsoleWin32.WriteConsoleW + ConsoleRead echo).
-        public static bool Quiet = false;
+        public static bool Quiet = true;
 
         public static void Write(string text)
         {

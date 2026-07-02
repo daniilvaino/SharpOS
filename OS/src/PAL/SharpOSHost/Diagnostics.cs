@@ -42,7 +42,7 @@ namespace OS.PAL.SharpOSHost
         // and always print. Panic reason (Panic_C) prints directly, also
         // ungated. Flip to true + rebuild kernel (no fork rebuild) to get
         // the full trace back for a failing case.
-        public static bool Verbose = true;  // step103: temporary, for msc-throw / SEH dispatch diagnostics
+        public static bool Verbose = false;  // step103: temporary, for msc-throw / SEH dispatch diagnostics
 
         // Per-line state for TraceGate dispatch. The fork emits a single
         // logical line via several DebugPrint+DebugPrintHex calls; we remember

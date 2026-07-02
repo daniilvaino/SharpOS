@@ -558,6 +558,13 @@ $forkFxWinSrc = "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\crossgen2_publi
 $fxDest   = Join-Path $espSharpOSDir "fx"
 $normalProj = "C:\work\OS\work\normal-hello"
 $normalDllSrc = Join-Path $normalProj "bin\Release\net10.0\NormalHello.dll"
+# step128 — PowerShell bootstrap shim. A managed wrapper that reflection-
+# sets SystemPolicy.s_systemLockdownPolicy = None before invoking
+# ManagedPSEntry.Main(). Lets PS 7.5 run in FullLanguage mode on bare
+# metal (CLM detection in PS 7.5 has no env-var override). See
+# apps/PowerShellBootstrap/Program.cs for the override logic.
+$psBootstrapProj   = "C:\work\OS\apps\PowerShellBootstrap"
+$psBootstrapDllSrc = Join-Path $psBootstrapProj "bin\Release\net10.0\PowerShellBootstrap.dll"
 if (Test-Path -LiteralPath $forkFxNames) {
     New-Item -ItemType Directory -Force -Path $fxDest | Out-Null
     $copiedFromWin = 0
@@ -593,6 +600,21 @@ if (Test-Path -LiteralPath $forkFxNames) {
         Write-Warning "NormalHello.dll not found at $normalDllSrc"
     }
 
+    # Build PowerShellBootstrap shim — managed wrapper that forces
+    # SystemPolicy → None via reflection, then forwards to ManagedPSEntry.
+    if (Test-Path -LiteralPath (Join-Path $psBootstrapProj "PowerShellBootstrap.csproj")) {
+        Push-Location $psBootstrapProj; & dotnet build -c Release | Out-Null; Pop-Location
+        if (Test-Path -LiteralPath $psBootstrapDllSrc) {
+            Copy-Item -LiteralPath $psBootstrapDllSrc -Destination (Join-Path $espSharpOSDir "PowerShellBootstrap.dll") -Force
+            $bh = (Get-FileHash -LiteralPath $psBootstrapDllSrc -Algorithm SHA256).Hash
+            Write-Host "Prepared PowerShellBootstrap.dll sha256=$bh"
+        } else {
+            Write-Warning "PowerShellBootstrap.dll not found at $psBootstrapDllSrc"
+        }
+    } else {
+        Write-Warning "PowerShellBootstrap project not found at $psBootstrapProj"
+    }
+
     # Generate TPA list: SPC (root) + every fx dll + every pwsh/* dll + the
     # app. Semicolon-sep, virtual-drive C:\sharpos\ paths so BCL's
     # Path.IsPathFullyQualified accepts them. SharpOSHost_FileOpen strips the
@@ -622,6 +644,7 @@ if (Test-Path -LiteralPath $forkFxNames) {
         }
     }
     [void]$tpa.Append(';C:\sharpos\NormalHello.dll')
+    [void]$tpa.Append(';C:\sharpos\PowerShellBootstrap.dll')
     [System.IO.File]::WriteAllText((Join-Path $espSharpOSDir "tpa.txt"), $tpa.ToString())
     Write-Host "Prepared \sharpos\tpa.txt (length=$($tpa.Length))"
 }

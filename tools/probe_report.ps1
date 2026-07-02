@@ -136,6 +136,32 @@ $results += Get-ProbeStatus -Cat 'Phase4' -Name 'Cctor' `
     -Status 'cctor ref-field repeat: (ok|FAIL)' `
     -ExpectRe '^ok$'
 
+# Enum coverage split into three orthogonal probes so the report shows
+# real coverage per surface (см. NativeAotProbe.cs — Probe_Enum). Today:
+# cast + bitwise green, toString RED (Enum stub in MinimalRuntime.cs is
+# empty). When std/no-runtime ports Enum, toString flips to OK without
+# any changes here.
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'EnumCast' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'enum\.cast: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'EnumBitwise' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'enum\.bitwise: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
+# toString — honest FAIL today (Enum stub in MinimalRuntime.cs has no
+# ToString override, falls through to object.ToString → returns type
+# name, not "B"). Gate expects 'ok' like everyone else: it'll show
+# straight FAIL now, and flip to green the day std/no-runtime ports
+# Enum's member-name resolution. No "expected FAIL" trick — that
+# rendered as ambiguous "OK (FAIL)".
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'EnumToString' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'enum\.toString: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
 # Phase 4 -- EH level gates.
 $ehGates = @(
     @{ N='EhTryFinallyNoThrow';    Re='eh L1 try/finally no-throw: val=(\d+)';       Expect='211'  },

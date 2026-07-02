@@ -203,14 +203,40 @@ namespace OS.Kernel.Diagnostics
         }
 
         // --- 9. Enum ---
+        // Split into three orthogonal probes so probe_report shows the
+        // real coverage of each surface separately:
+        //   • enum.cast     — IL-level int ↔ enum round-trip.
+        //   • enum.bitwise  — `|` `&` arithmetic via cast.
+        //   • enum.toString — member-name via ToString (BCL contract).
+        //
+        // `System.Enum` in MinimalRuntime.cs is a bare `abstract class
+        // Enum : ValueType {}` — no ToString override, no Parse/GetNames
+        // /HasFlag. Cast + bitwise are IL-level ops so they always work.
+        // ToString falls through to object.ToString → returns the type's
+        // full name, NOT "B". Expected today: enum.cast + enum.bitwise
+        // green, enum.toString RED. When std/no-runtime ports Enum, the
+        // last one turns green without any other change to probe_report.
         private enum Kind { A = 1, B = 2, C = 4 }
 
         private static void Probe_Enum()
         {
             Kind k = Kind.B;
             int v = (int)k;
+            ReportProbe("enum.cast", v == 2 && (Kind)v == Kind.B, (uint)v);
+
             bool combo = ((Kind.A | Kind.C) & Kind.A) == Kind.A;
-            ReportProbe("enum", v == 2 && combo, (uint)v);
+            ReportProbe("enum.bitwise", combo, (uint)(Kind.A | Kind.C));
+
+            bool toStrOk = false;
+            uint toStrHash = 0;
+            try
+            {
+                string s = k.ToString();
+                toStrOk = (s == "B");
+                toStrHash = (uint)(s?.Length ?? 0);
+            }
+            catch { toStrOk = false; }
+            ReportProbe("enum.toString", toStrOk, toStrHash);
         }
 
         // --- virtual Equals on a boxed value type ---

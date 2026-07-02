@@ -193,11 +193,30 @@ namespace OS.Kernel.Diagnostics
         private static readonly byte[] s_v1M    = new byte[] { (byte)'0',(byte)'x',(byte)'1',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',0 };           // 1 MiB
 
         // Stage A — managed assembly path for coreclr_execute_assembly.
-        // \sharpos\pwsh\pwsh.dll  (PowerShell test launch)
-        private static readonly byte[] s_normalAppPath = new byte[] {
+        // Two targets, selector = Probes.LaunchNormalHelloCensus:
+        //   true  → NormalHello.dll  (PAL/OS census probe suite, exits 42)
+        //   false → PowerShellBootstrap.dll  (managed shim → PS 7.5.5)
+        // Both are always built + deployed by run_build.ps1; the toggle
+        // just picks which one execute_assembly loads. Const bool folds
+        // the unused branch to nothing at ILC time.
+        //
+        // step128: PowerShellBootstrap.dll is a tiny managed shim
+        // (apps/PowerShellBootstrap/) that reflection-sets SystemPolicy
+        // .s_systemLockdownPolicy = None BEFORE forwarding to Microsoft
+        // .PowerShell.ManagedPSEntry.Main. Direct \sharpos\pwsh\pwsh.dll
+        // would land in ConstrainedLanguage mode (see step126.md).
+        private static readonly byte[] s_appPathPwsh = new byte[] {
             (byte)'C', (byte)':', (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
-            (byte)'p', (byte)'w', (byte)'s', (byte)'h', (byte)'\\',
-            (byte)'p', (byte)'w', (byte)'s', (byte)'h', (byte)'.', (byte)'d', (byte)'l', (byte)'l', 0 };
+            (byte)'P', (byte)'o', (byte)'w', (byte)'e', (byte)'r', (byte)'S', (byte)'h', (byte)'e', (byte)'l', (byte)'l',
+            (byte)'B', (byte)'o', (byte)'o', (byte)'t', (byte)'s', (byte)'t', (byte)'r', (byte)'a', (byte)'p',
+            (byte)'.', (byte)'d', (byte)'l', (byte)'l', 0 };
+        private static readonly byte[] s_appPathNormalHello = new byte[] {
+            (byte)'C', (byte)':', (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', (byte)'\\',
+            (byte)'N', (byte)'o', (byte)'r', (byte)'m', (byte)'a', (byte)'l',
+            (byte)'H', (byte)'e', (byte)'l', (byte)'l', (byte)'o',
+            (byte)'.', (byte)'d', (byte)'l', (byte)'l', 0 };
+        private static readonly byte[] s_normalAppPath =
+            Probes.LaunchNormalHelloCensus ? s_appPathNormalHello : s_appPathPwsh;
 
         // Names for coreclr_create_delegate — Hello.dll's SharpOSHello.Program.Run.
         private static readonly byte[] s_helloAsm = new byte[] {
