@@ -215,6 +215,51 @@ static void L19_Inner()
 
 ---
 
+## Backlog: единый UNWIND_INFO-декодер (Tier A SFI → SehUnwind)
+
+**Зафиксировано 2026-07-06. Решение: сводить, но НЕ сейчас** — отложено
+до/вместе с P0-1, приоритет ниже L18/L19.
+
+**Факт:** в дереве живут **две независимые реализации декодера
+winnt.h UNWIND_INFO**:
+
+1. `SehUnwind.ApplyUnwindInfo` (`OS/src/PAL/SharpOSHost/SehUnwind.cs:610`) —
+   опкоды 0–5 полные, 6/8/9/10 consume-only, CHAININFO, mid-prolog
+   skip + SET_FPREG prescan, EstablisherFrame per Windows ABI, KNCP.
+   Потребители: SehDispatch (оба прохода), RtlUnwind, форковский
+   StackFrameIterator через `Thread::VirtualUnwindCallFrame`.
+2. Собственный applier внутри Tier A `StackFrameIterator`
+   (`OS/src/Boot/EH/StackFrameIterator.cs:125-165`) — **только опкоды
+   0–3** (PUSH_NONVOL / ALLOC_LARGE / ALLOC_SMALL / SET_FPREG);
+   SAVE_NONVOL / SAVE_XMM128 / PUSH_MACHFRAME объявлены unsupported
+   в шапке файла. Ноль ссылок на SehUnwind. Потребитель: kernel-AOT
+   DispatchEx (Tier A).
+
+**Почему это долг:** одна спека — два места правок и два места
+регрессий. Каждый декодер-фикс (ближайший — P0-1 XMM: опкоды 8/9)
+надо приземлять в ОБА, иначе tier'ы разъезжаются молча. Дифферен-
+циальный оракул (сравнение с ntdll `RtlVirtualUnwind` на хосте),
+когда появится, тестировал бы одну общую реализацию за оба стека.
+
+**Целевая форма:** Tier A SFI вызывает `SehUnwind.VirtualUnwind`
+(или общий внутренний `ApplyUnwindInfo`) вместо своего switch'а.
+SehUnwind уже kernel-side и не зависит от CoreCLR — циклической
+зависимости нет. Отличия учесть: Tier A ходит по PAL_LIMITED_CONTEXT /
+RegDisplay, не по CONTEXT — нужен тонкий адаптер либо расширение
+сигнатуры.
+
+**Почему не сейчас:** Tier A зелёный (L8–L17), его узкое покрытие
+0–3 пока достаточно для ILC-прологов ядра; риск регрессии стабильного
+tier'а ради чистоты — плохой размен до закрытия P0-1/P0-2.
+
+**Триггер:** первый декодер-баг, воспроизводящийся в Tier A, ЛИБО
+момент когда P0-1 XMM-фикс придётся дублировать в
+StackFrameIterator.cs — в этот момент сведение дешевле дубля.
+
+**Интеримное правило (пока два декодера):** любой PR, трогающий
+опкоды/EstablisherFrame в одном декодере, обязан явно ответить
+«нужен ли тот же фикс во втором» (строчка в step-writeup).
+
 ---
 
 ## Big bet: snocket stack → Windows IL целиком, в комплекте

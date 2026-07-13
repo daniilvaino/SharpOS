@@ -131,6 +131,15 @@ $results += Get-ProbeStatus -Cat 'Phase4' -Name 'IcedEncode' `
     -Status 'iced\.encode\(mov rax,rcx\): (ok|FAIL)' `
     -ExpectRe '^ok$'
 
+# Generic dictionary + instantiating stubs — delegate prerequisite
+# (см. NativeAotProbe.Probe_GenericDictionary). Proves __Canon dictionary
+# resolves the real element MethodTable, not object[]/__Canon. Gating
+# brick before managed-delegate work — tracked as its own line.
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'GenericDictionary' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'generic dictionary \+ inst stubs: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
 $results += Get-ProbeStatus -Cat 'Phase4' -Name 'Cctor' `
     -Detect 'cctor implicit-int-field' `
     -Status 'cctor ref-field repeat: (ok|FAIL)' `

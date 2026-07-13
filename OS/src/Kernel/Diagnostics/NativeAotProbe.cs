@@ -101,6 +101,7 @@ namespace OS.Kernel.Diagnostics
             Probe_StringFormat();
 
             Probe_InterfaceCallFromSharedGeneric();
+            Probe_GenericDictionary();
             // Delegates (any managed `delegate T F(...)`, with or without capture) require
             // Delegate.InitializeClosedInstance + _target + _functionPointer + Invoke
             // machinery on System.Delegate. None of that is stubbed yet, so even a plain
@@ -311,6 +312,48 @@ namespace OS.Kernel.Diagnostics
             var c = new GenericContainer<RefMarker>(new GenericPickerRefImpl<RefMarker>());
             int r = c.Call(new RefMarker());
             ReportProbe("shared-gen iface call", r == 808, (uint)r);
+        }
+
+        // --- Generic dictionaries + instantiating stubs (delegate prerequisite). ---
+        // Inside a shared-generic (__Canon) body every T-dependent operation
+        // reads the generic dictionary: type handle for `new T[n]`, the
+        // List<T> instantiation, and the method-dictionary hand-off for the
+        // nested DictNewArray<T> call. Two reference instantiations share one
+        // __Canon body — the dictionary must tell them apart at runtime; the
+        // int instantiation compiles its own exact body. The MethodTable
+        // identity check proves the dictionary yielded the REAL element type
+        // (string[]), not __Canon/object[] — wrong-MT arrays would corrupt
+        // covariance checks and GC series downstream. Managed-delegate work
+        // (donext) leans on both mechanisms via instantiating stubs.
+        private static T[] DictNewArray<T>(int n) => new T[n];
+
+        private static int DictNested<T>(int seed)
+        {
+            T[] arr = DictNewArray<T>(3);
+            var list = new System.Collections.Generic.List<T>();
+            list.Add(default);
+            return seed + arr.Length + list.Count;
+        }
+
+        private static unsafe nint MethodTableOf(object o)
+        {
+            // First pointer-sized slot of every object is MethodTable* (mask
+            // the GC mark bit, same convention as GcObject.MethodTable).
+            byte* p = null;
+            *(object*)&p = o;
+            return *(nint*)p & ~(nint)1;
+        }
+
+        private static void Probe_GenericDictionary()
+        {
+            int a = DictNested<string>(10);   // 10 + 3 + 1 = 14 (shared __Canon)
+            int b = DictNested<object>(20);   // 24               (shared __Canon)
+            int c = DictNested<int>(30);      // 34               (exact body)
+            bool mtOk = MethodTableOf(DictNewArray<string>(1))
+                     == MethodTableOf(new string[1]);
+            bool ok = a == 14 && b == 24 && c == 34 && mtOk;
+            ReportProbe("generic dictionary + inst stubs", ok,
+                        (uint)(a + b + c + (mtOk ? 1000 : 0)));
         }
 
         // --- Non-generic base + child for a matrix of init patterns ---

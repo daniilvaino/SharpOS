@@ -32,8 +32,11 @@
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
 
     <!-- step115: Iced (x86/x64 encoder) bake-in for runtime shellcode emission.
-         Iced uses C# 12+ syntax in places; net7.0 defaults to C# 11. -->
-    <LangVersion>latest</LangVersion>
+         Iced uses C# 12+ syntax in places; net7.0 defaults to C# 11.
+         Pinned to a fixed language version (was `latest`, which floated with
+         the installed SDK — C# 14 under SDK 10.0.204). Fixed = deterministic
+         build; raise deliberately when a newer feature is actually needed. -->
+    <LangVersion>14.0</LangVersion>
 
     <!-- Iced compilation surface:
            ENCODER, BLOCK_ENCODER  — emitter side only (no decoder/formatter)
