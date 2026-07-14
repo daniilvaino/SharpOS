@@ -27,7 +27,6 @@ namespace OS.Boot
     internal static class ByRefAssignRefStub
     {
         [RuntimeExport("RhpByRefAssignRef")]
-        [UnmanagedCallersOnly(EntryPoint = "RhpByRefAssignRef")]
         private static void RhpByRefAssignRef()
         {
             OS.Kernel.Panic.Fail("RhpByRefAssignRef (stub not patched / patch failed)");
@@ -35,7 +34,7 @@ namespace OS.Boot
 
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<void> fn = &RhpByRefAssignRef;
+            delegate*<void> fn = &RhpByRefAssignRef;
             return (void*)fn;
         }
     }

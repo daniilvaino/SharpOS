@@ -45,7 +45,6 @@ namespace OS.PAL.SharpOSHost
         //         including trailing NUL, so caller can re-allocate).
         // outErr receives 0 on success, non-zero Win32 error code otherwise.
         [RuntimeExport("SharpOSHost_GetEnvVar")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetEnvVar")]
         public static uint GetEnvVar(byte* name, int nameLen,
                                       byte* outBuf, uint outBufSize,
                                       uint* outErr)

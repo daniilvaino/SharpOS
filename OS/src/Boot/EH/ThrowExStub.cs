@@ -19,7 +19,6 @@ namespace OS.Boot.EH
     internal static class ThrowExStub
     {
         [RuntimeExport("RhpThrowEx")]
-        [UnmanagedCallersOnly(EntryPoint = "RhpThrowEx")]
         private static unsafe void RhpThrowEx(byte* exceptionAsBytes)
         {
             // Padding body — never executes when patched. Bunch of explicit
@@ -66,7 +65,7 @@ namespace OS.Boot.EH
 
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<byte*, void> fn = &RhpThrowEx;
+            delegate*<byte*, void> fn = &RhpThrowEx;
             return (void*)fn;
         }
     }

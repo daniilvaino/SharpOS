@@ -60,7 +60,6 @@ namespace OS.PAL.SharpOSHost
         // GetStdHandle(DWORD nStdHandle) → HANDLE
         // BCL Console.OpenStandardOutput/Error/Input all call this on init.
         [RuntimeExport("SharpOSHost_GetStdHandle")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetStdHandle")]
         public static ulong GetStdHandle(int nStdHandle)
         {
             if (nStdHandle == STD_INPUT_HANDLE)  return HandleStdIn;
@@ -84,7 +83,6 @@ namespace OS.PAL.SharpOSHost
         //                                    LPDWORD numWritten, LPVOID reserved)
         // Returns: 1 on success, 0 on failure (caller checks GetLastError).
         [RuntimeExport("SharpOSHost_ConsoleWriteW")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ConsoleWriteW")]
         public static int WriteConsoleW(ulong hConsole, char* buffer, uint nChars, uint* numCharsWritten)
         {
             if (numCharsWritten != null) *numCharsWritten = 0;
@@ -121,7 +119,6 @@ namespace OS.PAL.SharpOSHost
         // BCL signature: BOOL WriteFile(HANDLE, LPCVOID, DWORD,
         //                                LPDWORD numWritten, LPOVERLAPPED)
         [RuntimeExport("SharpOSHost_ConsoleWriteFile")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ConsoleWriteFile")]
         public static int WriteFile(ulong hHandle, byte* buffer, uint nBytes, uint* numBytesWritten)
         {
             if (numBytesWritten != null) *numBytesWritten = 0;
@@ -137,7 +134,6 @@ namespace OS.PAL.SharpOSHost
         // BCL checks for processed-output / virtual-terminal-processing
         // flags before deciding to emit ANSI escape sequences.
         [RuntimeExport("SharpOSHost_GetConsoleMode")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetConsoleMode")]
         public static int GetConsoleMode(ulong hConsole, uint* outMode)
         {
             if (outMode == null) return 0;
@@ -154,7 +150,6 @@ namespace OS.PAL.SharpOSHost
         // SetConsoleMode — accept any, no-op success. Our UART doesn't have
         // distinct modes; BCL gets the courtesy of "yes, I set it".
         [RuntimeExport("SharpOSHost_SetConsoleMode")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_SetConsoleMode")]
         public static int SetConsoleMode(ulong hConsole, uint mode)
         {
             return IsStdHandle(hConsole) ? 1 : 0;
@@ -164,7 +159,6 @@ namespace OS.PAL.SharpOSHost
         // (CHAR), file (DISK), or pipe. Console handles report CHAR so
         // BCL takes the WriteConsoleW path; file handles get DISK.
         [RuntimeExport("SharpOSHost_GetFileType")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetFileType")]
         public static uint GetFileType(ulong hHandle)
         {
             if (IsStdHandle(hHandle)) return FILE_TYPE_CHAR;
@@ -184,7 +178,6 @@ namespace OS.PAL.SharpOSHost
         //   short dwMaxWindowSizeX, dwMaxWindowSizeY;    // +18, +20
         // Total: 22 bytes.
         [RuntimeExport("SharpOSHost_GetConsoleScreenBufferInfo")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetConsoleScreenBufferInfo")]
         public static int GetConsoleScreenBufferInfo(ulong hConsole, void* outInfo)
         {
             if (outInfo == null) return 0;
@@ -207,7 +200,6 @@ namespace OS.PAL.SharpOSHost
         // SetConsoleCursorPosition — no-op (UART has no positionable cursor).
         // Returns success so BCL doesn't propagate failure.
         [RuntimeExport("SharpOSHost_SetConsoleCursorPosition")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_SetConsoleCursorPosition")]
         public static int SetConsoleCursorPosition(ulong hConsole, int packedCoord)
         {
             return IsStdHandle(hConsole) ? 1 : 0;
@@ -215,7 +207,6 @@ namespace OS.PAL.SharpOSHost
 
         // SetConsoleTextAttribute — no-op success.
         [RuntimeExport("SharpOSHost_SetConsoleTextAttribute")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_SetConsoleTextAttribute")]
         public static int SetConsoleTextAttribute(ulong hConsole, ushort attrs)
         {
             return IsStdHandle(hConsole) ? 1 : 0;
@@ -229,7 +220,6 @@ namespace OS.PAL.SharpOSHost
         // detection later, we'll invoke the registered handler. For now
         // return TRUE so PowerShell init proceeds.
         [RuntimeExport("SharpOSHost_SetConsoleCtrlHandler")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_SetConsoleCtrlHandler")]
         public static int SetConsoleCtrlHandler() => 1;  // success
 
         // GetStartupInfoW — populates STARTUPINFOW struct with process
@@ -240,7 +230,6 @@ namespace OS.PAL.SharpOSHost
         // detect console-redirection inheritance which we don't use.
         // Caller passes pointer + sizeOf to write.
         [RuntimeExport("SharpOSHost_GetStartupInfo")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetStartupInfo")]
         public static void GetStartupInfo(uint* lpStartupInfo, uint structSize)
         {
             if (lpStartupInfo == null || structSize == 0) return;

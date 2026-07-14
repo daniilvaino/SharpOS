@@ -1,9 +1,83 @@
+# ★ СЕВЕРНАЯ ЗВЕЗДА: managed DOOM на SharpOS
+
+**Зафиксировано 2026-07-13. Все текущие работы останавливаются и
+переориентируются под эту цель.** Managed-порт DOOM запускается на
+bare metal SharpOS **против нашей собственной std** (не BCL).
+
+## Оценка автора (дословно, raw)
+
+> а там надо дохуя, надо делать математику на чистом си шарпе (вместо
+> musl libm), а пока что у меня ряды тейлора грубые, надо с исключениями
+> полностью разобраться по референсам из wine и reactOS, надо менеджед
+> дум запустить (против своей стд!), надо бампануть дотнет до хотя бы
+> .net9, а то у меня сейчас связка идёт .net7 + c#14 (SDK 10.0.204)
+
+## Предпосылки (derived из оценки + текущего состояния)
+
+| Предпосылка | Статус | Где |
+|---|---|---|
+| Managed-делегаты (`Delegate`/`MulticastDelegate`) | кирпичи зелёные, порт не начат | step129, §ниже workstream 1 |
+| PE-машинария для апп (вместо ELF) | не начато | eh-model.md §PE-миграция; workstream 2 |
+| Исключения — полностью, по референсам Wine/ReactOS | частично (P0-1/P0-2 latent) | §P0 ниже |
+| Математика на чистом C# (вместо musl libm) | грубые ряды Тейлора | plan.md Tier D-13 libm-port; memory `libm_transcendentals_are_trap_stubs`, `lm_atan_leibniz_bug` |
+| Бамп .NET | **net8 LANDED (step130)** — ILC 8.0.27 / RTR major 9, батарея зелёная; ≥net9 отложен | §ниже «net8 landed / net10 проба» |
+| DOOM против собственной std | не начато | workstream 3 |
+
+## Три активных потока
+
+**1) Делегаты** — автор уже раскопал, покажет/подскажет. Порт
+`System.Delegate`/`MulticastDelegate` из снапшота ILC (см. workstream-
+детали в конце §P0 «Next»). Все кирпичи проверены прогоном (step129:
+alloc+GCDesc, generic dict+inst stubs, cctor, shared generics, EH,
+Interlocked). Fat-pointer детектор — первым днём в `Initialize*`.
+Delegate.Method/DynamicInvoke/boxing-для-invoke — режем через
+`NotSupportedException`.
+
+**2) ELF → PE миграция апп** — убрать ELF-логику целиком, перейти на
+сборку **без WSL**, добавить PE-машинарию для апп, чтобы у них
+**работали исключения**. Сейчас: apps через ELF (linux-x64 RID, ILC
+через WSL/Ubuntu), Tier B EH = halt-on-throw (`apps/sdk/MinimalRuntime.cs`
+ThrowHelpers = while(true)). После PE: Tier B исчезает, апп шарят Tier A
+EH-стек с ядром (per-image `.pdata` registry + cross-image MethodTable
+identity). Детальная карта препятствий — [eh-model.md](docs/eh-model.md)
+§«PE-миграция апп». Побочно закрывает WSL-зависимость сборки и
+`curated_csproj_drift`.
+
+**3) managed-DOOM** — автор уже раскопал, покажет/подскажет. Запуск
+managed-порта DOOM против нашей std.
+
+## net8 LANDED (step130) / net10 проба
+
+**net8 закрыт** (step130, done/step130.md): net7→net8, ILC 8.0.27, RTR major 9.
+Батарея полностью зелёная (OK 58 / FAIL 1 = EnumToString known gap), CoreCLR
+exitCode=42, launchers 4/4. Корни major-9 закрыты: RTR accept 8→9, EEType-флаги
+(HasComponentSize=0x8000), GCStaticRegion RELPTR32, ленивый cctor (нет
+`initialized` int), **GC free-object marker HasComponentSize** (главный —
+синтетический free-MT ставил Flags=0 → free-блоки мис-размер 12 → хэнг/corruption),
+ILC8 линкер-добавки (DebuggerSupport/IlcDehydrate/bootstrapper/DropExportsDef).
+Ранняя scanner double-root стена (`[RuntimeExport]`+`[UnmanagedCallersOnly]`
+duplicate key) пройдена по дороге. runtime-Iced оживлён (cctor-фикс) — backlog
+«runtime-Iced on major-9» закрыт.
+
+**net10 проба (не landed):** флип TFM net8→net10 (ILC 10.0.x) падает на build:
+`error: Expected method 'BulkMoveWithWriteBarrier' not found on type
+'[OS]System.Buffer'`. ILC 10 требует новый обязательный helper
+`System.Buffer.BulkMoveWithWriteBarrier` в system-module. Откачено. net9 не
+пробован. Бамп ≥net9 = порт новых обязательных хелперов + вероятная переверстка
+layout major-10/11; пока не нужно (net8 хватает для делегатов/DOOM).
+
+---
+
 # P0 — ближайшие шаги по EH
 
 Источник: аудит [docs/eh-audit-2026-06.md](docs/eh-audit-2026-06.md), Q1+Q4 и Q2+Q11.
 Два подтверждённых latent-бага, оба чинятся в обозримом объёме. Принцип
 «сначала probe, потом фикс»: красный → зелёный переход фиксируется в
 `done/stepNN.md`.
+
+**Под DOOM-целью:** это часть предпосылки «исключения полностью». К
+Wine/ReactOS-референсам (оценка автора) добавить сверку EH-семантики
+при работе над P0-1/P0-2.
 
 ---
 
@@ -317,29 +391,31 @@ Sockets: pipes, file overlapped, console async. Это даёт IOCP-backend
 
 ### Стоимость и порядок
 
-- Подготовительный этап: собрать Windows-IL варианты CoreLib + Sockets
+Порядок — как этапы, не step-номера (номера присваиваются в момент
+коммита, заранее не фиксируются).
+
+- Этап 0 (подготовка): собрать Windows-IL варианты CoreLib + Sockets
   + Primitives в нашем fork'е (build/clr_sharpos.ps1 — добавить ветку).
-- step125: ws2_32 PAL stubs (~25 функций, без логики, только ABI).
-- step126: IOCP emulation в нашем kernel (Windows-shaped completion
+- Этап 1: ws2_32 PAL stubs (~25 функций, без логики, только ABI).
+- Этап 2: IOCP emulation в нашем kernel (Windows-shaped completion
   queue, привязка к coop-scheduler).
-- step127: CoreCLR side — `g_IOCompletionPort` activation,
+- Этап 3: CoreCLR side — `g_IOCompletionPort` activation,
   CompletionPortThread bring-up, OverlappedData allocation path.
-- step128: ThreadPool.BindHandle / UnsafeQueueNativeOverlapped public
+- Этап 4: ThreadPool.BindHandle / UnsafeQueueNativeOverlapped public
   API working, simple ping pong test (no network).
-- step129: Sockets BCL Windows-IL поверх — `Socket ctor (TCP)` зелёная,
+- Этап 5: Sockets BCL Windows-IL поверх — `Socket ctor (TCP)` зелёная,
   sync send/recv working.
-- step130: async send/recv через `SocketAsyncEventArgs` → IOCP →
+- Этап 6: async send/recv через `SocketAsyncEventArgs` → IOCP →
   completion thread.
 
 Реалистично: 1.5-2 недели сосредоточенной работы. Не "просто переключить
 dll".
 
-### Сейчас (step124)
+### Статус
 
-Пробу `Socket ctor (TCP)` **пропускаем** (отключаем в Probes.cs / probe
-list). Закрываем step124 на вехе catchable HW-exceptions + 4
-автокороткозамкнутых RSP-patch resume'а. Сетевой комплект — отдельная
-super-задача (SUPER-?, добавить в `plan.md`).
+Сетевой комплект ещё НЕ начат (по состоянию на step129). Проба
+`Socket ctor (TCP)` пропускается (отключена в Probes.cs / probe list).
+Отдельная super-задача — добавить в `plan.md`.
 
 ---
 

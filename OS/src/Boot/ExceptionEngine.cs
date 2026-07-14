@@ -43,7 +43,6 @@ namespace OS.Boot
         // chain, then halts. This is intentionally a halt — the full
         // dispatch (DispatchEx + funclet calling) lands later in 5.6.
         [RuntimeExport("RhpTest_ThrowIngress")]
-        [System.Runtime.InteropServices.UnmanagedCallersOnly(EntryPoint = "RhpTest_ThrowIngress")]
         public static unsafe void RhpTest_ThrowIngress(byte* exceptionPtr, OS.Boot.EH.ExInfo* exInfo)
         {
             // [UnmanagedCallersOnly] doesn't allow `object` parameter,

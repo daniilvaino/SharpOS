@@ -22,18 +22,15 @@ namespace OS.PAL.SharpOSHost
 
         // CreateDirectoryW result code.
         [RuntimeExport("SharpOSHost_CreateDirectory")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CreateDirectory")]
         public static int CreateDirectory() => ERROR_ALREADY_EXISTS;
 
         // RemoveDirectoryW result code.
         [RuntimeExport("SharpOSHost_RemoveDirectory")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RemoveDirectory")]
         public static int RemoveDirectory() => ERROR_FILE_NOT_FOUND;
 
         // SetEnvironmentVariableW/A — no-op success (we don't persist env
         // writes; reads continue to return whatever the kernel reports).
         [RuntimeExport("SharpOSHost_SetEnvironmentVariable")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_SetEnvironmentVariable")]
         public static int SetEnvironmentVariable() => ERROR_SUCCESS;
 
         // Recognise CONOUT$ / CONERR$ / CONIN$ as console pseudo-files.
@@ -42,7 +39,6 @@ namespace OS.PAL.SharpOSHost
         // handle from CreateFileW or fall through to filesystem path.
         // Caller passes UTF-8 bytes (zero-extended wchars) of the name.
         [RuntimeExport("SharpOSHost_ClassifyConsoleFileName")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ClassifyConsoleFileName")]
         public static int ClassifyConsoleFileName(byte* utf8Name, int len)
         {
             if (utf8Name == null) return 0;
@@ -85,14 +81,12 @@ namespace OS.PAL.SharpOSHost
         // FormatMessage — kernel returns "no message available" indicator
         // (BCL Win32Exception treats this as fallback to error code text).
         [RuntimeExport("SharpOSHost_FormatMessage")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FormatMessage")]
         public static int FormatMessage() => 1815;  // ERROR_MR_MID_NOT_FOUND
 
         // GetLogicalDrives — bitmask of valid drive letters. SharpOS exposes
         // a single virtual drive C: backed by \sharpos\ FAT/UEFI tree.
         // Bit 2 (= 1u << ('C' - 'A')) → drive C: only.
         [RuntimeExport("SharpOSHost_GetLogicalDrives")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetLogicalDrives")]
         public static uint GetLogicalDrives() => 1u << 2;  // C: only
 
         // GetVolumeInformation — kernel decides volume identity. Fork copies
@@ -105,7 +99,6 @@ namespace OS.PAL.SharpOSHost
         public const uint FILE_CASE_PRESERVED_NAMES = 0x00000002;
 
         [RuntimeExport("SharpOSHost_GetVolumeInformation")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetVolumeInformation")]
         public static int GetVolumeInformation(uint* outSerial,
                                                 uint* outMaxComp,
                                                 uint* outFsFlags)
@@ -122,7 +115,6 @@ namespace OS.PAL.SharpOSHost
         //   DRIVE_UNKNOWN = 0, DRIVE_NO_ROOT_DIR = 1, DRIVE_REMOVABLE = 2,
         //   DRIVE_FIXED = 3, DRIVE_REMOTE = 4, DRIVE_CDROM = 5, DRIVE_RAMDISK = 6
         [RuntimeExport("SharpOSHost_GetDriveType")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetDriveType")]
         public static uint GetDriveType(int driveLetter)
         {
             if (driveLetter == (int)'C' || driveLetter == (int)'c') return 3;  // DRIVE_FIXED

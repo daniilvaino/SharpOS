@@ -18,14 +18,14 @@ namespace OS.PAL.SharpOSHost
     // CoreClrProbe.cs or interactively via /probe shell (when that lands).
     internal static class TraceGate
     {
-        public static bool Jit       = false;  // [prestub] [DoPrestub] [PIBC] [JCCL*] [PSW]
+        public static bool Jit       = true;  // [prestub] [DoPrestub] [PIBC] [JCCL*] [PSW]
         public static bool Crst      = false;  // [Crst::Enter] [Crst::Leave]
-        public static bool Real      = false;  // [real] [CRT trap]
-        public static bool LoadLib   = false;  // [LoadLibrary] [GetProcAddress]
-        public static bool Vm        = false;  // [vm-reserve] [stub-reg]
+        public static bool Real      = true;  // [real] [CRT trap]
+        public static bool LoadLib   = true;  // [LoadLibrary] [GetProcAddress]
+        public static bool Vm        = true;  // [vm-reserve] [stub-reg]
         public static bool Eh        = true;   // [seh*] [SFI] [DESP] [CCF*] [PCRE*]
         public static bool Host      = true;   // [host] FileOpen
-        public static bool Thread    = false;  // [CT] [RT] [Tramp]
+        public static bool Thread    = true;  // [CT] [RT] [Tramp]
         public static bool Probe     = true;   // [probe-*]
         public static bool Info      = true;   // [info]
         public static bool Unknown   = true;   // any line not matching above
@@ -42,7 +42,7 @@ namespace OS.PAL.SharpOSHost
         // and always print. Panic reason (Panic_C) prints directly, also
         // ungated. Flip to true + rebuild kernel (no fork rebuild) to get
         // the full trace back for a failing case.
-        public static bool Verbose = false;  // step103: temporary, for msc-throw / SEH dispatch diagnostics
+        public static bool Verbose = true;  // step103: temporary, for msc-throw / SEH dispatch diagnostics
 
         // Per-line state for TraceGate dispatch. The fork emits a single
         // logical line via several DebugPrint+DebugPrintHex calls; we remember
@@ -153,7 +153,6 @@ namespace OS.PAL.SharpOSHost
         // to OS.Console (which routes to UEFI ConOut / kernel serial port).
         // Used by CRT walker для прогресса диагностики во время Phase 6.1.a.
         [RuntimeExport("SharpOSHost_DebugPrint")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugPrint")]
         public static void DebugPrint(byte* utf8Message)
         {
             if (!Verbose) return;
@@ -165,7 +164,6 @@ namespace OS.PAL.SharpOSHost
         // For *critical* diagnostics from fork-side that must surface even when
         // chatter is muted (missing P/Invoke targets, missing QCALL bindings).
         [RuntimeExport("SharpOSHost_DebugPrintForced")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugPrintForced")]
         public static void DebugPrintForced(byte* utf8Message)
         {
             if (utf8Message == null) return;
@@ -182,7 +180,6 @@ namespace OS.PAL.SharpOSHost
         // System.Console output reaches COM1 byte-exact (handles embedded
         // NULs / non-ASCII / no trailing zero).
         [RuntimeExport("SharpOSHost_DebugWrite")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugWrite")]
         public static void DebugWrite(byte* buf, int len)
         {
             // Length-prefixed path is the managed-System.Console output funnel
@@ -197,7 +194,6 @@ namespace OS.PAL.SharpOSHost
         // Print hex value inline (no trailing newline). Callers append "\n"
         // through DebugPrint when they want a line break.
         [RuntimeExport("SharpOSHost_DebugPrintHex")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugPrintHex")]
         public static void DebugPrintHex(ulong value)
         {
             // Hex chunks are mid-line continuations of an already-classified
@@ -209,7 +205,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_DebugBreak")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DebugBreak")]
         public static void DebugBreak()
         {
             Panic.Fail("SharpOSHost_DebugBreak not implemented (Phase 6.1.a)");
@@ -219,7 +214,6 @@ namespace OS.PAL.SharpOSHost
         // their diagnostic. Routes к kernel Panic.Fail → clean halt
         // with backtrace instead of hlt-loop hang.
         [RuntimeExport("SharpOSHost_Panic")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_Panic")]
         public static void Panic_C(byte* utf8Message)
         {
             // Print the failing reason via existing diagnostic, then halt

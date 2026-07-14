@@ -25,7 +25,6 @@ namespace OS.Boot
     internal static unsafe class BootStackSwitchStub
     {
         [RuntimeExport("BootStackSwitchRaw")]
-        [UnmanagedCallersOnly(EntryPoint = "BootStackSwitchRaw")]
         private static void BootStackSwitchRaw(byte* newRspTop, delegate* unmanaged<void> cont)
         {
             OS.Kernel.Panic.Fail("BootStackSwitchRaw (stub not patched / patch failed)");
@@ -33,7 +32,7 @@ namespace OS.Boot
 
         public static void* GetMethodAddress()
         {
-            delegate* unmanaged<byte*, delegate* unmanaged<void>, void> fn = &BootStackSwitchRaw;
+            delegate*<byte*, delegate* unmanaged<void>, void> fn = &BootStackSwitchRaw;
             return (void*)fn;
         }
     }

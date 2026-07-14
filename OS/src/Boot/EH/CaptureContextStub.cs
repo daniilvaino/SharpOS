@@ -25,7 +25,6 @@ namespace OS.Boot.EH
     internal static class CaptureContextStub
     {
         [RuntimeExport("RhpCaptureContext")]
-        [UnmanagedCallersOnly(EntryPoint = "RhpCaptureContext")]
         private static unsafe void CaptureContext(byte* ctx)
         {
             // Padding body — ILC compiles this to enough bytes that the
@@ -55,7 +54,7 @@ namespace OS.Boot.EH
 
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<byte*, void> fn = &CaptureContext;
+            delegate*<byte*, void> fn = &CaptureContext;
             return (void*)fn;
         }
     }

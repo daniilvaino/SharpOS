@@ -84,7 +84,6 @@ namespace OS.PAL.SharpOSHost
         // The fork zero-extends wide subKey into the byte buffer before
         // calling us; subKeyLen is the byte length (not wchar count).
         [RuntimeExport("SharpOSHost_RegOpenKey")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegOpenKey")]
         public static int RegOpenKey(ulong hKey, byte* subKey, int subKeyLen, ulong* phkResult)
         {
             if (phkResult != null) *phkResult = 0;
@@ -101,7 +100,6 @@ namespace OS.PAL.SharpOSHost
         // RegCloseKey(hKey) — always success. We don't allocate per-key
         // state; close is just a contract.
         [RuntimeExport("SharpOSHost_RegCloseKey")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegCloseKey")]
         public static int RegCloseKey(ulong hKey)
         {
             return ERROR_SUCCESS;
@@ -113,7 +111,6 @@ namespace OS.PAL.SharpOSHost
         // We accept the call (return appropriate error) — no marshalling
         // of value data needed since we don't return any.
         [RuntimeExport("SharpOSHost_RegQueryValue")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegQueryValue")]
         public static int RegQueryValue(
             ulong hKey, byte* valueName, int valueNameLen,
             uint* outType, byte* outData, uint* outDataLen)
@@ -127,7 +124,6 @@ namespace OS.PAL.SharpOSHost
 
         // RegEnumKeyExW(hKey, dwIndex, ...) — empty enum.
         [RuntimeExport("SharpOSHost_RegEnumKey")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegEnumKey")]
         public static int RegEnumKey(
             ulong hKey, uint dwIndex,
             byte* outName, uint* outNameLen,
@@ -143,7 +139,6 @@ namespace OS.PAL.SharpOSHost
 
         // RegEnumValueW(hKey, dwIndex, ...) — empty enum.
         [RuntimeExport("SharpOSHost_RegEnumValue")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegEnumValue")]
         public static int RegEnumValue(
             ulong hKey, uint dwIndex,
             byte* outName, uint* outNameLen,
@@ -161,7 +156,6 @@ namespace OS.PAL.SharpOSHost
         // calls this to learn key cardinality before enumerating; an
         // empty key is a valid answer that satisfies the contract.
         [RuntimeExport("SharpOSHost_RegQueryInfoKey")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegQueryInfoKey")]
         public static int RegQueryInfoKey(
             ulong hKey,
             byte* outClass, uint* outClassLen,
@@ -186,7 +180,6 @@ namespace OS.PAL.SharpOSHost
         // could return ERROR_ACCESS_DENIED but ERROR_FILE_NOT_FOUND is
         // closer to "this hive is read-only and empty".
         [RuntimeExport("SharpOSHost_RegCreateKey")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegCreateKey")]
         public static int RegCreateKey(
             ulong hKey, byte* subKey, int subKeyLen,
             uint reserved, byte* keyClass, uint options, uint samDesired,
@@ -200,7 +193,6 @@ namespace OS.PAL.SharpOSHost
 
         // RegFlushKey — no-op for empty registry.
         [RuntimeExport("SharpOSHost_RegFlushKey")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegFlushKey")]
         public static int RegFlushKey(ulong hKey)
         {
             if (!IsKnownRoot(hKey)) return ERROR_INVALID_HANDLE;

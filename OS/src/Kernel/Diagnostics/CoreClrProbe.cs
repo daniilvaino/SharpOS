@@ -499,7 +499,7 @@ namespace OS.Kernel.Diagnostics
                 (delegate* unmanaged<IntPtr, int>)del;
 
             // Function pointer to our [UnmanagedCallersOnly] DebugPrint.
-            delegate* unmanaged<byte*, void> printFn = &SharpOSHostDiagnostics.DebugPrint;
+            delegate*<byte*, void> printFn = &SharpOSHostDiagnostics.DebugPrint;
 
             Console.WriteLine("--- invoking managed Hello.Run ---");
             int rv = hello((IntPtr)printFn);

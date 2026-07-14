@@ -32,6 +32,18 @@ namespace System.Runtime.CompilerServices
 
     internal static class ClassConstructorRunner
     {
+        // net8/major-9 diagnostic counters (plain ints, no cctor). CheckCalls
+        // = how many times a cctor-check helper fired; CctorRuns = how many
+        // times a cctor body was actually invoked. A probe reads these
+        // around a known lazy-cctor access to tell "ILC never emitted the
+        // check (preinit'd)" from "check fired but cctor was skipped".
+        internal static int CheckCalls;
+        internal static int CctorRuns;
+        // First-check raw context capture (major-9 layout probe).
+        internal static long FirstCtxQ0;   // raw bytes [0..7]
+        internal static long FirstCtxQ1;   // raw bytes [8..15]
+        internal static int FirstInitAt8;  // what we read as `initialized` (@+8)
+
         // Two entry points ILC may emit, one per static-base flavor.
         // Both run the cctor (if needed) then pass through the static base
         // pointer. The runtime uses the return value as the actual address
@@ -73,21 +85,35 @@ namespace System.Runtime.CompilerServices
             // SMP TODO: replace with per-thread cctor execution stack
             // (currentlyExecuting array of context*'s). Until Phase 3.5, the
             // single-threaded shortcut is correct.
-            int oldState = context.initialized;
-            if (oldState == 1) return;          // already done
-            if (oldState == 2) return;          // mid-cctor — same thread, recursive call
-
-            // First-time entry: state == 0. Claim the slot and run the cctor.
-            // CAS is overkill on single-thread but harmless and keeps the
-            // shape ready for SMP.
-            if (Interlocked.CompareExchange(ref context.initialized, 2, 0) == 0)
+            CheckCalls++;
+            if (CheckCalls == 1)
             {
-                // Invoke the cctor body via the function pointer ILC stamped.
-                ((delegate*<void>)context.cctorMethodAddress)();
-
-                Interlocked.MemoryBarrier();
-                context.initialized = 1;
+                fixed (StaticClassConstructionContext* c = &context)
+                {
+                    byte* b = (byte*)c;
+                    FirstCtxQ0 = *(long*)b;
+                    FirstCtxQ1 = *(long*)(b + 8);
+                }
+                FirstInitAt8 = context.initialized;
             }
+            // major 9 (ILC 8): there is NO separate `initialized` int at +8
+            // (that slot holds the GC static base pointer). The cctor is
+            // pending iff cctorMethodAddress != 0; the runner nulls it once
+            // run. Confirmed against dotnet/runtime release/8.0
+            // ClassConstructorRunner (`if (pfnCctor == 0) return;`). Reading
+            // the old `initialized` field saw a non-zero pointer and wrongly
+            // skipped every lazy cctor.
+            IntPtr pfn = context.cctorMethodAddress;
+            if (pfn == IntPtr.Zero) return;     // already run
+
+            // Null BEFORE running: a reentrant access to the same static
+            // during the cctor sees 0 and uses the partially-initialized
+            // storage (ILC already laid it out) instead of recursing forever.
+            // Single-threaded — no CAS needed.
+            CctorRuns++;
+            context.cctorMethodAddress = IntPtr.Zero;
+            ((delegate*<void>)pfn)();
+            Interlocked.MemoryBarrier();
         }
     }
 }

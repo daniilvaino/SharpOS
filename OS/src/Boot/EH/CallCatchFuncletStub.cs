@@ -49,7 +49,6 @@ namespace OS.Boot.EH
     internal static class CallCatchFuncletStub
     {
         [RuntimeExport("RhpCallCatchFunclet")]
-        [UnmanagedCallersOnly(EntryPoint = "RhpCallCatchFunclet")]
         private static unsafe void CallCatchFunclet(
             byte* exception, byte* handlerIp, byte* regDisplay, byte* exInfo)
         {
@@ -76,7 +75,7 @@ namespace OS.Boot.EH
 
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<byte*, byte*, byte*, byte*, void> fn = &CallCatchFunclet;
+            delegate*<byte*, byte*, byte*, byte*, void> fn = &CallCatchFunclet;
             return (void*)fn;
         }
     }

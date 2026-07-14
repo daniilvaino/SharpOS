@@ -13,7 +13,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class SharpOSHostFramebuffer
     {
         [RuntimeExport("SharpOSHost_GetFramebuffer")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetFramebuffer")]
         public static int GetFramebuffer(
             ulong* outBaseVa, uint* outWidth, uint* outHeight,
             uint* outStride, uint* outFormat)

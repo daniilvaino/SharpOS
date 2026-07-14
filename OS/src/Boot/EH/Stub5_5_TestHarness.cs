@@ -33,7 +33,6 @@ namespace OS.Boot.EH
     internal static class TestCatchHandlerStub
     {
         [RuntimeExport("RhpTest_5_5_CatchHandler")]
-        [UnmanagedCallersOnly(EntryPoint = "RhpTest_5_5_CatchHandler")]
         private static unsafe byte* CatchHandler(ulong establisherSP, byte* exception)
         {
             // Padding body — must be > 54 bytes when patched.
@@ -48,7 +47,7 @@ namespace OS.Boot.EH
 
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<ulong, byte*, byte*> fn = &CatchHandler;
+            delegate*<ulong, byte*, byte*> fn = &CatchHandler;
             return (void*)fn;
         }
     }
@@ -73,7 +72,6 @@ namespace OS.Boot.EH
     internal static class TestContinuationStub
     {
         [RuntimeExport("RhpTest_5_5_Continuation")]
-        [UnmanagedCallersOnly(EntryPoint = "RhpTest_5_5_Continuation")]
         private static unsafe void Continuation()
         {
             // Padding — must be > 42 bytes when patched.
@@ -86,7 +84,7 @@ namespace OS.Boot.EH
 
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<void> fn = &Continuation;
+            delegate*<void> fn = &Continuation;
             return (void*)fn;
         }
     }

@@ -62,7 +62,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_GetFileAttributes")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetFileAttributes")]
         public static uint GetFileAttributes(byte* utf8Path)
         {
             if (utf8Path == null) return AttrInvalid;
@@ -145,7 +144,6 @@ namespace OS.PAL.SharpOSHost
         // Path normalization mirrors GetFileAttributes — strip leading C:\ /
         // c:\ so the FAT-side EnumDir sees the canonical \sharpos\... form.
         [RuntimeExport("SharpOSHost_FindDirEntry")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FindDirEntry")]
         public static uint FindDirEntry(byte* utf8Path, uint index,
                                          char* outName, uint outNameChars,
                                          uint* outAttrs, uint* outSize)

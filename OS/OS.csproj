@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net7.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Nullable=annotations enables `T?` syntax without flow-analysis
          warnings. Annotations are intent docs only; no extra runtime
@@ -19,6 +19,26 @@
     <IlcSystemModule>OS</IlcSystemModule>
     <EntryPointSymbol>EfiMain</EntryPointSymbol>
     <LinkerSubsystem>EFI_APPLICATION</LinkerSubsystem>
+
+    <!-- net8/ILC8: with DebuggerSupport on (the default), Native.targets:244
+         adds an export-dynamic-symbol arg for DotNetRuntimeDebugHeader. That
+         lone export makes the linker try to emit an export lib, which
+         /SUBSYSTEM:EFI_APPLICATION forbids (LNK1294 "export and import
+         libraries are not supported"). ILC 7 targets had no such line, so
+         net7 linked. No managed debugger attaches to a bare-metal kernel;
+         turn it off. Exception.StackTrace is unaffected: it rides on the
+         separate StackTraceSupport / stacktracedata arg (still on). -->
+    <DebuggerSupport>false</DebuggerSupport>
+
+    <!-- net8/ILC8 dehydrates the image by default (Native.targets:231 adds
+         the dehydrate arg): data sections, including the FrozenObjectRegion
+         that holds string literals, are stored compressed and rehydrated at
+         startup by the stock bootstrapper. SharpOS boots through its own
+         EfiMain and excludes that bootstrapper, so nothing rehydrates and the
+         frozen objects read back as all-zeros (string literals print empty).
+         ILC 7 had no dehydration, so net7 baked the data directly. Turn it
+         off so the data is baked in the image as before. -->
+    <IlcDehydrate>false</IlcDehydrate>
 
     <PublishAot>true</PublishAot>
     <!-- IlcGenerateMapFile=true was used during step 40 cctor research.
@@ -271,8 +291,36 @@ detach vdisk
     <ItemGroup>
       <NativeLibrary Remove="$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)" />
       <LinkerArg Remove="&quot;$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)&quot;" />
+
+      <!-- net8/ILC8 newly links the SDK's default wmain bootstrapper
+           (bootstrapper.obj). SharpOS boots through its own EfiMain
+           (/ENTRY:EfiMain) and runs module init itself (NativeAotModuleInit),
+           so that bootstrapper is unused and only drags in unresolved
+           runtime-init externals: RhInitialize, RhRegisterOSModule,
+           InitializeModules, PalGetModuleHandleFromPointer, GetSystemArrayEEType,
+           IDynamicCastableIsInterfaceImplemented, IDynamicCastableGetInterface-
+           Implementation (all referenced by bootstrapper.obj, LNK2001/2019).
+           net7 linked no bootstrapper at all; drop it to match, without
+           setting CustomNativeMain (that would add ILC's splitinit arg and
+           change init codegen our own init doesn't expect). -->
+      <NativeLibrary Remove="$(IlcSdkPath)bootstrapper$(ObjectSuffix)" />
+      <LinkerArg Remove="&quot;$(IlcSdkPath)bootstrapper$(ObjectSuffix)&quot;" />
     </ItemGroup>
     <Message Text="After exclude, LinkerArg = @(LinkerArg)" Importance="high" />
+  </Target>
+
+  <!-- net8/ILC8: even with DebuggerSupport=false (so OS.def carries zero
+       exported symbols), the ILC targets still set ExportsFile and hand
+       /DEF:"OS.def" to the linker (Native.targets:336, win-only). An empty
+       .def under /SUBSYSTEM:EFI_APPLICATION still trips LNK1294 ("export and
+       import libraries are not supported"). Clearing ExportsFile just before
+       LinkNative drops the /DEF arg (its Condition is ExportsFile != '').
+       OS.def is still generated earlier and left unused. ILC 7 targets had
+       no /DEF path, so net7 never needed this. -->
+  <Target Name="DropExportsDefForEfi" AfterTargets="SetupOSSpecificProps" BeforeTargets="LinkNative">
+    <PropertyGroup>
+      <ExportsFile></ExportsFile>
+    </PropertyGroup>
   </Target>
 
   <ItemGroup>

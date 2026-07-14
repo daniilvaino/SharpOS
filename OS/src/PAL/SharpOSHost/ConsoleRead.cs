@@ -26,7 +26,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class ConsoleRead
     {
         [RuntimeExport("SharpOSHost_ReadConsole")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ReadConsole")]
         public static int ReadConsole(char* lpBuffer, uint nCharsToRead, uint* lpNumberOfCharsRead)
         {
             if (lpNumberOfCharsRead != null) *lpNumberOfCharsRead = 0;

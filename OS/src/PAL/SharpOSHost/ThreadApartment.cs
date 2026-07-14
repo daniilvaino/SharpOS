@@ -34,7 +34,6 @@ namespace OS.PAL.SharpOSHost
         private static int s_currentState = Unknown;
 
         [RuntimeExport("SharpOSHost_ThreadSetApartmentState")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ThreadSetApartmentState")]
         public static int SetApartmentState(int state)
         {
             // Validate range (defensive — managed caller already enum-bound).
@@ -48,7 +47,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_ThreadGetApartmentState")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ThreadGetApartmentState")]
         public static int GetApartmentState()
         {
             return s_currentState;

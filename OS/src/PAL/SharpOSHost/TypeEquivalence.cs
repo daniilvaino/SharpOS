@@ -17,7 +17,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class TypeEquivalence
     {
         [RuntimeExport("SharpOSHost_TypeIsEquivalentTo")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_TypeIsEquivalentTo")]
         public static int IsEquivalentTo() => 0;  // FALSE
     }
 }

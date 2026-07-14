@@ -74,7 +74,7 @@ namespace OS.Boot.EH
         // through the [UnmanagedCallersOnly] export.
         private static void* GetIngressAddress()
         {
-            delegate* unmanaged<byte*, ExInfo*, void> fn =
+            delegate*<byte*, ExInfo*, void> fn =
                 &OS.Boot.ExceptionEngine.RhpTest_ThrowIngress;
             return (void*)fn;
         }

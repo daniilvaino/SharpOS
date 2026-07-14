@@ -20,7 +20,6 @@ namespace OS.PAL.SharpOSHost
         // mutex (RecursionCount = 1, Owner = current). Otherwise the
         // mutex is created unowned.
         [RuntimeExport("SharpOSHost_CreateMutex")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CreateMutex")]
         public static ulong CreateMutex(int bInitialOwner)
         {
             if (!HandleTable.Init()) return 0;
@@ -38,7 +37,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_ReleaseMutex")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ReleaseMutex")]
         public static int ReleaseMutex(ulong handle)
         {
             object? target = HandleTable.Lookup(handle);

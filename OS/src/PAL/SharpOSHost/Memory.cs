@@ -40,7 +40,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class SharpOSHostMemory
     {
         [RuntimeExport("SharpOSHost_AllocPages")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_AllocPages")]
         public static void* AllocPages(void* address, ulong size, uint allocFlags, uint protectFlags)
         {
             Panic.Fail("SharpOSHost_AllocPages not implemented (Phase 6.1.a)");
@@ -48,7 +47,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_FreePages")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FreePages")]
         public static int FreePages(void* address, ulong size, uint freeFlags)
         {
             Panic.Fail("SharpOSHost_FreePages not implemented (Phase 6.1.a)");
@@ -56,7 +54,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_ProtectPages")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ProtectPages")]
         public static int ProtectPages(void* address, ulong size, uint newProtect, uint* oldProtect)
         {
             Panic.Fail("SharpOSHost_ProtectPages not implemented (Phase 6.1.a)");
@@ -64,7 +61,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_QueryPages")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_QueryPages")]
         public static ulong QueryPages(void* address, void* buffer, ulong bufferSize)
         {
             Panic.Fail("SharpOSHost_QueryPages not implemented (Phase 6.1.b)");
@@ -72,7 +68,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_MapFile")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_MapFile")]
         public static void* MapFile(void* fileBlob, ulong blobSize, ulong offset, ulong viewSize, uint protectFlags)
         {
             Panic.Fail("SharpOSHost_MapFile not implemented (Phase 6.1.b)");
@@ -80,7 +75,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_UnmapFile")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_UnmapFile")]
         public static int UnmapFile(void* view)
         {
             Panic.Fail("SharpOSHost_UnmapFile not implemented (Phase 6.1.b)");
@@ -97,7 +91,6 @@ namespace OS.PAL.SharpOSHost
         // BootServices remains valid (kernel never calls ExitBootServices) →
         // allocation works for the SharpOS lifetime. Pages are never freed.
         [RuntimeExport("SharpOSHost_AllocExecutable")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_AllocExecutable")]
         public static void* AllocExecutable(ulong size)
         {
             if (size == 0) return null;
@@ -187,7 +180,6 @@ namespace OS.PAL.SharpOSHost
         //   PAGE_NOACCESS (0x01)             → 0             (P=0)
         // Returns 1 on success, 0 on failure.
         [RuntimeExport("SharpOSHost_ProtectExecutable")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ProtectExecutable")]
         public static int ProtectExecutable(void* address, ulong size, uint flProtect)
         {
             if (address == null || size == 0) return 0;

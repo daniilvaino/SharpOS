@@ -26,7 +26,6 @@ namespace OS.PAL.SharpOSHost
         // Windows FILETIME = 100-ns ticks since 1601-01-01 UTC.
         // 134774 = days between 1601-01-01 and 1970-01-01.
         [RuntimeExport("SharpOSHost_GetUtcFileTime")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetUtcFileTime")]
         public static long GetUtcFileTime()
         {
             if (!Rtc.TryRead(out Rtc.Snapshot s))
@@ -53,18 +52,15 @@ namespace OS.PAL.SharpOSHost
         // Stopwatch routes: System.Native's GetTimestamp asks for monotonic
         // hi-res ticks. HPET is exactly that — fixed-freq monotonic counter.
         [RuntimeExport("SharpOSHost_GetHpetCounter")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetHpetCounter")]
         public static ulong GetHpetCounter() => OS.Hal.Timer.Hpet.ReadCounter();
 
         [RuntimeExport("SharpOSHost_GetHpetFrequencyHz")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetHpetFrequencyHz")]
         public static ulong GetHpetFrequencyHz() => OS.Hal.Timer.Hpet.FrequencyHz;
 
         // Fill a Win32 SYSTEMTIME (8 × WORD: Year, Month, DayOfWeek, Day,
         // Hour, Minute, Second, Milliseconds). DayOfWeek: 0=Sunday;
         // 1970-01-01 was a Thursday (=4).
         [RuntimeExport("SharpOSHost_GetSystemTime")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetSystemTime")]
         public static void GetSystemTime(ushort* outSt)
         {
             if (outSt == null) return;

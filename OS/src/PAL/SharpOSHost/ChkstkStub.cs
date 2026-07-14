@@ -26,7 +26,6 @@ namespace OS.PAL.SharpOSHost
     internal static class ChkstkStub
     {
         [RuntimeExport("__chkstk")]
-        [UnmanagedCallersOnly(EntryPoint = "__chkstk")]
         private static unsafe void Chkstk()
         {
             // Padding — never executes after patcher runs. Inflate via
@@ -41,7 +40,7 @@ namespace OS.PAL.SharpOSHost
 
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<void> fn = &Chkstk;
+            delegate*<void> fn = &Chkstk;
             return (void*)fn;
         }
     }

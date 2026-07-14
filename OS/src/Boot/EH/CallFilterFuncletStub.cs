@@ -28,7 +28,6 @@ namespace OS.Boot.EH
     internal static class CallFilterFuncletStub
     {
         [RuntimeExport("RhpCallFilterFunclet")]
-        [UnmanagedCallersOnly(EntryPoint = "RhpCallFilterFunclet")]
         private static unsafe int RhpCallFilterFunclet(byte* exceptionPtr, byte* filterIp, RegDisplay* regDisplay)
         {
             // Padding body — never executes when patched.
@@ -45,7 +44,7 @@ namespace OS.Boot.EH
 
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<byte*, byte*, RegDisplay*, int> fn = &RhpCallFilterFunclet;
+            delegate*<byte*, byte*, RegDisplay*, int> fn = &RhpCallFilterFunclet;
             return (void*)fn;
         }
     }

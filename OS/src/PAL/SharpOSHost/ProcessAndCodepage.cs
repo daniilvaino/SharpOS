@@ -23,7 +23,6 @@ namespace OS.PAL.SharpOSHost
         // pseudo-handle for our single process (always PID=1), null for
         // anything else.
         [RuntimeExport("SharpOSHost_OpenProcess")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_OpenProcess")]
         public static void* OpenProcess(uint dwProcessId)
         {
             // PID 1 = current process (matches our GetCurrentProcessId).
@@ -38,7 +37,6 @@ namespace OS.PAL.SharpOSHost
         // name). With invariant globalization we always return failure.
         // BCL surfaces this as platform fallback to ASCII / UTF-8.
         [RuntimeExport("SharpOSHost_GetCPInfoEx")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetCPInfoEx")]
         public static int GetCPInfoEx()
         {
             return ERROR_INVALID_FUNCTION;  // BCL handles as fallback
@@ -48,7 +46,6 @@ namespace OS.PAL.SharpOSHost
         // room for at least one DWORD, sets *needed accordingly. Kernel
         // decides "we have one process, id=1". Fork marshals into Win32 buffer.
         [RuntimeExport("SharpOSHost_EnumProcesses")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_EnumProcesses")]
         public static int EnumProcesses(uint* outPid)
         {
             if (outPid != null) *outPid = 1;
@@ -59,7 +56,6 @@ namespace OS.PAL.SharpOSHost
         // "DOMAIN\user") to SID. On unikernel there's no SAM database,
         // every lookup fails with ERROR_NONE_MAPPED.
         [RuntimeExport("SharpOSHost_LookupAccountName")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_LookupAccountName")]
         public static int LookupAccountName(uint* outSidSize, uint* outDomainSize, int* outUse)
         {
             if (outSidSize    != null) *outSidSize    = 0;

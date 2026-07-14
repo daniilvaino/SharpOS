@@ -23,7 +23,6 @@ namespace OS.Boot.EH
     internal static class RethrowStub
     {
         [RuntimeExport("RhpRethrow")]
-        [UnmanagedCallersOnly(EntryPoint = "RhpRethrow")]
         private static unsafe void RhpRethrow(byte* exceptionAsBytes)
         {
             // Padding body — never executes when patched.
@@ -45,7 +44,7 @@ namespace OS.Boot.EH
 
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<byte*, void> fn = &RhpRethrow;
+            delegate*<byte*, void> fn = &RhpRethrow;
             return (void*)fn;
         }
     }

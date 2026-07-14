@@ -22,7 +22,6 @@ namespace OS.Hal
     internal static class PortIoStub
     {
         [RuntimeExport("PortIo_Inb")]
-        [UnmanagedCallersOnly(EntryPoint = "PortIo_Inb")]
         private static byte Inb(ushort port)
         {
             OS.Kernel.Panic.Fail("PortIo.Inb (stub not patched)");
@@ -30,7 +29,6 @@ namespace OS.Hal
         }
 
         [RuntimeExport("PortIo_Outb")]
-        [UnmanagedCallersOnly(EntryPoint = "PortIo_Outb")]
         private static void Outb(ushort port, byte value)
         {
             OS.Kernel.Panic.Fail("PortIo.Outb (stub not patched)");
@@ -38,13 +36,13 @@ namespace OS.Hal
 
         public static unsafe void* GetInbAddress()
         {
-            delegate* unmanaged<ushort, byte> fn = &Inb;
+            delegate*<ushort, byte> fn = &Inb;
             return (void*)fn;
         }
 
         public static unsafe void* GetOutbAddress()
         {
-            delegate* unmanaged<ushort, byte, void> fn = &Outb;
+            delegate*<ushort, byte, void> fn = &Outb;
             return (void*)fn;
         }
     }

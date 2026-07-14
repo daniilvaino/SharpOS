@@ -55,7 +55,16 @@ namespace SharpOS.Std.NoRuntime
 
             GcMethodTable* mt = FreeObjectMt;
             mt->ComponentSize = 1;
-            mt->Flags = 0;
+            // major-9: HasComponentSize is the 0x8000 flag bit, NOT the old
+            // "ComponentSize != 0" test (major-8). With Flags=0 the free
+            // marker reports HasComponentSize=false, so ComputeSize() returns
+            // BaseSize (12) and IGNORES Length — a swept free block of any
+            // size claims size 12. The sweeper then advances only 16 bytes
+            // into a larger free block, lands in its middle, reads garbage as
+            // an MT, and faults / mis-walks forever (silent hang on the first
+            // Collect that meets a pre-existing free marker). Set the flag so
+            // ComputeSize = BaseSize + Length*ComponentSize = aligned again.
+            mt->Flags = 0x8000; // HasComponentSizeFlag (see GcMethodTable)
             mt->BaseSize = 12;
             mt->RelatedType = null;
             s_initialized = true;

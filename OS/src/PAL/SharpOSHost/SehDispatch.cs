@@ -43,7 +43,6 @@ namespace OS.PAL.SharpOSHost
         // Builds an ExceptionRecord with the supplied code, captures
         // current context, drives the unwind loop.
         [RuntimeExport("RaiseException")]
-        [UnmanagedCallersOnly(EntryPoint = "RaiseException")]
         public static void RaiseException(uint code, uint flags, uint nParams, ulong* args)
             => RaiseExceptionImpl(code, flags, nParams, args);
 
@@ -227,7 +226,6 @@ namespace OS.PAL.SharpOSHost
 
         // _CxxThrowException — MSVC-emitted entry for `throw obj;`.
         [RuntimeExport("_CxxThrowException")]
-        [UnmanagedCallersOnly(EntryPoint = "_CxxThrowException")]
         public static void CxxThrow(void* pObject, void* pThrowInfo)
         {
             ulong* args = stackalloc ulong[4];
@@ -873,7 +871,6 @@ namespace OS.PAL.SharpOSHost
         // the fork CRT_STUB(RtlUnwind) is only the __imp_ alias (same
         // arrangement as RtlVirtualUnwind / RtlLookupFunctionEntry).
         [RuntimeExport("RtlUnwind")]
-        [UnmanagedCallersOnly(EntryPoint = "RtlUnwind")]
         public static void RtlUnwind(void* targetFrame, void* targetIp,
                                      ExceptionRecord* excRec, void* returnValue)
         {

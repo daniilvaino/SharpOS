@@ -21,7 +21,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class SharpOSHostTls
     {
         [RuntimeExport("SharpOSHost_TlsAlloc")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_TlsAlloc")]
         public static uint TlsAlloc()
         {
             Panic.Fail("SharpOSHost_TlsAlloc not implemented (Phase 6.1.a, needs Phase 5.5 TLS bring-up)");
@@ -29,7 +28,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_TlsFree")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_TlsFree")]
         public static int TlsFree(uint index)
         {
             Panic.Fail("SharpOSHost_TlsFree not implemented (Phase 6.1.a)");
@@ -37,7 +35,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_TlsGet")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_TlsGet")]
         public static void* TlsGet(uint index)
         {
             Panic.Fail("SharpOSHost_TlsGet not implemented (Phase 6.1.a)");
@@ -45,7 +42,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_TlsSet")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_TlsSet")]
         public static int TlsSet(uint index, void* value)
         {
             Panic.Fail("SharpOSHost_TlsSet not implemented (Phase 6.1.a)");

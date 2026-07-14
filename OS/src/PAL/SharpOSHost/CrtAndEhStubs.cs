@@ -37,7 +37,6 @@ namespace OS.PAL.SharpOSHost
         // ---------------------------------------------------------------
 
         [RuntimeExport("memcmp")]
-        [UnmanagedCallersOnly(EntryPoint = "memcmp")]
         public static int Memcmp(void* a, void* b, ulong count)
         {
             byte* pa = (byte*)a;
@@ -82,7 +81,6 @@ namespace OS.PAL.SharpOSHost
         // Unwind pass: walk scopes whose JumpTarget == 0 (__finally), call
         // handler funclet. ABI: rcx = abnormal flag (1), rdx = establisher.
         [RuntimeExport("__C_specific_handler")]
-        [UnmanagedCallersOnly(EntryPoint = "__C_specific_handler")]
         public static int CSpecificHandler(ExceptionRecord* rec,
                                             void* establisherFrame,
                                             Context* ctx,
@@ -201,7 +199,6 @@ namespace OS.PAL.SharpOSHost
 
         // void __cdecl _purecall(void);
         [RuntimeExport("_purecall")]
-        [UnmanagedCallersOnly(EntryPoint = "_purecall")]
         public static void Purecall()
         {
             Panic.Fail("_purecall fired (pure virtual function call — CoreCLR bug if reached)");
@@ -226,7 +223,6 @@ namespace OS.PAL.SharpOSHost
 
         // char* strchr(const char* s, int c) — find first byte == c
         [RuntimeExport("strchr")]
-        [UnmanagedCallersOnly(EntryPoint = "strchr")]
         public static byte* Strchr(byte* s, int c)
         {
             byte target = (byte)c;
@@ -240,7 +236,6 @@ namespace OS.PAL.SharpOSHost
 
         // char* strrchr(const char* s, int c) — find LAST byte == c
         [RuntimeExport("strrchr")]
-        [UnmanagedCallersOnly(EntryPoint = "strrchr")]
         public static byte* Strrchr(byte* s, int c)
         {
             byte target = (byte)c;
@@ -256,7 +251,6 @@ namespace OS.PAL.SharpOSHost
 
         // char* strstr(const char* haystack, const char* needle)
         [RuntimeExport("strstr")]
-        [UnmanagedCallersOnly(EntryPoint = "strstr")]
         public static byte* Strstr(byte* haystack, byte* needle)
         {
             if (*needle == 0) return haystack;
@@ -272,7 +266,6 @@ namespace OS.PAL.SharpOSHost
 
         // void* memchr(const void* s, int c, size_t n) — find first byte == c in n bytes
         [RuntimeExport("memchr")]
-        [UnmanagedCallersOnly(EntryPoint = "memchr")]
         public static void* Memchr(void* s, int c, ulong n)
         {
             byte target = (byte)c;
@@ -286,7 +279,6 @@ namespace OS.PAL.SharpOSHost
 
         // wchar_t* wcsstr(const wchar_t* haystack, const wchar_t* needle)
         [RuntimeExport("wcsstr")]
-        [UnmanagedCallersOnly(EntryPoint = "wcsstr")]
         public static char* Wcsstr(char* haystack, char* needle)
         {
             if (*needle == 0) return haystack;
@@ -302,7 +294,6 @@ namespace OS.PAL.SharpOSHost
 
         // wchar_t* wcschr(const wchar_t* s, wchar_t c)
         [RuntimeExport("wcschr")]
-        [UnmanagedCallersOnly(EntryPoint = "wcschr")]
         public static char* Wcschr(char* s, char c)
         {
             while (*s != 0)
@@ -315,7 +306,6 @@ namespace OS.PAL.SharpOSHost
 
         // wchar_t* wcsrchr(const wchar_t* s, wchar_t c)
         [RuntimeExport("wcsrchr")]
-        [UnmanagedCallersOnly(EntryPoint = "wcsrchr")]
         public static char* Wcsrchr(char* s, char c)
         {
             char* last = null;
@@ -339,7 +329,6 @@ namespace OS.PAL.SharpOSHost
 
         // bool __uncaught_exception(void) — std lib internal, returns true if в throw
         [RuntimeExport("__uncaught_exception")]
-        [UnmanagedCallersOnly(EntryPoint = "__uncaught_exception")]
         public static int UncaughtException()
         {
             return 0; // Never в a throw on Phase 6.1.0b
@@ -353,7 +342,6 @@ namespace OS.PAL.SharpOSHost
         // catchable downstream if the caller treats _CrtDbgReportW's exit
         // code as terminal.
         [RuntimeExport("_CrtDbgReportW")]
-        [UnmanagedCallersOnly(EntryPoint = "_CrtDbgReportW")]
         public static int CrtDbgReportW(int reportType, char* filename, int line, char* module, char* fmt, void* vargs)
         {
             Console.Write("[CrtDbgReport type=");
@@ -389,7 +377,6 @@ namespace OS.PAL.SharpOSHost
         // Used в CoreCLR PropagateLongJmpThroughNativeFrames (rare path).
         // Fatal — Phase 6.1.0b doesn't exercise это.
         [RuntimeExport("longjmp")]
-        [UnmanagedCallersOnly(EntryPoint = "longjmp")]
         public static void Longjmp(void* env, int val)
         {
             Panic.Fail("longjmp fired (CoreCLR PropagateLongJmpThroughNativeFrames; Phase 6.1.0b stub)");
@@ -398,7 +385,6 @@ namespace OS.PAL.SharpOSHost
         // void __std_exception_copy(struct __std_exception_data*, struct __std_exception_data*)
         // — pass-through copy of exception data.
         [RuntimeExport("__std_exception_copy")]
-        [UnmanagedCallersOnly(EntryPoint = "__std_exception_copy")]
         public static void StdExceptionCopy(void* src, void* dst)
         {
             // Just zero out dst — exception body не реально used в 6.1.0b
@@ -408,7 +394,6 @@ namespace OS.PAL.SharpOSHost
 
         // void __std_exception_destroy(struct __std_exception_data*)
         [RuntimeExport("__std_exception_destroy")]
-        [UnmanagedCallersOnly(EntryPoint = "__std_exception_destroy")]
         public static void StdExceptionDestroy(void* data)
         {
             // No-op
@@ -416,7 +401,6 @@ namespace OS.PAL.SharpOSHost
 
         // void* __current_exception(void) — TLS slot for current exception
         [RuntimeExport("__current_exception")]
-        [UnmanagedCallersOnly(EntryPoint = "__current_exception")]
         public static void* CurrentException()
         {
             return null;
@@ -424,7 +408,6 @@ namespace OS.PAL.SharpOSHost
 
         // void* __current_exception_context(void) — TLS slot for context
         [RuntimeExport("__current_exception_context")]
-        [UnmanagedCallersOnly(EntryPoint = "__current_exception_context")]
         public static void* CurrentExceptionContext()
         {
             return null;
@@ -437,47 +420,36 @@ namespace OS.PAL.SharpOSHost
         // ---------------------------------------------------------------
 
         [RuntimeExport("__vcrt_initialize")]
-        [UnmanagedCallersOnly(EntryPoint = "__vcrt_initialize")]
         public static int VcrtInitialize() { return 1; }
 
         [RuntimeExport("__vcrt_uninitialize")]
-        [UnmanagedCallersOnly(EntryPoint = "__vcrt_uninitialize")]
         public static int VcrtUninitialize(int isTerminate) { return 1; }
 
         [RuntimeExport("__vcrt_uninitialize_critical")]
-        [UnmanagedCallersOnly(EntryPoint = "__vcrt_uninitialize_critical")]
         public static int VcrtUninitializeCritical() { return 1; }
 
         [RuntimeExport("__vcrt_thread_attach")]
-        [UnmanagedCallersOnly(EntryPoint = "__vcrt_thread_attach")]
         public static int VcrtThreadAttach() { return 1; }
 
         [RuntimeExport("__vcrt_thread_detach")]
-        [UnmanagedCallersOnly(EntryPoint = "__vcrt_thread_detach")]
         public static int VcrtThreadDetach() { return 1; }
 
         [RuntimeExport("__acrt_initialize")]
-        [UnmanagedCallersOnly(EntryPoint = "__acrt_initialize")]
         public static int AcrtInitialize() { return 1; }
 
         [RuntimeExport("__acrt_uninitialize")]
-        [UnmanagedCallersOnly(EntryPoint = "__acrt_uninitialize")]
         public static int AcrtUninitialize(int isTerminate) { return 1; }
 
         [RuntimeExport("__acrt_uninitialize_critical")]
-        [UnmanagedCallersOnly(EntryPoint = "__acrt_uninitialize_critical")]
         public static int AcrtUninitializeCritical() { return 1; }
 
         [RuntimeExport("__acrt_thread_attach")]
-        [UnmanagedCallersOnly(EntryPoint = "__acrt_thread_attach")]
         public static int AcrtThreadAttach() { return 1; }
 
         [RuntimeExport("__acrt_thread_detach")]
-        [UnmanagedCallersOnly(EntryPoint = "__acrt_thread_detach")]
         public static int AcrtThreadDetach() { return 1; }
 
         [RuntimeExport("_is_c_termination_complete")]
-        [UnmanagedCallersOnly(EntryPoint = "_is_c_termination_complete")]
         public static int IsCTerminationComplete() { return 0; }
 
         // _malloc_dbg / _free_dbg — debug CRT heap entry points emitted by
@@ -486,7 +458,6 @@ namespace OS.PAL.SharpOSHost
         // malloc/free. blockType + filename + line are debug-tracking args
         // we ignore (no leak tracking needed in unikernel).
         [RuntimeExport("_malloc_dbg")]
-        [UnmanagedCallersOnly(EntryPoint = "_malloc_dbg")]
         public static void* MallocDbg(ulong size, int blockType, byte* filename, int line)
         {
             if (size == 0) return NativeArena.Allocate(1);
@@ -494,14 +465,12 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("_free_dbg")]
-        [UnmanagedCallersOnly(EntryPoint = "_free_dbg")]
         public static void FreeDbg(void* ptr, int blockType)
         {
             // No-op — GC sweeps unreachable blocks.
         }
 
         [RuntimeExport("_calloc_dbg")]
-        [UnmanagedCallersOnly(EntryPoint = "_calloc_dbg")]
         public static void* CallocDbg(ulong num, ulong size, int blockType, byte* filename, int line)
         {
             ulong total = num * size;
@@ -511,7 +480,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("_realloc_dbg")]
-        [UnmanagedCallersOnly(EntryPoint = "_realloc_dbg")]
         public static void* ReallocDbg(void* old, ulong size, int blockType, byte* filename, int line)
         {
             if (size == 0) return null;
@@ -542,7 +510,6 @@ namespace OS.PAL.SharpOSHost
         // 6 ctors call this (log/pgo/profdetach/stubhelpers).
         // Kernel never shuts down → callbacks never need to run → no-op.
         [RuntimeExport("atexit")]
-        [UnmanagedCallersOnly(EntryPoint = "atexit")]
         public static int Atexit(void* func) { return 0; }
 
         // int __tlregdtor(_PVFV func) — libcmtd internal: register
@@ -550,7 +517,6 @@ namespace OS.PAL.SharpOSHost
         // 3 ctors call this (ceemain tls_destructionMonitor, eventpipe).
         // D5 says single-threaded boot → no thread teardown → no-op.
         [RuntimeExport("__tlregdtor")]
-        [UnmanagedCallersOnly(EntryPoint = "__tlregdtor")]
         public static int Tlregdtor(void* func) { return 0; }
     }
 
@@ -588,7 +554,6 @@ namespace OS.PAL.SharpOSHost
         // is enforced anyway, so make this a true no-op (avoids #UD from
         // libcmt's __report_gsfailure on mismatch).
         [RuntimeExport("__security_check_cookie")]
-        [UnmanagedCallersOnly(EntryPoint = "__security_check_cookie")]
         public static void SecurityCheckCookie(ulong cookie)
         {
             _ = cookie;

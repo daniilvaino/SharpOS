@@ -31,7 +31,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class SharpOSHostEh
     {
         [RuntimeExport("SharpOSHost_RegisterFunctionTable")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegisterFunctionTable")]
         public static int RegisterFunctionTable(
             ulong tableId,
             ulong baseAddr,
@@ -45,7 +44,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_UnregisterFunctionTable")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_UnregisterFunctionTable")]
         public static int UnregisterFunctionTable(ulong tableId)
         {
             Panic.Fail("SharpOSHost_UnregisterFunctionTable not implemented (Phase 6.1.c)");

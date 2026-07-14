@@ -21,7 +21,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class UserUiPolicy
     {
         [RuntimeExport("SharpOSHost_SystemParametersInfo")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_SystemParametersInfo")]
         public static int SystemParametersInfo(uint action, uint param, byte* pvParam, uint fWinIni)
         {
             _ = action; _ = param; _ = fWinIni;
@@ -38,7 +37,6 @@ namespace OS.PAL.SharpOSHost
         // (no display); PowerShell uses this rarely but some code paths
         // check screen width to format help text.
         [RuntimeExport("SharpOSHost_GetSystemMetrics")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetSystemMetrics")]
         public static int GetSystemMetrics(int nIndex)
         {
             _ = nIndex;
@@ -48,7 +46,6 @@ namespace OS.PAL.SharpOSHost
         // GetConsoleWindow — returns HWND of console window. Null indicates
         // "no associated window" which is the truth for our setup.
         [RuntimeExport("SharpOSHost_GetConsoleWindow")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetConsoleWindow")]
         public static void* GetConsoleWindow() => null;
     }
 }

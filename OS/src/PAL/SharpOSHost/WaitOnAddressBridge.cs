@@ -22,21 +22,18 @@ namespace OS.PAL.SharpOSHost
         // cancel-on-wake plumbing yet; matches the WaitForSingleObject
         // policy in ThreadStubs.cs).
         [RuntimeExport("SharpOSHost_WaitOnAddress")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_WaitOnAddress")]
         public static int WaitOnAddress(void* addr, void* cmpAddr, uint addressSize, uint timeoutMs)
         {
             return AddressWait.WaitOnAddress(addr, cmpAddr, addressSize, timeoutMs) ? 1 : 0;
         }
 
         [RuntimeExport("SharpOSHost_WakeByAddressSingle")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_WakeByAddressSingle")]
         public static void WakeByAddressSingle(void* addr)
         {
             AddressWait.WakeByAddressSingle(addr);
         }
 
         [RuntimeExport("SharpOSHost_WakeByAddressAll")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_WakeByAddressAll")]
         public static void WakeByAddressAll(void* addr)
         {
             AddressWait.WakeByAddressAll(addr);

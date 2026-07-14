@@ -29,7 +29,6 @@ namespace OS.Boot.EH
     internal static class CallFinallyFuncletStub
     {
         [RuntimeExport("RhpCallFinallyFunclet")]
-        [UnmanagedCallersOnly(EntryPoint = "RhpCallFinallyFunclet")]
         private static unsafe void RhpCallFinallyFunclet(byte* handlerIp, RegDisplay* regDisplay)
         {
             // Padding body — never executes when patched.
@@ -45,7 +44,7 @@ namespace OS.Boot.EH
 
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<byte*, RegDisplay*, void> fn = &RhpCallFinallyFunclet;
+            delegate*<byte*, RegDisplay*, void> fn = &RhpCallFinallyFunclet;
             return (void*)fn;
         }
     }

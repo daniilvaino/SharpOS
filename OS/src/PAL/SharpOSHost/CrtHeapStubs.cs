@@ -32,7 +32,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_HeapAlloc")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_HeapAlloc")]
         public static void* HeapAlloc(ulong size)
         {
             // No per-call trace here — caller (winapi_shim's malloc wrapper)
@@ -60,7 +59,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_HeapFree")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_HeapFree")]
         public static void HeapFree(void* ptr)
         {
             // No-op — managed GC handles reclaim. Block becomes unreachable
@@ -68,7 +66,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_HeapRealloc")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_HeapRealloc")]
         public static void* HeapRealloc(void* old, ulong size)
         {
             if (size == 0) return null;
@@ -90,7 +87,6 @@ namespace OS.PAL.SharpOSHost
         // 16 bytes of v4 GUID into `out`. Real generation lives in BCL
         // System.Guid.NewGuid() per CLAUDE.md invariant 1.
         [RuntimeExport("SharpOSHost_CreateGuid")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CreateGuid")]
         public static void CreateGuid(void* outGuid)
         {
             if (outGuid == null) return;
@@ -107,7 +103,6 @@ namespace OS.PAL.SharpOSHost
         // (BCL Guid.NewGuid → 16 entropy bytes/draw) — no second RNG, logic
         // stays in C# per CLAUDE.md invariant 1.
         [RuntimeExport("SharpOSHost_FillRandom")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FillRandom")]
         public static void FillRandom(void* buf, int n)
         {
             if (buf == null || n <= 0) return;
@@ -129,7 +124,6 @@ namespace OS.PAL.SharpOSHost
         // back. Returns char count written (excluding null), or required size
         // when outBuf too small. Per CLAUDE.md invariant 1, path logic in C#.
         [RuntimeExport("SharpOSHost_GetFullPathName")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetFullPathName")]
         public static uint GetFullPathName(char* lpFileName, uint nBufferLength, char* lpBuffer)
         {
             if (lpFileName == null) return 0;
@@ -172,7 +166,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_FileOpen")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FileOpen")]
         public static void* FileOpen(char* lpFileName)
         {
             if (lpFileName == null) return null;
@@ -266,7 +259,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_FileRead")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FileRead")]
         public static int FileRead(void* handle, void* outBuf, uint count, uint* bytesRead)
         {
             if (handle == null || outBuf == null)
@@ -286,7 +278,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_FileGetSize")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FileGetSize")]
         public static uint FileGetSize(void* handle)
         {
             if (handle == null) return 0xFFFFFFFFu;
@@ -296,7 +287,6 @@ namespace OS.PAL.SharpOSHost
         // origin: 0 = FILE_BEGIN, 1 = FILE_CURRENT, 2 = FILE_END.
         // Returns new absolute position, or -1 on error.
         [RuntimeExport("SharpOSHost_FileSetPosition")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FileSetPosition")]
         public static long FileSetPosition(void* handle, long distance, uint origin)
         {
             if (handle == null) return -1;
@@ -315,7 +305,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_FileClose")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FileClose")]
         public static void FileClose(void* handle)
         {
             // No-op — GC reclaims FileState and its buffer when unreachable.

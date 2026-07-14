@@ -149,44 +149,91 @@ namespace OS.Kernel.Memory
             s_sectionStart = section;
             s_sectionLength = length;
 
-            int entryCount = length / sizeof(nint);
-            nint* entries = (nint*)section;
+            // GCStaticRegion entry format depends on RTR major version:
+            //   major 8 (ILC 7): array of 8-byte ABSOLUTE pointers to blocks.
+            //   major 9 (ILC 8): array of 4-byte SELF-RELATIVE pointers
+            //     (RELPTR32) — blockPtr = (byte*)&entry + *(int*)&entry.
+            // Verified from a raw net8 dump: 37 int32 offsets 4 bytes apart
+            // whose resolved targets are 8 bytes apart (the 8-byte base slots).
+            // Reading the major-9 array as 8-byte pointers packs two int32
+            // offsets into one garbage non-canonical value → #GP in the walk.
+            bool relPtr = NativeAotModuleInit.ReadyToRunMajor >= 9;
+            int entryStride = relPtr ? 4 : sizeof(nint);
+            int entryCount = length / entryStride;
             int materialized = 0;
             int alreadyInit = 0;
             int failed = 0;
 
             for (int i = 0; i < entryCount; i++)
             {
-                nint blockPtr = entries[i];
-                if (blockPtr == 0) continue;
-
-                nint blockAddr = *(nint*)blockPtr;
-                if ((blockAddr & Uninitialized) == 0)
+                nint blockPtr;
+                if (relPtr)
                 {
-                    // Already materialized (shared block initialized by
-                    // an earlier entry via deduplication).
-                    alreadyInit++;
-                    continue;
+                    int* pRel = (int*)(section + i * 4);
+                    int rel = *pRel;
+                    if (rel == 0) continue;
+                    blockPtr = (nint)((byte*)pRel + rel);
+                }
+                else
+                {
+                    blockPtr = ((nint*)section)[i];
+                    if (blockPtr == 0) continue;
                 }
 
-                // Decode tagged pointer.
-                GcMethodTable* eetype = (GcMethodTable*)(blockAddr & ~Mask);
+                // Decode the block descriptor. Format also depends on the
+                // RTR major version:
+                //   major 8: one qword = tagged ABSOLUTE EEType* (low 2 bits
+                //            = Uninitialized/HasPreInitializedData); preinit
+                //            blob is an absolute pointer at blockPtr+8.
+                //   major 9: two int32 SELF-RELATIVE pointers —
+                //            [blockPtr+0] eeRel (rel to blockPtr, low 2 bits
+                //            = tag) → EEType; [blockPtr+4] dataRel (rel to
+                //            blockPtr+4) → preinit blob.
+                // Verified: *blockPtr = 0x..FFE6974B packs two int32; decoding
+                // the low int32 self-relative (clearing the tag) lands on an
+                // 8-aligned EEType next to the RTR.
+                GcMethodTable* eetype;
+                bool hasPreInit;
+                byte* preInitBlob = null;
+                nint tagForDiag;
+
+                if (relPtr)
+                {
+                    int eeRel = *(int*)blockPtr;
+                    tagForDiag = eeRel;
+                    if ((eeRel & (int)Uninitialized) == 0) { alreadyInit++; continue; }
+                    eetype = (GcMethodTable*)((byte*)blockPtr + (eeRel & ~(int)Mask));
+                    hasPreInit = (eeRel & (int)HasPreInitializedData) != 0;
+                    if (hasPreInit)
+                    {
+                        int dataRel = *(int*)((byte*)blockPtr + 4);
+                        preInitBlob = (byte*)blockPtr + 4 + dataRel;
+                    }
+                }
+                else
+                {
+                    nint blockAddr = *(nint*)blockPtr;
+                    tagForDiag = blockAddr;
+                    if ((blockAddr & Uninitialized) == 0) { alreadyInit++; continue; }
+                    eetype = (GcMethodTable*)(blockAddr & ~Mask);
+                    hasPreInit = (blockAddr & HasPreInitializedData) != 0;
+                    if (hasPreInit) preInitBlob = *(byte**)(blockPtr + sizeof(nint));
+                }
+
                 if (eetype == null)
                 {
                     failed++;
                     continue;
                 }
 
-                // One-shot diagnostic dump for the first uninitialized entry.
-                // Sage 2 asked us to confirm: MT shape (ComponentSize/Flags/
-                // BaseSize/RelatedType), the GCDesc region (mt-32..mt+24),
-                // and the first 32 bytes of the resulting object. If
-                // ComponentSize is non-zero or seriesCount looks insane,
-                // that pinpoints the layout assumption to revisit.
+                // One-shot diagnostic dump for the first uninitialized entry:
+                // confirms MT shape (ComponentSize/Flags/BaseSize) so we can
+                // see the decode landed on a real EEType before materializing
+                // all of them.
                 if (!s_diagnosticPrinted)
                 {
                     s_diagnosticPrinted = true;
-                    DumpEETypeShape(eetype, blockAddr);
+                    DumpEETypeShape(eetype, tagForDiag);
                 }
 
                 // Allocate fresh object of this type via our standard GC path.
@@ -199,16 +246,12 @@ namespace OS.Kernel.Memory
 
                 // If preinit data exists, bulk-copy it into the object's
                 // raw data area (everything after the 8-byte MT header).
-                if ((blockAddr & HasPreInitializedData) != 0)
+                if (hasPreInit && preInitBlob != null)
                 {
-                    byte* preInitBlob = *(byte**)(blockPtr + sizeof(nint));
-                    if (preInitBlob != null)
-                    {
-                        uint rawDataSize = eetype->BaseSize - 8;
-                        byte* objData = (byte*)obj + 8;
-                        for (uint b = 0; b < rawDataSize; b++)
-                            objData[b] = preInitBlob[b];
-                    }
+                    uint rawDataSize = eetype->BaseSize - 8;
+                    byte* objData = (byte*)obj + 8;
+                    for (uint b = 0; b < rawDataSize; b++)
+                        objData[b] = preInitBlob[b];
                 }
 
                 // First materialized object: dump first 32 bytes for the
@@ -376,8 +419,12 @@ namespace OS.Kernel.Memory
                 return;
             }
 
-            int entryCount = s_sectionLength / sizeof(nint);
-            nint* entries = (nint*)s_sectionStart;
+            // Same major-8 (absolute) vs major-9 (RELPTR32) entry format as
+            // Materialize — see the note there.
+            bool relPtr = NativeAotModuleInit.ReadyToRunMajor >= 9;
+            int entryStride = relPtr ? 4 : sizeof(nint);
+            int entryCount = s_sectionLength / entryStride;
+            byte* section = s_sectionStart;
 
             Log.Begin(LogLevel.Info);
             Console.Write("gcstatics-summary: entries=");
@@ -386,8 +433,19 @@ namespace OS.Kernel.Memory
 
             for (int i = 0; i < entryCount; i++)
             {
-                nint blockPtr = entries[i];
-                if (blockPtr == 0) continue;
+                nint blockPtr;
+                if (relPtr)
+                {
+                    int* pRel = (int*)(section + i * 4);
+                    int rel = *pRel;
+                    if (rel == 0) continue;
+                    blockPtr = (nint)((byte*)pRel + rel);
+                }
+                else
+                {
+                    blockPtr = ((nint*)section)[i];
+                    if (blockPtr == 0) continue;
+                }
                 nint blockVal = *(nint*)blockPtr;
 
                 Log.Begin(LogLevel.Info);

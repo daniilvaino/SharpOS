@@ -24,7 +24,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class Sha256Bridge
     {
         [RuntimeExport("SharpOSHost_Sha256_Create")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_Sha256_Create")]
         public static Sha256State* Create()
         {
             Sha256State* state = (Sha256State*)NativeArena.Allocate((ulong)sizeof(Sha256State));
@@ -34,7 +33,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_Sha256_Update")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_Sha256_Update")]
         public static void Update(Sha256State* state, byte* data, uint len)
         {
             if (state == null || data == null || len == 0) return;
@@ -42,7 +40,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_Sha256_Final")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_Sha256_Final")]
         public static void Final(Sha256State* state, byte* out32)
         {
             if (state == null || out32 == null) return;
@@ -50,7 +47,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_Sha256_Snapshot")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_Sha256_Snapshot")]
         public static void Snapshot(Sha256State* state, byte* out32)
         {
             if (state == null || out32 == null) return;
@@ -58,7 +54,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_Sha256_Reset")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_Sha256_Reset")]
         public static void Reset(Sha256State* state)
         {
             if (state == null) return;
@@ -66,7 +61,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_Sha256_Destroy")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_Sha256_Destroy")]
         public static void Destroy(Sha256State* state)
         {
             // GcHeap is mark-sweep; the box becomes unreachable once the
@@ -76,7 +70,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_Sha256_OneShot")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_Sha256_OneShot")]
         public static void OneShot(byte* data, uint len, byte* out32)
         {
             if (out32 == null) return;

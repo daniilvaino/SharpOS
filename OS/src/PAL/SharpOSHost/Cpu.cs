@@ -18,14 +18,12 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class SharpOSHostCpu
     {
         [RuntimeExport("SharpOSHost_FlushICache")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_FlushICache")]
         public static void FlushICache(void* address, ulong size)
         {
             Panic.Fail("SharpOSHost_FlushICache not implemented (Phase 6.1.a)");
         }
 
         [RuntimeExport("SharpOSHost_MemoryBarrier")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_MemoryBarrier")]
         public static void MemoryBarrier()
         {
             Panic.Fail("SharpOSHost_MemoryBarrier not implemented (Phase 6.1.a)");

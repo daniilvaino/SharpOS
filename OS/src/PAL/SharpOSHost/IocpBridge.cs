@@ -18,7 +18,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class IocpBridge
     {
         [RuntimeExport("SharpOSHost_IocpCreate")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_IocpCreate")]
         public static ulong IocpCreate(int maxConcurrent)
         {
             if (!HandleTable.IsInitialized) return 0;
@@ -34,7 +33,6 @@ namespace OS.PAL.SharpOSHost
         // and links cleanly. Same shape as EventBridge / MutexBridge /
         // SemaphoreBridge / ThreadStubs.
         [RuntimeExport("SharpOSHost_IocpWait")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_IocpWait")]
         public static int IocpWait(ulong handle, int timeoutMs)
         {
             object? target = HandleTable.Lookup(handle);
@@ -43,7 +41,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_IocpPost")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_IocpPost")]
         public static int IocpPost(ulong handle, int count)
         {
             object? target = HandleTable.Lookup(handle);

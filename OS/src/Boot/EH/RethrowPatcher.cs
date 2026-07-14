@@ -66,7 +66,7 @@ namespace OS.Boot.EH
         // detects Rethrow kind flag и handles accordingly.
         private static void* GetRethrowIngressAddress()
         {
-            delegate* unmanaged<byte*, ExInfo*, void> fn =
+            delegate*<byte*, ExInfo*, void> fn =
                 &OS.Boot.ExceptionEngine.RhpTest_ThrowIngress;
             return (void*)fn;
         }

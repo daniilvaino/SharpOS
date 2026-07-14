@@ -22,9 +22,31 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Force MSVC toolchain (cl.exe, link.exe) to emit messages in English
-# (VSLANG=1033 = en-US). Otherwise localized CP866 messages mangle when
-# last_build.log is re-read as UTF-16LE — see "каракули" on link errors.
+# (VSLANG=1033 = en-US). Effective only if the English MSVC language pack
+# is installed; on a Russian-only install the tools fall back to localized
+# (CP866) text, so the UTF-8 console setup below is what actually keeps the
+# log readable.
 $env:VSLANG = "1033"
+
+# Encoding hygiene. On a localized (RU) Windows the MSVC tools write their
+# output in the OEM code page (CP866); captured through the default console
+# encoding and then teed to a UTF-16LE file, link/compiler errors come out
+# as "каракули". Switch the whole pipeline to UTF-8: chcp 65001 makes the
+# MSVC tools (which honour the console code page) emit UTF-8, PowerShell
+# captures it as UTF-8, and every file write below defaults to UTF-8 too.
+# Result: last_build.log is portable UTF-8 that reads cleanly everywhere.
+$env:DOTNET_CLI_UI_LANGUAGE = "en"
+$env:PYTHONIOENCODING = "utf-8"
+try { chcp 65001 > $null } catch { }
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    [Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+} catch { }   # no interactive console (redirected / CI) — chcp already covers native tools
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$PSDefaultParameterValues['Out-File:Encoding']    = 'utf8'
+$PSDefaultParameterValues['Tee-Object:Encoding']  = 'utf8'
+$PSDefaultParameterValues['Set-Content:Encoding'] = 'utf8'
+$PSDefaultParameterValues['Add-Content:Encoding'] = 'utf8'
 
 if ($Stop) {
     try {

@@ -28,6 +28,7 @@ namespace OS.Kernel.Diagnostics
             Probe_BoxedEquals();
             Probe_StaticAssignRead();
             Probe_ExplicitCctor();
+            Probe_ComplexCctor();
             // Probe_GenericNewConstraint — compile error: needs System.Activator.CreateInstance
             Probe_ThrowFromIndexOutOfRange();
             // Probe_MultiDimArray — ILC codegen fails (RhpNewMultiDimArray not wired)
@@ -388,6 +389,54 @@ namespace OS.Kernel.Diagnostics
         {
             int v = ExplicitCctorHolder.X;
             ReportProbe("explicit cctor (int)", v == 77, (uint)v);
+        }
+
+        // Complex cctor that ILC's TypePreinit cannot fold at build time
+        // (builds an array via a helper that constructs an object + virtual
+        // call + loop) — mirrors Iced's OpCodeHandlers static cctor. On net8/
+        // major-9 Iced's `OpCodeHandlers.Handlers` comes back null (its cctor
+        // never ran) → encoder null-derefs. If THIS probe's Table is null too,
+        // complex lazy cctors are broken as a CLASS on major-9, not just Iced.
+        private class CctorArrayBuilder { public virtual int Seed() => 10; }
+        private static class ComplexCctorHolder
+        {
+            public static readonly int[] Table;
+            static ComplexCctorHolder() { Table = Build(); }
+            private static int[] Build()
+            {
+                var b = new CctorArrayBuilder();
+                var t = new int[6];
+                for (int i = 0; i < t.Length; i++) t[i] = b.Seed() + i;
+                return t;
+            }
+        }
+
+        private static void Probe_ComplexCctor()
+        {
+            int before = System.Runtime.CompilerServices.ClassConstructorRunner.CheckCalls;
+            int runsBefore = System.Runtime.CompilerServices.ClassConstructorRunner.CctorRuns;
+            int[] t = ComplexCctorHolder.Table;   // triggers the cctor-check IF ILC left it lazy
+            int after = System.Runtime.CompilerServices.ClassConstructorRunner.CheckCalls;
+            int runsAfter = System.Runtime.CompilerServices.ClassConstructorRunner.CctorRuns;
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("  [cctor-diag] checkDelta="); Console.WriteInt(after - before);
+            Console.Write(" runDelta="); Console.WriteInt(runsAfter - runsBefore);
+            Console.Write(" tableNull="); Console.WriteInt(t == null ? 1 : 0);
+            Console.Write(" totalChecks="); Console.WriteInt(after);
+            Console.Write(" totalRuns="); Console.WriteInt(runsAfter);
+            Log.EndLine();
+            Log.Begin(LogLevel.Info);
+            Console.Write("  [cctor-ctx] q0=0x");
+            Console.WriteHexRaw((ulong)System.Runtime.CompilerServices.ClassConstructorRunner.FirstCtxQ0, 16);
+            Console.Write(" q1=0x");
+            Console.WriteHexRaw((ulong)System.Runtime.CompilerServices.ClassConstructorRunner.FirstCtxQ1, 16);
+            Console.Write(" initAt8=");
+            Console.WriteInt(System.Runtime.CompilerServices.ClassConstructorRunner.FirstInitAt8);
+            Log.EndLine();
+
+            bool ok = t != null && t.Length == 6 && t[5] == 15;
+            ReportProbe("complex cctor (array via method+vcall)", ok, ok && t != null ? (uint)t[5] : 0u);
         }
 
         // --- Direct throw: expect halt via ThrowHelpers stub, not crash ---

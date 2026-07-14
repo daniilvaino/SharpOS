@@ -43,7 +43,6 @@ namespace OS.PAL.SharpOSHost
         // falls back to its previous behavior (weak no-op default keeps the
         // fork linkable if this export is absent).
         [RuntimeExport("SharpOSHost_GetStackBounds")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetStackBounds")]
         public static void GetStackBounds(ulong* outBase, ulong* outLimit)
         {
             if (outBase != null) *outBase = 0;

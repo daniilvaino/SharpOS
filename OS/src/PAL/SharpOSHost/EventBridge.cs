@@ -26,7 +26,6 @@ namespace OS.PAL.SharpOSHost
         private const uint CREATE_EVENT_INITIAL_SET  = 0x00000002;
 
         [RuntimeExport("SharpOSHost_CreateEvent")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CreateEvent")]
         public static ulong CreateEvent(int manualReset, int initialState)
         {
             if (!HandleTable.Init()) return 0;
@@ -35,7 +34,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_CreateEventEx")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CreateEventEx")]
         public static ulong CreateEventEx(uint flags)
         {
             if (!HandleTable.Init()) return 0;
@@ -46,7 +44,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_SetEvent")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_SetEvent")]
         public static int SetEvent(ulong handle)
         {
             object? target = HandleTable.Lookup(handle);
@@ -56,7 +53,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_ResetEvent")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ResetEvent")]
         public static int ResetEvent(ulong handle)
         {
             object? target = HandleTable.Lookup(handle);

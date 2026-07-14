@@ -29,22 +29,18 @@ namespace OS.PAL.SharpOSHost
         public const int CO_E_NOTINITIALIZED = unchecked((int)0x800401F0);
 
         [RuntimeExport("SharpOSHost_CoInitializeEx")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CoInitializeEx")]
         public static int CoInitializeEx(int coInit) { _ = coInit; return S_OK; }
 
         [RuntimeExport("SharpOSHost_CoInitialize")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CoInitialize")]
         public static int CoInitialize() => S_OK;
 
         [RuntimeExport("SharpOSHost_CoUninitialize")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CoUninitialize")]
         public static void CoUninitialize() { /* no-op */ }
 
         // CoCreateInstance: no CLSIDs registered — every call is "class
         // not registered". Catchable as System.Runtime.InteropServices.
         // COMException by BCL.
         [RuntimeExport("SharpOSHost_CoCreateInstance")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CoCreateInstance")]
         public static int CoCreateInstance(void** outIface)
         {
             if (outIface != null) *outIface = null;
@@ -56,7 +52,6 @@ namespace OS.PAL.SharpOSHost
         // the kernel NativeArena (same as SharpOSHost_HeapAlloc); Free is
         // a no-op — blocks become unreachable once C++ drops the pointer.
         [RuntimeExport("SharpOSHost_CoTaskMemAlloc")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CoTaskMemAlloc")]
         public static void* CoTaskMemAlloc(ulong size)
         {
             if (size == 0) return null;
@@ -64,7 +59,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_CoTaskMemFree")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CoTaskMemFree")]
         public static void CoTaskMemFree(void* ptr)
         {
             // No-op — managed-side ownership.

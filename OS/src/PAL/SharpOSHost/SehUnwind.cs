@@ -71,7 +71,6 @@ namespace OS.PAL.SharpOSHost
         // pImageBase out-param: caller uses for unwind-info RVA math.
         // pHistoryTable: unused (optional optimization slot).
         [RuntimeExport("RtlLookupFunctionEntry")]
-        [UnmanagedCallersOnly(EntryPoint = "RtlLookupFunctionEntry")]
         public static RuntimeFunction* RtlLookupFunctionEntry(
             ulong controlPc, ulong* pImageBase, void* pHistoryTable)
             => LookupFunctionEntry(controlPc, pImageBase);
@@ -143,7 +142,6 @@ namespace OS.PAL.SharpOSHost
         private static int s_dynCount;
 
         [RuntimeExport("SharpOSHost_RegisterFunctionTableCallback")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegisterFunctionTableCallback")]
         public static void RegisterFunctionTableCallback(
             ulong baseAddr, uint length, void* callback, void* context)
         {
@@ -220,7 +218,6 @@ namespace OS.PAL.SharpOSHost
         private static int s_statCount;
 
         [RuntimeExport("SharpOSHost_RegisterStaticFunctionTable")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegisterStaticFunctionTable")]
         public static void RegisterStaticFunctionTable(
             ulong baseAddr, void* funcTable, uint count)
         {
@@ -334,7 +331,6 @@ namespace OS.PAL.SharpOSHost
         // ReserveWithinRange + ReserveAt. Redundant against the VM-level
         // catch but kept for defense-in-depth.
         [RuntimeExport("SharpOSHost_RegisterStubRange")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RegisterStubRange")]
         public static void RegisterStubRangeExport(ulong baseAddr, ulong length)
             => RegisterStubRange(baseAddr, length);
 
@@ -525,7 +521,6 @@ namespace OS.PAL.SharpOSHost
         // Returns: personality routine pointer if function has E/U handler
         //          and handlerType matches; null otherwise.
         [RuntimeExport("RtlVirtualUnwind")]
-        [UnmanagedCallersOnly(EntryPoint = "RtlVirtualUnwind")]
         public static void* RtlVirtualUnwind(
             uint handlerType,
             ulong imageBase,

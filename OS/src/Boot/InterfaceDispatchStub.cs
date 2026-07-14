@@ -21,7 +21,6 @@ namespace OS.Boot
     internal static class InterfaceDispatchStub
     {
         [RuntimeExport("RhpInitialDynamicInterfaceDispatch")]
-        [UnmanagedCallersOnly(EntryPoint = "RhpInitialDynamicInterfaceDispatch")]
         private static void RhpInitialDynamicInterfaceDispatch()
         {
             OS.Kernel.Panic.Fail("RhpInitialDynamicInterfaceDispatch (stub not patched / patch failed)");
@@ -30,7 +29,7 @@ namespace OS.Boot
         // Exposed for the boot-time patcher to know where to write the JMP.
         public static unsafe void* GetMethodAddress()
         {
-            delegate* unmanaged<void> fn = &RhpInitialDynamicInterfaceDispatch;
+            delegate*<void> fn = &RhpInitialDynamicInterfaceDispatch;
             return (void*)fn;
         }
     }

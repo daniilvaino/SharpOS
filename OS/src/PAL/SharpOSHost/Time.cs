@@ -16,7 +16,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class SharpOSHostTime
     {
         [RuntimeExport("SharpOSHost_GetTickCount")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetTickCount")]
         public static ulong GetTickCount()
         {
             Panic.Fail("SharpOSHost_GetTickCount not implemented (Phase 6.1.a)");
@@ -24,7 +23,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_GetTickFreq")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetTickFreq")]
         public static ulong GetTickFreq()
         {
             Panic.Fail("SharpOSHost_GetTickFreq not implemented (Phase 6.1.a)");
@@ -32,18 +30,17 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_GetMillis")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetMillis")]
         public static ulong GetMillis()
         {
             Panic.Fail("SharpOSHost_GetMillis not implemented (Phase 6.1.a)");
             return 0;
         }
 
-        [RuntimeExport("SharpOSHost_GetSystemTime")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetSystemTime")]
-        public static void GetSystemTime(ulong* fileTimeOut)
-        {
-            Panic.Fail("SharpOSHost_GetSystemTime not implemented (Phase 6.1.a)");
-        }
+        // SharpOSHost_GetSystemTime is provided by Clock.cs (real RTC impl,
+        // ushort* SYSTEMTIME signature matching the fork's crt_imp_stubs.cpp
+        // declaration). A stale ulong* Panic stub used to live here and
+        // duplicate-defined the symbol — ILC 7 dead-code-eliminated the
+        // unreachable stub, ILC 8 roots both and errors "symbol already
+        // defined". Removed; Clock.cs owns the export.
     }
 }

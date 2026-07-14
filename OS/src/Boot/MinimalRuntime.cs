@@ -390,9 +390,13 @@ namespace System
     public abstract class Delegate { }
     public abstract class MulticastDelegate : Delegate { }
 
-    public struct RuntimeTypeHandle { }
-    public struct RuntimeMethodHandle { }
-    public struct RuntimeFieldHandle { }
+    // Each carries one pointer-sized slot so ILC's ldtoken lowering
+    // (Internal.Runtime.CompilerHelpers.LdTokenHelpers.GetRuntime*Handle,
+    // required by ILC 8+) can pointer-store the token into it. Empty
+    // structs would overflow on the store. See LdTokenHelpers.cs.
+    public struct RuntimeTypeHandle { internal IntPtr _value; }
+    public struct RuntimeMethodHandle { internal IntPtr _value; }
+    public struct RuntimeFieldHandle { internal IntPtr _value; }
 
     public class Attribute { }
 

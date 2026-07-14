@@ -232,6 +232,39 @@ namespace OS.Kernel.Memory
                 Log.EndLine();
             }
 
+            // net8/major-9 diag: HasDispatchMap reads 0 (section 203 gone,
+            // the map likely moved to a trailing relative pointer in the
+            // EEType). Dump flags + the raw tail after the interface map so we
+            // can locate the new dispatch-map pointer. REMOVE once decoded.
+            {
+                byte* mb = (byte*)mt;
+                byte* optF = mt->GetOptionalFieldsPtr();
+                Log.Begin(LogLevel.Warn);
+                Console.Write("  [tail] flags=0x"); Console.WriteHexRaw((ulong)mt->Flags, 4);
+                Console.Write(" hasOptF="); Console.WriteULongRaw(mt->HasOptionalFields ? 1ul : 0ul);
+                Console.Write(" optF=0x"); Console.WriteHexRaw((ulong)optF, 16);
+                if (optF != null)
+                {
+                    Console.Write(" optF[0..8]=0x"); Console.WriteHexRaw(*(ulong*)optF, 16);
+                }
+                Log.EndLine();
+                int ifSize = 8; // EEInterfaceInfo assumed 8B; adjust if tail misaligns
+                int tail = 24 + (int)mt->NumVtableSlots * 8 + (int)mt->NumInterfaces * ifSize;
+                Log.Begin(LogLevel.Warn);
+                Console.Write("  [tail] ifaceMapEnd=+0x"); Console.WriteHexRaw((ulong)tail, 3);
+                Log.EndLine();
+                for (int off = tail - 8; off < tail + 0x40; off += 8)
+                {
+                    Log.Begin(LogLevel.Warn);
+                    Console.Write("    mt+0x"); Console.WriteHexRaw((ulong)off, 3);
+                    Console.Write(" = 0x"); Console.WriteHexRaw(*(ulong*)(mb + off), 16);
+                    // also show low int32 as a self-relative target from here
+                    int rel = *(int*)(mb + off);
+                    Console.Write("  rel->0x"); Console.WriteHexRaw((ulong)(nint)(mb + off + rel), 16);
+                    Log.EndLine();
+                }
+            }
+
             if (mt->HasDispatchMap)
             {
                 byte* optFields = mt->GetOptionalFieldsPtr();

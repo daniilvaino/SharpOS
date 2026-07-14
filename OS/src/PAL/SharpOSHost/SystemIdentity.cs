@@ -40,7 +40,6 @@ namespace OS.PAL.SharpOSHost
         // srcLen, returns srcLen + 1 (required incl NUL) and writes
         // nothing. Returns -1 for unknown kind.
         [RuntimeExport("SharpOSHost_GetSystemString")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetSystemString")]
         public static int GetSystemString(int kind, byte* outBuf, int outBufSize)
         {
             // Use a stack buffer keyed by the kind. Each branch writes
@@ -120,7 +119,6 @@ namespace OS.PAL.SharpOSHost
         // Mirrors the host build target (Windows 11 build 26100) until
         // SharpOS diverges enough to claim its own version.
         [RuntimeExport("SharpOSHost_GetOSVersion")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetOSVersion")]
         public static void GetOSVersion(uint* outMajor, uint* outMinor, uint* outBuild)
         {
             if (outMajor != null) *outMajor = 10;
@@ -131,7 +129,6 @@ namespace OS.PAL.SharpOSHost
         // Time zone bias in MINUTES, west of UTC positive (matches Win32
         // TIME_ZONE_INFORMATION.Bias semantics). SharpOS reports UTC: 0.
         [RuntimeExport("SharpOSHost_GetTimeZoneBiasMinutes")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetTimeZoneBiasMinutes")]
         public static int GetTimeZoneBiasMinutes() => 0;
     }
 }

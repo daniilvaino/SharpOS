@@ -13,7 +13,6 @@ namespace OS.PAL.SharpOSHost
     internal static unsafe class SemaphoreBridge
     {
         [RuntimeExport("SharpOSHost_CreateSemaphore")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CreateSemaphore")]
         public static ulong CreateSemaphore(int initialCount, int maxCount)
         {
             if (!HandleTable.Init()) return 0;
@@ -24,7 +23,6 @@ namespace OS.PAL.SharpOSHost
         // Win32 ReleaseSemaphore writes the previous count to *outPrev
         // if non-null. Returns 1 on success, 0 on bad handle.
         [RuntimeExport("SharpOSHost_ReleaseSemaphore")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ReleaseSemaphore")]
         public static int ReleaseSemaphore(ulong handle, int releaseCount, int* outPrev)
         {
             object? target = HandleTable.Lookup(handle);

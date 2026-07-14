@@ -54,36 +54,45 @@ function Get-ProbeStatus {
         [string]$ExpectRe,
         [int]$Group = 1
     )
+    # A "batch" probe shares one begin-marker with many siblings (all the
+    # Phase4 'nativeaot probe begin' tests). For those, "Detect present +
+    # Status absent" does NOT mean this probe hung -- it means the batch
+    # started and this probe never emitted, which for a crashed run means
+    # "not reached". Only a probe with its OWN begin-marker can legitimately
+    # be HALT. We stamp $Batch so the crash-aware post-pass can downgrade
+    # false HALTs to NOTRUN. (см. user note: "HALT только последней строкой".)
+    $batch = ($Detect -eq 'nativeaot probe begin')
+
     $det = if ($Detect) { Find-First $Detect } else { $null }
     $st  = if ($Status) { Find-First $Status } else { $null }
     if (-not $det -and -not $st) {
-        return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='UNKNOWN'; Detail='' }
+        return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='UNKNOWN'; Detail=''; Batch=$batch }
     }
     if ($det -and -not $st -and $Status) {
-        return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='HALT'; Detail='started but no terminator' }
+        return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='HALT'; Detail='started but no terminator'; Batch=$batch }
     }
     if ($st) {
         $val = if ($st.Groups.Count -gt $Group) { $st.Groups[$Group].Value } else { '' }
         if ($Expect) {
             if ($val -eq $Expect) {
-                return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='OK'; Detail="val=$val" }
+                return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='OK'; Detail="val=$val"; Batch=$batch }
             } else {
-                return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='FAIL'; Detail="val=$val expected=$Expect" }
+                return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='FAIL'; Detail="val=$val expected=$Expect"; Batch=$batch }
             }
         }
         if ($ExpectRe) {
             if ($val -match $ExpectRe) {
-                return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='OK'; Detail=$val }
+                return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='OK'; Detail=$val; Batch=$batch }
             } else {
-                return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='FAIL'; Detail=$val }
+                return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='FAIL'; Detail=$val; Batch=$batch }
             }
         }
-        return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='VALUE'; Detail=$val }
+        return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='VALUE'; Detail=$val; Batch=$batch }
     }
     if ($det -and -not $Status) {
-        return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='OK'; Detail='present' }
+        return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='OK'; Detail='present'; Batch=$batch }
     }
-    return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='UNKNOWN'; Detail='' }
+    return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='UNKNOWN'; Detail=''; Batch=$batch }
 }
 
 # --- probe map -------------------------------------------------------
@@ -140,9 +149,21 @@ $results += Get-ProbeStatus -Cat 'Phase4' -Name 'GenericDictionary' `
     -Status 'generic dictionary \+ inst stubs: (ok|FAIL)' `
     -ExpectRe '^ok$'
 
-$results += Get-ProbeStatus -Cat 'Phase4' -Name 'Cctor' `
-    -Detect 'cctor implicit-int-field' `
-    -Status 'cctor ref-field repeat: (ok|FAIL)' `
+# Explicit-cctor (int static with initializer) — the simplest lazy-cctor
+# surface (см. NativeAotProbe.Probe_ExplicitCctor). ReportProbe prints
+# "explicit cctor (int): ok val=77". Prior detect ('cctor implicit-int-
+# field') matched no emitted text → always UNKNOWN. Fixed to real markers.
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'ExplicitCctor' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'explicit cctor \(int\): (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
+# Complex-cctor class detector (см. NativeAotProbe.Probe_ComplexCctor).
+# Distinguishes "complex lazy cctors broken on major-9" (FAIL) from an
+# Iced-only issue (OK). Mirrors Iced's OpCodeHandlers static cctor.
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'ComplexCctor' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'complex cctor \(array via method\+vcall\): (ok|FAIL)' `
     -ExpectRe '^ok$'
 
 # Enum coverage split into three orthogonal probes so the report shows
@@ -365,7 +386,33 @@ $results += $appResults
 $hw = Find-All '\bHW fault:\s+vec=0x([0-9A-Fa-f]+)'
 $unhandled = Find-All '\*\*\* unhandled exception'
 $panics = Find-All '\*\*\* halting'
-if ($hw.Count -gt 0 -or $unhandled.Count -gt 0 -or $panics.Count -gt 0) {
+$runCrashed = ($hw.Count -gt 0 -or $unhandled.Count -gt 0 -or $panics.Count -gt 0)
+
+# Earliest crash byte-offset: whichever fault marker appears first. Used to
+# (a) name the last log line before the crash and (b) downgrade the false
+# batch-HALTs that come from probes whose status simply never printed
+# because the run died mid-battery.
+$crashIdx = $null
+foreach ($coll in @($hw, $unhandled, $panics)) {
+    if ($coll.Count -gt 0) {
+        $i = $coll[0].Index
+        if ($null -eq $crashIdx -or $i -lt $crashIdx) { $crashIdx = $i }
+    }
+}
+# Back the index up to the start of the fault's own line: the fault markers
+# match mid-line (after the "[info] " prefix), so a raw substring would leave
+# that prefix as a phantom "last line". Rewind to the preceding newline.
+if ($null -ne $crashIdx) {
+    $nl = $text.LastIndexOf("`n", [Math]::Min([int]$crashIdx, $text.Length - 1))
+    if ($nl -ge 0) { $crashIdx = $nl }
+}
+
+if ($runCrashed) {
+    # Last non-empty log line before the crash = the probe that was executing.
+    $preCrash = $text.Substring(0, $crashIdx)
+    $lastLine = ($preCrash -split "\r?\n" | Where-Object { $_.Trim() -ne '' } | Select-Object -Last 1)
+    $results += [PSCustomObject]@{ Cat='Faults'; Name='RUN CRASHED -- last output'; Status='CRASH'; Detail=$lastLine.Trim() }
+
     $hwStatus = if ($hw.Count -eq 0) { 'none' } else { "$($hw.Count) seen" }
     $hwDetail = ($hw | ForEach-Object { "vec=0x$($_.Groups[1].Value)" } | Select-Object -First 5) -join ', '
     $results += [PSCustomObject]@{ Cat='Faults'; Name='HW faults'; Status=$hwStatus; Detail=$hwDetail }
@@ -375,15 +422,28 @@ if ($hw.Count -gt 0 -or $unhandled.Count -gt 0 -or $panics.Count -gt 0) {
 
     $haltStatus = if ($panics.Count -eq 0) { 'none' } else { "$($panics.Count) seen" }
     $results += [PSCustomObject]@{ Cat='Faults'; Name='halts'; Status=$haltStatus; Detail='' }
+
+    # Crash-aware relabel: a batch probe (shared 'nativeaot probe begin'
+    # marker) reported HALT only because its status line is missing -- but on
+    # a crashed run that means "not reached", not "this probe hung". Downgrade
+    # to NOTRUN so the real single crash point (above) is the only red flag.
+    foreach ($r in $results) {
+        if ($r.Status -eq 'HALT' -and $r.Batch) {
+            $r.Status = 'NOTRUN'
+            $r.Detail = 'not reached (run crashed before it)'
+        }
+    }
 }
 
 # --- render ---------------------------------------------------------
-$counts = @{ OK=0; FAIL=0; VALUE=0; HALT=0; UNKNOWN=0; Other=0 }
+$counts = @{ OK=0; FAIL=0; VALUE=0; HALT=0; NOTRUN=0; UNKNOWN=0; Other=0 }
 
 $colors = @{
     OK      = 'Green'
     FAIL    = 'Red'
     HALT    = 'Yellow'
+    CRASH   = 'Red'
+    NOTRUN  = 'DarkGray'
     UNKNOWN = 'DarkGray'
     VALUE   = 'Cyan'
 }
@@ -412,7 +472,7 @@ foreach ($cat in $catsOrder) {
 }
 
 Write-Host "--- totals ---" -ForegroundColor White
-foreach ($k in 'OK','VALUE','FAIL','HALT','UNKNOWN','Other') {
+foreach ($k in 'OK','VALUE','FAIL','HALT','NOTRUN','UNKNOWN','Other') {
     $cnt = $counts[$k]
     if ($cnt -gt 0) {
         $color = if ($colors.ContainsKey($k)) { $colors[$k] } else { 'Gray' }
@@ -420,7 +480,12 @@ foreach ($k in 'OK','VALUE','FAIL','HALT','UNKNOWN','Other') {
         Write-Host $totalLine -ForegroundColor $color
     }
 }
+if ($runCrashed) {
+    Write-Host "  RUN CRASHED -- battery incomplete (see [Faults])" -ForegroundColor Red
+}
 Write-Host ""
 
-# Exit code: 0 if no FAIL/HALT, 1 otherwise. Friendly for CI gating.
-if ($counts.FAIL -gt 0 -or $counts.HALT -gt 0) { exit 1 } else { exit 0 }
+# Exit code: 0 if clean, 1 on any FAIL/HALT or a crashed run. NOTRUN alone
+# (probes not reached because the run crashed) is already covered by the
+# $runCrashed gate; UNKNOWN (no trace) is informational, never fatal.
+if ($counts.FAIL -gt 0 -or $counts.HALT -gt 0 -or $runCrashed) { exit 1 } else { exit 0 }

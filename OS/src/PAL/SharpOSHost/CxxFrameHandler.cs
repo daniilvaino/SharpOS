@@ -149,7 +149,6 @@ namespace OS.PAL.SharpOSHost
 
         // Personality routine entry point.
         [RuntimeExport("__CxxFrameHandler3")]
-        [UnmanagedCallersOnly(EntryPoint = "__CxxFrameHandler3")]
         public static int FrameHandler3(
             ExceptionRecord* pExceptionRecord,
             void* pEstablisherFrame,

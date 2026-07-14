@@ -20,7 +20,6 @@ namespace OS.PAL.SharpOSHost
         // runspace, but stays alive. Real fix is to make the downstream
         // Safer/AppLocker probe chain consistent — separate work.
         [RuntimeExport("SharpOSHost_ShellGetKnownFolderPath")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ShellGetKnownFolderPath")]
         public static int GetKnownFolderPath(void** outPathPtr)
         {
             if (outPathPtr != null) *outPathPtr = null;
@@ -28,7 +27,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_ShellGetFolderPath")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ShellGetFolderPath")]
         public static int GetFolderPath(char* pszPath)
         {
             if (pszPath != null) pszPath[0] = (char)0;

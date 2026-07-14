@@ -6,7 +6,13 @@ namespace System
     public sealed unsafe partial class String
     {
         public static readonly string Empty = "";
-        public readonly int Length;
+        // BCL-canonical field name: ILC's TypePreinit.ConstructStringInstance
+        // (frozen-string codegen) looks the length field up by the name
+        // `_stringLength`. ILC 7 tolerated our old `Length` field; ILC 8+
+        // NREs in ConstructStringInstance when the lookup misses. Keep the
+        // field named exactly as BCL and expose `Length` as a property.
+        private readonly int _stringLength;
+        public int Length => _stringLength;
         // Accessible to other types in the same assembly (StringBuilder,
         // MemoryExtensions.AsSpan via StringHelpers.GetFirstCharRef).
         // `ref _firstChar` + pointer arithmetic is the canonical way BCL
@@ -15,7 +21,7 @@ namespace System
 
         public String(char c, int count)
         {
-            Length = count;
+            _stringLength = count;
             _firstChar = c;
         }
 
@@ -23,10 +29,10 @@ namespace System
         {
             if (value == null || value.Length == 0)
             {
-                Length = 0;
+                _stringLength = 0;
                 return;
             }
-            Length = value.Length;
+            _stringLength = value.Length;
             fixed (char* dest = &_firstChar)
                 for (int i = 0; i < value.Length; i++) dest[i] = value[i];
         }
@@ -35,10 +41,10 @@ namespace System
         {
             if (value == null || length <= 0)
             {
-                Length = 0;
+                _stringLength = 0;
                 return;
             }
-            Length = length;
+            _stringLength = length;
             fixed (char* dest = &_firstChar)
                 for (int i = 0; i < length; i++) dest[i] = value[startIndex + i];
         }

@@ -19,10 +19,10 @@ namespace System
             int n = value.Length;
             if (n == 0)
             {
-                Length = 0;
+                _stringLength = 0;
                 return;
             }
-            Length = n;
+            _stringLength = n;
             fixed (char* dest = &_firstChar)
                 for (int i = 0; i < n; i++) dest[i] = value[i];
         }

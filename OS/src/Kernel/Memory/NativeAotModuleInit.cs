@@ -31,7 +31,14 @@ namespace OS.Kernel.Memory
     internal static unsafe class NativeAotModuleInit
     {
         private const uint ReadyToRunSignature = 0x00525452;  // 'RTR'
-        private const ushort ReadyToRunMajorVersion = 8;
+        // ILC 7 emits ReadyToRunHeader MajorVersion 8; ILC 8 bumped it to 9
+        // (verified: BOOTX64.EFI RTR major=9 minor=1, entrySize still 24 so
+        // the ModuleInfoRow layout is unchanged). Accept the range so the
+        // header is found on both toolchains — a hard `== 8` check made
+        // net8 fail "ReadyToRunHeader not found", which cascaded into GC
+        // statics never materializing and a #GP loop on garbage static slots.
+        private const ushort ReadyToRunMajorVersionMin = 8;
+        private const ushort ReadyToRunMajorVersionMax = 9;
 
         // ReadyToRunSectionType values from ModuleHeaders.h.
         private const int SectionId_InterfaceDispatchTable = 203;
@@ -193,7 +200,8 @@ namespace OS.Kernel.Memory
             // uint32 are possible but the combo with a stable major == 8
             // makes them astronomically unlikely.
             if (*(uint*)p != ReadyToRunSignature) return false;
-            if (*(ushort*)(p + 4) != ReadyToRunMajorVersion) return false;
+            ushort major = *(ushort*)(p + 4);
+            if (major < ReadyToRunMajorVersionMin || major > ReadyToRunMajorVersionMax) return false;
 
             // Sanity: NumberOfSections > 0 and < 100, EntrySize == 24.
             ushort numSections = *(ushort*)(p + 12);

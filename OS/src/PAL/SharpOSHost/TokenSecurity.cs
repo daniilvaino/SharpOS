@@ -28,7 +28,6 @@ namespace OS.PAL.SharpOSHost
         // "SeDebugPrivilege"). On unikernel no privileges exist — clear
         // output LUID and report ERROR_NO_SUCH_PRIVILEGE.
         [RuntimeExport("SharpOSHost_LookupPrivilegeValue")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_LookupPrivilegeValue")]
         public static int LookupPrivilegeValue(ulong* outLuid)
         {
             if (outLuid != null) *outLuid = 0;
@@ -37,7 +36,6 @@ namespace OS.PAL.SharpOSHost
 
         // LookupPrivilegeNameW: reverse mapping. Same answer.
         [RuntimeExport("SharpOSHost_LookupPrivilegeName")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_LookupPrivilegeName")]
         public static int LookupPrivilegeName(uint* outNameLen)
         {
             if (outNameLen != null) *outNameLen = 0;
@@ -48,7 +46,6 @@ namespace OS.PAL.SharpOSHost
         // Return failure with ERROR_INVALID_HANDLE so BCL surface it as
         // catchable Win32Exception.
         [RuntimeExport("SharpOSHost_OpenProcessToken")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_OpenProcessToken")]
         public static int OpenProcessToken(void** outToken)
         {
             if (outToken != null) *outToken = null;
@@ -56,7 +53,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_OpenThreadToken")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_OpenThreadToken")]
         public static int OpenThreadToken(void** outToken)
         {
             if (outToken != null) *outToken = null;
@@ -64,11 +60,9 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_AdjustTokenPrivileges")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_AdjustTokenPrivileges")]
         public static int AdjustTokenPrivileges() => ERROR_INVALID_HANDLE;
 
         [RuntimeExport("SharpOSHost_GetTokenInformation")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_GetTokenInformation")]
         public static int GetTokenInformation(uint* outReturnLen)
         {
             if (outReturnLen != null) *outReturnLen = 0;
@@ -76,17 +70,14 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_ImpersonateLoggedOnUser")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_ImpersonateLoggedOnUser")]
         public static int ImpersonateLoggedOnUser() => ERROR_INVALID_HANDLE;
 
         // RevertToSelf: succeeds trivially. There is no impersonation to
         // revert from in our single-process world.
         [RuntimeExport("SharpOSHost_RevertToSelf")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_RevertToSelf")]
         public static int RevertToSelf() => ERROR_SUCCESS;  // BOOL=1 mapping handled in fork
 
         [RuntimeExport("SharpOSHost_CheckTokenMembership")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_CheckTokenMembership")]
         public static int CheckTokenMembership(int* outIsMember)
         {
             if (outIsMember != null) *outIsMember = 0;
@@ -94,7 +85,6 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_DuplicateTokenEx")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_DuplicateTokenEx")]
         public static int DuplicateTokenEx(void** outNewToken)
         {
             if (outNewToken != null) *outNewToken = null;

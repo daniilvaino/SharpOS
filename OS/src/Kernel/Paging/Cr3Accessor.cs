@@ -87,6 +87,11 @@ namespace OS.Kernel.Paging
             if (destination == null) return false;
 
             byte* scratch = stackalloc byte[16];
+            // Runtime Iced restored: the lazy-cctor fix (ClassConstructorRunner
+            // on major-9 — run cctor iff cctorMethodAddress!=0, null it after)
+            // materialised Iced's encoder-table cctors, so runtime Assemble now
+            // encodes correctly. Probe_IcedEncode is green. Iced emits into the
+            // real exec buffer; legacy bytes into scratch; parity-compare gates.
             int icedLen = EmitReadStubIced(destination, 16);
             int legacyLen = EmitReadStubLegacy(scratch);
             CompareOrPanic("ReadStub", destination, scratch, icedLen, legacyLen);
@@ -106,6 +111,7 @@ namespace OS.Kernel.Paging
             if (destination == null) return false;
 
             byte* scratch = stackalloc byte[16];
+            // Runtime Iced restored (see ReadStub note above).
             int icedLen = EmitWriteStubIced(destination, 16);
             int legacyLen = EmitWriteStubLegacy(scratch);
             CompareOrPanic("WriteStub", destination, scratch, icedLen, legacyLen);

@@ -41,7 +41,6 @@ namespace OS.PAL.SharpOSHost
         public const ulong AmsiSessionSentinel = 0xA751C0DE_5E55_BEEFUL;
 
         [RuntimeExport("SharpOSHost_AmsiInitialize")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_AmsiInitialize")]
         public static int Initialize(ulong* outContext)
         {
             if (outContext != null) *outContext = AmsiContextSentinel;
@@ -49,11 +48,9 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_AmsiUninitialize")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_AmsiUninitialize")]
         public static void Uninitialize() { /* no-op */ }
 
         [RuntimeExport("SharpOSHost_AmsiOpenSession")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_AmsiOpenSession")]
         public static int OpenSession(ulong* outSession)
         {
             if (outSession != null) *outSession = AmsiSessionSentinel;
@@ -61,11 +58,9 @@ namespace OS.PAL.SharpOSHost
         }
 
         [RuntimeExport("SharpOSHost_AmsiCloseSession")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_AmsiCloseSession")]
         public static void CloseSession() { /* no-op */ }
 
         [RuntimeExport("SharpOSHost_AmsiScan")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_AmsiScan")]
         public static int Scan(uint* outResult)
         {
             // Single entry covers both ScanString and ScanBuffer — fork
@@ -78,7 +73,6 @@ namespace OS.PAL.SharpOSHost
         // these to notify AMSI of generic operations (script loads, module
         // load events). Unikernel has no AMSI engine; always S_OK.
         [RuntimeExport("SharpOSHost_AmsiNotifyOperation")]
-        [UnmanagedCallersOnly(EntryPoint = "SharpOSHost_AmsiNotifyOperation")]
         public static int NotifyOperation() => S_OK;
     }
 }

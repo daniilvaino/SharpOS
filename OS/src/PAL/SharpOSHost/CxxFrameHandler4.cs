@@ -198,7 +198,6 @@ namespace OS.PAL.SharpOSHost
         // Personality routine entry point. Replaces the old panic stub.
         // ----------------------------------------------------------------
         [RuntimeExport("__CxxFrameHandler4")]
-        [UnmanagedCallersOnly(EntryPoint = "__CxxFrameHandler4")]
         public static int FrameHandler4(
             ExceptionRecord* pExceptionRecord,
             void* pEstablisherFrame,

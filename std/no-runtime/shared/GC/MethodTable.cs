@@ -63,16 +63,28 @@ namespace SharpOS.Std.NoRuntime
     {
         // --- Flag bits (from MethodTable.h, release/7.0) ---
 
+        // ILC 7 (RTR major 8) vs ILC 8 (RTR major 9) high-16 flag bits.
+        // Confirmed against dotnet/runtime release/8.0
+        // Internal/Runtime/MethodTable.Constants.cs (values there are in the
+        // full 32-bit _uFlags; >>16 gives these high-16 bits we read as Flags):
+        //   HasDispatchMap 0x0004 (major 9; replaced RelatedTypeViaIAT, which
+        //     was removed — base type is always a direct pointer now),
+        //   HasSealedVTableEntries 0x0040 (new), IsGeneric 0x0200 (was 0x0400),
+        //   ElementType 0x7C00>>10 (was 0xF800>>11), HasComponentSize 0x8000.
+        // HasPointers 0x0020 / OptionalFields 0x0100 / HasFinalizer 0x0010 /
+        // IsDynamicType 0x0008 / EETypeKind 0x0003 are unchanged.
         private const ushort EETypeKindMask = 0x0003;
-        private const ushort RelatedTypeViaIATFlag = 0x0004;
+        private const ushort HasDispatchMapFlag = 0x0004;   // major 9 (was RelatedTypeViaIAT in major 8)
         private const ushort IsDynamicTypeFlag = 0x0008;
         private const ushort HasFinalizerFlag = 0x0010;
         private const ushort HasPointersFlag = 0x0020;
+        private const ushort HasSealedVTableEntriesFlag = 0x0040;  // major 9
         private const ushort GenericVarianceFlag = 0x0080;
         private const ushort OptionalFieldsFlag = 0x0100;
-        private const ushort IsGenericFlag = 0x0400;
-        private const ushort ElementTypeMask = 0xF800;
-        private const int ElementTypeShift = 11;
+        private const ushort IsGenericFlag = 0x0200;        // major 9 (was 0x0400)
+        private const ushort ElementTypeMask = 0x7C00;      // major 9 (was 0xF800)
+        private const int ElementTypeShift = 10;            // major 9 (was 11)
+        private const ushort HasComponentSizeFlag = 0x8000; // major 9: high bit of _uFlags
 
         // --- Layout ---
 
@@ -108,9 +120,15 @@ namespace SharpOS.Std.NoRuntime
 
         // --- Derived queries ---
 
-        // Universal: EEType has variable-size tail iff ComponentSize > 0.
-        // This covers strings (char elements) and SzArrays (T[] elements).
-        public bool HasComponentSize => ComponentSize != 0;
+        // major 9: _uFlags is 32-bit; bit 31 (high-16 bit 0x8000) is
+        // HasComponentSizeFlag, and ONLY then do the low 16 bits hold the
+        // component size — otherwise they hold extended flags (EETypeFlagsEx)
+        // that are frequently non-zero on ordinary objects. The old
+        // `ComponentSize != 0` test therefore mis-classified plain objects as
+        // arrays, so GC ComputeSize returned BaseSize + Length*ComponentSize
+        // with a garbage Length → wrong size → heap corruption surfacing as a
+        // clobbered ref field after GC.Collect (the write-barrier probe).
+        public bool HasComponentSize => (Flags & HasComponentSizeFlag) != 0;
 
         public GcEETypeKind Kind => (GcEETypeKind)(Flags & EETypeKindMask);
 
@@ -149,7 +167,9 @@ namespace SharpOS.Std.NoRuntime
 
         public bool IsGeneric => (Flags & IsGenericFlag) != 0;
 
-        public bool IsRelatedTypeViaIAT => (Flags & RelatedTypeViaIATFlag) != 0;
+        // major 9 removed RelatedTypeViaIAT (its bit 0x0004 is now
+        // HasDispatchMap); the related/base type is always a direct pointer.
+        public bool IsRelatedTypeViaIAT => false;
 
         public bool IsDynamicType => (Flags & IsDynamicTypeFlag) != 0;
 
@@ -242,6 +262,7 @@ namespace SharpOS.Std.NoRuntime
             byte* p = ExtrasStart;
             p += 4;                             // skip TypeManagerIndirection (rel32)
             p += 4;                             // skip WritableData (always present in our build)
+            if (HasDispatchMap) p += 4;         // skip DispatchMap (major 9: precedes Finalizer)
             if (HasFinalizer) p += 4;           // skip Finalizer if any
             return ReadRelativePointer(p);
         }
@@ -272,18 +293,10 @@ namespace SharpOS.Std.NoRuntime
         // Returns true iff the MT has a DispatchMap (interface method resolution
         // table) — checks the DispatchMap optional field tag. Dynamic types not
         // handled yet. Arrays handled via element type's map (not implemented).
-        public bool HasDispatchMap
-        {
-            get
-            {
-                byte* optFields = GetOptionalFieldsPtr();
-                if (optFields == null) return false;
-
-                uint idx = OptionalFieldsReader.GetInlineField(
-                    optFields, EETypeOptionalFieldTag.DispatchMap, 0xFFFFFFFFu);
-                return idx != 0xFFFFFFFFu;
-            }
-        }
+        // major 9: HasDispatchMap is a direct high-16 flag bit, not an
+        // optional-fields entry + global-table index (that whole path,
+        // including RTR section 203, was removed).
+        public bool HasDispatchMap => (Flags & HasDispatchMapFlag) != 0;
 
         // Returns the code pointer for a sealed-virtual slot.
         //
@@ -301,14 +314,18 @@ namespace SharpOS.Std.NoRuntime
         // NumVtableSlots is the caller's implicit signal).
         public void* GetSealedVirtualSlot(int slotNumber)
         {
-            // ExtrasStart + 4 (TypeManagerIndirection) + 4 (WritableData,
-            // SupportsWritableData=true) + [Finalizer if HasFinalizer] +
-            // [OptionalFieldsPtr if HasOptionalFields] → SealedVirtualSlots rel32.
+            // major-9 extras order: TypeManagerIndirection → WritableData →
+            // DispatchMap → Finalizer → OptionalFieldsPtr → SealedVirtualSlots
+            // (all rel32). The DispatchMap skip was missing, so the sealed
+            // table pointer was read 4 bytes early (from the DispatchMap slot)
+            // → wrong table → garbage code pointer → #PF on the dispatched call
+            // (surfaced by ReadOnlyCollection.Contains, a sealed-virtual impl).
             byte* p = ExtrasStart;
-            p += 4;
-            p += 4;
-            if (HasFinalizer) p += 4;
-            if (HasOptionalFields) p += 4;
+            p += 4;                              // TypeManagerIndirection
+            p += 4;                              // WritableData (always present)
+            if (HasDispatchMap) p += 4;          // DispatchMap (major 9)
+            if (HasFinalizer) p += 4;            // Finalizer
+            if (HasOptionalFields) p += 4;       // OptionalFieldsPtr
 
             byte* tableAddr = ReadRelativePointer(p);
             // Table is rel32[]. Entry slotNumber is at tableAddr + slotNumber*4.
@@ -320,18 +337,16 @@ namespace SharpOS.Std.NoRuntime
         // Returns the DispatchMap* for this type, or null if not present.
         public void* GetDispatchMap()
         {
-            byte* optFields = GetOptionalFieldsPtr();
-            if (optFields == null) return null;
+            if (!HasDispatchMap) return null;
 
-            uint idx = OptionalFieldsReader.GetInlineField(
-                optFields, EETypeOptionalFieldTag.DispatchMap, 0xFFFFFFFFu);
-            if (idx == 0xFFFFFFFFu) return null;
-
-            byte* table = GetTypeManagerDispatchMapTable();
-            if (table == null) return null;
-
-            // Table is DispatchMap*[].
-            return ((void**)table)[idx];
+            // major 9: DispatchMap is a RelativePointer<DispatchMap> in the
+            // extras region, right after TypeManagerIndirection + WritableData
+            // (both always present in our AOT build) and BEFORE Finalizer /
+            // OptionalFields. No more global dispatch-map table indirection.
+            byte* p = ExtrasStart;
+            p += 4;   // TypeManagerIndirection (rel32)
+            p += 4;   // WritableData (rel32, always present)
+            return ReadRelativePointer(p);
         }
     }
 
