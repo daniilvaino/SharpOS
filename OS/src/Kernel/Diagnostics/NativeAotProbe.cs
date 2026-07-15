@@ -104,6 +104,7 @@ namespace OS.Kernel.Diagnostics
             // harmless now — the freelist / register-root GC bugs it once tripped
             // over are fixed this step).
             Probe_Delegates();
+            Probe_PeNet();
             Probe_StringFormat();
             Probe_InterfaceCallFromSharedGeneric();
             Probe_GenericDictionary();
@@ -1497,6 +1498,149 @@ namespace OS.Kernel.Diagnostics
 
             uint sig = exType == "OOM" ? 1u : exType == "Overflow" ? 2u : caught ? 3u : 0u;
             ReportProbe("OOM/huge-alloc -> deterministic exception", caught, sig);
+        }
+
+        // Vendored PeNet (native-PE parser) smoke test. Builds a structurally-
+        // valid PE32+ image (2 sections, real optional-header + data-directory
+        // fields) in a byte[] and parses it through PeNet's NativeStructureParsers
+        // on our own std (BufferFile forked onto byte[]; System.Text.Encoding
+        // brick; MemoryMarshal.Read; delegate-backed Array.Sort in the section
+        // parser). Walks DOS -> NT -> optional header -> data directories ->
+        // section table end to end. See PeNet/PROVENANCE.md.
+        private static void Probe_PeNet()
+        {
+            byte[] image = BuildSyntheticPe64();
+
+            var raw = new global::PeNet.FileParser.BufferFile(image);
+            var parsers = new global::PeNet.HeaderParser.Pe.NativeStructureParsers(raw);
+
+            // --- DOS header ---
+            var dos = parsers.ImageDosHeader;
+            ReportProbe("penet DOS e_magic (MZ)",
+                dos != null && dos.E_magic == 0x5A4D, dos == null ? 0u : dos.E_magic);
+            ReportProbe("penet DOS e_lfanew",
+                dos != null && dos.E_lfanew == 0x80, dos == null ? 0u : dos.E_lfanew);
+
+            // --- NT + file header ---
+            var nt = parsers.ImageNtHeaders;
+            ReportProbe("penet NT signature (PE\\0\\0)",
+                nt != null && nt.Signature == 0x4550, nt == null ? 0u : nt.Signature);
+            ReportProbe("penet file machine (AMD64)",
+                nt != null && (uint)nt.FileHeader.Machine == 0x8664,
+                nt == null ? 0u : (uint)nt.FileHeader.Machine);
+            ReportProbe("penet file nsections==2",
+                nt != null && nt.FileHeader.NumberOfSections == 2,
+                nt == null ? 0u : nt.FileHeader.NumberOfSections);
+
+            // --- optional header (PE32+) ---
+            var opt = nt?.OptionalHeader;
+            ReportProbe("penet opt magic (PE32+)",
+                opt != null && (uint)opt.Magic == 0x20B, opt == null ? 0u : (uint)opt.Magic);
+            ReportProbe("penet Is64Bit() extension",
+                global::PeNet.ExtensionMethods.Is64Bit(raw), 0u);
+            ReportProbe("penet opt entrypoint",
+                opt != null && opt.AddressOfEntryPoint == 0x1000,
+                opt == null ? 0u : opt.AddressOfEntryPoint);
+            ReportProbe("penet opt imagebase (ulong)",
+                opt != null && opt.ImageBase == 0x140000000UL,
+                opt == null ? 0u : (uint)opt.ImageBase);
+            ReportProbe("penet opt sectionalign",
+                opt != null && opt.SectionAlignment == 0x1000,
+                opt == null ? 0u : opt.SectionAlignment);
+            ReportProbe("penet opt subsystem==3",
+                opt != null && (uint)opt.Subsystem == 3, opt == null ? 0u : (uint)opt.Subsystem);
+            ReportProbe("penet opt rva-count==16",
+                opt != null && opt.NumberOfRvaAndSizes == 16,
+                opt == null ? 0u : opt.NumberOfRvaAndSizes);
+
+            // --- data directory (index 1 = import) ---
+            bool ddOk = opt != null && opt.DataDirectory.Length == 16
+                        && opt.DataDirectory[1].VirtualAddress == 0x2000
+                        && opt.DataDirectory[1].Size == 0x50;
+            ReportProbe("penet datadir[import] va/size", ddOk,
+                opt == null ? 0u : opt.DataDirectory[1].VirtualAddress);
+
+            // --- section table ---
+            var secs = parsers.ImageSectionHeaders;
+            ReportProbe("penet sections count==2",
+                secs != null && secs.Length == 2, secs == null ? 0u : (uint)secs.Length);
+            ReportProbe("penet section[0] .text va",
+                secs != null && secs.Length >= 1 && secs[0].Name == ".text" && secs[0].VirtualAddress == 0x1000,
+                secs != null && secs.Length >= 1 ? secs[0].VirtualAddress : 0u);
+            ReportProbe("penet section[1] .data va",
+                secs != null && secs.Length >= 2 && secs[1].Name == ".data" && secs[1].VirtualAddress == 0x2000,
+                secs != null && secs.Length >= 2 ? secs[1].VirtualAddress : 0u);
+        }
+
+        // Synthetic PE32+ layout the parser walks (opt-header base = 0x98):
+        //   0x00  DOS:  "MZ", e_lfanew(0x3C)=0x80
+        //   0x80  NT signature "PE\0\0"
+        //   0x84  IMAGE_FILE_HEADER (20B): Machine=0x8664, NumSec=2, SizeOfOpt=0xF0
+        //   0x98  IMAGE_OPTIONAL_HEADER64: Magic, EntryPoint, ImageBase, aligns,
+        //         Subsystem, NumberOfRvaAndSizes; DataDirectory[16] @ 0x98+0x70
+        //   0x188 IMAGE_SECTION_HEADER[0] ".text"  (=0x80+0x18+0xF0)
+        //   0x1B0 IMAGE_SECTION_HEADER[1] ".data"  (0x188+0x28)
+        private static byte[] BuildSyntheticPe64()
+        {
+            var b = new byte[0x200];
+            const int Opt = 0x98;
+
+            // DOS
+            PutU16(b, 0x00, 0x5A4D);           // "MZ"
+            PutU32(b, 0x3C, 0x80);             // e_lfanew
+
+            // NT signature "PE\0\0"
+            PutU32(b, 0x80, 0x00004550);
+
+            // IMAGE_FILE_HEADER @0x84
+            PutU16(b, 0x84, 0x8664);           // Machine = AMD64
+            PutU16(b, 0x86, 2);                // NumberOfSections
+            PutU16(b, 0x94, 0xF0);             // SizeOfOptionalHeader
+            PutU16(b, 0x96, 0x22);             // Characteristics
+
+            // IMAGE_OPTIONAL_HEADER64 @0x98
+            PutU16(b, Opt + 0x00, 0x020B);            // Magic = PE32+
+            PutU32(b, Opt + 0x10, 0x1000);            // AddressOfEntryPoint
+            PutU64(b, Opt + 0x18, 0x140000000UL);     // ImageBase
+            PutU32(b, Opt + 0x20, 0x1000);            // SectionAlignment
+            PutU32(b, Opt + 0x24, 0x200);             // FileAlignment
+            PutU32(b, Opt + 0x38, 0x4000);            // SizeOfImage
+            PutU16(b, Opt + 0x44, 3);                 // Subsystem = console
+            PutU32(b, Opt + 0x6C, 16);                // NumberOfRvaAndSizes
+            PutU32(b, Opt + 0x78, 0x2000);            // DataDirectory[1].VirtualAddress
+            PutU32(b, Opt + 0x7C, 0x50);              // DataDirectory[1].Size
+
+            // IMAGE_SECTION_HEADER[0] @0x188 ".text"
+            PutName(b, 0x188, '.', 't', 'e', 'x', 't');
+            PutU32(b, 0x188 + 0x0C, 0x1000);          // VirtualAddress
+
+            // IMAGE_SECTION_HEADER[1] @0x1B0 ".data"
+            PutName(b, 0x1B0, '.', 'd', 'a', 't', 'a');
+            PutU32(b, 0x1B0 + 0x0C, 0x2000);          // VirtualAddress
+
+            return b;
+        }
+
+        private static void PutU16(byte[] b, int o, ushort v)
+        {
+            b[o] = (byte)v; b[o + 1] = (byte)(v >> 8);
+        }
+
+        private static void PutU32(byte[] b, int o, uint v)
+        {
+            b[o] = (byte)v; b[o + 1] = (byte)(v >> 8);
+            b[o + 2] = (byte)(v >> 16); b[o + 3] = (byte)(v >> 24);
+        }
+
+        private static void PutU64(byte[] b, int o, ulong v)
+        {
+            PutU32(b, o, (uint)v); PutU32(b, o + 4, (uint)(v >> 32));
+        }
+
+        private static void PutName(byte[] b, int o, char c0, char c1, char c2, char c3, char c4)
+        {
+            b[o] = (byte)c0; b[o + 1] = (byte)c1; b[o + 2] = (byte)c2;
+            b[o + 3] = (byte)c3; b[o + 4] = (byte)c4;
         }
 
         private static void ReportProbe(string name, bool ok, uint value)

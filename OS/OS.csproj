@@ -99,6 +99,16 @@
              LinkBase="Iced" />
     <None Include="..\iced\Iced.csproj" />
   </ItemGroup>
+
+  <!-- PeNet (PE parser) vendored cut at repo-root /PeNet/ (sibling to iced/).
+       Apache-2.0 — see PeNet/LICENSE. This is a milestone-1 native-PE subset
+       (DOS/NT/section headers via NativeStructureParsers); .NET-metadata,
+       resources, authenticode/crypto, imports/exports and the Editor were cut
+       (see PeNet/PROVENANCE.md). BufferFile is forked onto byte[] (no Memory<T>
+       in our std). Glob-included like Iced; grows as later milestones land. -->
+  <ItemGroup>
+    <Compile Include="..\PeNet\**\*.cs" LinkBase="PeNet" />
+  </ItemGroup>
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <!-- step 121: kernel-side libcmt cut completed via CoffStub.Generator.
          OS.obj's единственный native ref (__security_cookie) теперь покрыт
@@ -363,6 +373,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Runtime\MulticastDelegate.cs" Link="src\Std\Runtime\MulticastDelegate.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\ActionFunc.cs" Link="src\Std\Runtime\ActionFunc.cs" />
     <Compile Include="..\std\no-runtime\shared\Text\StringBuilder.cs" Link="src\Std\Text\StringBuilder.cs" />
+    <Compile Include="..\std\no-runtime\shared\Text\Encoding.cs" Link="src\Std\Text\Encoding.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\NativeFormatDecoder.cs" Link="src\Std\GC\NativeFormatDecoder.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="src\Std\GC\OptionalFieldsReader.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\MethodTable.cs" Link="src\Std\GC\MethodTable.cs" />

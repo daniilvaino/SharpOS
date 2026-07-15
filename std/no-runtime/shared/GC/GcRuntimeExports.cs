@@ -151,7 +151,7 @@ namespace SharpOS.Std.NoRuntime
         // OS/src/Boot/InterfaceDispatchStub.cs so the kernel variant can
         // Panic.Fail with a descriptive message instead of spinning silently.
         // Apps don't currently hit this path; if they do, add a halt stub
-        // in apps/sdk/ the same way.
+        // in apps_native/sdk/ the same way.
 
         [RuntimeExport("RhpStelemRef")]
         public static unsafe void RhpStelemRef(System.Array array, nint index, object value)

@@ -1,5 +1,5 @@
 param(
-    [string]$AppProject = "apps/FetchApp/FetchApp.csproj",
+    [string]$AppProject = "apps_native/FetchApp/FetchApp.csproj",
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     [string]$RuntimeIdentifier = "linux-x64",

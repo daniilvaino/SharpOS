@@ -270,6 +270,60 @@ namespace System
             return SharpOS.Std.NoRuntime.StringTransforms.TrimEnd(this);
         }
 
+        public string TrimStart(char trimChar)
+        {
+            int start = 0;
+            while (start < Length && this[start] == trimChar) start++;
+            return Substring(start, Length - start);
+        }
+
+        public string TrimEnd(char trimChar)
+        {
+            int end = Length - 1;
+            while (end >= 0 && this[end] == trimChar) end--;
+            return Substring(0, end + 1);
+        }
+
+        public string Trim(char trimChar)
+        {
+            int start = 0, end = Length - 1;
+            while (start <= end && this[start] == trimChar) start++;
+            while (end >= start && this[end] == trimChar) end--;
+            return start > end ? "" : Substring(start, end - start + 1);
+        }
+
+        public string TrimStart(params char[] trimChars)
+        {
+            if (trimChars == null || trimChars.Length == 0) return TrimStart();
+            int start = 0;
+            while (start < Length && ContainsChar(trimChars, this[start])) start++;
+            return Substring(start, Length - start);
+        }
+
+        public string TrimEnd(params char[] trimChars)
+        {
+            if (trimChars == null || trimChars.Length == 0) return TrimEnd();
+            int end = Length - 1;
+            while (end >= 0 && ContainsChar(trimChars, this[end])) end--;
+            return Substring(0, end + 1);
+        }
+
+        public string Trim(params char[] trimChars)
+        {
+            if (trimChars == null || trimChars.Length == 0) return Trim();
+            int start = 0, end = Length - 1;
+            while (start <= end && ContainsChar(trimChars, this[start])) start++;
+            while (end >= start && ContainsChar(trimChars, this[end])) end--;
+            return start > end ? "" : Substring(start, end - start + 1);
+        }
+
+        private static bool ContainsChar(char[] chars, char c)
+        {
+            for (int i = 0; i < chars.Length; i++)
+                if (chars[i] == c) return true;
+            return false;
+        }
+
         public string Replace(char oldChar, char newChar)
         {
             return SharpOS.Std.NoRuntime.StringTransforms.Replace(this, oldChar, newChar);
@@ -329,6 +383,35 @@ namespace System
             {
                 for (int i = 0; i < count; i++)
                     dst[i] = c;
+            }
+
+            return result;
+        }
+
+        // ILC redirects `newobj String::.ctor(char[])` / `(char[],int,int)` to
+        // these Ctor methods (the public constructors above are placeholders,
+        // like Ctor(char,int)). Missing before: `new string(char[]...)` failed
+        // ILC codegen with "Expected method 'Ctor' not found on type 'string'".
+        private static string Ctor(char[] value)
+        {
+            if (value == null || value.Length == 0)
+                return "";
+            return Ctor(value, 0, value.Length);
+        }
+
+        private static string Ctor(char[] value, int startIndex, int length)
+        {
+            if (value == null || length <= 0)
+                return "";
+
+            string result = SharpOS.Std.NoRuntime.StringRuntime.FastAllocateString(length);
+            if (result.Length != length)
+                return "";
+
+            fixed (char* dst = &result.GetPinnableReference())
+            {
+                for (int i = 0; i < length; i++)
+                    dst[i] = value[startIndex + i];
             }
 
             return result;

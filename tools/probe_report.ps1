@@ -173,6 +173,35 @@ $results += Get-ProbeStatus -Cat 'Phase4' -Name 'DelegateGcSurvival' `
     -Status 'delegate GC-survival: (ok|FAIL)' `
     -ExpectRe '^ok$'
 
+# PeNet native-PE parser (milestone 1) -- vendored PeNet cut (PeNet/) parsing
+# a synthetic PE32+ image on our own std (System.Text.Encoding brick,
+# BufferFile forked onto byte[], MemoryMarshal, delegate-backed Array.Sort in
+# the section parser). See NativeAotProbe.Probe_PeNet / PeNet/PROVENANCE.md.
+# One line per header field walked: DOS -> NT -> optional header -> data
+# directory -> section table.
+$penetProbes = @(
+    @{ N='PeNetDosMagic';       Re='penet DOS e_magic \(MZ\): (ok|FAIL)' },
+    @{ N='PeNetDosLfanew';      Re='penet DOS e_lfanew: (ok|FAIL)' },
+    @{ N='PeNetNtSignature';    Re='penet NT signature \(PE\\0\\0\): (ok|FAIL)' },
+    @{ N='PeNetFileMachine';    Re='penet file machine \(AMD64\): (ok|FAIL)' },
+    @{ N='PeNetFileNsections';  Re='penet file nsections==2: (ok|FAIL)' },
+    @{ N='PeNetOptMagic';       Re='penet opt magic \(PE32\+\): (ok|FAIL)' },
+    @{ N='PeNetIs64Bit';        Re='penet Is64Bit\(\) extension: (ok|FAIL)' },
+    @{ N='PeNetOptEntryPoint';  Re='penet opt entrypoint: (ok|FAIL)' },
+    @{ N='PeNetOptImageBase';   Re='penet opt imagebase \(ulong\): (ok|FAIL)' },
+    @{ N='PeNetOptSectionAlign';Re='penet opt sectionalign: (ok|FAIL)' },
+    @{ N='PeNetOptSubsystem';   Re='penet opt subsystem==3: (ok|FAIL)' },
+    @{ N='PeNetOptRvaCount';    Re='penet opt rva-count==16: (ok|FAIL)' },
+    @{ N='PeNetDataDirImport';  Re='penet datadir\[import\] va/size: (ok|FAIL)' },
+    @{ N='PeNetSectionsCount';  Re='penet sections count==2: (ok|FAIL)' },
+    @{ N='PeNetSection0Text';   Re='penet section\[0\] \.text va: (ok|FAIL)' },
+    @{ N='PeNetSection1Data';   Re='penet section\[1\] \.data va: (ok|FAIL)' }
+)
+foreach ($p in $penetProbes) {
+    $results += Get-ProbeStatus -Cat 'PeNet' -Name $p.N `
+        -Detect 'nativeaot probe begin' -Status $p.Re -ExpectRe '^ok$'
+}
+
 # Explicit-cctor (int static with initializer) — the simplest lazy-cctor
 # surface (см. NativeAotProbe.Probe_ExplicitCctor). ReportProbe prints
 # "explicit cctor (int): ok val=77". Prior detect ('cctor implicit-int-
@@ -472,7 +501,7 @@ $colors = @{
     VALUE   = 'Cyan'
 }
 
-$catsOrder = @('Boot','Phase1','Phase2','Phase3','Phase4','EH','PhaseE','Drivers','CoreCLR','EBS','Launcher','Faults')
+$catsOrder = @('Boot','Phase1','Phase2','Phase3','Phase4','PeNet','EH','PhaseE','Drivers','CoreCLR','EBS','Launcher','Faults')
 
 Write-Host ""
 Write-Host "=== SharpOS probe report -- $Log ===" -ForegroundColor White

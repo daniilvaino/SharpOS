@@ -578,14 +578,14 @@ else {
 $forkFxNames  = "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\coreclr-pack\Debug\net10.0\linux-x64"
 $forkFxWinSrc = "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\crossgen2_publish\x64\Release"
 $fxDest   = Join-Path $espSharpOSDir "fx"
-$normalProj = "C:\work\OS\work\normal-hello"
+$normalProj = "C:\work\OS\apps_managed\normal-hello"
 $normalDllSrc = Join-Path $normalProj "bin\Release\net10.0\NormalHello.dll"
 # step128 — PowerShell bootstrap shim. A managed wrapper that reflection-
 # sets SystemPolicy.s_systemLockdownPolicy = None before invoking
 # ManagedPSEntry.Main(). Lets PS 7.5 run in FullLanguage mode on bare
 # metal (CLM detection in PS 7.5 has no env-var override). See
-# apps/PowerShellBootstrap/Program.cs for the override logic.
-$psBootstrapProj   = "C:\work\OS\apps\PowerShellBootstrap"
+# apps_managed/PowerShellBootstrap/Program.cs for the override logic.
+$psBootstrapProj   = "C:\work\OS\apps_managed\PowerShellBootstrap"
 $psBootstrapDllSrc = Join-Path $psBootstrapProj "bin\Release\net10.0\PowerShellBootstrap.dll"
 if (Test-Path -LiteralPath $forkFxNames) {
     New-Item -ItemType Directory -Force -Path $fxDest | Out-Null

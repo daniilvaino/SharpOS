@@ -201,7 +201,7 @@ namespace OS.Kernel.Diagnostics
         // the unused branch to nothing at ILC time.
         //
         // step128: PowerShellBootstrap.dll is a tiny managed shim
-        // (apps/PowerShellBootstrap/) that reflection-sets SystemPolicy
+        // (apps_managed/PowerShellBootstrap/) that reflection-sets SystemPolicy
         // .s_systemLockdownPolicy = None BEFORE forwarding to Microsoft
         // .PowerShell.ManagedPSEntry.Main. Direct \sharpos\pwsh\pwsh.dll
         // would land in ConstrainedLanguage mode (see step126.md).

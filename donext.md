@@ -43,6 +43,21 @@ identity). Детальная карта препятствий — [eh-model.md
 §«PE-миграция апп». Побочно закрывает WSL-зависимость сборки и
 `curated_csproj_drift`.
 
+**Подготовка к PE (step132, LANDED):** дерево апп разложено по тиру —
+`apps_native/` (FetchApp, HelloSharpFs=лаунчер, sdk — ELF/NativeAOT) и
+`apps_managed/` (normal-hello, PowerShellBootstrap — CoreCLR-hosted;
+сюда же пойдёт managed-DOOM). Ссылки в build-скриптах (`build_fetch_wsl.ps1`,
+`build_launcher_wsl.ps1`, `run_build.ps1`) и `.gitignore` обновлены.
+Лаунчер `HelloSharpFs` **переименовать при самой PE-миграции** (тогда же
+уходит ELF-логика). Относительные `..\sdk\`/`..\..\std\` в native-csproj
+остались валидны (глубина сохранена).
+
+**Backlog (низкий приоритет, не блокирует):** переименовать проект `OS`
+→ `Kernel` (или `SharpOS.Kernel`). Затрагивает `OS.csproj`,
+`IlcSystemModule=OS`, namespace `OS.*`, множество путей в build-скриптах и
+ESP-раскладке — большой blast radius, делать отдельным степом, не в связке
+с PE. Пока «ладно, хуй с ним» (дословно автор).
+
 **3) managed-DOOM** — автор уже раскопал, покажет/подскажет. Запуск
 managed-порта DOOM против нашей std.
 
