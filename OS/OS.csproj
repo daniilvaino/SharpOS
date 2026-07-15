@@ -357,6 +357,11 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Runtime\MemoryMarshal.cs" Link="src\Std\Runtime\MemoryMarshal.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Diagnostics.cs" Link="src\Std\Runtime\Diagnostics.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\ClassConstructorRunner.cs" Link="src\Std\Runtime\ClassConstructorRunner.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\FunctionPointerOps.cs" Link="src\Std\Runtime\FunctionPointerOps.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\RuntimeImports.Delegate.cs" Link="src\Std\Runtime\RuntimeImports.Delegate.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\Delegate.cs" Link="src\Std\Runtime\Delegate.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\MulticastDelegate.cs" Link="src\Std\Runtime\MulticastDelegate.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\ActionFunc.cs" Link="src\Std\Runtime\ActionFunc.cs" />
     <Compile Include="..\std\no-runtime\shared\Text\StringBuilder.cs" Link="src\Std\Text\StringBuilder.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\NativeFormatDecoder.cs" Link="src\Std\GC\NativeFormatDecoder.cs" />
     <Compile Include="..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="src\Std\GC\OptionalFieldsReader.cs" />

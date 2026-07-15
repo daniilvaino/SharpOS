@@ -185,22 +185,8 @@ namespace Iced.Intel {
 				}
 				block.SetInstructions(instrs);
 			}
-			// Optimize from low to high addresses.
-			// SharpOS: original was `Array.Sort(blocks, (a, b) => a.RIP.CompareTo(b.RIP));`
-			// — managed delegates / lambdas don't work on the AOT tier (see README
-			// feature table). Inline insertion sort by RIP; `blocks.Length` is the
-			// number of code blocks in one encode call (typically a handful), and
-			// insertion sort is optimal at that scale anyway.
-			for (int i = 1; i < blocks.Length; i++) {
-				var b = blocks[i];
-				ulong rip = b.RIP;
-				int k = i - 1;
-				while (k >= 0 && blocks[k].RIP > rip) {
-					blocks[k + 1] = blocks[k];
-					k--;
-				}
-				blocks[k + 1] = b;
-			}
+			// Optimize from low to high addresses
+			Array.Sort(blocks, (a, b) => a.RIP.CompareTo(b.RIP));
 
 			// There must not be any instructions with the same IP, except if IP = 0 (default value)
 			var toInstr = new Dictionary<ulong, Instr>(instrCount);

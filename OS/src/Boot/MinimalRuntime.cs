@@ -64,6 +64,13 @@ namespace System
         }
 
         public static bool ReferenceEquals(object objA, object objB) => objA == objB;
+
+        // The object's MethodTable as an EETypePtr. NativeAOT S.P.CoreLib
+        // exposes this as an instance method on Object; Delegate/
+        // MulticastDelegate use it for type-identity (InternalEqualTypes,
+        // NewMulticastDelegate allocation). m_pEEType is the header word @0.
+        internal EETypePtr GetEETypePtr() =>
+            new EETypePtr((Internal.Runtime.MethodTable*)m_pEEType);
     }
 
     public struct Void { }
@@ -292,14 +299,20 @@ namespace System
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
         public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.ULongToString((ulong)_value);
     }
-    // Single / Double: ILC special-cases these primitives by namespace+name —
-    // arithmetic / cast / boxing all work without an instance _value field
-    // (same trick as Int32._value). We carry just the canonical BCL constants
-    // so `float.MinValue`, `double.NaN` etc. resolve in lifted code. Bit
-    // patterns match dotnet/runtime exactly; PositiveInfinity / NaN are
-    // compile-time-foldable per IEEE 754 in C# const context.
+    // Single / Double MUST carry the recursive `_value` instance field — the
+    // same BCL convention as Int32/Boolean/Char. Without it the struct is an
+    // empty (1-byte) type, so ILC mis-sizes its box: `box (double)x` allocates
+    // a box too small for the 8-byte value, and writing the value overruns it
+    // into the next heap object's header (surfaced step131 as a heap corruptor
+    // in string.Format {0:F2} → bad MT 0xFFFFFFFF00000000). The field gives the
+    // type its true 4/8-byte size so the box is correct. Bit patterns of the
+    // constants match dotnet/runtime; NaN / Infinity are IEEE-754 const-foldable.
     public struct Single
     {
+#pragma warning disable 169
+        private float _value;
+#pragma warning restore 169
+
         public const float MinValue = -3.40282347E+38F;
         public const float MaxValue = 3.40282347E+38F;
         public const float Epsilon = 1.401298E-45F;
@@ -310,6 +323,10 @@ namespace System
 
     public struct Double
     {
+#pragma warning disable 169
+        private double _value;
+#pragma warning restore 169
+
         public const double MinValue = -1.7976931348623157E+308;
         public const double MaxValue = 1.7976931348623157E+308;
         public const double Epsilon = 4.9406564584124654E-324;
@@ -387,8 +404,6 @@ namespace System
     {
         public readonly int Length;
     }
-    public abstract class Delegate { }
-    public abstract class MulticastDelegate : Delegate { }
 
     // Each carries one pointer-sized slot so ILC's ldtoken lowering
     // (Internal.Runtime.CompilerHelpers.LdTokenHelpers.GetRuntime*Handle,
@@ -453,6 +468,12 @@ namespace System
         {
             return default;
         }
+
+        // Type-identity comparison (Delegate.InternalEqualTypes / GetHashCode).
+        public static bool operator ==(EETypePtr a, EETypePtr b) => a._value == b._value;
+        public static bool operator !=(EETypePtr a, EETypePtr b) => a._value != b._value;
+        public override bool Equals(object o) => o is EETypePtr e && _value == e._value;
+        public override int GetHashCode() => unchecked((int)(nint)_value);
     }
 
     public sealed class AttributeUsageAttribute : Attribute

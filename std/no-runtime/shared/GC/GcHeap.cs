@@ -161,18 +161,35 @@ namespace SharpOS.Std.NoRuntime
                         *(nint*)(prev + FreeNextOffset) = nextNode;
                     s_freelistNodes--;
 
+                    // remaining is a multiple of ObjectAlignment (both blockAligned
+                    // and aligned are), so it is either 0 or >= 16.
                     uint remaining = blockAligned - aligned;
-                    if (remaining >= MinFreeBlockSize)
+                    if (remaining >= ObjectAlignment)
                     {
+                        // ALWAYS turn a non-empty remainder into a walkable free
+                        // marker (MT@0 + Length@8 = 12 bytes, fits in 16). If we
+                        // skip this for small remainders, the heap walk (sweep /
+                        // GcMark unmark) steps by the allocated object's
+                        // ComputeSize and lands on the untracked remainder,
+                        // reading its STALE bytes as a MethodTable — e.g.
+                        // leftover boxed-double NaN 0xFFFFFFFF00000000 ->
+                        // `test [mt+2]` #PF. This was the pervasive, non-
+                        // deterministic heap corruptor (step131). The remainder
+                        // is only ADDED to the freelist (next-pointer @+12, needs
+                        // >= MinFreeBlockSize=32 so the pointer fits) when large
+                        // enough; smaller ones stay walkable-but-unreused.
                         nint tailPtr = cur + (nint)aligned;
                         GcObject* tail = (GcObject*)tailPtr;
                         tail->RawMethodTable = freeMt;
-                        tail->Length = remaining - 12;
-                        // Insert at head.
-                        *(nint*)(tailPtr + FreeNextOffset) = s_freelistHead;
-                        s_freelistHead = tailPtr;
-                        s_freelistNodes++;
-                        s_freelistSplitCount++;
+                        tail->Length = remaining - 12;      // ComputeSize == remaining
+                        if (remaining >= MinFreeBlockSize)
+                        {
+                            // Room for the next-pointer -> track for reuse.
+                            *(nint*)(tailPtr + FreeNextOffset) = s_freelistHead;
+                            s_freelistHead = tailPtr;
+                            s_freelistNodes++;
+                            s_freelistSplitCount++;
+                        }
                     }
 
                     s_allocCount++;

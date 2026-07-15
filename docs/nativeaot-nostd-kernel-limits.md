@@ -278,18 +278,31 @@ IEnumerable<int> Foo() { yield return 1; yield return 2; }
 
 **Фикс-позже:** добавить недостающие stub-ы (`Interlocked.CompareExchange<T>`, `Environment.CurrentManagedThreadId`) и попробовать снова. Если Roslyn захочет ещё что-то — trace покажет какой именно тип/ctor ищется.
 
-### ❌ Любой managed delegate (`delegate T F(...)`) + lambda
+### ✅ Managed delegate + lambda — РАБОТАЕТ (step 131)
 
 ```csharp
-delegate int IntFn(int x);
-IntFn f = x => x * 3;   // ILC: InitializeClosedInstance not found on System.Delegate
+Func<int,int,int> f = (a,b) => a+b;   // static/open-static thunk
+Func<int,int> g = adder.Add;          // closed-instance thunk
+Action both = a1 + a2;                 // multicast (Delegate.Combine)
+Array.Sort(arr, (a,b) => a.CompareTo(b));  // non-capturing lambda + Comparison<T>
 ```
 
-Требует инфраструктуру `System.Delegate` с полями `_target`, `_functionPointer`, методом `InitializeClosedInstance` и Invoke-машинерией.
+`System.Delegate`/`MulticastDelegate` завендорены из dotnet/runtime v8.0.27
+(точный layout `m_firstParameter`/`m_helperObject`/`m_extraFunctionPointerOrData`/
+`m_functionPointer`, полный `Initialize*` набор, `GetThunk` 0-5). Работают: static
+метод-группа, closed-instance, multicast (Combine/Remove/GetInvocationList),
+GC-survival (GCDesc делегатного типа трассирует `m_firstParameter`/`m_helperObject`),
+non-capturing лямбды (`<>c` синглтон), `Array.Sort` с `Comparison<T>`. Боевая
+валидация — оригинальный Iced `BlockEncoder` (`Array.Sort(blocks, (a,b)=>...)`).
 
-**⚠️ Workaround:** `delegate* unmanaged<T>` / `delegate*<T>` (IL function pointers) — **работают** и используются в нашем kernel/GC везде (`GcStackSpill.Invoke(&GcRoots.MarkAllUnmanaged)` и т.д.). Они не требуют Delegate-инфраструктуры.
+**❌ Вырезано → `NotSupportedException`:** reflection-поверхность
+(`Delegate.Method`/`DynamicInvoke`/`CreateDelegate`, всё через `MethodInfo`),
+`GetFunctionPointer`, GVM / delegate-to-interface Initialize, open-instance
+invoke, variance-cast (`Func<string,bool>`→`Func<object,bool>`). Serialization
+(`[Serializable]`/`GetObjectData`) — тоже нет. Доделка по первому потребителю.
 
-Managed delegate допишем когда понадобится events/LINQ (там просто `Func<T>` и `Action<T>`).
+**`delegate* unmanaged<T>` / `delegate*<T>`** (IL function pointers) — работают
+как и раньше, отдельный механизм (не требует Delegate-инфраструктуры).
 
 ---
 

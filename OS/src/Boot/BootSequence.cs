@@ -205,6 +205,14 @@ namespace OS.Boot
             if (!GcHeap.Init())
                 Panic.Fail("gc heap init failed");
 
+            // Route System.GC.Collect() (std, plain conservative MarkAll — blind
+            // to roots living in callee-saved registers) to KernelGC.Collect,
+            // which spills registers via GcStackSpill / uses the precise walker.
+            // Without this, BCL code calling GC.Collect() can have a live local
+            // swept if the JIT kept it in a register (write-barrier probe FAIL).
+            SharpOS.Std.NoRuntime.GC.s_collectHook = &global::OS.Kernel.Memory.KernelGC.CollectConservative;
+            Log.Write(LogLevel.Info, "gc collect hook installed (conservative)");
+
             // Force-init NativeAotModuleInit (RTR walking + TypeManager).
             // Anchor MT for the scan = `EETypePtrOf<object>()` intrinsic,
             // returns an MT pointer in our binary's data section.

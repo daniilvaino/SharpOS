@@ -15,8 +15,21 @@
 
 namespace SharpOS.Std.NoRuntime
 {
-    public static class GC
+    public static unsafe class GC
     {
+        // Kernel-registered collect override. The plain Collect() below walks
+        // only static roots + a conservative scan of the CURRENT stack — it
+        // CANNOT see a root that lives in a callee-saved register at the
+        // GC.Collect callsite (e.g. a local `h` the JIT kept in rbx). The
+        // kernel's KernelGC.Collect routes through the GcStackSpill trampoline
+        // (pushes all registers to the stack first) / the precise walker, so it
+        // sees register roots. The kernel installs it at boot; any BCL code that
+        // calls System.GC.Collect() then gets the robust path. Layering-safe: a
+        // raw function pointer, no std->OS reference. Null before install ->
+        // fall back to the best-effort scan (apps without the trampoline).
+        public static delegate*<void> s_collectHook;
+
+
         // When true, GcSweep.Run() is a no-op: unmarked objects are NOT
         // converted to free markers and the freelist is not rebuilt, so no
         // block is ever reused. Set this once a foreign managed runtime
@@ -30,6 +43,11 @@ namespace SharpOS.Std.NoRuntime
 
         public static void Collect()
         {
+            if (s_collectHook != null)
+            {
+                s_collectHook();
+                return;
+            }
             GcMark.Begin();
             GcRoots.MarkAll();
             GcSweep.Run();

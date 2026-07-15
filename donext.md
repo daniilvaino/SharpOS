@@ -16,7 +16,7 @@ bare metal SharpOS **против нашей собственной std** (не 
 
 | Предпосылка | Статус | Где |
 |---|---|---|
-| Managed-делегаты (`Delegate`/`MulticastDelegate`) | кирпичи зелёные, порт не начат | step129, §ниже workstream 1 |
+| Managed-делегаты (`Delegate`/`MulticastDelegate`) | **LANDED (step131)** — 4/4 матрица, боевой Iced BlockEncoder | done/step131.md |
 | PE-машинария для апп (вместо ELF) | не начато | eh-model.md §PE-миграция; workstream 2 |
 | Исключения — полностью, по референсам Wine/ReactOS | частично (P0-1/P0-2 latent) | §P0 ниже |
 | Математика на чистом C# (вместо musl libm) | грубые ряды Тейлора | plan.md Tier D-13 libm-port; memory `libm_transcendentals_are_trap_stubs`, `lm_atan_leibniz_bug` |

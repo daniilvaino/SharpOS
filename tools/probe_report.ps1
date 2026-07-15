@@ -149,6 +149,30 @@ $results += Get-ProbeStatus -Cat 'Phase4' -Name 'GenericDictionary' `
     -Status 'generic dictionary \+ inst stubs: (ok|FAIL)' `
     -ExpectRe '^ok$'
 
+# Managed delegates — vendored System.Delegate/MulticastDelegate (step131),
+# see NativeAotProbe.Probe_Delegates. Four sub-cases from the plan smoke
+# matrix: static method-group (17), closed-instance (14), multicast (21),
+# GC-survival (8 — exercises the delegate EEType GCDesc tracing).
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'DelegateStatic' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'delegate static method-group: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'DelegateClosedInstance' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'delegate closed-instance: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'DelegateMulticast' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'delegate multicast x2: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'DelegateGcSurvival' `
+    -Detect 'nativeaot probe begin' `
+    -Status 'delegate GC-survival: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
 # Explicit-cctor (int static with initializer) — the simplest lazy-cctor
 # surface (см. NativeAotProbe.Probe_ExplicitCctor). ReportProbe prints
 # "explicit cctor (int): ok val=77". Prior detect ('cctor implicit-int-

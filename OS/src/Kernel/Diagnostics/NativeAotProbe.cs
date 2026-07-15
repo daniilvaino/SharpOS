@@ -98,18 +98,15 @@ namespace OS.Kernel.Diagnostics
             Probe_RethrowStackTrace();
             Probe_GcSpanInterior();
             Probe_ArrayCopyOverlap();
-            Probe_XmmAcrossThrow();           // RED until P0-1 lands
+            Probe_XmmAcrossThrow();            // RED until P0-1 lands
+            // Managed delegates (step131): vendored System.Delegate/
+            // MulticastDelegate. Placed before Probe_StringFormat (ordering is
+            // harmless now — the freelist / register-root GC bugs it once tripped
+            // over are fixed this step).
+            Probe_Delegates();
             Probe_StringFormat();
-
             Probe_InterfaceCallFromSharedGeneric();
             Probe_GenericDictionary();
-            // Delegates (any managed `delegate T F(...)`, with or without capture) require
-            // Delegate.InitializeClosedInstance + _target + _functionPointer + Invoke
-            // machinery on System.Delegate. None of that is stubbed yet, so even a plain
-            // `IntFn f = x => x * 3;` fails at ILC codegen. `delegate* unmanaged<T>` (IL
-            // function pointers) is unrelated and works — that's what we actually use
-            // across the kernel. Real managed delegates: TODO for later.
-            Log.Write(LogLevel.Warn, "lambda: SKIP (needs Delegate infrastructure)");
 
             Log.Write(LogLevel.Info, "---- nativeaot probe end ----");
         }
@@ -343,6 +340,53 @@ namespace OS.Kernel.Diagnostics
             byte* p = null;
             *(object*)&p = o;
             return *(nint*)p & ~(nint)1;
+        }
+
+        // --- Managed delegates (vendored System.Delegate/MulticastDelegate) ---
+        private static int DlgStaticAdd(int a, int b) => a + b;
+        private class DlgAdder { public int Base; public int Add(int x) => Base + x; }
+        private static int s_dlgMulti;
+        private static void DlgInc() => s_dlgMulti++;
+        private static Func<int, int> s_dlgGcRooted;
+        // Target reachable ONLY through the returned delegate (no surviving
+        // local), so the GC-survival case really depends on delegate tracing.
+        private static Func<int, int> MakeDlgAdder(int b)
+        {
+            var a = new DlgAdder { Base = b };
+            return a.Add;
+        }
+
+        private static void Probe_Delegates()
+        {
+            // Case 17: static method-group -> Func (open static thunk).
+            Func<int, int, int> f = DlgStaticAdd;
+            int r17 = f(3, 4);
+            ReportProbe("delegate static method-group", r17 == 7, (uint)r17);
+
+            // Case 14: closed-instance method-group. Also exercises the
+            // fat-pointer tripwire in InitializeClosedInstance (a non-generic
+            // instance method yields a plain pointer -> tripwire must NOT fire).
+            var adder = new DlgAdder { Base = 100 };
+            Func<int, int> g = adder.Add;
+            int r14 = g(5);
+            ReportProbe("delegate closed-instance", r14 == 105, (uint)r14);
+
+            // Case 21-lite: multicast. `a1 + a2` lowers to Delegate.Combine;
+            // invoking runs the multicast thunk over the invocation list.
+            s_dlgMulti = 0;
+            Action a1 = DlgInc;
+            Action a2 = DlgInc;
+            Action both = a1 + a2;
+            both();
+            ReportProbe("delegate multicast x2", s_dlgMulti == 2, (uint)s_dlgMulti);
+
+            // Case 8: GC-survival. The DlgAdder target is reachable only via the
+            // rooted delegate's m_firstParameter; GC.Collect must trace it
+            // through the delegate EEType GCDesc, else invoke reads freed memory.
+            s_dlgGcRooted = MakeDlgAdder(200);
+            global::OS.Kernel.Memory.KernelGC.Collect();
+            int r8 = s_dlgGcRooted(7);
+            ReportProbe("delegate GC-survival", r8 == 207, (uint)r8);
         }
 
         private static void Probe_GenericDictionary()
@@ -1212,7 +1256,10 @@ namespace OS.Kernel.Diagnostics
         {
             var h = new RefHolder();
             h.Field = "alive-after-gc";          // exercises RhpAssignRef
-            GC.Collect();                        // forces mark-sweep
+            GC.Collect();                        // forces mark-sweep; `h` is a
+                                                 // register-resident local, so
+                                                 // this exercises conservative
+                                                 // register-root marking (step131).
             bool ok = h.Field == "alive-after-gc";
             ReportProbe("write barrier (ref field + GC.Collect)", ok, ok ? 1u : 0u);
         }

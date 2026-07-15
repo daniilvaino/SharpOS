@@ -65,5 +65,29 @@ namespace OS.Kernel.Memory
             KernelGcPreciseWalk.RunFromCurrentFrame();
             GcSweep.Run();
         }
+
+        // Conservative-only collect: ALWAYS spill every register to the stack
+        // (GcStackSpill) and scan conservatively — never the precise walker.
+        // The precise walker enumerates only the slots ILC's GcInfo marks live,
+        // and it does not reliably recover a root that lives in a callee-saved
+        // register at the collect callsite (write-barrier probe: local `h` kept
+        // in rbx got swept). Conservative over-marks (may retain a few dead
+        // objects) but NEVER under-marks — the safe choice for System.GC.
+        // Collect() from BCL code, where a swept live local is a correctness
+        // bug. Routed here via GC.s_collectHook (installed in BootSequence).
+        public static void CollectConservative()
+        {
+            GcMark.Begin();
+            if (GcStackSpill.IsInitialized)
+            {
+                delegate* unmanaged<void> markFn = &GcRoots.MarkAllUnmanaged;
+                GcStackSpill.Invoke(markFn);
+            }
+            else
+            {
+                GcRoots.MarkAll();
+            }
+            GcSweep.Run();
+        }
     }
 }

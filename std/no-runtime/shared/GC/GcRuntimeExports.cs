@@ -14,7 +14,9 @@
 // for phase 3; apps keep C-stub RhNewString until phase 4 when we migrate
 // them off.
 
+using System;
 using System.Runtime;
+using System.Runtime.CompilerServices;
 
 namespace SharpOS.Std.NoRuntime
 {
@@ -251,6 +253,85 @@ namespace SharpOS.Std.NoRuntime
             }
 
             return null;
+        }
+
+        // ---- General cast helpers (step131). ILC emits these for the vendored
+        // delegate code's (Delegate[]) / (MulticastDelegate) casts, `as`, and
+        // `ref array[i]`. Minimal trusted-kernel versions: no cast cache, no
+        // generic variance. The real NativeAOT TypeCast.cs adds a cast cache +
+        // variance + array-covariance we don't need here.
+
+        // isinst(any): null->null; exact MT; interface map; else class-hierarchy
+        // walk (also lets an array/object reach a matching base). obj or null.
+        [RuntimeExport("RhTypeCast_IsInstanceOfAny")]
+        public static unsafe object RhTypeCast_IsInstanceOfAny(GcMethodTable* pTargetType, object obj)
+        {
+            if (obj == null) return null;
+
+            nint objAddr = *(nint*)&obj;
+            GcMethodTable* mt = *(GcMethodTable**)objAddr;
+            if (mt == pTargetType) return obj;
+
+            if (pTargetType->IsInterface)
+                return RhTypeCast_IsInstanceOfInterface(pTargetType, obj);
+
+            const int MaxDepth = 64;
+            GcMethodTable* cur = mt;
+            for (int i = 0; i < MaxDepth; i++)
+            {
+                cur = cur->GetBaseType();
+                if (cur == null) break;
+                if (cur == pTargetType) return obj;
+            }
+            return null;
+        }
+
+        // checkcast(any): like IsInstanceOfAny but throws on failure. null casts
+        // to anything.
+        [RuntimeExport("RhTypeCast_CheckCastAny")]
+        public static unsafe object RhTypeCast_CheckCastAny(GcMethodTable* pTargetType, object obj)
+        {
+            if (obj == null) return null;
+            if (RhTypeCast_IsInstanceOfAny(pTargetType, obj) == null)
+                throw new InvalidCastException();
+            return obj;
+        }
+
+        // checkcast to a class (non-interface, non-array target). JIT inlines the
+        // trivial obj==null / mt==target cases; this slow path walks the base
+        // chain and throws on miss.
+        [RuntimeExport("RhTypeCast_CheckCastClassSpecial")]
+        public static unsafe object RhTypeCast_CheckCastClassSpecial(GcMethodTable* pTargetType, object obj)
+        {
+            if (obj == null) return null;
+
+            nint objAddr = *(nint*)&obj;
+            GcMethodTable* mt = *(GcMethodTable**)objAddr;
+
+            const int MaxDepth = 64;
+            GcMethodTable* cur = mt;
+            for (int i = 0; i < MaxDepth; i++)
+            {
+                cur = cur->GetBaseType();
+                if (cur == pTargetType) return obj;
+                if (cur == null) break;
+            }
+            throw new InvalidCastException();
+        }
+
+        // ref array[index] for reference-element arrays. ILC emits this for
+        // `ref a[i]` (e.g. Interlocked.CompareExchange(ref list[i], ...) in
+        // MulticastDelegate.TrySetSlot). Trusted: skip null/bounds/covariance
+        // checks (same policy as RhpStelemRef). Array layout: MT@0, Length@8,
+        // element[0]@16, 8 bytes each.
+        [RuntimeExport("RhpLdelemaRef")]
+        public static unsafe ref object RhpLdelemaRef(System.Array array, nint index, IntPtr elementType)
+        {
+            nint arrayAddr = *(nint*)&array;
+            byte* slot = (byte*)arrayAddr + 16 + index * 8;
+            // Same pattern Buffer.cs uses (proven to compile in this project):
+            // reinterpret the element slot as `ref object`.
+            return ref System.Runtime.CompilerServices.Unsafe.As<byte, object>(ref *slot);
         }
     }
 }
