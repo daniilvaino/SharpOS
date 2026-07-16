@@ -127,6 +127,22 @@ namespace System.Collections.Generic
                 array[arrayIndex + i] = _items[i];
         }
 
+        public void Reverse() => Reverse(0, _size);
+
+        public void Reverse(int index, int count)
+        {
+            int i = index;
+            int j = index + count - 1;
+            while (i < j)
+            {
+                T tmp = _items[i];
+                _items[i] = _items[j];
+                _items[j] = tmp;
+                i++;
+                j--;
+            }
+        }
+
         private void EnsureCapacity(int min)
         {
             if (_items.Length >= min) return;

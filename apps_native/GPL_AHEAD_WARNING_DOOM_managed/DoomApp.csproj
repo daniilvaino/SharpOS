@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>DoomApp</IlcSystemModule>
+  </PropertyGroup>
+
+  <!-- SharpOS freestanding win-x64 PE build of ManagedDoom (GPL-2.0, isolated in
+       this folder). P1 compile-gap probe: the platform-independent core
+       (src/Doom + src/Video + src/UserInput + src/Audio, all Null* impls kept for
+       headless bring-up) on our app std; the Silk/GL/DrippyAL/MeltySynth platform
+       layer (src/Silk) is cut and will be replaced by GOP/PS2 shims. Original
+       ManagedDoom.csproj (net10 + Silk PackageReferences) left untouched. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+
+    <!-- Top-level glue the core orchestrator (Doom.cs ctor) requires. -->
+    <Compile Include="ManagedDoom\src\ApplicationInfo.cs" />
+    <Compile Include="ManagedDoom\src\CommandLineArgs.cs" />
+    <Compile Include="ManagedDoom\src\Config.cs" />
+    <Compile Include="ManagedDoom\src\ConfigUtilities.cs" />
+
+    <!-- Platform-independent core + software renderer + input/audio abstractions
+         (interfaces, enums, Null* implementations). -->
+    <Compile Include="ManagedDoom\src\Doom\**\*.cs" />
+    <Compile Include="ManagedDoom\src\Video\**\*.cs" />
+    <Compile Include="ManagedDoom\src\UserInput\**\*.cs" />
+    <Compile Include="ManagedDoom\src\Audio\**\*.cs" />
+
+    <!-- CUT (platform layer, replaced later): ManagedDoom\src\Silk\**. -->
+  </ItemGroup>
+</Project>

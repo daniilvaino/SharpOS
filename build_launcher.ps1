@@ -7,7 +7,7 @@
 # comes from CoffStub.Generator via @(NativeLibrary). So `dotnet publish -r
 # win-x64` emits the PE directly -- no WSL, no cl.exe, no manual link. Run inside
 # a VS dev environment (vcvars64). PeLoader maps the PE at ImageBase 0x400000.
-# Per-app wrappers: build_fetch.ps1, build_aottests.ps1.
+# Per-app wrappers: build_fetch.ps1, build_aottests.ps1, build_doom.ps1.
 
 param(
     [string]$AppProject = "apps_native/HelloSharpFs/HelloSharpFs.csproj",

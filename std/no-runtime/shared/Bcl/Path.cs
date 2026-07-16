@@ -182,6 +182,18 @@ namespace System.IO
             return string.Empty;
         }
 
+        public static string? GetFileNameWithoutExtension(string? path)
+        {
+            if (path == null) return null;
+            string fileName = GetFileName(path);
+            for (int i = fileName.Length - 1; i >= 0; i--)
+            {
+                if (fileName[i] == '.')
+                    return fileName.Substring(0, i);
+            }
+            return fileName;
+        }
+
         public static string? GetExtension(string? path)
         {
             if (path == null) return null;

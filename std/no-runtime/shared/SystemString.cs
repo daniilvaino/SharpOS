@@ -64,6 +64,10 @@ namespace System
             return SharpOS.Std.NoRuntime.StringRuntime.FastAllocateString(length);
         }
 
+        // [IndexerName("Chars")] — BCL metadata name. Roslyn lowers
+        // `foreach (char c in str)` to Length + get_Chars by fixed name
+        // (CS0656 without it); the default would emit get_Item.
+        [System.Runtime.CompilerServices.IndexerName("Chars")]
         public char this[int index]
         {
             get
@@ -342,6 +346,20 @@ namespace System
         public string ToLowerInvariant()
         {
             return SharpOS.Std.NoRuntime.StringTransforms.ToLowerInvariant(this);
+        }
+
+        // Culture-sensitive BCL overloads: no cultures in this environment,
+        // so current-culture == invariant (ASCII-only case mapping).
+        public string ToUpper() => ToUpperInvariant();
+        public string ToLower() => ToLowerInvariant();
+
+        public char[] ToCharArray()
+        {
+            int length = Length;
+            char[] chars = new char[length];
+            for (int i = 0; i < length; i++)
+                chars[i] = this[i];
+            return chars;
         }
 
         public static bool operator ==(string str0, string str1)

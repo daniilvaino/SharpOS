@@ -2,16 +2,12 @@
 // canonical integer widths. Used by BCL StringBuilder, collections, path
 // helpers and similar.
 //
-// Float/double Math (Floor/Ceiling/Round/Sqrt/transcendentals) is
-// intentionally cut — kernel/native-tier code does no floating-point
-// math, and CoreCLR will bring its own when hosted-tier comes up.
-// Our Single/Double in MinimalRuntime are empty placeholder structs;
-// adding double Math would require the recursive `_value` field
-// pattern + BitConverter infrastructure. Add when first caller needs it.
+// The double/float subset (Floor/Round/Sin/Cos/Pow/...) lives in
+// Math.Double.cs (partial half, step141) — pure managed series, no libm.
 
 namespace System
 {
-    public static class Math
+    public static partial class Math
     {
         // ---- Min ----
         public static byte   Min(byte a, byte b)     => a < b ? a : b;

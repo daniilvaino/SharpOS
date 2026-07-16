@@ -95,6 +95,7 @@ namespace System
         public override int GetHashCode() => _value ? 1 : 0;
         public int CompareTo(bool other) => _value == other ? 0 : (!_value ? -1 : 1);
         public int CompareTo(object obj) => obj is bool b ? CompareTo(b) : 1;
+        public override string ToString() => _value ? "True" : "False";
     }
 
     public struct Char : IEquatable<char>, IComparable<char>, IComparable
@@ -109,6 +110,7 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(char other) => _value - other;
         public int CompareTo(object obj) => obj is char c ? CompareTo(c) : 1;
+        public override string ToString() => new string(new char[] { _value });
     }
 
     public struct SByte : IEquatable<sbyte>, IComparable<sbyte>, IComparable
@@ -122,6 +124,7 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(sbyte other) => _value - other;
         public int CompareTo(object obj) => obj is sbyte v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.IntToString(_value);
     }
 
     public struct Byte : IEquatable<byte>, IComparable<byte>, IComparable
@@ -135,6 +138,7 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(byte other) => _value - other;
         public int CompareTo(object obj) => obj is byte v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
     }
 
     public struct Int16 : IEquatable<short>, IComparable<short>, IComparable
@@ -148,6 +152,7 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(short other) => _value - other;
         public int CompareTo(object obj) => obj is short v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.IntToString(_value);
     }
 
     public struct UInt16 : IEquatable<ushort>, IComparable<ushort>, IComparable
@@ -161,6 +166,7 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(ushort other) => _value - other;
         public int CompareTo(object obj) => obj is ushort v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
     }
 
     public struct Int32 : IEquatable<int>, IComparable<int>, IComparable
@@ -174,6 +180,18 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(int other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is int v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.IntToString(_value);
+        public string ToString(string format) => SharpOS.Std.NoRuntime.NumberFormatting.FormatInt64(_value, format);
+
+        public static int Parse(string s)
+        {
+            if (!SharpOS.Std.NoRuntime.NumberParsing.TryParseInt32(s, out int value))
+                throw new FormatException("Input string was not in a correct format.");
+            return value;
+        }
+
+        public static bool TryParse(string s, out int result)
+            => SharpOS.Std.NoRuntime.NumberParsing.TryParseInt32(s, out result);
     }
 
     public struct UInt32 : IEquatable<uint>, IComparable<uint>, IComparable
@@ -187,6 +205,7 @@ namespace System
         public override int GetHashCode() => (int)_value;
         public int CompareTo(uint other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is uint v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
     }
 
     public struct Int64 : IEquatable<long>, IComparable<long>, IComparable
@@ -200,6 +219,17 @@ namespace System
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
         public int CompareTo(long other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is long v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.LongToString(_value);
+
+        public static long Parse(string s)
+        {
+            if (!SharpOS.Std.NoRuntime.NumberParsing.TryParseInt64(s, out long value))
+                throw new FormatException("Input string was not in a correct format.");
+            return value;
+        }
+
+        public static bool TryParse(string s, out long result)
+            => SharpOS.Std.NoRuntime.NumberParsing.TryParseInt64(s, out result);
     }
 
     public struct UInt64 : IEquatable<ulong>, IComparable<ulong>, IComparable
@@ -213,6 +243,7 @@ namespace System
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
         public int CompareTo(ulong other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is ulong v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.ULongToString(_value);
     }
 
     // IntPtr / UIntPtr = native-sized integer (8 bytes on x64, 4 on x86).
@@ -323,9 +354,7 @@ namespace System
 
     public struct Double
     {
-#pragma warning disable 169
         private double _value;
-#pragma warning restore 169
 
         public const double MinValue = -1.7976931348623157E+308;
         public const double MaxValue = 1.7976931348623157E+308;
@@ -333,6 +362,23 @@ namespace System
         public const double PositiveInfinity = 1.0 / 0.0;
         public const double NegativeInfinity = -1.0 / 0.0;
         public const double NaN = 0.0 / 0.0;
+
+        // Bit-pattern classification — avoids the self-comparison idiom
+        // (d != d) that trips CS1718 at callsites.
+        public static unsafe bool IsNaN(double d)
+        {
+            ulong bits = *(ulong*)&d;
+            return (bits & 0x7FFFFFFFFFFFFFFFul) > 0x7FF0000000000000ul;
+        }
+
+        public static unsafe bool IsInfinity(double d)
+        {
+            ulong bits = *(ulong*)&d;
+            return (bits & 0x7FFFFFFFFFFFFFFFul) == 0x7FF0000000000000ul;
+        }
+
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.DoubleToString(_value);
+        public string ToString(string format) => SharpOS.Std.NoRuntime.NumberFormatting.DoubleToString(_value, format);
     }
 
     public abstract class ValueType { }

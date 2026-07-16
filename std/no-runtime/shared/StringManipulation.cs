@@ -114,6 +114,14 @@ namespace System
             return Join(separator, value, 0, value.Length);
         }
 
+        public static string Join(string separator, IEnumerable<string> values)
+        {
+            if (values == null) return "";
+            var list = new List<string>();
+            foreach (string v in values) list.Add(v);
+            return Join(separator, list.ToArray(), 0, list.Count);
+        }
+
         public static string Join(string separator, string[] value, int startIndex, int count)
         {
             if (value == null) { Halt(); return null; }

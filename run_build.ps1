@@ -463,7 +463,8 @@ foreach ($staleElf in @("HELLO.ELF", "ABIINFO.ELF", "MARKER.ELF", "HELLOCS.ELF",
 $peApps = @(
     @{ Src = "apps_native\HelloSharpFs\bin\Release\out-win-x64\HelloSharpFs.exe"; Dest = "HELLO.EXE" },
     @{ Src = "apps_native\FetchApp\bin\Release\out-win-x64\FetchApp.exe";         Dest = "FETCH.EXE" },
-    @{ Src = "apps_native\AotTests\bin\Release\out-win-x64\AotTests.exe";         Dest = "AOTTESTS.EXE" }
+    @{ Src = "apps_native\AotTests\bin\Release\out-win-x64\AotTests.exe";         Dest = "AOTTESTS.EXE" },
+    @{ Src = "apps_native\GPL_AHEAD_WARNING_DOOM_managed\bin\Release\out-win-x64\DoomApp.exe"; Dest = "DOOM.EXE" }
 )
 foreach ($peApp in $peApps) {
     $peSrc = Join-Path $repoRoot $peApp.Src

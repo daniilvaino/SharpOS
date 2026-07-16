@@ -106,6 +106,16 @@ namespace System.Collections.Generic
             return Find(key) != null;
         }
 
+        // net-era surface: add if absent, false on duplicate (no throw).
+        public bool TryAdd(TKey key, TValue value)
+        {
+            if (key == null) Halt();
+            if (Find(key) != null) return false;
+            _version++;
+            UncheckedAdd(key, value);
+            return true;
+        }
+
         public void Clear(int capacity = DefaultSize)
         {
             _version++;

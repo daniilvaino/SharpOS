@@ -51,15 +51,60 @@
     <Compile Include="$(MSBuildThisFileDirectory)StringAlgorithms.cs"     Link="sdk\StringAlgorithms.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)KeyInfo.cs"              Link="sdk\KeyInfo.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileEntry.cs"            Link="sdk\FileEntry.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)DebugOutput.AppHost.cs"  Link="sdk\DebugOutput.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SystemConsole.cs"        Link="sdk\SystemConsole.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ProcessStub.cs"          Link="sdk\ProcessStub.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Stopwatch.AppStub.cs"    Link="sdk\Stopwatch.AppStub.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)DateTime.AppStub.cs"     Link="sdk\DateTime.AppStub.cs" />
 
+    <!-- std surface mirrors OS/OS.csproj's std/no-runtime/shared list (step141:
+         app runtime upgraded from a minimal slice to full-std for ManagedDoom).
+         Tier-specific swaps vs the kernel list: GcMemorySource.AppStatic (not
+         .KernelHeap), StringRuntime.RhNewString (not .KernelHeap), Debug output
+         via sdk/DebugOutput.AppHost.cs (not Diagnostics.Output.KernelConsole),
+         and Internal.Runtime.CompilerHelpers.ThrowHelpers stays the inline
+         halt-only copy in sdk/MinimalRuntime.cs. -->
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\MemoryPrimitives.cs"        Link="std\MemoryPrimitives.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\DefaultMemberAttribute.cs"  Link="std\DefaultMemberAttribute.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\SystemString.cs"            Link="std\SystemString.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\SystemString.Enumerator.cs" Link="std\SystemString.Enumerator.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\SystemString.Span.cs"       Link="std\SystemString.Span.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringManipulation.cs"      Link="std\StringManipulation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringSplitOptions.cs"      Link="std\StringSplitOptions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringComparison.cs"        Link="std\StringComparison.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringAlgorithms.cs"        Link="std\StringAlgorithms.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\CharHelpers.cs"             Link="std\CharHelpers.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringQueries.cs"           Link="std\StringQueries.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringTransforms.cs"        Link="std\StringTransforms.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringFormat.cs"            Link="std\StringFormat.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\NumberFormatting.cs"        Link="std\NumberFormatting.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\NumberParsing.cs"           Link="std\NumberParsing.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.cs"               Link="std\Threading.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ExceptionIDs.cs"    Link="std\Runtime\ExceptionIDs.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ExceptionServices.cs" Link="std\Runtime\ExceptionServices.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\RuntimeAttributes.cs" Link="std\Runtime\RuntimeAttributes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\CodeAnalysisAttributes.cs" Link="std\Runtime\CodeAnalysisAttributes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ByReference.cs"     Link="std\Runtime\ByReference.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Unsafe.cs"          Link="std\Runtime\Unsafe.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Span.cs"            Link="std\Runtime\Span.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ReadOnlySpan.cs"    Link="std\Runtime\ReadOnlySpan.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\MemoryExtensions.cs" Link="std\Runtime\MemoryExtensions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Math.cs"            Link="std\Runtime\Math.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Math.Double.cs"     Link="std\Runtime\Math.Double.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Buffer.cs"          Link="std\Runtime\Buffer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\GC.cs"              Link="std\Runtime\GC.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Array.cs"           Link="std\Runtime\Array.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\MemoryMarshal.cs"   Link="std\Runtime\MemoryMarshal.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Diagnostics.cs"     Link="std\Runtime\Diagnostics.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ClassConstructorRunner.cs" Link="std\Runtime\ClassConstructorRunner.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\FunctionPointerOps.cs" Link="std\Runtime\FunctionPointerOps.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\RuntimeImports.Delegate.cs" Link="std\Runtime\RuntimeImports.Delegate.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Delegate.cs"        Link="std\Runtime\Delegate.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\MulticastDelegate.cs" Link="std\Runtime\MulticastDelegate.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ActionFunc.cs"      Link="std\Runtime\ActionFunc.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Text\StringBuilder.cs"      Link="std\Text\StringBuilder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Text\Encoding.cs"           Link="std\Text\Encoding.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\MethodTable.cs"          Link="std\GC\MethodTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="std\GC\OptionalFieldsReader.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\NativeFormatDecoder.cs"  Link="std\GC\NativeFormatDecoder.cs" />
@@ -75,10 +120,31 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GC.cs"                   Link="std\GC\GC.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Exception.cs"               Link="std\Exception.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Exceptions.Derived.cs"      Link="std\Exceptions.Derived.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Guid.cs"                Link="std\Bcl\Guid.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Path.cs"                Link="std\Bcl\Path.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Interfaces.cs"          Link="std\Bcl\Interfaces.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\DebuggerAttributes.cs"  Link="std\Bcl\DebuggerAttributes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\EqualityComparer.cs"    Link="std\Bcl\EqualityComparer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Comparer.cs"            Link="std\Bcl\Comparer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\List.cs"                Link="std\Bcl\List.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Dictionary.cs"          Link="std\Bcl\Dictionary.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\HashSet.cs"             Link="std\Bcl\HashSet.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Stack.cs"               Link="std\Bcl\Stack.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Queue.cs"               Link="std\Bcl\Queue.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\LinkedList.cs"          Link="std\Bcl\LinkedList.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\ReadOnlyCollection.cs"  Link="std\Bcl\ReadOnlyCollection.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\ReadOnlyDictionary.cs"  Link="std\Bcl\ReadOnlyDictionary.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\ArraySegment.cs"        Link="std\Bcl\ArraySegment.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\SortedList.cs"          Link="std\Bcl\SortedList.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Tuple.cs"               Link="std\Bcl\Tuple.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\TimeSpan.cs"            Link="std\Bcl\TimeSpan.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BitConverter.cs"        Link="std\Bcl\BitConverter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\IO\Stream.cs"               Link="std\IO\Stream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\IO\IOException.cs"          Link="std\IO\IOException.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\IO\MemoryStream.cs"         Link="std\IO\MemoryStream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\IO\StreamReader.cs"         Link="std\IO\StreamReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Numerics\Vector3.cs"        Link="std\Numerics\Vector3.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Linq\Enumerable.cs"         Link="std\Linq\Enumerable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
   </ItemGroup>
 

@@ -659,6 +659,38 @@ namespace System.Linq
             return max;
         }
 
+        public static int Min<TSource>(this IEnumerable<TSource> source, Func<TSource, int> selector)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (selector == null) ThrowNull(nameof(selector));
+            bool found = false;
+            int min = 0;
+            foreach (var item in source)
+            {
+                int value = selector(item);
+                if (!found) { min = value; found = true; }
+                else if (value < min) min = value;
+            }
+            if (!found) ThrowNoElements();
+            return min;
+        }
+
+        public static int Max<TSource>(this IEnumerable<TSource> source, Func<TSource, int> selector)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (selector == null) ThrowNull(nameof(selector));
+            bool found = false;
+            int max = 0;
+            foreach (var item in source)
+            {
+                int value = selector(item);
+                if (!found) { max = value; found = true; }
+                else if (value > max) max = value;
+            }
+            if (!found) ThrowNoElements();
+            return max;
+        }
+
         public static double Average(this IEnumerable<int> source)
         {
             if (source == null) ThrowNull(nameof(source));

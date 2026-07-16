@@ -260,6 +260,14 @@ methodtable конкретного массива диспатчит `IEnumerabl
 **Когда чинить:** порт SZArrayHelper + patch array-MT interface map при
 type-loader'е. Крупная задача (runtime), отложена. До этого array-LINQ = нет.
 
+**✅ String — НЕ массив: `IEnumerable<char>` работает (step 141).** В отличие
+от массивов, `string` — обычный класс: интерфейс объявлен на типе
+(`SystemString.Enumerator.cs`), ILC кладёт его в DispatchMap, рантайм-диспатч
+резолвится. `s.Last()` / `s.FirstOrDefault()` / `s.All(c => ...)` компилятся
+и работают. `foreach (char c in str)` идёт мимо enumerator'а (Roslyn лоурит в
+`Length` + `get_Chars` — индексатору обязателен `[IndexerName("Chars")]`,
+иначе CS0656).
+
 Repro: `OS/src/Kernel/Diagnostics/NativeAotProbe.cs` —
 `Probe_ArrayCovariance` тестирует только positive monomorphic case;
 negative throwing-test намеренно пропущен (silent corruption убил
@@ -326,6 +334,14 @@ invoke, variance-cast (`Func<string,bool>`→`Func<object,bool>`). Serialization
 
 **`delegate* unmanaged<T>` / `delegate*<T>`** (IL function pointers) — работают
 как и раньше, отдельный механизм (не требует Delegate-инфраструктуры).
+
+**App-tier (freestanding PE): те же файлы с step 141.** FreestandingPe.props
+компилит тот же `Delegate.cs`/`MulticastDelegate.cs`/`ActionFunc.cs` (плюс
+LINQ/StringBuilder/полный Bcl-набор) — app-std теперь зеркалит kernel-список
+OS.csproj, tier-specific остались только backend'ы (GcMemorySource.AppStatic,
+StringRuntime.RhNewString, DebugOutput.AppHost). Матрица делегатов и все
+вырезки выше применимы к аппам as-is (боевой потребитель — ManagedDoom,
+done/step141.md).
 
 ---
 

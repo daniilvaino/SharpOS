@@ -46,6 +46,13 @@ namespace System
         }
 
         public static bool ReferenceEquals(object objA, object objB) => objA == objB;
+
+        // The object's MethodTable as an EETypePtr. NativeAOT S.P.CoreLib
+        // exposes this as an instance method on Object; Delegate/
+        // MulticastDelegate use it for type-identity (InternalEqualTypes,
+        // NewMulticastDelegate allocation). m_pEEType is the header word @0.
+        internal EETypePtr GetEETypePtr() =>
+            new EETypePtr((Internal.Runtime.MethodTable*)m_pEEType);
     }
 
     public struct Void { }
@@ -65,6 +72,7 @@ namespace System
         public override int GetHashCode() => _value ? 1 : 0;
         public int CompareTo(bool other) => _value == other ? 0 : (!_value ? -1 : 1);
         public int CompareTo(object obj) => obj is bool b ? CompareTo(b) : 1;
+        public override string ToString() => _value ? "True" : "False";
     }
 
     public struct Char : IEquatable<char>, IComparable<char>, IComparable
@@ -78,6 +86,7 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(char other) => _value - other;
         public int CompareTo(object obj) => obj is char c ? CompareTo(c) : 1;
+        public override string ToString() => new string(new char[] { _value });
     }
 
     public struct SByte : IEquatable<sbyte>, IComparable<sbyte>, IComparable
@@ -91,6 +100,7 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(sbyte other) => _value - other;
         public int CompareTo(object obj) => obj is sbyte v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.IntToString(_value);
     }
 
     public struct Byte : IEquatable<byte>, IComparable<byte>, IComparable
@@ -104,6 +114,7 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(byte other) => _value - other;
         public int CompareTo(object obj) => obj is byte v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
     }
 
     public struct Int16 : IEquatable<short>, IComparable<short>, IComparable
@@ -117,6 +128,7 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(short other) => _value - other;
         public int CompareTo(object obj) => obj is short v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.IntToString(_value);
     }
 
     public struct UInt16 : IEquatable<ushort>, IComparable<ushort>, IComparable
@@ -130,6 +142,7 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(ushort other) => _value - other;
         public int CompareTo(object obj) => obj is ushort v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
     }
 
     public struct Int32 : IEquatable<int>, IComparable<int>, IComparable
@@ -143,6 +156,18 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(int other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is int v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.IntToString(_value);
+        public string ToString(string format) => SharpOS.Std.NoRuntime.NumberFormatting.FormatInt64(_value, format);
+
+        public static int Parse(string s)
+        {
+            if (!SharpOS.Std.NoRuntime.NumberParsing.TryParseInt32(s, out int value))
+                throw new FormatException("Input string was not in a correct format.");
+            return value;
+        }
+
+        public static bool TryParse(string s, out int result)
+            => SharpOS.Std.NoRuntime.NumberParsing.TryParseInt32(s, out result);
     }
 
     public struct UInt32 : IEquatable<uint>, IComparable<uint>, IComparable
@@ -156,6 +181,7 @@ namespace System
         public override int GetHashCode() => (int)_value;
         public int CompareTo(uint other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is uint v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
     }
 
     public struct Int64 : IEquatable<long>, IComparable<long>, IComparable
@@ -169,6 +195,17 @@ namespace System
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
         public int CompareTo(long other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is long v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.LongToString(_value);
+
+        public static long Parse(string s)
+        {
+            if (!SharpOS.Std.NoRuntime.NumberParsing.TryParseInt64(s, out long value))
+                throw new FormatException("Input string was not in a correct format.");
+            return value;
+        }
+
+        public static bool TryParse(string s, out long result)
+            => SharpOS.Std.NoRuntime.NumberParsing.TryParseInt64(s, out result);
     }
 
     public struct UInt64 : IEquatable<ulong>, IComparable<ulong>, IComparable
@@ -182,22 +219,199 @@ namespace System
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
         public int CompareTo(ulong other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is ulong v ? CompareTo(v) : 1;
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.ULongToString(_value);
     }
-    public unsafe struct IntPtr
+    // IntPtr / UIntPtr = native-sized integer (8 bytes on x64, 4 on x86).
+    // BCL defines explicit conversion operators (to/from int, long, void*)
+    // which the C# compiler emits calls to whenever you cast. We give the
+    // same operator surface so verbatim BCL code (Unsafe, Span, etc.) that
+    // does `(IntPtr)someLong` or `(IntPtr)somePtr` compiles. The underlying
+    // storage is a recursive `nint` — ILC special-cases primitives by
+    // namespace+name, same trick as Int32._value. Mirrors the kernel's
+    // OS/src/Boot/MinimalRuntime.cs.
+    public readonly struct IntPtr
     {
-        private void* _value;
+        private readonly nint _value;
+
+        public IntPtr(int value) { _value = (nint)value; }
+        public IntPtr(long value) { _value = (nint)value; }
+        public unsafe IntPtr(void* value) { _value = (nint)value; }
+
+        public static readonly IntPtr Zero;
+
+        public static unsafe int Size => sizeof(nint);
+
+        public static IntPtr MaxValue => (IntPtr)long.MaxValue;
+        public static IntPtr MinValue => (IntPtr)long.MinValue;
+
+        public int ToInt32() => (int)_value;
+        public long ToInt64() => (long)_value;
+        public unsafe void* ToPointer() => (void*)_value;
+
+        public static explicit operator IntPtr(int value) => new IntPtr(value);
+        public static explicit operator IntPtr(long value) => new IntPtr(value);
+        public static unsafe explicit operator IntPtr(void* value) => new IntPtr(value);
+        public static explicit operator int(IntPtr value) => (int)value._value;
+        public static explicit operator long(IntPtr value) => (long)value._value;
+        public static unsafe explicit operator void*(IntPtr value) => (void*)value._value;
+
+        public static bool operator ==(IntPtr value1, IntPtr value2) => value1._value == value2._value;
+        public static bool operator !=(IntPtr value1, IntPtr value2) => value1._value != value2._value;
+
+        public static IntPtr operator +(IntPtr pointer, int offset) => new IntPtr((long)(pointer._value + offset));
+        public static IntPtr operator -(IntPtr pointer, int offset) => new IntPtr((long)(pointer._value - offset));
+        public static IntPtr Add(IntPtr pointer, int offset) => pointer + offset;
+        public static IntPtr Subtract(IntPtr pointer, int offset) => pointer - offset;
+
+        public override bool Equals(object obj) => obj is IntPtr p && p._value == _value;
+        public override int GetHashCode() => (int)_value ^ (int)((long)_value >> 32);
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.LongToString((long)_value);
     }
 
-    public unsafe struct UIntPtr
+    public readonly struct UIntPtr
     {
-        private void* _value;
+        private readonly nuint _value;
+
+        public UIntPtr(uint value) { _value = (nuint)value; }
+        public UIntPtr(ulong value) { _value = (nuint)value; }
+        public unsafe UIntPtr(void* value) { _value = (nuint)value; }
+
+        public static readonly UIntPtr Zero;
+
+        public static unsafe int Size => sizeof(nuint);
+
+        public static UIntPtr MaxValue => (UIntPtr)ulong.MaxValue;
+        public static UIntPtr MinValue => (UIntPtr)0UL;
+
+        public uint ToUInt32() => (uint)_value;
+        public ulong ToUInt64() => (ulong)_value;
+        public unsafe void* ToPointer() => (void*)_value;
+
+        public static explicit operator UIntPtr(uint value) => new UIntPtr(value);
+        public static explicit operator UIntPtr(ulong value) => new UIntPtr(value);
+        public static unsafe explicit operator UIntPtr(void* value) => new UIntPtr(value);
+        public static explicit operator uint(UIntPtr value) => (uint)value._value;
+        public static explicit operator ulong(UIntPtr value) => (ulong)value._value;
+        public static unsafe explicit operator void*(UIntPtr value) => (void*)value._value;
+
+        public static bool operator ==(UIntPtr value1, UIntPtr value2) => value1._value == value2._value;
+        public static bool operator !=(UIntPtr value1, UIntPtr value2) => value1._value != value2._value;
+
+        public static UIntPtr operator +(UIntPtr pointer, int offset) => new UIntPtr((ulong)(pointer._value + (nuint)offset));
+        public static UIntPtr operator -(UIntPtr pointer, int offset) => new UIntPtr((ulong)(pointer._value - (nuint)offset));
+        public static UIntPtr Add(UIntPtr pointer, int offset) => pointer + offset;
+        public static UIntPtr Subtract(UIntPtr pointer, int offset) => pointer - offset;
+
+        public override bool Equals(object obj) => obj is UIntPtr p && p._value == _value;
+        public override int GetHashCode() => (int)_value ^ (int)((long)_value >> 32);
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.ULongToString((ulong)_value);
     }
-    public struct Single { }
-    public struct Double { }
+
+    // Single / Double MUST carry the recursive `_value` instance field — the
+    // same BCL convention as Int32/Boolean/Char. Without it the struct is an
+    // empty (1-byte) type, so ILC mis-sizes its box: `box (double)x` allocates
+    // a box too small for the 8-byte value, and writing the value overruns it
+    // into the next heap object's header (surfaced step131 as a heap corruptor
+    // in string.Format {0:F2} → bad MT 0xFFFFFFFF00000000). The field gives the
+    // type its true 4/8-byte size so the box is correct. Bit patterns of the
+    // constants match dotnet/runtime; NaN / Infinity are IEEE-754 const-foldable.
+    public struct Single
+    {
+#pragma warning disable 169
+        private float _value;
+#pragma warning restore 169
+
+        public const float MinValue = -3.40282347E+38F;
+        public const float MaxValue = 3.40282347E+38F;
+        public const float Epsilon = 1.401298E-45F;
+        public const float PositiveInfinity = (float)1.0 / (float)0.0;
+        public const float NegativeInfinity = (float)-1.0 / (float)0.0;
+        public const float NaN = (float)0.0 / (float)0.0;
+    }
+
+    public struct Double
+    {
+        private double _value;
+
+        public const double MinValue = -1.7976931348623157E+308;
+        public const double MaxValue = 1.7976931348623157E+308;
+        public const double Epsilon = 4.9406564584124654E-324;
+        public const double PositiveInfinity = 1.0 / 0.0;
+        public const double NegativeInfinity = -1.0 / 0.0;
+        public const double NaN = 0.0 / 0.0;
+
+        // Bit-pattern classification — avoids the self-comparison idiom
+        // (d != d) that trips CS1718 at callsites.
+        public static unsafe bool IsNaN(double d)
+        {
+            ulong bits = *(ulong*)&d;
+            return (bits & 0x7FFFFFFFFFFFFFFFul) > 0x7FF0000000000000ul;
+        }
+
+        public static unsafe bool IsInfinity(double d)
+        {
+            ulong bits = *(ulong*)&d;
+            return (bits & 0x7FFFFFFFFFFFFFFFul) == 0x7FF0000000000000ul;
+        }
+
+        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.DoubleToString(_value);
+        public string ToString(string format) => SharpOS.Std.NoRuntime.NumberFormatting.DoubleToString(_value, format);
+    }
 
     public abstract class ValueType { }
     public abstract class Enum : ValueType { }
-    public struct Nullable<T> where T : struct { }
+
+    // Ported from dotnet/runtime
+    // src/libraries/System.Private.CoreLib/src/System/Nullable.cs
+    // Roslyn lowering for `T?` value-type chains (`arr?.Length ?? 0`,
+    // `int? x = ...`, `x.HasValue`) calls into specific members via
+    // `.Single(predicate)` ctor/method lookup. An empty stub here makes
+    // Roslyn crash with "Sequence contains no elements". [Serializable]
+    // in upstream dropped (no SerializableAttribute in our std). Mirrors
+    // the kernel's OS/src/Boot/MinimalRuntime.cs.
+    public struct Nullable<T> where T : struct
+    {
+        private readonly bool hasValue;
+        internal T value;
+
+        public Nullable(T value)
+        {
+            this.value = value;
+            this.hasValue = true;
+        }
+
+        public readonly bool HasValue => hasValue;
+        public readonly T Value
+        {
+            get
+            {
+                if (!hasValue) ThrowNoValue();
+                return value;
+            }
+        }
+
+        public readonly T GetValueOrDefault() => value;
+        public readonly T GetValueOrDefault(T defaultValue) => hasValue ? value : defaultValue;
+
+        public override bool Equals(object other)
+        {
+            if (!hasValue) return other == null;
+            if (other == null) return false;
+            return value.Equals(other);
+        }
+
+        public override int GetHashCode() => hasValue ? value.GetHashCode() : 0;
+
+        public override string ToString() => hasValue ? value.ToString() : "";
+
+        public static implicit operator Nullable<T>(T value) => new Nullable<T>(value);
+        public static explicit operator T(Nullable<T> value) => value.Value;
+
+        private static void ThrowNoValue()
+        {
+            throw new InvalidOperationException("Nullable object must have a value.");
+        }
+    }
 
     public abstract class Type { }
     public class RuntimeType : Type { }
@@ -222,22 +436,62 @@ namespace System
         {
             return default;
         }
+
+        // Type-identity comparison (Delegate.InternalEqualTypes / GetHashCode).
+        public static bool operator ==(EETypePtr a, EETypePtr b) => a._value == b._value;
+        public static bool operator !=(EETypePtr a, EETypePtr b) => a._value != b._value;
+        public override bool Equals(object o) => o is EETypePtr e && _value == e._value;
+        public override int GetHashCode() => unchecked((int)(nint)_value);
     }
 
+    // Base class for all arrays. Length is stored at offset 8 (after the
+    // MethodTable pointer) by RhpNewArray and read here via managed field
+    // access. Layout matches NativeAOT's convention; same pattern as String.
+    //
+    // `partial` so std/no-runtime/shared/Runtime/Array.cs can add Copy,
+    // Empty<T>() and other BCL-compat statics without editing this file.
     [StructLayout(LayoutKind.Sequential)]
-    public abstract class Array
+    public abstract partial class Array
     {
         public readonly int Length;
     }
-    public abstract class Delegate { }
-    public abstract class MulticastDelegate : Delegate { }
 
-    public struct RuntimeTypeHandle { }
-    public struct RuntimeMethodHandle { }
-    public struct RuntimeFieldHandle { }
+    // Delegate / MulticastDelegate come from std/no-runtime/shared/Runtime/
+    // (Delegate.cs / MulticastDelegate.cs / ActionFunc.cs), same files the
+    // kernel compiles — the ILC field-layout/Initialize* contract lives there.
+
+    // Each carries one pointer-sized slot so ILC's ldtoken lowering
+    // (Internal.Runtime.CompilerHelpers.LdTokenHelpers.GetRuntime*Handle,
+    // required by ILC 8+) can pointer-store the token into it. Empty
+    // structs would overflow on the store.
+    public struct RuntimeTypeHandle { internal IntPtr _value; }
+    public struct RuntimeMethodHandle { internal IntPtr _value; }
+    public struct RuntimeFieldHandle { internal IntPtr _value; }
 
     public class Attribute { }
 
+    [Flags]
+    public enum AttributeTargets
+    {
+        Assembly = 1,
+        Module = 2,
+        Class = 4,
+        Struct = 8,
+        Enum = 16,
+        Constructor = 0x20,
+        Method = 0x40,
+        Property = 128,
+        Field = 0x100,
+        Event = 512,
+        Interface = 1024,
+        Parameter = 2048,
+        Delegate = 4096,
+        ReturnValue = 8192,
+        GenericParameter = 16384,
+        All = 32767,
+    }
+
+    [AttributeUsage(AttributeTargets.Enum, Inherited = false)]
     public sealed class FlagsAttribute : Attribute
     {
         public FlagsAttribute() { }
@@ -245,16 +499,10 @@ namespace System
 
     // Required by the C# compiler for `params` parameters (e.g. the shared
     // std String.Trim(params char[]) overloads). Mirrors the kernel's.
+    [AttributeUsage(AttributeTargets.Parameter, Inherited = true)]
     public sealed class ParamArrayAttribute : Attribute
     {
         public ParamArrayAttribute() { }
-    }
-
-    public enum AttributeTargets
-    {
-        Field = 0x100,
-        Constructor = 0x20,
-        Method = 0x40,
     }
 
     public sealed class AttributeUsageAttribute : Attribute
@@ -274,11 +522,24 @@ namespace System
         public class RuntimeHelpers
         {
             public static unsafe int OffsetToStringData => sizeof(IntPtr) + sizeof(int);
+
+            // Roslyn lowers `ReadOnlySpan<T> x = [1,2,3,...]` and similar RVA
+            // literals into `ldtoken <field> + call RuntimeHelpers.CreateSpan<T>`.
+            // [Intrinsic] tells ILC to fold the pattern into a direct span over
+            // the RData blob — the body never executes. Return default to avoid
+            // pulling in any exception type for the dead path.
+            [Intrinsic]
+            public static ReadOnlySpan<T> CreateSpan<T>(RuntimeFieldHandle fldHandle)
+                => default;
         }
 
         public static class RuntimeFeature
         {
             public const string UnmanagedSignatureCallingConvention = nameof(UnmanagedSignatureCallingConvention);
+            // Tells the C# compiler the runtime supports `ref T` fields in
+            // ref structs (C#11 feature, used by Span<T>'s ByReference<T>
+            // storage). Without this const the compiler emits CS9064.
+            public const string ByRefFields = nameof(ByRefFields);
         }
     }
 }
@@ -339,7 +600,9 @@ namespace System
             public RuntimeImportAttribute(string dllName, string entryPoint) { }
         }
 
-        internal static unsafe class RuntimeImports
+        // `partial` — std/no-runtime/shared/Runtime/RuntimeImports.Delegate.cs
+        // contributes RhNewObject (backed by our GcHeap) for MulticastDelegate.
+        internal static unsafe partial class RuntimeImports
         {
             private const string RuntimeLibrary = "*";
 
@@ -360,6 +623,7 @@ namespace System.Runtime.CompilerServices
 {
     public enum MethodImplOptions
     {
+        NoInlining = 0x0008,
         AggressiveInlining = 0x0100,
         InternalCall = 0x1000,
     }
