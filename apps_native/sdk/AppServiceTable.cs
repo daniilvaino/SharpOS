@@ -33,6 +33,13 @@ namespace SharpOS.AppSdk
         public ulong RunAppAddress;
         public ulong WriteCharAddress;
         public ulong WriteBuildIdAddress;
+
+        // Kernel interface-dispatch bridge shellcode entry (raw address, not an
+        // ABI thunk). The app patches its own RhpInitialDynamicInterfaceDispatch
+        // stub with `mov rax,<this>; jmp rax` so interface dispatch resolves via
+        // the kernel's shared resolver. See InterfaceDispatchTrampoline. Filled
+        // unconditionally by the kernel; layout must match OS/.../AppServiceTable.cs.
+        public ulong InterfaceDispatchBridgeAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

@@ -34,4 +34,4 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
 
 $exe = Join-Path $outDir "$projectName.exe"
 if (-not (Test-Path -LiteralPath $exe)) { throw "PE not produced: $exe" }
-Write-Host "Built freestanding PE launcher: $exe"
+Write-Host "Built: $exe"

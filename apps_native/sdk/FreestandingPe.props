@@ -45,6 +45,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)AppStartupBlock.cs"      Link="sdk\AppStartupBlock.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppServiceTable.cs"      Link="sdk\AppServiceTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppRuntime.cs"           Link="sdk\AppRuntime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)InterfaceDispatchTrampoline.cs" Link="sdk\InterfaceDispatchTrampoline.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppHost.cs"              Link="sdk\AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StringAlgorithms.cs"     Link="sdk\StringAlgorithms.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)KeyInfo.cs"              Link="sdk\KeyInfo.cs" />

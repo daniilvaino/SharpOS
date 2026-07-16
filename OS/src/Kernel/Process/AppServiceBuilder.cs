@@ -188,6 +188,14 @@ namespace OS.Kernel.Process
             table.WriteCharAddress = tableWriteCharAddress;
             table.WriteBuildIdAddress = tableWriteBuildIdAddress;
 
+            // Hand the app the kernel's interface-dispatch bridge entry so it
+            // can trampoline its RhpInitialDynamicInterfaceDispatch into our
+            // shared (major-9-pure) resolver. Raw shellcode address, ABI-agnostic
+            // (ILC call-site ABI: rcx=this, r10=cell). Null if the bridge failed
+            // to install at boot — the app's stub then stays in its fallback body.
+            table.InterfaceDispatchBridgeAddress =
+                (ulong)OS.Kernel.Memory.InterfaceDispatchBridge.ShellcodeStart;
+
             AppServiceTable* serviceTablePointer = Pager.IsPagerRootActive()
                 ? (AppServiceTable*)serviceVirtual
                 : (AppServiceTable*)servicePhysical;

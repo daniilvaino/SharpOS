@@ -49,16 +49,140 @@ namespace System
     }
 
     public struct Void { }
-    public struct Boolean { }
-    public struct Char { }
-    public struct SByte { }
-    public struct Byte { }
-    public struct Int16 { }
-    public struct UInt16 { }
-    public struct Int32 { }
-    public struct UInt32 { }
-    public struct Int64 { }
-    public struct UInt64 { }
+
+    // Primitives carry a self-referential backing field + IEquatable<T>/
+    // IComparable<T> so `x is IEquatable<T>` (DefaultComparer<T>.Equals) and
+    // Array.Sort/List.Contains/Dictionary lookups resolve through real interface
+    // dispatch instead of falling through to Object.Equals reference-equality on
+    // boxes. Mirrors OS/src/Boot/MinimalRuntime.cs (kernel tier); the app tier
+    // was shapeless (`struct Int32 { }`) so int was NOT IEquatable<int> and every
+    // value-type comparison silently gave the wrong answer.
+    public struct Boolean : IEquatable<bool>, IComparable<bool>, IComparable
+    {
+        private bool _value;
+        public bool Equals(bool other) => _value == other;
+        public override bool Equals(object obj) => obj is bool b && _value == b;
+        public override int GetHashCode() => _value ? 1 : 0;
+        public int CompareTo(bool other) => _value == other ? 0 : (!_value ? -1 : 1);
+        public int CompareTo(object obj) => obj is bool b ? CompareTo(b) : 1;
+    }
+
+    public struct Char : IEquatable<char>, IComparable<char>, IComparable
+    {
+        public const char MaxValue = (char)0xFFFF;
+        public const char MinValue = (char)0x00;
+
+        private char _value;
+        public bool Equals(char other) => _value == other;
+        public override bool Equals(object obj) => obj is char c && _value == c;
+        public override int GetHashCode() => _value;
+        public int CompareTo(char other) => _value - other;
+        public int CompareTo(object obj) => obj is char c ? CompareTo(c) : 1;
+    }
+
+    public struct SByte : IEquatable<sbyte>, IComparable<sbyte>, IComparable
+    {
+        public const sbyte MaxValue = (sbyte)0x7F;
+        public const sbyte MinValue = unchecked((sbyte)0x80);
+
+        private sbyte _value;
+        public bool Equals(sbyte other) => _value == other;
+        public override bool Equals(object obj) => obj is sbyte v && _value == v;
+        public override int GetHashCode() => _value;
+        public int CompareTo(sbyte other) => _value - other;
+        public int CompareTo(object obj) => obj is sbyte v ? CompareTo(v) : 1;
+    }
+
+    public struct Byte : IEquatable<byte>, IComparable<byte>, IComparable
+    {
+        public const byte MaxValue = (byte)0xFF;
+        public const byte MinValue = 0;
+
+        private byte _value;
+        public bool Equals(byte other) => _value == other;
+        public override bool Equals(object obj) => obj is byte v && _value == v;
+        public override int GetHashCode() => _value;
+        public int CompareTo(byte other) => _value - other;
+        public int CompareTo(object obj) => obj is byte v ? CompareTo(v) : 1;
+    }
+
+    public struct Int16 : IEquatable<short>, IComparable<short>, IComparable
+    {
+        public const short MaxValue = (short)0x7FFF;
+        public const short MinValue = unchecked((short)0x8000);
+
+        private short _value;
+        public bool Equals(short other) => _value == other;
+        public override bool Equals(object obj) => obj is short v && _value == v;
+        public override int GetHashCode() => _value;
+        public int CompareTo(short other) => _value - other;
+        public int CompareTo(object obj) => obj is short v ? CompareTo(v) : 1;
+    }
+
+    public struct UInt16 : IEquatable<ushort>, IComparable<ushort>, IComparable
+    {
+        public const ushort MaxValue = (ushort)0xFFFF;
+        public const ushort MinValue = 0;
+
+        private ushort _value;
+        public bool Equals(ushort other) => _value == other;
+        public override bool Equals(object obj) => obj is ushort v && _value == v;
+        public override int GetHashCode() => _value;
+        public int CompareTo(ushort other) => _value - other;
+        public int CompareTo(object obj) => obj is ushort v ? CompareTo(v) : 1;
+    }
+
+    public struct Int32 : IEquatable<int>, IComparable<int>, IComparable
+    {
+        public const int MaxValue = 0x7FFFFFFF;
+        public const int MinValue = unchecked((int)0x80000000);
+
+        private int _value;
+        public bool Equals(int other) => _value == other;
+        public override bool Equals(object obj) => obj is int v && _value == v;
+        public override int GetHashCode() => _value;
+        public int CompareTo(int other) => _value < other ? -1 : (_value > other ? 1 : 0);
+        public int CompareTo(object obj) => obj is int v ? CompareTo(v) : 1;
+    }
+
+    public struct UInt32 : IEquatable<uint>, IComparable<uint>, IComparable
+    {
+        public const uint MaxValue = 0xFFFFFFFFu;
+        public const uint MinValue = 0u;
+
+        private uint _value;
+        public bool Equals(uint other) => _value == other;
+        public override bool Equals(object obj) => obj is uint v && _value == v;
+        public override int GetHashCode() => (int)_value;
+        public int CompareTo(uint other) => _value < other ? -1 : (_value > other ? 1 : 0);
+        public int CompareTo(object obj) => obj is uint v ? CompareTo(v) : 1;
+    }
+
+    public struct Int64 : IEquatable<long>, IComparable<long>, IComparable
+    {
+        public const long MaxValue = 0x7FFFFFFFFFFFFFFFL;
+        public const long MinValue = unchecked((long)0x8000000000000000L);
+
+        private long _value;
+        public bool Equals(long other) => _value == other;
+        public override bool Equals(object obj) => obj is long v && _value == v;
+        public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
+        public int CompareTo(long other) => _value < other ? -1 : (_value > other ? 1 : 0);
+        public int CompareTo(object obj) => obj is long v ? CompareTo(v) : 1;
+    }
+
+    public struct UInt64 : IEquatable<ulong>, IComparable<ulong>, IComparable
+    {
+        public const ulong MaxValue = 0xFFFFFFFFFFFFFFFFuL;
+        public const ulong MinValue = 0uL;
+
+        private ulong _value;
+        public bool Equals(ulong other) => _value == other;
+        public override bool Equals(object obj) => obj is ulong v && _value == v;
+        public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
+        public int CompareTo(ulong other) => _value < other ? -1 : (_value > other ? 1 : 0);
+        public int CompareTo(object obj) => obj is ulong v ? CompareTo(v) : 1;
+    }
     public unsafe struct IntPtr
     {
         private void* _value;

@@ -33,6 +33,14 @@ namespace OS.Kernel.Process
         public ulong RunAppAddress;
         public ulong WriteCharAddress;
         public ulong WriteBuildIdAddress;
+
+        // Raw entry of the kernel's interface-dispatch bridge shellcode
+        // (InterfaceDispatchBridge.ShellcodeStart). NOT an ABI-thunked managed
+        // function: it is the target of a `mov rax,imm64; jmp rax` the app
+        // patches into its own RhpInitialDynamicInterfaceDispatch stub, so the
+        // app shares the kernel's (pure, major-9) dispatch resolver instead of
+        // carrying its own. Filled unconditionally, independent of AbiVersion.
+        public ulong InterfaceDispatchBridgeAddress;
     }
 
     internal unsafe struct AppFileExistsRequest
