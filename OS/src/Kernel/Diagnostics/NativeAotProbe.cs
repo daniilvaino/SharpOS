@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using OS.Hal;
 
 namespace OS.Kernel.Diagnostics
@@ -105,6 +106,7 @@ namespace OS.Kernel.Diagnostics
             // over are fixed this step).
             Probe_Delegates();
             Probe_PeNet();
+            Probe_Linq();
             Probe_StringFormat();
             Probe_InterfaceCallFromSharedGeneric();
             Probe_GenericDictionary();
@@ -1498,6 +1500,63 @@ namespace OS.Kernel.Diagnostics
 
             uint sig = exType == "OOM" ? 1u : exType == "Overflow" ? 2u : caught ? 3u : 0u;
             ReportProbe("OOM/huge-alloc -> deterministic exception", caught, sig);
+        }
+
+        // mini-LINQ (System.Linq.Enumerable, step134) smoke test. Source is a
+        // List<int>{1..10} -- NOT a raw array: arrays don't implement our
+        // IEnumerable<T> (no SZArrayHelper runtime wiring), so LINQ over an
+        // int[] compiles but faults at GetEnumerator. Exercises lazy iterators
+        // (Where/Select/Take/Skip/Distinct -- generic yield), materializers
+        // (ToArray/ToList/Count), element access, aggregation, ordering, and a
+        // chained deferred pipeline.
+        private static void Probe_Linq()
+        {
+            var src = new global::System.Collections.Generic.List<int>();
+            for (int i = 1; i <= 10; i++) src.Add(i);
+
+            ReportProbe("linq Where+Count (evens)",
+                src.Where(x => x % 2 == 0).Count() == 5,
+                (uint)src.Where(x => x % 2 == 0).Count());
+
+            ReportProbe("linq Select+First (squares)",
+                src.Select(x => x * x).First() == 1,
+                (uint)src.Select(x => x * x).First());
+
+            ReportProbe("linq Where+ToArray len",
+                src.Where(x => x > 5).ToArray().Length == 5,
+                (uint)src.Where(x => x > 5).ToArray().Length);
+
+            ReportProbe("linq Sum", src.Sum() == 55, (uint)src.Sum());
+
+            ReportProbe("linq Any(>9) & All(>0)",
+                src.Any(x => x > 9) && src.All(x => x > 0), src.Any(x => x > 9) ? 1u : 0u);
+
+            ReportProbe("linq First(pred)", src.First(x => x > 3) == 4, (uint)src.First(x => x > 3));
+
+            ReportProbe("linq Contains(7)", src.Contains(7), src.Contains(7) ? 1u : 0u);
+
+            ReportProbe("linq Min/Max",
+                src.Min() == 1 && src.Max() == 10, (uint)src.Max());
+
+            ReportProbe("linq OrderByDesc+First",
+                src.OrderByDescending(x => x).First() == 10,
+                (uint)src.OrderByDescending(x => x).First());
+
+            ReportProbe("linq Take(3).Sum", src.Take(3).Sum() == 6, (uint)src.Take(3).Sum());
+
+            ReportProbe("linq Skip(8).Count", src.Skip(8).Count() == 2, (uint)src.Skip(8).Count());
+
+            ReportProbe("linq Aggregate(sum)",
+                src.Aggregate((a, b) => a + b) == 55, (uint)src.Aggregate((a, b) => a + b));
+
+            // Chained deferred pipeline: evens -> *10 -> sum = (2+4+6+8+10)*10.
+            int chained = src.Where(x => x % 2 == 0).Select(x => x * 10).Sum();
+            ReportProbe("linq chained Where.Select.Sum", chained == 300, (uint)chained);
+
+            // Distinct over duplicates {1,1,2,2,3} -> 3.
+            var dups = new global::System.Collections.Generic.List<int>();
+            dups.Add(1); dups.Add(1); dups.Add(2); dups.Add(2); dups.Add(3);
+            ReportProbe("linq Distinct count", dups.Distinct().Count() == 3, (uint)dups.Distinct().Count());
         }
 
         // Vendored PeNet (native-PE parser) smoke test. Builds a structurally-

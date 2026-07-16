@@ -403,6 +403,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Bcl\ReadOnlyDictionary.cs" Link="src\Std\Bcl\ReadOnlyDictionary.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\ArraySegment.cs" Link="src\Std\Bcl\ArraySegment.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\SortedList.cs" Link="src\Std\Bcl\SortedList.cs" />
+    <Compile Include="..\std\no-runtime\shared\Linq\Enumerable.cs" Link="src\Std\Linq\Enumerable.cs" />
     <Compile Include="..\std\no-runtime\shared\StringRuntime.KernelHeap.cs" Link="src\Std\StringRuntime.cs" />
   </ItemGroup>
 

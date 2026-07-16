@@ -202,6 +202,31 @@ foreach ($p in $penetProbes) {
         -Detect 'nativeaot probe begin' -Status $p.Re -ExpectRe '^ok$'
 }
 
+# mini-LINQ (System.Linq.Enumerable, step134) -- yield-based lazy operators +
+# materializers over a List<int> source (see NativeAotProbe.Probe_Linq). Proves
+# generic iterator methods (Where/Select/Take/Skip/Distinct) and the
+# delegate-backed Func<> predicates/selectors work end to end on our std.
+$linqProbes = @(
+    @{ N='LinqWhereCount';     Re='linq Where\+Count \(evens\): (ok|FAIL)' },
+    @{ N='LinqSelectFirst';    Re='linq Select\+First \(squares\): (ok|FAIL)' },
+    @{ N='LinqWhereToArray';   Re='linq Where\+ToArray len: (ok|FAIL)' },
+    @{ N='LinqSum';            Re='linq Sum: (ok|FAIL)' },
+    @{ N='LinqAnyAll';         Re='linq Any\(>9\) & All\(>0\): (ok|FAIL)' },
+    @{ N='LinqFirstPred';      Re='linq First\(pred\): (ok|FAIL)' },
+    @{ N='LinqContains';       Re='linq Contains\(7\): (ok|FAIL)' },
+    @{ N='LinqMinMax';         Re='linq Min/Max: (ok|FAIL)' },
+    @{ N='LinqOrderByDesc';    Re='linq OrderByDesc\+First: (ok|FAIL)' },
+    @{ N='LinqTakeSum';        Re='linq Take\(3\)\.Sum: (ok|FAIL)' },
+    @{ N='LinqSkipCount';      Re='linq Skip\(8\)\.Count: (ok|FAIL)' },
+    @{ N='LinqAggregate';      Re='linq Aggregate\(sum\): (ok|FAIL)' },
+    @{ N='LinqChained';        Re='linq chained Where\.Select\.Sum: (ok|FAIL)' },
+    @{ N='LinqDistinct';       Re='linq Distinct count: (ok|FAIL)' }
+)
+foreach ($p in $linqProbes) {
+    $results += Get-ProbeStatus -Cat 'Linq' -Name $p.N `
+        -Detect 'nativeaot probe begin' -Status $p.Re -ExpectRe '^ok$'
+}
+
 # Explicit-cctor (int static with initializer) — the simplest lazy-cctor
 # surface (см. NativeAotProbe.Probe_ExplicitCctor). ReportProbe prints
 # "explicit cctor (int): ok val=77". Prior detect ('cctor implicit-int-
@@ -501,7 +526,7 @@ $colors = @{
     VALUE   = 'Cyan'
 }
 
-$catsOrder = @('Boot','Phase1','Phase2','Phase3','Phase4','PeNet','EH','PhaseE','Drivers','CoreCLR','EBS','Launcher','Faults')
+$catsOrder = @('Boot','Phase1','Phase2','Phase3','Phase4','Linq','PeNet','EH','PhaseE','Drivers','CoreCLR','EBS','Launcher','Faults')
 
 Write-Host ""
 Write-Host "=== SharpOS probe report -- $Log ===" -ForegroundColor White
