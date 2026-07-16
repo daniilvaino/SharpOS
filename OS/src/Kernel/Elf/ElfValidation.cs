@@ -42,45 +42,24 @@ namespace OS.Kernel.Elf
             DebugLog.Write(LogLevel.Info, "fs init ok");
             FileDiagnostics.DumpDirectory(BootDirectoryPath);
 
-            ExternalElfApp hello = default;
-            hello.Name = ElfAppContract.HelloAppName;
-            hello.Path = ElfAppContract.HelloAppPath;
-            hello.AppAbiVersion = ProcessStartupBlock.AbiVersionV1;
-            hello.ExpectedExitCode = ElfAppContract.HelloExitCodeExpected;
-            hello.ValidateMarker = false;
-            hello.ServiceAbi = AppServiceAbi.WindowsX64;
-
-            ExternalElfApp abiInfo = default;
-            abiInfo.Name = ElfAppContract.AbiInfoAppName;
-            abiInfo.Path = ElfAppContract.AbiInfoAppPath;
-            abiInfo.AppAbiVersion = ProcessStartupBlock.AbiVersionV1;
-            abiInfo.ExpectedExitCode = ElfAppContract.AbiInfoExitCodeExpected;
-            abiInfo.ValidateMarker = false;
-            abiInfo.ServiceAbi = AppServiceAbi.WindowsX64;
-
-            ExternalElfApp helloCs = default;
-            helloCs.Name = ElfAppContract.HelloCsAppName;
-            helloCs.Path = ElfAppContract.HelloCsAppPath;
-            helloCs.AppAbiVersion = ProcessStartupBlock.AbiVersionV2;
-            helloCs.ExpectedExitCode = ElfAppContract.HelloCsExitCodeExpected;
-            helloCs.ValidateMarker = false;
-            helloCs.OptionalIfMissing = true;
-            helloCs.ServiceAbi = AppServiceAbi.SystemV;
-
-            ExternalElfApp marker = default;
-            marker.Name = ElfAppContract.MarkerAppName;
-            marker.Path = ElfAppContract.MarkerAppPath;
-            marker.AppAbiVersion = ProcessStartupBlock.AbiVersionV1;
-            marker.ExpectedExitCode = ElfAppContract.MarkerExitCodeExpected;
-            marker.ValidateMarker = true;
-            marker.ServiceAbi = AppServiceAbi.WindowsX64;
+            // step137: the app batch is PE-only now. ELF support is gone; the
+            // only app is HelloSharpFs built as a freestanding win-x64 PE
+            // (HELLO.EXE, build_launcher_win.ps1). PeLoader flattens/maps/jumps
+            // it. Same code as the old HELLOCS ELF -> same expected exit code;
+            // WindowsX64 service ABI (win-x64 calling convention). (Fetch is
+            // dormant until migrated to PE.)
+            ExternalElfApp peHello = default;
+            peHello.Name = ElfAppContract.PeHelloAppName;
+            peHello.Path = ElfAppContract.PeHelloAppPath;
+            peHello.AppAbiVersion = ProcessStartupBlock.AbiVersionV2;
+            peHello.ExpectedExitCode = ElfAppContract.HelloCsExitCodeExpected;
+            peHello.ValidateMarker = false;
+            peHello.OptionalIfMissing = true;
+            peHello.ServiceAbi = AppServiceAbi.WindowsX64;
 
             uint passed = 0;
             uint failed = 0;
-            RunAppAndAccumulate(ref hello, ref passed, ref failed);
-            RunAppAndAccumulate(ref abiInfo, ref passed, ref failed);
-            RunAppAndAccumulate(ref helloCs, ref passed, ref failed);
-            RunAppAndAccumulate(ref marker, ref passed, ref failed);
+            RunAppAndAccumulate(ref peHello, ref passed, ref failed);
 
             DebugLog.Write(LogLevel.Info, "app batch summary");
             DebugLog.Begin(LogLevel.Info);
@@ -139,31 +118,24 @@ namespace OS.Kernel.Elf
                 return AppRunResult.ReadFailed;
 
             MemoryBlock image = fileBuffer.AsMemoryBlock();
-            DebugLog.Write(LogLevel.Info, "open elf file ok");
+            DebugLog.Write(LogLevel.Info, "open app file ok");
             DebugLog.Begin(LogLevel.Info);
-            UiText.Write("read elf bytes = ");
+            UiText.Write("read app bytes = ");
             UiText.WriteUInt(fileBuffer.Length);
             DebugLog.EndLine();
 
-            if (!ElfParser.TryParse(image, out ElfParseResult parseResult, out ElfParseError parseError))
+            // PE-only loader (step137). ELF support is removed; apps are
+            // freestanding win-x64 PEs (see build_launcher_win.ps1). PeLoader
+            // flattens + maps the image at its ImageBase and yields the same
+            // ElfLoadedImage the ProcessImageBuilder pipeline below consumes.
+            if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out ElfLoadedImage loadedImage, out int peStage))
             {
-                ElfDiagnostics.WriteParseError(parseError);
-                return AppRunResult.ElfParseFailed;
-            }
-
-            if (!TryValidateSegments(ref parseResult))
-                return AppRunResult.ElfParseFailed;
-
-            ElfDiagnostics.DumpSummary(ref parseResult);
-
-            if (!ElfLoader.TryLoad(ref parseResult, out ElfLoadedImage loadedImage, out ElfLoadError loadError))
-            {
-                ElfDiagnostics.WriteLoadError(loadError);
+                DebugLog.Begin(LogLevel.Warn);
+                UiText.Write("pe load failed at stage = ");
+                UiText.WriteInt(peStage);
+                DebugLog.EndLine();
                 return AppRunResult.ElfLoadFailed;
             }
-
-            ElfLoadValidation.Run(ref parseResult, ref loadedImage);
-            ElfDiagnostics.DumpLoadedImage(loadedImage);
 
             DebugLog.Write(LogLevel.Info, "process build start");
             ulong markerVirtualAddress = app.ValidateMarker ? ElfAppContract.MarkerVirtualAddress : 0;

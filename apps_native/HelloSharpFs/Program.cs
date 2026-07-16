@@ -198,7 +198,7 @@ namespace HelloSharpFs
 
             if (visibleCount == 0)
             {
-                AppHost.WriteString("(no .ELF files)\n");
+                AppHost.WriteString("(no .EXE files)\n");
             }
 
             AppHost.WriteString(NewLine);
@@ -274,8 +274,8 @@ namespace HelloSharpFs
                 return false;
 
             return IsAsciiLetter(c1, (byte)'E') &&
-                   IsAsciiLetter(c2, (byte)'L') &&
-                   IsAsciiLetter(c3, (byte)'F');
+                   IsAsciiLetter(c2, (byte)'X') &&
+                   IsAsciiLetter(c3, (byte)'E');
         }
 
         private static bool IsAsciiLetter(byte value, byte upper)

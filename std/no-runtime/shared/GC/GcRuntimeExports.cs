@@ -20,7 +20,7 @@ using System.Runtime.CompilerServices;
 
 namespace SharpOS.Std.NoRuntime
 {
-    internal static unsafe class GcRuntimeExports
+    internal static unsafe partial class GcRuntimeExports
     {
         [RuntimeExport("RhpNewFast")]
         private static void* RhpNewFast(GcMethodTable* mt)
@@ -286,52 +286,11 @@ namespace SharpOS.Std.NoRuntime
             return null;
         }
 
-        // checkcast(any): like IsInstanceOfAny but throws on failure. null casts
-        // to anything.
-        [RuntimeExport("RhTypeCast_CheckCastAny")]
-        public static unsafe object RhTypeCast_CheckCastAny(GcMethodTable* pTargetType, object obj)
-        {
-            if (obj == null) return null;
-            if (RhTypeCast_IsInstanceOfAny(pTargetType, obj) == null)
-                throw new InvalidCastException();
-            return obj;
-        }
-
-        // checkcast to a class (non-interface, non-array target). JIT inlines the
-        // trivial obj==null / mt==target cases; this slow path walks the base
-        // chain and throws on miss.
-        [RuntimeExport("RhTypeCast_CheckCastClassSpecial")]
-        public static unsafe object RhTypeCast_CheckCastClassSpecial(GcMethodTable* pTargetType, object obj)
-        {
-            if (obj == null) return null;
-
-            nint objAddr = *(nint*)&obj;
-            GcMethodTable* mt = *(GcMethodTable**)objAddr;
-
-            const int MaxDepth = 64;
-            GcMethodTable* cur = mt;
-            for (int i = 0; i < MaxDepth; i++)
-            {
-                cur = cur->GetBaseType();
-                if (cur == pTargetType) return obj;
-                if (cur == null) break;
-            }
-            throw new InvalidCastException();
-        }
-
-        // ref array[index] for reference-element arrays. ILC emits this for
-        // `ref a[i]` (e.g. Interlocked.CompareExchange(ref list[i], ...) in
-        // MulticastDelegate.TrySetSlot). Trusted: skip null/bounds/covariance
-        // checks (same policy as RhpStelemRef). Array layout: MT@0, Length@8,
-        // element[0]@16, 8 bytes each.
-        [RuntimeExport("RhpLdelemaRef")]
-        public static unsafe ref object RhpLdelemaRef(System.Array array, nint index, IntPtr elementType)
-        {
-            nint arrayAddr = *(nint*)&array;
-            byte* slot = (byte*)arrayAddr + 16 + index * 8;
-            // Same pattern Buffer.cs uses (proven to compile in this project):
-            // reinterpret the element slot as `ref object`.
-            return ref System.Runtime.CompilerServices.Unsafe.As<byte, object>(ref *slot);
-        }
+        // RhTypeCast_CheckCastAny / CheckCastClassSpecial / RhpLdelemaRef moved
+        // to the kernel-only partial (OS/src/Kernel/Memory/GcRuntimeExports.
+        // KernelCast.cs): they need System.Exception / InvalidCastException /
+        // Unsafe, which the app tier (Tier-B, halt-on-throw, no Unsafe) doesn't
+        // ship. Apps don't reference them (no delegates/casts), so keeping them
+        // out of the shared file keeps the app build compiling.
     }
 }

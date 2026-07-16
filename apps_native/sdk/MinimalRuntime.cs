@@ -119,6 +119,13 @@ namespace System
         public FlagsAttribute() { }
     }
 
+    // Required by the C# compiler for `params` parameters (e.g. the shared
+    // std String.Trim(params char[]) overloads). Mirrors the kernel's.
+    public sealed class ParamArrayAttribute : Attribute
+    {
+        public ParamArrayAttribute() { }
+    }
+
     public enum AttributeTargets
     {
         Field = 0x100,

@@ -145,232 +145,6 @@ function Write-Bytes {
     }
 }
 
-function New-DefaultDataSegment {
-    [byte[]]$data = New-Object byte[] 0x40
-    for ($i = 0; $i -lt 0x40; $i++) {
-        $data[$i] = [byte](0x22 + ($i -band 0x0F))
-    }
-    $data[0x20] = 0
-    $data[0x21] = 0
-    $data[0x22] = 0
-    $data[0x23] = 0
-    return $data
-}
-
-function New-BaseElfImage {
-    param([byte[]]$TextSegment, [byte[]]$DataSegment)
-
-    $imageSize = 4096
-    $textOffset = 0x100
-    $dataOffset = 0x200
-    $textVaddr = [uint64]0x0000000000400000
-    $dataVaddr = [uint64]0x0000000000401000
-    $entry = [uint64]0x0000000000400010
-
-    [byte[]]$bytes = New-Object byte[] $imageSize
-
-    $bytes[0] = 0x7F
-    $bytes[1] = [byte][char]'E'
-    $bytes[2] = [byte][char]'L'
-    $bytes[3] = [byte][char]'F'
-    $bytes[4] = 2
-    $bytes[5] = 1
-    $bytes[6] = 1
-    Write-U16 -Buffer $bytes -Offset 16 -Value 2
-    Write-U16 -Buffer $bytes -Offset 18 -Value 0x3E
-    Write-U32 -Buffer $bytes -Offset 20 -Value 1
-    Write-U64 -Buffer $bytes -Offset 24 -Value $entry
-    Write-U64 -Buffer $bytes -Offset 32 -Value 64
-    Write-U16 -Buffer $bytes -Offset 52 -Value 64
-    Write-U16 -Buffer $bytes -Offset 54 -Value 56
-    Write-U16 -Buffer $bytes -Offset 56 -Value 3
-
-    # PHDR 0: PT_LOAD RX
-    $ph0 = 64
-    Write-U32 -Buffer $bytes -Offset ($ph0 + 0) -Value 1
-    Write-U32 -Buffer $bytes -Offset ($ph0 + 4) -Value 5
-    Write-U64 -Buffer $bytes -Offset ($ph0 + 8) -Value $textOffset
-    Write-U64 -Buffer $bytes -Offset ($ph0 + 16) -Value $textVaddr
-    Write-U64 -Buffer $bytes -Offset ($ph0 + 32) -Value $TextSegment.Length
-    Write-U64 -Buffer $bytes -Offset ($ph0 + 40) -Value $TextSegment.Length
-    Write-U64 -Buffer $bytes -Offset ($ph0 + 48) -Value 0x1000
-
-    # PHDR 1: PT_LOAD RW
-    $ph1 = $ph0 + 56
-    Write-U32 -Buffer $bytes -Offset ($ph1 + 0) -Value 1
-    Write-U32 -Buffer $bytes -Offset ($ph1 + 4) -Value 6
-    Write-U64 -Buffer $bytes -Offset ($ph1 + 8) -Value $dataOffset
-    Write-U64 -Buffer $bytes -Offset ($ph1 + 16) -Value $dataVaddr
-    Write-U64 -Buffer $bytes -Offset ($ph1 + 32) -Value $DataSegment.Length
-    Write-U64 -Buffer $bytes -Offset ($ph1 + 40) -Value 0x100
-    Write-U64 -Buffer $bytes -Offset ($ph1 + 48) -Value 0x1000
-
-    # PHDR 2: PT_NOTE
-    $ph2 = $ph1 + 56
-    Write-U32 -Buffer $bytes -Offset ($ph2 + 0) -Value 4
-    Write-U32 -Buffer $bytes -Offset ($ph2 + 4) -Value 4
-    Write-U64 -Buffer $bytes -Offset ($ph2 + 8) -Value 0x300
-    Write-U64 -Buffer $bytes -Offset ($ph2 + 32) -Value 0x20
-    Write-U64 -Buffer $bytes -Offset ($ph2 + 40) -Value 0x20
-    Write-U64 -Buffer $bytes -Offset ($ph2 + 48) -Value 8
-
-    for ($i = 0; $i -lt $TextSegment.Length; $i++) {
-        $bytes[$textOffset + $i] = $TextSegment[$i]
-    }
-
-    for ($i = 0; $i -lt $DataSegment.Length; $i++) {
-        $bytes[$dataOffset + $i] = $DataSegment[$i]
-    }
-
-    return $bytes
-}
-
-function New-HelloElfImage {
-    [byte[]]$text = New-Object byte[] 0x100
-    for ($i = 0; $i -lt $text.Length; $i++) {
-        $text[$i] = 0x90
-    }
-
-    Write-Bytes -Buffer $text -Offset 0x10 -Values @(
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x08,
-        0x48,0x8D,0x0D,0x61,0x00,0x00,0x00,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x28,
-        0xB9,0x0A,0x00,0x00,0x00,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0xB8,0x0A,0x00,0x00,0x00,
-        0xC3
-    )
-
-    Write-Bytes -Buffer $text -Offset 0x80 -Values @(
-        0x68,0x65,0x6C,0x6C,0x6F,0x20,0x66,0x72,0x6F,0x6D,0x20,0x68,0x65,0x6C,0x6C,0x6F,0x20,0x61,0x70,0x70,0x0A,0x00
-    )
-
-    return (New-BaseElfImage -TextSegment $text -DataSegment (New-DefaultDataSegment))
-}
-
-function New-AbiInfoElfImage {
-    [byte[]]$text = New-Object byte[] 0x100
-    for ($i = 0; $i -lt $text.Length; $i++) {
-        $text[$i] = 0x90
-    }
-
-    Write-Bytes -Buffer $text -Offset 0x10 -Values @(
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x08,
-        0x48,0x8D,0x0D,0x81,0x00,0x00,0x00,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x08,
-        0x48,0x8D,0x0D,0x80,0x00,0x00,0x00,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x20,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0x89,0xC1,
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x10,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x08,
-        0x48,0x8D,0x0D,0x49,0x00,0x00,0x00,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x28,
-        0xB9,0x0B,0x00,0x00,0x00,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0xB8,0x0B,0x00,0x00,0x00,
-        0xC3
-    )
-
-    Write-Bytes -Buffer $text -Offset 0xA0 -Values @(
-        0x61,0x62,0x69,0x20,0x69,0x6E,0x66,0x6F,0x20,0x61,0x70,0x70,0x0A,0x00
-    )
-    Write-Bytes -Buffer $text -Offset 0xB8 -Values @(
-        0x61,0x62,0x69,0x3D,0x00
-    )
-    Write-Bytes -Buffer $text -Offset 0xC0 -Values @(
-        0x0A,0x00
-    )
-
-    return (New-BaseElfImage -TextSegment $text -DataSegment (New-DefaultDataSegment))
-}
-
-function New-MarkerElfImage {
-    [byte[]]$text = New-Object byte[] 0x100
-    for ($i = 0; $i -lt $text.Length; $i++) {
-        $text[$i] = 0x90
-    }
-
-    Write-Bytes -Buffer $text -Offset 0x10 -Values @(
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x08,
-        0x48,0x8D,0x0D,0x81,0x00,0x00,0x00,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0x48,0x8B,0x57,0x30,
-        0xB8,0x78,0x56,0x34,0x12,
-        0x89,0x02,
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x08,
-        0x48,0x8D,0x0D,0x6D,0x00,0x00,0x00,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x18,
-        0x48,0x8B,0x4F,0x30,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x08,
-        0x48,0x8D,0x0D,0x46,0x00,0x00,0x00,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0x4C,0x8B,0x5F,0x38,
-        0x49,0x8B,0x43,0x28,
-        0xB9,0x0C,0x00,0x00,0x00,
-        0x48,0x83,0xEC,0x28,
-        0xFF,0xD0,
-        0x48,0x83,0xC4,0x28,
-        0xB8,0x0C,0x00,0x00,0x00,
-        0xC3
-    )
-
-    Write-Bytes -Buffer $text -Offset 0xA0 -Values @(
-        0x6D,0x61,0x72,0x6B,0x65,0x72,0x20,0x61,0x70,0x70,0x0A,0x00
-    )
-    Write-Bytes -Buffer $text -Offset 0xB0 -Values @(
-        0x6D,0x61,0x72,0x6B,0x65,0x72,0x3D,0x00
-    )
-    Write-Bytes -Buffer $text -Offset 0xB8 -Values @(
-        0x0A,0x00
-    )
-
-    return (New-BaseElfImage -TextSegment $text -DataSegment (New-DefaultDataSegment))
-}
-
 function New-AppAbiManifest {
     param(
         [uint16]$AppAbiVersion,
@@ -673,47 +447,31 @@ if (Test-Path -LiteralPath $forkFxNames) {
 else {
     Write-Warning "fork fx not found at $forkFx - Stage A normal hosting unavailable"
 }
-$helloElf = Join-Path $espBootDir "HELLO.ELF"
-$abiInfoElf = Join-Path $espBootDir "ABIINFO.ELF"
-$markerElf = Join-Path $espBootDir "MARKER.ELF"
-[string]$helloCsElf = Join-Path $espBootDir "HELLOCS.ELF"
-[string]$fetchElf = Join-Path $espBootDir "FETCH.ELF"
-[string]$legacyAppElf = Join-Path $espBootDir "APP.ELF"
-[System.IO.File]::WriteAllBytes($helloElf, (New-HelloElfImage))
-[System.IO.File]::WriteAllBytes($abiInfoElf, (New-AbiInfoElfImage))
-[System.IO.File]::WriteAllBytes($markerElf, (New-MarkerElfImage))
-[System.IO.File]::WriteAllBytes("$helloElf.abi", (New-AppAbiManifest -AppAbiVersion 1 -ServiceAbi 0))
-[System.IO.File]::WriteAllBytes("$abiInfoElf.abi", (New-AppAbiManifest -AppAbiVersion 1 -ServiceAbi 0))
-[System.IO.File]::WriteAllBytes("$markerElf.abi", (New-AppAbiManifest -AppAbiVersion 1 -ServiceAbi 0))
-
-if (Test-Path -LiteralPath $helloCsElf) {
-    [System.IO.File]::WriteAllBytes("$helloCsElf.abi", (New-AppAbiManifest -AppAbiVersion 2 -ServiceAbi 1))
-}
-elseif (Test-Path -LiteralPath "$helloCsElf.abi") {
-    Remove-Item -LiteralPath "$helloCsElf.abi" -Force
+# step137: ELF apps removed. No ELF images are generated or staged anymore;
+# actively delete any stale ELF images + .abi sidecars from a prior ESP so the
+# launcher only ever sees PE apps. (Fetch is dormant until its PE migration.)
+foreach ($staleElf in @("HELLO.ELF", "ABIINFO.ELF", "MARKER.ELF", "HELLOCS.ELF", "FETCH.ELF", "APP.ELF")) {
+    $stalePath = Join-Path $espBootDir $staleElf
+    if (Test-Path -LiteralPath $stalePath) { Remove-Item -LiteralPath $stalePath -Force }
+    if (Test-Path -LiteralPath "$stalePath.abi") { Remove-Item -LiteralPath "$stalePath.abi" -Force }
 }
 
-if (Test-Path -LiteralPath $fetchElf) {
-    [System.IO.File]::WriteAllBytes("$fetchElf.abi", (New-AppAbiManifest -AppAbiVersion 2 -ServiceAbi 1))
+# step137: freestanding win-x64 PE launcher (HelloSharpFs.exe, built by
+# build_launcher_win.ps1). Stage to ESP as HELLO.EXE + .abi (AbiV2, ServiceAbi
+# 0 = WindowsX64). The kernel dispatches on the MZ magic to PeLoader. Optional:
+# absent PE just skips (ELF-only ESP still boots).
+$peHelloExe = Join-Path $espBootDir "HELLO.EXE"
+$peHelloSrc = "C:\work\OS\apps_native\HelloSharpFs\bin\Release\out-win-x64\HelloSharpFs.exe"
+if (Test-Path -LiteralPath $peHelloSrc) {
+    Copy-Item -LiteralPath $peHelloSrc -Destination $peHelloExe -Force
+    [System.IO.File]::WriteAllBytes("$peHelloExe.abi", (New-AppAbiManifest -AppAbiVersion 2 -ServiceAbi 0))
+    Write-Host "Prepared app PE: $peHelloExe"
 }
-elseif (Test-Path -LiteralPath "$fetchElf.abi") {
-    Remove-Item -LiteralPath "$fetchElf.abi" -Force
-}
-
-if (Test-Path -LiteralPath $legacyAppElf) {
-    Remove-Item -LiteralPath $legacyAppElf -Force
+elseif (Test-Path -LiteralPath "$peHelloExe.abi") {
+    Remove-Item -LiteralPath "$peHelloExe.abi" -Force
 }
 
 Write-Host "Prepared EFI image: $bootx64"
-Write-Host "Prepared app ELF: $helloElf"
-Write-Host "Prepared app ELF: $abiInfoElf"
-Write-Host "Prepared app ELF: $markerElf"
-if (Test-Path -LiteralPath $helloCsElf) {
-    Write-Host "Prepared app ELF: $helloCsElf"
-}
-if (Test-Path -LiteralPath $fetchElf) {
-    Write-Host "Prepared app ELF: $fetchElf"
-}
 if ($NoRun) {
     Write-Host "NoRun set: build finished, QEMU launch skipped."
     exit 0

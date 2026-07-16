@@ -14,6 +14,12 @@ namespace OS.Kernel.Elf
         public const string MarkerAppName = "MARKER.ELF";
         public const string MarkerAppPath = "\\EFI\\BOOT\\MARKER.ELF";
 
+        // PE launcher (step137): HelloSharpFs built as a freestanding win-x64 PE
+        // (build_launcher_win.ps1) instead of ELF. Same app code as HELLOCS, so
+        // the same expected exit code; dispatched to PeLoader by the MZ magic.
+        public const string PeHelloAppName = "HELLO.EXE";
+        public const string PeHelloAppPath = "\\EFI\\BOOT\\HELLO.EXE";
+
         public const int HelloExitCodeExpected = 10;
         public const int HelloCsExitCodeExpected = 21;
         public const int AbiInfoExitCodeExpected = 11;

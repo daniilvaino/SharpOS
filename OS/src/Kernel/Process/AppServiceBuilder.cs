@@ -1070,22 +1070,37 @@ namespace OS.Kernel.Process
                         break;
                     }
 
-                    if (!ElfParser.TryParse(image, out ElfParseResult parseResult, out _))
+                    // Dispatch by image magic: "MZ" -> PE loader (step137),
+                    // otherwise the ELF path. Lets PE and ELF apps coexist
+                    // during the ELF->PE bring-up.
+                    image.TryReadUInt16(0, out ushort imageMagic);
+                    if (imageMagic == global::OS.Kernel.Pe.PeLoader.DosMagicMZ)
                     {
-                        result = AppServiceStatus.Unsupported;
-                        break;
+                        if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out loadedImage, out _))
+                        {
+                            result = AppServiceStatus.DeviceError;
+                            break;
+                        }
                     }
-
-                    if (!TryValidateSegments(ref parseResult))
+                    else
                     {
-                        result = AppServiceStatus.Unsupported;
-                        break;
-                    }
+                        if (!ElfParser.TryParse(image, out ElfParseResult parseResult, out _))
+                        {
+                            result = AppServiceStatus.Unsupported;
+                            break;
+                        }
 
-                    if (!ElfLoader.TryLoad(ref parseResult, out loadedImage, out _))
-                    {
-                        result = AppServiceStatus.DeviceError;
-                        break;
+                        if (!TryValidateSegments(ref parseResult))
+                        {
+                            result = AppServiceStatus.Unsupported;
+                            break;
+                        }
+
+                        if (!ElfLoader.TryLoad(ref parseResult, out loadedImage, out _))
+                        {
+                            result = AppServiceStatus.DeviceError;
+                            break;
+                        }
                     }
 
                     imageLoaded = true;

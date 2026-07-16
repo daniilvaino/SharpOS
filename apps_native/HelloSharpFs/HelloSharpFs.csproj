@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net7.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
     <NoStdLib>true</NoStdLib>
@@ -14,6 +14,16 @@
     <PublishAot>true</PublishAot>
     <IlcSystemModule>HelloSharpFs</IlcSystemModule>
     <EntryPointSymbol>SharpAppEntry</EntryPointSymbol>
+
+    <!-- net8/ILC8: DebuggerSupport (default on) adds an export of
+         DotNetRuntimeDebugHeader (unresolved here / LNK1294 under some
+         subsystems); no debugger attaches to a freestanding app, so off.
+         IlcDehydrate (default on) compresses data sections and relies on the
+         stock bootstrapper to rehydrate at startup (we removed that
+         bootstrapper), so bake the data in directly, else string literals read
+         back as zeros. Both apply to the net8 build (kernel does the same). -->
+    <DebuggerSupport>false</DebuggerSupport>
+    <IlcDehydrate>false</IlcDehydrate>
   </PropertyGroup>
 
   <ItemGroup>
@@ -65,6 +75,47 @@
   <Target Name="RemoveHostConfigurationOptions" BeforeTargets="WriteIlcRspFileForCompilation" DependsOnTargets="PrepareForILLink">
     <ItemGroup>
       <RuntimeHostConfigurationOption Remove="@(RuntimeHostConfigurationOption)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Freestanding win-x64 PE build: __security_cookie via CoffStub.Generator
+       (like the kernel), not a hand-linked cl.exe stub. Gated on the RID so the
+       ELF (linux-x64) build via WSL is untouched (no CoffDataSymbol attribute,
+       no WinCrtStubs). `dotnet publish -r win-x64` then emits the freestanding
+       PE directly (no manual link.exe) with these LinkerArgs, and the CoffStub
+       __security_cookie .obj auto-links via @(NativeLibrary). -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <Compile Include="WinCrtStubs.cs" />
+    <LinkerArg Include="/ENTRY:SharpAppBootstrap" />
+    <LinkerArg Include="/SUBSYSTEM:NATIVE" />
+    <LinkerArg Include="/BASE:0x400000" />
+    <LinkerArg Include="/FIXED" />
+    <LinkerArg Include="/DYNAMICBASE:NO" />
+    <LinkerArg Include="/NODEFAULTLIB" />
+  </ItemGroup>
+  <Import Project="..\..\bootasm\CoffStub.Generator\CoffStub.Generator.targets"
+          Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('..\..\bootasm\CoffStub.Generator\CoffStub.Generator.targets')" />
+
+  <!-- net8/ILC8 links the SDK's NativeAOT runtime (Runtime.WorkstationGC.lib +
+       Runtime.VxsortEnabled.lib) and the wmain bootstrapper (bootstrapper.obj)
+       by default. The app supplies its OWN freestanding runtime (the std GC +
+       [RuntimeExport] helpers) and enters via SharpAppBootstrap, so linking the
+       SDK's runtime double-defines RhpAssignRef/RhpReversePInvoke/... and drags
+       in a CRT cascade (_tls_index, operator new/delete, __GSHandlerCheck,
+       strlen, RhThrowEx, ...). Mirror the kernel's ExcludeNativeAotRuntime
+       (OS.csproj): drop them from BOTH NativeLibrary and LinkerArg (Windows.
+       targets snapshots NativeLibrary into LinkerArg in SetupOSSpecificProps
+       before this Target runs). win-x64 only. -->
+  <Target Name="ExcludeNativeAotRuntime"
+          AfterTargets="SetupOSSpecificProps" BeforeTargets="LinkNative"
+          Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <ItemGroup>
+      <NativeLibrary Remove="$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)" />
+      <LinkerArg Remove="&quot;$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)&quot;" />
+      <NativeLibrary Remove="$(IlcSdkPath)Runtime.VxsortEnabled$(LibrarySuffix)" />
+      <LinkerArg Remove="&quot;$(IlcSdkPath)Runtime.VxsortEnabled$(LibrarySuffix)&quot;" />
+      <NativeLibrary Remove="$(IlcSdkPath)bootstrapper$(ObjectSuffix)" />
+      <LinkerArg Remove="&quot;$(IlcSdkPath)bootstrapper$(ObjectSuffix)&quot;" />
     </ItemGroup>
   </Target>
 </Project>

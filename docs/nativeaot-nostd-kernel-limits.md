@@ -404,7 +404,13 @@ Milestone-1 срез [PeNet](https://github.com/secana/PeNet) (Apache-2.0, `vend
 - **`PeRelocations.TryApply`** — base relocations по `.reloc` (DIR64/HIGHLOW, `delta = actualBase - preferredBase`); no-move → no-op, moved-без-reloc → fail.
 - **`PeImports.TryResolve`** — парсит импорты по **файлу** (RvaToOffset→file-offset), биндит IAT-слоты **flattened-образа** через `resolver(ImportFunction)→addr`. PE32 (32-битные слоты) пока не поддержан.
 
-16/16 probe (`Probe_PeLoad`/`PeReloc`/`PeImports`, категория `[PeLoad]`). Осталось: per-section page-протекция (NX/RO), .pdata/EH-регистрация per-image, execute; build-side эмиссия PE-апп (ILC win-x64 вместо ELF).
+16/16 probe (`Probe_PeLoad`/`PeReloc`/`PeImports`, категория `[PeLoad]`).
+
+### ✅ PE-loader execute + freestanding PE build (step137) — лаунчер РАБОТАЕТ
+
+**Kernel execute-side:** `PeLoader.TryLoad(MemoryBlock)` — flatten → map contiguous phys→VA@ImageBase (RWX) → blit → `ElfLoadedImage` → тот же `ProcessImageBuilder`+`JumpStub`. Magic-dispatch (`MZ`→PeLoader) в `ElfValidation.RunApp` (boot-batch, теперь PE-only) + `AppServiceBuilder`. **JumpStub entry-ABI**: startup block кладётся в **RCX** (Win64 arg0), не RDI (SysV-legacy от ELF) — иначе win64 PE-апп читает адрес entry как startup → #GP.
+
+**Build-side (без WSL):** freestanding win-x64 PE через `dotnet publish -r win-x64` (рецепт в app-csproj, gated win-x64): `/ENTRY:SharpAppBootstrap /SUBSYSTEM:NATIVE /BASE:0x400000 /FIXED /NODEFAULTLIB` + снятие SDK-рантайма (`ExcludeNativeAotRuntime`: `Runtime.WorkstationGC`/`VxsortEnabled`/`bootstrapper.obj`) + `DebuggerSupport=false` + `IlcDehydrate=false` + `__security_cookie` через CoffStub.Generator + `__managed__Startup` no-op стаб. Апп на net8.0. HelloSharpFs исполнен на bare metal, TUI-файлпикер видит `.EXE`, self-launch с nested-лимитом. ELF выпилен из app-batch (kernel ELF-файлы — Stage B, пока живут unused).
 
 ---
 

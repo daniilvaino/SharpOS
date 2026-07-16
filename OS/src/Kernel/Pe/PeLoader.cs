@@ -1,0 +1,97 @@
+using System;
+using OS.Kernel.Elf;
+using OS.Kernel.Paging;
+using OS.Kernel.Util;
+
+namespace OS.Kernel.Pe
+{
+    // PE loader, execute path (step137): take a raw PE file image, flatten it
+    // (PeImageLayout), map it into the address space at its preferred ImageBase,
+    // and return an ElfLoadedImage so the existing ProcessImageBuilder + JumpStub
+    // pipeline (format-agnostic: it only needs EntryPoint + the mapped VA range)
+    // runs unchanged.
+    //
+    // v1 scope: honor ImageBase (the launcher is linked with /BASE matching the
+    // app VA window, so no relocation needed); map every page RWX (Present|
+    // Writable|User, executable) -- per-section NX/RO protection, base
+    // relocations for off-base loads, and per-image .pdata/EH registration are
+    // deferred. EH is Tier-B (halt-on-throw), same as the ELF apps today.
+    internal static unsafe class PeLoader
+    {
+        private const ulong PageSize = X64PageTable.PageSize;
+
+        // PE\0\0 -> "MZ" DOS magic at offset 0.
+        public const ushort DosMagicMZ = 0x5A4D;
+
+        public static bool TryLoad(MemoryBlock image, out ElfLoadedImage loadedImage, out int stage)
+        {
+            loadedImage = default;
+            stage = 0;
+
+            if (!image.IsValid)
+                return false;
+
+            // Copy the raw file into a managed byte[] for the pure-transform
+            // flatten stage.
+            int fileLen = (int)image.Length;
+            byte[] file = new byte[fileLen];
+            new Span<byte>(image.Pointer, fileLen).CopyTo(new Span<byte>(file));
+            stage = 1;
+
+            if (!PeImageLayout.TryFlatten(file, out byte[] flat, out ulong imageBase, out ulong entryPoint, out uint sectionCount))
+                return false;
+            stage = 2;
+
+            if (imageBase == 0 || (imageBase & (PageSize - 1)) != 0)
+                return false; // ImageBase must be page-aligned to honor it directly
+
+            ulong sizeOfImage = (ulong)flat.Length;
+            uint pageCount = (uint)((sizeOfImage + PageSize - 1) / PageSize);
+            if (pageCount == 0)
+                return false;
+
+            // Drop any stale mappings across the target window.
+            ulong va = imageBase;
+            for (uint i = 0; i < pageCount; i++)
+            {
+                if (Pager.TryQuery(va, out _, out _) && !Pager.Unmap(va))
+                    return false;
+                va += PageSize;
+            }
+            stage = 3;
+
+            ulong physBase = global::OS.Kernel.PhysicalMemory.AllocPages(pageCount);
+            if (physBase == 0)
+                return false;
+            stage = 4;
+
+            // Map contiguous phys -> VA at ImageBase, RWX (no NX for now).
+            PageFlags flags = PageFlags.Present | PageFlags.Writable | PageFlags.User;
+            va = imageBase;
+            for (uint i = 0; i < pageCount; i++)
+            {
+                ulong pa = physBase + (ulong)i * PageSize;
+                if (!Pager.Map(va, pa, flags))
+                {
+                    Pager.UnmapRange(imageBase, i);
+                    return false;
+                }
+                va += PageSize;
+            }
+            stage = 5;
+
+            // Blit the flattened image into the now-mapped window. Tail of the
+            // last page (pageCount*PageSize - sizeOfImage) stays zero.
+            new Span<byte>(flat).CopyTo(new Span<byte>((void*)imageBase, flat.Length));
+            stage = 6;
+
+            loadedImage.EntryPoint = entryPoint;
+            loadedImage.LowestVirtualAddress = imageBase;
+            loadedImage.HighestVirtualAddressExclusive = imageBase + (ulong)pageCount * PageSize;
+            loadedImage.LoadedPages = pageCount;
+            loadedImage.LoadedSegmentCount = sectionCount;
+            stage = 7;
+            return true;
+        }
+    }
+}

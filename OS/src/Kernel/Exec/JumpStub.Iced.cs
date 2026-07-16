@@ -1,12 +1,10 @@
-// step 115 follow-up #2: Iced-driven replacement for the JumpStub byte
-// emitter. The legacy hand-rolled byte stream still lives next to this
-// (see JumpStub.cs::EmitStubLegacy) and TryInitialize emits both in
-// parallel + byte-compares them via CompareOrPanic. Isolated in its own
-// partial file so the `using static Iced.Intel.AssemblerRegisters` import
-// (which dumps `rax`/`rcx`/…/`cr3`/`__qword_ptr`/… into the namespace)
-// doesn't shadow anything in JumpStub's hot path. After several green
-// boots the legacy emitter + the compare gate get pulled out and only
-// the Iced half remains.
+// Iced-driven JumpStub emitter. Isolated in its own partial file so the
+// `using static Iced.Intel.AssemblerRegisters` import (which dumps
+// `rax`/`rcx`/…/`cr3`/`__qword_ptr`/… into the namespace) doesn't shadow
+// anything in JumpStub's hot path. The legacy hand-rolled byte emitter and
+// its byte-compare gate were removed (step137) after many green boots with
+// zero drift; the entry call now passes the startup block in rcx (Win64
+// arg0) for the freestanding PE apps.
 
 using OS.Hal;
 using static Iced.Intel.AssemblerRegisters;
@@ -45,8 +43,9 @@ namespace OS.Kernel.Exec
         //   mov  cr3, r9                  ; activate pager CR3
         //   mov  rsp, rdx                 ; switch to app stack
         //   sub  rsp, 0x20                ; Win64 shadow space
-        //   mov  rdi, r8                  ; rdi = startup block (Linux-ish ABI for app)
-        //   call rcx                      ; run app entry
+        //   mov  rax, rcx                 ; rax = entry address (rcx reused as arg0)
+        //   mov  rcx, r8                  ; rcx = startup block (Win64 arg0 -- PE apps)
+        //   call rax                      ; run app entry
         //   mov  r10, rax                 ; stash return value
         //   mov  rax, [r12-0x20]          ; reload kernel CR3 from saved slot
         //   mov  cr3, rax
@@ -72,8 +71,9 @@ namespace OS.Kernel.Exec
             a.mov(cr3, r9);
             a.mov(rsp, rdx);
             a.sub(rsp, 0x20);
-            a.mov(rdi, r8);
-            a.call(rcx);
+            a.mov(rax, rcx);
+            a.mov(rcx, r8);
+            a.call(rax);
             a.mov(r10, rax);
             a.mov(rax, __qword_ptr[r12 - 0x20]);
             a.mov(cr3, rax);
@@ -88,42 +88,6 @@ namespace OS.Kernel.Exec
             var w = new StubBufWriter(p, cap);
             a.Assemble(w, 0);
             return w.Count;
-        }
-
-        // Same shape as SehDispatch.CompareOrPanic — local to keep the
-        // dependency cone narrow. Length mismatch and per-byte mismatch
-        // both panic with full diagnostics on the serial console so any
-        // drift is visible at boot, not as a wild jump after we hand off
-        // to the stub.
-        private static void CompareOrPanic(string name, byte* iced, byte* legacy, int icedLen, int legacyLen)
-        {
-            if (icedLen != legacyLen)
-            {
-                Console.Write("[stub] ");
-                Console.Write(name);
-                Console.Write(" length mismatch: iced=0x");
-                Console.WriteHex((ulong)icedLen);
-                Console.Write(" legacy=0x");
-                Console.WriteHex((ulong)legacyLen);
-                Console.WriteLine("");
-                OS.Kernel.Panic.Fail("stub iced/legacy length mismatch");
-            }
-            for (int i = 0; i < icedLen; i++)
-            {
-                if (iced[i] != legacy[i])
-                {
-                    Console.Write("[stub] ");
-                    Console.Write(name);
-                    Console.Write(" byte mismatch at offset 0x");
-                    Console.WriteHex((ulong)i);
-                    Console.Write(": iced=0x");
-                    Console.WriteHex(iced[i]);
-                    Console.Write(" legacy=0x");
-                    Console.WriteHex(legacy[i]);
-                    Console.WriteLine("");
-                    OS.Kernel.Panic.Fail("stub iced/legacy byte mismatch");
-                }
-            }
         }
     }
 }
