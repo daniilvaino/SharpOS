@@ -351,6 +351,78 @@ StackFrameIterator.cs — в этот момент сведение дешевл
 
 ---
 
+## Backlog: слить дуал-копии MinimalRuntime (kernel/app) в shared-ядро
+
+**Зафиксировано 2026-07-16 (step141). Решение: сливать, но отдельным
+степом** — не в связке с DOOM bring-up (blast radius = пересборка
+обоих тиров ради чистого рефакторинга).
+
+**Факт:** `OS/src/Boot/MinimalRuntime.cs` и `apps_native/sdk/
+MinimalRuntime.cs` — дуал-копии. После step141 (апгрейд app-копии до
+kernel-парности под делегаты/std) их System-секция **текстуально
+идентична** (~500 строк зеркала): Object + примитивы (с ToString/
+Parse/IsNaN), IntPtr/UIntPtr, Single/Double, Nullable, Array, атрибуты,
+EETypePtr, RuntimeHelpers/RuntimeFeature, Runtime*Handle. Логика НЕ
+дублируется (всё форвардит в shared NumberFormatting/NumberParsing) —
+дублируются объявления типов и тонкие обёртки, потому что ILC требует
+core-типы внутри каждого SystemModule.
+
+**Целевая форма:** общая System-секция уезжает в
+`std/no-runtime/shared/MinimalRuntime.Core.cs`, включаемый обоими
+csproj (ровно как любой std-файл — каждый компилит его в свой
+SystemModule). В tier-файлах остаются только хвосты: у ядра
+DllImport/CallingConvention, у аппы RuntimeImports
+(ManagedStartup/RhNewString) + StartupCodeHelpers/ThrowHelpers +
+NativeMemoryStubs (namespace SharpOS.AppSdk vs OS.Boot).
+
+**Почему это долг:** step141 уже показал механику гниения — каждая
+добавка к примитивам (ToString/Parse/IsNaN) вносилась парным
+идентичным диффом в оба файла; пропуск одной стороны = тихий дрейф,
+который всплывёт как «у аппы int.Parse есть, у ядра нет» через
+несколько степов (родня `curated_csproj_drift`).
+
+**Триггер:** следующая правка, которой понадобится трогать примитивы/
+IntPtr/Nullable в MinimalRuntime — сначала слить, потом править один
+файл. Либо любой замеченный дрейф между копиями.
+
+**Интеримное правило (пока две копии):** любая правка одной копии
+MinimalRuntime обязана явно ответить «нужен ли тот же дифф во второй»
+(строчка в step-writeup).
+
+---
+
+## Ограничение: HW-fault исключения не ловятся app-catch'ами (cross-image MT identity)
+
+**Зафиксировано 2026-07-16 (step142, ManagedDoom bring-up).** Наблюдено
+вживую: #PF в app-коде → kernel HwFaultBridge → walk честно доходит до
+`catch (Exception)` в app-фрейме (клауза найдена, fp.Found=N) → **тип не
+матчится** → `*** unhandled exception (no matching catch) ***`.
+
+**Корень:** исключение из HW-фолта конструирует ЯДРО — объект несёт
+kernel-image MethodTable (`NullReferenceException` ядра). Catch-клаузы
+аппы типизированы app-image MT. TypeMatch сравнивает указатели MT по
+base-цепочке — цепочки из разных образов не пересекаются никогда.
+App-thrown исключения (`throw new X()` в коде аппы) матчатся нормально —
+оба конца в одном образе; батарея step140 видела только их.
+
+**Целевая форма (upstream-паттерн):** exception-объект должен
+конструироваться В ОБРАЗЕ, где случился фолт — как `RhpThrowHwEx` стокового
+NativeAOT. Апп регистрирует в service table (или через self-patch стаб,
+как InterfaceDispatchTrampoline) свой thrower-вход; kernel-диспетчер для
+фолтов с app-RIP вызывает его с кодом фолта → апп аллоцирует СВОЙ
+NRE/DivideByZero/... и кидает через общий EH-движок. Альтернатива —
+type-identity мост по имени/шейпу MT — дороже и грязнее.
+
+**Триггер:** первый случай, когда аппе реально нужно ПЕРЕЖИТЬ HW-фолт
+(catch + продолжение), а не просто упасть с диагностикой. Для DOOM
+bring-up некритично: NRE в геймплее = баг, который чиним, а не ловим;
+uncaught-репорт с walk-дампом даёт вполне рабочую диагностику.
+
+**Интеримное правило:** не полагаться на `catch` для NRE/AV/DivideByZero
+в app-коде; typed catch app-thrown исключений — можно свободно.
+
+---
+
 ## Big bet: snocket stack → Windows IL целиком, в комплекте
 
 **Решено НЕ ходить через fake-epoll и НЕ изобретать SocketAsyncEngine для

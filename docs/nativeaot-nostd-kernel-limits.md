@@ -49,6 +49,25 @@ class C { public static T X; static C() { X = new T(); } }   // ok
 
 ## 2. Generics
 
+### ❌ Вариантный interface dispatch (co/contravariance)
+
+`InterfaceDispatchResolver.FindImplSlot` матчит интерфейс **строгим
+сравнением MT-указателей** с записями interface map. Ковариантный запрос —
+`IReadOnlyList<IReadOnlyList<T>>.get_Item` на `T[][]` (map массива несёт
+`IReadOnlyList<T[]>`, это другой MT) — даёт
+`iface-resolve fail (no match in inheritance chain)` → panic. Упавший
+вживую пример: ManagedDoom `DoomInfo.MapTitles.Doom[e][m]` (done/step142).
+Инвариантные запросы (точная инстанциация, включая shared-`__Canon`
+внутри одного образа) работают.
+
+**Workaround:** типизировать хранилище конкретно (jagged `T[][]` вместо
+`IReadOnlyList<IReadOnlyList<T>>`) — потребители переходят на прямое
+индексирование без диспатча. Так пропатчены 3 vendor-таблицы ManagedDoom.
+
+**Когда чинить:** порт вариантного пути upstream-резолвера
+(`AreTypesAssignable` по generic-аргументам, флаг variance у interface-MT).
+По первому невендорируемому потребителю.
+
 ### 🔧 `new T()` с `where T : new()`
 
 ```csharp
@@ -237,28 +256,27 @@ heap corruption после array assignment. Pretty cheap fix (compare MT
 pointers), но usability win небольшой пока user-code не пишет
 generic-data-container'ы с covariant assignment.
 
-### ❌ Массивы НЕ реализуют `IEnumerable<T>` / `IList<T>` / `ICollection<T>`
+### ✅ Массивы реализуют `IEnumerable<T>` / `IList<T>` / `ICollection<T>` (step 142)
 
-`T[]` в C# по языковому правилу считается реализующим `IEnumerable<T>` (и
-`IList<T>`), но в реальном .NET это делается runtime-трюком **SZArrayHelper**:
-methodtable конкретного массива диспатчит `IEnumerable<T>`-методы на
-`SZArrayHelper<T>`. Мы этой машинерии НЕ имеем — у array-MT `NumInterfaces=0`.
+В NativeAOT интерфейсы SZ-массивов приходят НЕ из CoreCLR-шного
+SZArrayHelper, а из **`System.Array<T>`**: ILC берёт interface list +
+dispatch map array-MT из этого класса, а `this` внутри его методов — сам
+`T[]` (реинтерпретация `Unsafe.As<T[]>`). До step142 наш `Array<T>` был
+пустой заглушкой в MinimalRuntime — array-MT нёс `NumInterfaces=0`, и любой
+интерфейсный вызов на массиве умирал в диспатче (в т.ч. с corrupted-`this`
+джампами через мусорную мапу — ManagedDoom KeyBinding, done/step142).
 
-Эффект: `int[] a; IEnumerable<int> e = a;` **компилится** (компилятор верит
-языковому правилу), но при `e.GetEnumerator()` → `iface-resolve: no impl slot`
-→ panic. Прямой `foreach (var x in a)` работает (компилится в `ldlen`/`ldelem`,
-без `GetEnumerator`). LINQ и любой код, зовущий массив как `IEnumerable<T>`,
-падает в рантайме.
+Порт upstream `Array<T>` (`std/no-runtime/shared/Runtime/ArrayT.cs`:
+IEnumerable<T>/ICollection<T>/IList<T>/IReadOnlyList<T> + ArrayEnumerator)
+делает массивы честными интерфейсными источниками на обоих тирах: LINQ по
+массиву, `T[]` в `IEnumerable<T>`/`IReadOnlyList<T>`-параметр — работают.
+Mutating-поверхность (`Add/Remove/Insert/RemoveAt/Clear`) бросает
+NotSupportedException — BCL-контракт fixed-size коллекции.
 
-**Workaround:** source для LINQ / `IEnumerable<T>`-параметров — `List<T>`,
-`HashSet<T>`, yield-итератор или свой `IEnumerable<T>`, НЕ голый массив.
-Обернуть массив: `new List<T>(...)` или свой enumerable-wrapper. Любой
-собственный `IEnumerable<T>`-возвращающий метод (LINQ-оператор) обязан
-отдавать настоящий итератор, НЕ голый массив (напоролись в step134
-`Enumerable.OrderBy` — фикс: yield-обёртка).
-
-**Когда чинить:** порт SZArrayHelper + patch array-MT interface map при
-type-loader'е. Крупная задача (runtime), отложена. До этого array-LINQ = нет.
+**Perf-примечание:** наш `Enumerable` дополнительно несёт array-специфичные
+перегрузки (`Select/Where/Contains/.../Min/Max(this T[] ...)`, step142) —
+они биндятся раньше интерфейсной формы и обходят диспатч+боксинг совсем.
+Семантика идентична; это ускорение, больше не workaround.
 
 **✅ String — НЕ массив: `IEnumerable<char>` работает (step 141).** В отличие
 от массивов, `string` — обычный класс: интерфейс объявлен на типе

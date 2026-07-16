@@ -55,7 +55,9 @@ namespace ManagedDoom
         public int Y => y;
         public int Data => data;
 
-        public static readonly IReadOnlyList<IReadOnlyList<AnimationInfo>> Episodes = new AnimationInfo[][]
+        // SharpOS: was IReadOnlyList<IReadOnlyList<AnimationInfo>> — variant
+        // interface dispatch on arrays is unsupported (limits doc §2).
+        public static readonly AnimationInfo[][] Episodes = new AnimationInfo[][]
         {
             new AnimationInfo[]
             {

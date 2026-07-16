@@ -658,7 +658,10 @@ namespace System
         }
     }
 
-    class Array<T> : Array { }
+    // System.Array<T> — the SZ-array interface template — lives in
+    // std/no-runtime/shared/Runtime/ArrayT.cs (step142; port of the upstream
+    // NativeAOT class). The empty placeholder that used to sit here left
+    // array MTs with NumInterfaces=0 (limits doc §4).
 }
 
 namespace Internal.Runtime.CompilerHelpers

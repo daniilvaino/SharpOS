@@ -16,7 +16,7 @@ namespace SharpOS.AppSdk
     // The app provides its own RhpThrowEx symbol (satisfies ILC's `throw`
     // codegen) and, at startup, patches its body to tail-jump the kernel's
     // RhpThrowEx entry (handed over in AppServiceTable.RhpThrowExAddress). The
-    // absolute form is required: the app image (0x400000) is further than an
+    // absolute form is required: the app image (/BASE:0x100000000) is further than an
     // int32 rel32 from the kernel entry. A tail JMP (not CALL) preserves the
     // throw-site return address the kernel shellcode reads from [rsp].
     internal static unsafe class ThrowExTrampoline

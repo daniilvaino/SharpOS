@@ -24,7 +24,10 @@ namespace ManagedDoom
     {
         public static class MapTitles
         {
-            public static IReadOnlyList<IReadOnlyList<DoomString>> Doom = new DoomString[][]
+            // SharpOS: was IReadOnlyList<IReadOnlyList<DoomString>> — variant
+            // interface dispatch on arrays is unsupported (limits doc §2);
+            // jagged-array type keeps consumers as direct indexing.
+            public static DoomString[][] Doom = new DoomString[][]
             {
                 new DoomString[]
                 {

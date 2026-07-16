@@ -22,7 +22,9 @@ namespace ManagedDoom
 {
     public static class WorldMap
     {
-        public static readonly IReadOnlyList<IReadOnlyList<Point>> Locations = new Point[][]
+        // SharpOS: was IReadOnlyList<IReadOnlyList<Point>> — variant
+        // interface dispatch on arrays is unsupported (limits doc §2).
+        public static readonly Point[][] Locations = new Point[][]
         {
             // Episode 0 world map.
             new Point[]

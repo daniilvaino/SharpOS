@@ -479,6 +479,19 @@ foreach ($peApp in $peApps) {
     }
 }
 
+# step142: IWAD staging for DOOM.EXE. Drop doom1.wad (shareware) / doom.wad /
+# doom2.wad into wads\ at the repo root (dir is gitignored — WADs are not
+# repo material) and it lands next to the apps; ManagedDoom's
+# ConfigUtilities probes \EFI\BOOT for the known IWAD names.
+$wadSrcDir = Join-Path $repoRoot "wads"
+if (Test-Path -LiteralPath $wadSrcDir) {
+    foreach ($wad in Get-ChildItem -LiteralPath $wadSrcDir -Filter "*.wad") {
+        $wadDst = Join-Path $espBootDir $wad.Name.ToUpperInvariant()
+        Copy-Item -LiteralPath $wad.FullName -Destination $wadDst -Force
+        Write-Host "Prepared IWAD: $wadDst"
+    }
+}
+
 Write-Host "Prepared EFI image: $bootx64"
 if ($NoRun) {
     Write-Host "NoRun set: build finished, QEMU launch skipped."

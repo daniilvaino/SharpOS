@@ -21,9 +21,10 @@ namespace SharpOS.AppSdk
     //   2. At startup, overwrites that body with `mov rax,<bridge>; jmp rax` where
     //      <bridge> is the kernel's InterfaceDispatchBridge.ShellcodeStart handed
     //      over via AppServiceTable.InterfaceDispatchBridgeAddress.
-    // The absolute (12-byte) form is required because the app image (0x400000)
-    // and the kernel exec-stub buffer are further than an int32 rel32 apart, so
-    // the kernel's own 5-byte `jmp rel32` patch would not reach.
+    // The absolute (12-byte) form is required because the app image (linked
+    // at /BASE:0x100000000, see FreestandingPe.props) and the kernel
+    // exec-stub buffer are further than an int32 rel32 apart, so the
+    // kernel's own 5-byte `jmp rel32` patch would not reach.
     internal static unsafe class InterfaceDispatchTrampoline
     {
         [RuntimeExport("RhpInitialDynamicInterfaceDispatch")]

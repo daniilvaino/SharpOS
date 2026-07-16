@@ -202,7 +202,7 @@ namespace ManagedDoom
 
             if (animations == null)
             {
-                animations = new Animation[AnimationInfo.Episodes[info.Episode].Count];
+                animations = new Animation[AnimationInfo.Episodes[info.Episode].Length]; // SharpOS: .Count -> .Length (jagged array)
                 for (var i = 0; i < animations.Length; i++)
                 {
                     animations[i] = new Animation(this, AnimationInfo.Episodes[info.Episode][i], i);

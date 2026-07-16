@@ -103,3 +103,7 @@ work/*
 hello/
 last_build.log
 *.lscache
+
+# IWAD staging source for DOOM.EXE (run_build.ps1 copies wads/*.wad to the
+# ESP) — game data, never repo material.
+wads/

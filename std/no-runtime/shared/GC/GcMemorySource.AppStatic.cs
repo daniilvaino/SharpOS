@@ -16,7 +16,11 @@ namespace SharpOS.Std.NoRuntime
 
     internal static class PoolSizeLiteral
     {
-        public const int Size = 1 * 1024 * 1024; // 1 MB
+        // 64 MB (step142, ManagedDoom): WAD load is a whole-file byte[]
+        // (doom2 ~12 MB → 16 MB segment after GcHeap doubling) + parsed
+        // game content. Inflates SizeOfImage — the kernel PeLoader flattens
+        // a SizeOfImage buffer per launch, fine under QEMU's 2 GB.
+        public const int Size = 64 * 1024 * 1024;
     }
 
     internal static unsafe class GcMemorySource

@@ -700,5 +700,210 @@ namespace System.Linq
             if (count == 0) ThrowNoElements();
             return (double)sum / count;
         }
+
+        // ---- array sources (step142) ----------------------------------
+        //
+        // NOT in the BCL. Overload resolution prefers the exact T[] over
+        // the IEnumerable<TSource> form, so array call sites bind here and
+        // skip interface dispatch + enumerator boxing entirely. Originally
+        // a workaround for arrays not being runtime-IEnumerable<T>; since
+        // the Array<T> port (Runtime/ArrayT.cs, same step) arrays are
+        // honest interface sources and these are a pure fast path.
+        // Semantics identical to the generic forms.
+
+        public static IEnumerable<TResult> Select<TSource, TResult>(this TSource[] source, Func<TSource, TResult> selector)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (selector == null) ThrowNull(nameof(selector));
+            for (int i = 0; i < source.Length; i++)
+                yield return selector(source[i]);
+        }
+
+        public static IEnumerable<TSource> Where<TSource>(this TSource[] source, Func<TSource, bool> predicate)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (predicate == null) ThrowNull(nameof(predicate));
+            for (int i = 0; i < source.Length; i++)
+                if (predicate(source[i]))
+                    yield return source[i];
+        }
+
+        public static bool Contains<TSource>(this TSource[] source, TSource value)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            var comparer = EqualityComparer<TSource>.Default;
+            for (int i = 0; i < source.Length; i++)
+                if (comparer.Equals(source[i], value))
+                    return true;
+            return false;
+        }
+
+        public static bool Any<TSource>(this TSource[] source)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            return source.Length > 0;
+        }
+
+        public static bool Any<TSource>(this TSource[] source, Func<TSource, bool> predicate)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (predicate == null) ThrowNull(nameof(predicate));
+            for (int i = 0; i < source.Length; i++)
+                if (predicate(source[i]))
+                    return true;
+            return false;
+        }
+
+        public static bool All<TSource>(this TSource[] source, Func<TSource, bool> predicate)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (predicate == null) ThrowNull(nameof(predicate));
+            for (int i = 0; i < source.Length; i++)
+                if (!predicate(source[i]))
+                    return false;
+            return true;
+        }
+
+        public static TSource First<TSource>(this TSource[] source)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (source.Length == 0) ThrowNoElements();
+            return source[0];
+        }
+
+        public static TSource FirstOrDefault<TSource>(this TSource[] source)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            return source.Length == 0 ? default : source[0];
+        }
+
+        public static TSource Last<TSource>(this TSource[] source)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (source.Length == 0) ThrowNoElements();
+            return source[source.Length - 1];
+        }
+
+        public static TSource LastOrDefault<TSource>(this TSource[] source)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            return source.Length == 0 ? default : source[source.Length - 1];
+        }
+
+        public static IEnumerable<TSource> Skip<TSource>(this TSource[] source, int count)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            for (int i = count < 0 ? 0 : count; i < source.Length; i++)
+                yield return source[i];
+        }
+
+        public static IEnumerable<TSource> Take<TSource>(this TSource[] source, int count)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            int limit = count > source.Length ? source.Length : count;
+            for (int i = 0; i < limit; i++)
+                yield return source[i];
+        }
+
+        public static IEnumerable<TSource> SkipWhile<TSource>(this TSource[] source, Func<TSource, bool> predicate)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (predicate == null) ThrowNull(nameof(predicate));
+            int i = 0;
+            while (i < source.Length && predicate(source[i])) i++;
+            for (; i < source.Length; i++)
+                yield return source[i];
+        }
+
+        public static IEnumerable<TSource> TakeWhile<TSource>(this TSource[] source, Func<TSource, bool> predicate)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (predicate == null) ThrowNull(nameof(predicate));
+            for (int i = 0; i < source.Length && predicate(source[i]); i++)
+                yield return source[i];
+        }
+
+        public static TSource[] ToArray<TSource>(this TSource[] source)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            var copy = new TSource[source.Length];
+            Array.Copy(source, copy, source.Length);
+            return copy;
+        }
+
+        public static IEnumerable<TSource> Concat<TSource>(this TSource[] first, IEnumerable<TSource> second)
+        {
+            if (first == null) ThrowNull(nameof(first));
+            if (second == null) ThrowNull(nameof(second));
+            for (int i = 0; i < first.Length; i++)
+                yield return first[i];
+            foreach (var item in second)
+                yield return item;
+        }
+
+        public static List<TSource> ToList<TSource>(this TSource[] source)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            var list = new List<TSource>(source.Length);
+            for (int i = 0; i < source.Length; i++)
+                list.Add(source[i]);
+            return list;
+        }
+
+        public static int Count<TSource>(this TSource[] source)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            return source.Length;
+        }
+
+        public static TSource Min<TSource>(this TSource[] source)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (source.Length == 0) ThrowNoElements();
+            var comparer = Comparer<TSource>.Default;
+            TSource min = source[0];
+            for (int i = 1; i < source.Length; i++)
+                if (comparer.Compare(source[i], min) < 0) min = source[i];
+            return min;
+        }
+
+        public static TSource Max<TSource>(this TSource[] source)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (source.Length == 0) ThrowNoElements();
+            var comparer = Comparer<TSource>.Default;
+            TSource max = source[0];
+            for (int i = 1; i < source.Length; i++)
+                if (comparer.Compare(source[i], max) > 0) max = source[i];
+            return max;
+        }
+
+        public static int Min<TSource>(this TSource[] source, Func<TSource, int> selector)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (selector == null) ThrowNull(nameof(selector));
+            if (source.Length == 0) ThrowNoElements();
+            int min = selector(source[0]);
+            for (int i = 1; i < source.Length; i++)
+            {
+                int value = selector(source[i]);
+                if (value < min) min = value;
+            }
+            return min;
+        }
+
+        public static int Max<TSource>(this TSource[] source, Func<TSource, int> selector)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (selector == null) ThrowNull(nameof(selector));
+            if (source.Length == 0) ThrowNoElements();
+            int max = selector(source[0]);
+            for (int i = 1; i < source.Length; i++)
+            {
+                int value = selector(source[i]);
+                if (value > max) max = value;
+            }
+            return max;
+        }
     }
 }

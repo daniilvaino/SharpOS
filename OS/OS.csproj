@@ -368,6 +368,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Runtime\Buffer.cs" Link="src\Std\Runtime\Buffer.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\GC.cs" Link="src\Std\Runtime\GC.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Array.cs" Link="src\Std\Runtime\Array.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\ArrayT.cs" Link="src\Std\Runtime\ArrayT.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\MemoryMarshal.cs" Link="src\Std\Runtime\MemoryMarshal.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Diagnostics.cs" Link="src\Std\Runtime\Diagnostics.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Diagnostics.Output.KernelConsole.cs" Link="src\Std\Runtime\Diagnostics.Output.KernelConsole.cs" />

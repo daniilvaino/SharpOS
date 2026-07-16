@@ -46,6 +46,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)AppServiceTable.cs"      Link="sdk\AppServiceTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppRuntime.cs"           Link="sdk\AppRuntime.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)InterfaceDispatchTrampoline.cs" Link="sdk\InterfaceDispatchTrampoline.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StackProbeStub.cs"       Link="sdk\StackProbeStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ThrowExTrampoline.cs"          Link="sdk\ThrowExTrampoline.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppHost.cs"              Link="sdk\AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StringAlgorithms.cs"     Link="sdk\StringAlgorithms.cs" />
@@ -95,6 +96,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Buffer.cs"          Link="std\Runtime\Buffer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\GC.cs"              Link="std\Runtime\GC.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Array.cs"           Link="std\Runtime\Array.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ArrayT.cs"          Link="std\Runtime\ArrayT.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\MemoryMarshal.cs"   Link="std\Runtime\MemoryMarshal.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Diagnostics.cs"     Link="std\Runtime\Diagnostics.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ClassConstructorRunner.cs" Link="std\Runtime\ClassConstructorRunner.cs" />
@@ -117,6 +119,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcMark.cs"               Link="std\GC\GcMark.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcSweep.cs"              Link="std\GC\GcSweep.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcRoots.cs"              Link="std\GC\GcRoots.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcStaticsInit.cs"        Link="std\GC\GcStaticsInit.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GC.cs"                   Link="std\GC\GC.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Exception.cs"               Link="std\Exception.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Exceptions.Derived.cs"      Link="std\Exceptions.Derived.cs" />
@@ -156,7 +159,14 @@
     <Compile Include="$(MSBuildThisFileDirectory)WinCrtStubs.cs" Link="sdk\WinCrtStubs.cs" />
     <LinkerArg Include="/ENTRY:SharpAppBootstrap" />
     <LinkerArg Include="/SUBSYSTEM:NATIVE" />
-    <LinkerArg Include="/BASE:0x400000" />
+    <!-- 0x100000000 (4 GiB): above physical RAM (QEMU 2 GiB), below the app
+         stack window (0x40_0000_0000). Kernel and apps share one address
+         space post-EBS; the loader's map-over of [base, base+SizeOfImage)
+         must never intersect the kernel's identity-mapped working RAM — at
+         the old 0x400000 base a bss-fattened image (64 MB GcAppPool,
+         step142) swallowed phys 4..72 MB where the kernel heap and page
+         tables live. -->
+    <LinkerArg Include="/BASE:0x100000000" />
     <LinkerArg Include="/FIXED" />
     <LinkerArg Include="/DYNAMICBASE:NO" />
     <LinkerArg Include="/NODEFAULTLIB" />
@@ -164,6 +174,21 @@
 
   <Import Project="$(MSBuildThisFileDirectory)..\..\bootasm\CoffStub.Generator\CoffStub.Generator.targets"
           Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(MSBuildThisFileDirectory)..\..\bootasm\CoffStub.Generator\CoffStub.Generator.targets')" />
+
+  <!-- Drop the resilient ILC flag (mirrors OS.csproj DropResilient, step142).
+       Resilient mode makes ILC silently emit fallback stubs for cctor checks
+       instead of routing them through the managed ClassConstructorRunner the
+       app now compiles (std/Runtime/ClassConstructorRunner.cs) — the stubs
+       #GP with a 0xF000... sentinel on the first `static readonly` touch.
+       Combined with GcStaticsInit (app-side GCStaticRegion materialization in
+       AppRuntime.Initialize) this makes lazy static patterns work in apps,
+       same as the kernel (limits doc §1). -->
+  <Target Name="DropResilient" AfterTargets="WriteIlcRspFileForCompilation" BeforeTargets="IlcCompile">
+    <ItemGroup>
+      <IlcArg Remove="--resilient" />
+    </ItemGroup>
+    <WriteLinesToFile File="%(ManagedBinary.IlcRspFile)" Lines="@(IlcArg)" Overwrite="true" />
+  </Target>
 
   <!-- net8/ILC8 links the SDK NativeAOT runtime (Runtime.WorkstationGC /
        Runtime.VxsortEnabled) + wmain bootstrapper by default. The app ships its

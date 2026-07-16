@@ -286,11 +286,59 @@ namespace SharpOS.Std.NoRuntime
             return null;
         }
 
-        // RhTypeCast_CheckCastAny / CheckCastClassSpecial / RhpLdelemaRef moved
-        // to the kernel-only partial (OS/src/Kernel/Memory/GcRuntimeExports.
-        // KernelCast.cs): they need System.Exception / InvalidCastException /
-        // Unsafe, which the app tier (Tier-B, halt-on-throw, no Unsafe) doesn't
-        // ship. Apps don't reference them (no delegates/casts), so keeping them
-        // out of the shared file keeps the app build compiling.
+        // RhTypeCast_CheckCastAny / CheckCastClassSpecial / RhpLdelemaRef lived
+        // in a kernel-only partial (step137) because the app tier then had no
+        // Exception/InvalidCastException/Unsafe. Since step140/141 apps share
+        // the kernel EH engine and compile the full std (delegates included),
+        // that split's reason is gone — moved back here (step142) so app links
+        // resolve them (DropResilient surfaced the missing symbols).
+
+        // checkcast(any): like IsInstanceOfAny but throws on failure. null casts
+        // to anything.
+        [RuntimeExport("RhTypeCast_CheckCastAny")]
+        public static unsafe object RhTypeCast_CheckCastAny(GcMethodTable* pTargetType, object obj)
+        {
+            if (obj == null) return null;
+            if (RhTypeCast_IsInstanceOfAny(pTargetType, obj) == null)
+                throw new InvalidCastException();
+            return obj;
+        }
+
+        // checkcast to a class (non-interface, non-array target). JIT inlines the
+        // trivial obj==null / mt==target cases; this slow path walks the base
+        // chain and throws on miss.
+        [RuntimeExport("RhTypeCast_CheckCastClassSpecial")]
+        public static unsafe object RhTypeCast_CheckCastClassSpecial(GcMethodTable* pTargetType, object obj)
+        {
+            if (obj == null) return null;
+
+            nint objAddr = *(nint*)&obj;
+            GcMethodTable* mt = *(GcMethodTable**)objAddr;
+
+            const int MaxDepth = 64;
+            GcMethodTable* cur = mt;
+            for (int i = 0; i < MaxDepth; i++)
+            {
+                cur = cur->GetBaseType();
+                if (cur == pTargetType) return obj;
+                if (cur == null) break;
+            }
+            throw new InvalidCastException();
+        }
+
+        // ref array[index] for reference-element arrays. ILC emits this for
+        // `ref a[i]` (e.g. Interlocked.CompareExchange(ref list[i], ...) in
+        // MulticastDelegate.TrySetSlot). Trusted: skip null/bounds/covariance
+        // checks (same policy as RhpStelemRef). Array layout: MT@0, Length@8,
+        // element[0]@16, 8 bytes each.
+        [RuntimeExport("RhpLdelemaRef")]
+        public static unsafe ref object RhpLdelemaRef(System.Array array, nint index, System.IntPtr elementType)
+        {
+            nint arrayAddr = *(nint*)&array;
+            byte* slot = (byte*)arrayAddr + 16 + index * 8;
+            // Same pattern Buffer.cs uses (proven to compile in this project):
+            // reinterpret the element slot as `ref object`.
+            return ref System.Runtime.CompilerServices.Unsafe.As<byte, object>(ref *slot);
+        }
     }
 }
