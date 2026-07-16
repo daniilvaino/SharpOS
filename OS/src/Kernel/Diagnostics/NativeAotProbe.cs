@@ -106,6 +106,7 @@ namespace OS.Kernel.Diagnostics
             // over are fixed this step).
             Probe_Delegates();
             Probe_PeNet();
+            Probe_PeNetPhase2();
             Probe_Linq();
             Probe_StringFormat();
             Probe_InterfaceCallFromSharedGeneric();
@@ -1629,6 +1630,139 @@ namespace OS.Kernel.Diagnostics
             ReportProbe("penet section[1] .data va",
                 secs != null && secs.Length >= 2 && secs[1].Name == ".data" && secs[1].VirtualAddress == 0x2000,
                 secs != null && secs.Length >= 2 ? secs[1].VirtualAddress : 0u);
+        }
+
+        // PeNet phase-2 (step135): imports / exports / base relocations. Builds
+        // a PE32+ with one identity-mapped section (VirtualAddress ==
+        // PointerToRawData, so RVA == file offset) carrying import, export and
+        // reloc tables, and drives the vendored DataDirectory parsers directly
+        // (bypassing the DataDirectoryParsers god-aggregator). Exercises our
+        // mini-LINQ (List<T>.ToArray/Last via Enumerable) and the array-typed
+        // RvaToOffset. Returned parser results are arrays -> indexed directly,
+        // never iterated as IEnumerable (arrays aren't IEnumerable<T>).
+        private static void Probe_PeNetPhase2()
+        {
+            byte[] image = BuildSyntheticPe64Phase2();
+
+            var raw = new global::PeNet.FileParser.BufferFile(image);
+            var nsp = new global::PeNet.HeaderParser.Pe.NativeStructureParsers(raw);
+            var nt = nsp.ImageNtHeaders;
+            var secs = nsp.ImageSectionHeaders;
+            var dds = nt.OptionalHeader.DataDirectory;
+            bool is64 = global::PeNet.ExtensionMethods.Is64Bit(raw);
+
+            // ---- imports ----
+            uint impOff = global::PeNet.ExtensionMethods.RvaToOffset(dds[1].VirtualAddress, secs);
+            var idescs = new global::PeNet.HeaderParser.Pe.ImageImportDescriptorsParser(raw, impOff).GetParserTarget();
+            ReportProbe("penet2 import descriptors==1",
+                idescs != null && idescs.Length == 1, idescs == null ? 0u : (uint)idescs.Length);
+
+            var imports = new global::PeNet.HeaderParser.Pe.ImportedFunctionsParser(raw, idescs, secs, dds, is64).GetParserTarget();
+            bool impOk = imports != null && imports.Length == 1
+                         && imports[0].DLL == "TESTDLL" && imports[0].Name == "MyFunc" && imports[0].Hint == 7;
+            ReportProbe("penet2 imported func (MyFunc)", impOk,
+                imports == null ? 0u : (uint)imports.Length);
+            ReportProbe("penet2 import hint==7",
+                imports != null && imports.Length == 1 && imports[0].Hint == 7,
+                imports != null && imports.Length == 1 ? imports[0].Hint : 0u);
+
+            // ---- exports ----
+            uint expOff = global::PeNet.ExtensionMethods.RvaToOffset(dds[0].VirtualAddress, secs);
+            var expDir = new global::PeNet.HeaderParser.Pe.ImageExportDirectoriesParser(raw, expOff).GetParserTarget();
+            ReportProbe("penet2 export dir (nfuncs==1)",
+                expDir != null && expDir.NumberOfFunctions == 1, expDir == null ? 0u : expDir.NumberOfFunctions);
+
+            var exports = new global::PeNet.HeaderParser.Pe.ExportedFunctionsParser(raw, expDir, secs, dds[0]).GetParserTarget();
+            bool expOk = exports != null && exports.Length == 1
+                         && exports[0].Name == "ExpFunc" && exports[0].Ordinal == 1 && exports[0].Address == 0x1000;
+            ReportProbe("penet2 exported func (ExpFunc)", expOk,
+                exports == null ? 0u : exports[0].Address);
+
+            // ---- base relocations ----
+            uint relOff = global::PeNet.ExtensionMethods.RvaToOffset(dds[5].VirtualAddress, secs);
+            var relocs = new global::PeNet.HeaderParser.Pe.ImageBaseRelocationsParser(raw, relOff, dds[5].Size).GetParserTarget();
+            bool relOk = relocs != null && relocs.Length == 1
+                         && relocs[0].VirtualAddress == 0x1000 && relocs[0].SizeOfBlock == 0x0C
+                         && relocs[0].TypeOffsets != null && relocs[0].TypeOffsets.Length == 2;
+            ReportProbe("penet2 reloc block (va/size/n)", relOk,
+                relocs == null ? 0u : relocs[0].VirtualAddress);
+        }
+
+        // Synthetic PE32+ with imports/exports/relocs in one identity-mapped
+        // section (VA == PtrRaw == 0x200, size 0x400 -> RVA==offset for
+        // 0x200..0x600). Directory RVAs: import 0x200, export 0x300, reloc 0x400.
+        private static byte[] BuildSyntheticPe64Phase2()
+        {
+            var b = new byte[0x600];
+            const int Opt = 0x98;
+
+            // DOS + NT sig + file header (1 section)
+            PutU16(b, 0x00, 0x5A4D);
+            PutU32(b, 0x3C, 0x80);
+            PutU32(b, 0x80, 0x00004550);
+            PutU16(b, 0x84, 0x8664);   // Machine
+            PutU16(b, 0x86, 1);        // NumberOfSections
+            PutU16(b, 0x94, 0xF0);     // SizeOfOptionalHeader
+
+            // optional header
+            PutU16(b, Opt + 0x00, 0x020B);   // Magic PE32+
+            PutU32(b, Opt + 0x6C, 16);       // NumberOfRvaAndSizes
+            // data directories @ Opt+0x70; entry i at +0x70 + i*8 (VA, then Size)
+            PutU32(b, Opt + 0x70 + 0 * 8, 0x300); PutU32(b, Opt + 0x74 + 0 * 8, 0x28);  // [0] Export
+            PutU32(b, Opt + 0x70 + 1 * 8, 0x200); PutU32(b, Opt + 0x74 + 1 * 8, 0x28);  // [1] Import
+            PutU32(b, Opt + 0x70 + 5 * 8, 0x400); PutU32(b, Opt + 0x74 + 5 * 8, 0x0C);  // [5] BaseReloc
+            PutU32(b, Opt + 0x70 + 12 * 8, 0x260); PutU32(b, Opt + 0x74 + 12 * 8, 0x10); // [12] IAT
+
+            // section header @0x188, identity map
+            PutName(b, 0x188, '.', 'd', 'a', 't', 'a');
+            PutU32(b, 0x188 + 0x08, 0x400);  // VirtualSize
+            PutU32(b, 0x188 + 0x0C, 0x200);  // VirtualAddress
+            PutU32(b, 0x188 + 0x10, 0x400);  // SizeOfRawData
+            PutU32(b, 0x188 + 0x14, 0x200);  // PointerToRawData
+
+            // ---- import table @0x200 ----
+            // descriptor[0]
+            PutU32(b, 0x200 + 0x00, 0x230);  // OriginalFirstThunk (ILT)
+            PutU32(b, 0x200 + 0x0C, 0x240);  // Name (DLL string)
+            PutU32(b, 0x200 + 0x10, 0x260);  // FirstThunk (IAT)
+            // descriptor[1] @0x214 = null terminator (already zero)
+            // ILT @0x230: thunk[0]=0x250 (-> ImageImportByName), thunk[1]=0
+            PutU64(b, 0x230, 0x250);
+            // DLL name @0x240
+            PutAscii(b, 0x240, "TESTDLL");
+            // ImageImportByName @0x250: Hint=7, Name="MyFunc"
+            PutU16(b, 0x250, 7);
+            PutAscii(b, 0x252, "MyFunc");
+            // IAT @0x260
+            PutU64(b, 0x260, 0x250);
+
+            // ---- export table @0x300 (IMAGE_EXPORT_DIRECTORY) ----
+            PutU32(b, 0x300 + 0x0C, 0x340);  // Name (module)
+            PutU32(b, 0x300 + 0x10, 1);      // Base (ordinal base)
+            PutU32(b, 0x300 + 0x14, 1);      // NumberOfFunctions
+            PutU32(b, 0x300 + 0x18, 1);      // NumberOfNames
+            PutU32(b, 0x300 + 0x1C, 0x350);  // AddressOfFunctions (EAT)
+            PutU32(b, 0x300 + 0x20, 0x360);  // AddressOfNames
+            PutU32(b, 0x300 + 0x24, 0x370);  // AddressOfNameOrdinals
+            PutAscii(b, 0x340, "TEST.DLL");
+            PutU32(b, 0x350, 0x1000);        // EAT[0] = function RVA
+            PutU32(b, 0x360, 0x380);         // name ptr[0]
+            PutU16(b, 0x370, 0);             // ordinal[0] (index into EAT)
+            PutAscii(b, 0x380, "ExpFunc");
+
+            // ---- base reloc block @0x400 ----
+            PutU32(b, 0x400, 0x1000);        // page RVA
+            PutU32(b, 0x404, 0x0C);          // SizeOfBlock (8 + 2*2)
+            PutU16(b, 0x408, 0xA008);        // TypeOffset[0]: type=10 (DIR64), off=8
+            PutU16(b, 0x40A, 0);             // TypeOffset[1]: padding
+
+            return b;
+        }
+
+        private static void PutAscii(byte[] b, int o, string s)
+        {
+            for (int i = 0; i < s.Length; i++) b[o + i] = (byte)s[i];
+            b[o + s.Length] = 0;
         }
 
         // Synthetic PE32+ layout the parser walks (opt-header base = 0x98):

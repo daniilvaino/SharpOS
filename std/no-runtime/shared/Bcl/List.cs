@@ -78,6 +78,13 @@ namespace System.Collections.Generic
             _size = 0;
         }
 
+        public T[] ToArray()
+        {
+            T[] array = new T[_size];
+            for (int i = 0; i < _size; i++) array[i] = _items[i];
+            return array;
+        }
+
         public bool Contains(T item) => IndexOf(item) >= 0;
 
         public int IndexOf(T item)

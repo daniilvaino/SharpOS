@@ -195,7 +195,14 @@ $penetProbes = @(
     @{ N='PeNetDataDirImport';  Re='penet datadir\[import\] va/size: (ok|FAIL)' },
     @{ N='PeNetSectionsCount';  Re='penet sections count==2: (ok|FAIL)' },
     @{ N='PeNetSection0Text';   Re='penet section\[0\] \.text va: (ok|FAIL)' },
-    @{ N='PeNetSection1Data';   Re='penet section\[1\] \.data va: (ok|FAIL)' }
+    @{ N='PeNetSection1Data';   Re='penet section\[1\] \.data va: (ok|FAIL)' },
+    # phase-2 (step135): imports / exports / base relocations
+    @{ N='PeNet2ImportDescs';   Re='penet2 import descriptors==1: (ok|FAIL)' },
+    @{ N='PeNet2ImportFunc';    Re='penet2 imported func \(MyFunc\): (ok|FAIL)' },
+    @{ N='PeNet2ImportHint';    Re='penet2 import hint==7: (ok|FAIL)' },
+    @{ N='PeNet2ExportDir';     Re='penet2 export dir \(nfuncs==1\): (ok|FAIL)' },
+    @{ N='PeNet2ExportFunc';    Re='penet2 exported func \(ExpFunc\): (ok|FAIL)' },
+    @{ N='PeNet2Reloc';         Re='penet2 reloc block \(va/size/n\): (ok|FAIL)' }
 )
 foreach ($p in $penetProbes) {
     $results += Get-ProbeStatus -Cat 'PeNet' -Name $p.N `
