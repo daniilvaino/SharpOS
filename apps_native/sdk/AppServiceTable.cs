@@ -40,6 +40,11 @@ namespace SharpOS.AppSdk
         // the kernel's shared resolver. See InterfaceDispatchTrampoline. Filled
         // unconditionally by the kernel; layout must match OS/.../AppServiceTable.cs.
         public ulong InterfaceDispatchBridgeAddress;
+
+        // Kernel RhpThrowEx entry (raw address). The app tail-jumps its own
+        // RhpThrowEx stub here so throw/catch share the kernel EH engine. See
+        // ThrowExTrampoline. Layout must match OS/.../AppServiceTable.cs.
+        public ulong RhpThrowExAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

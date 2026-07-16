@@ -41,6 +41,13 @@ namespace OS.Kernel.Process
         // app shares the kernel's (pure, major-9) dispatch resolver instead of
         // carrying its own. Filled unconditionally, independent of AbiVersion.
         public ulong InterfaceDispatchBridgeAddress;
+
+        // Raw entry of the kernel's RhpThrowEx (ThrowExStub.GetMethodAddress —
+        // patched at boot to the throw shellcode). The app tail-jumps its own
+        // RhpThrowEx stub here so `throw`/`catch` share the kernel's managed EH
+        // engine (DispatchEx). Requires the app's .pdata to be registered
+        // (PeLoader) so the unwinder can walk app frames. Filled unconditionally.
+        public ulong RhpThrowExAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

@@ -46,8 +46,19 @@ namespace OS.Boot.EH
 
         // Resolved method info — both the immediate record (which may be
         // a funclet) and the ROOT parent (which carries the EH clauses).
+        //
+        // ImageBase/ImageRecords/ImageCount identify the IMAGE that owns this
+        // method (step140 multi-image): kernel or a loaded PE app. Indices are
+        // LOCAL to that image. Consumers that turn an RVA into an address (EH
+        // clause type RVA, UNWIND_INFO RVA, gcInfo RVA) must use info.ImageBase,
+        // NOT the global CoffRuntimeFunctionTable.ImageBase (which is always the
+        // kernel). For a kernel frame the two are identical, so pre-multi-image
+        // consumers keep working until migrated.
         public struct MethodInfo
         {
+            public byte* ImageBase;
+            public RuntimeFunction* ImageRecords;
+            public int ImageCount;
             public int CurrentIndex;
             public int RootIndex;
             public RuntimeFunction* CurrentRuntimeFunction;
@@ -96,7 +107,9 @@ namespace OS.Boot.EH
         public static byte ReadUnwindBlockFlags(RuntimeFunction* rf)
         {
             if (rf == null) return 0;
-            byte* unwindInfo = CoffRuntimeFunctionTable.ImageBase + rf->UnwindInfoAddress;
+            // Image-aware (step140): UnwindInfoAddress is an RVA relative to the
+            // image that owns `rf`, which may be a loaded app, not the kernel.
+            byte* unwindInfo = CoffRuntimeFunctionTable.ImageBaseForRecord(rf) + rf->UnwindInfoAddress;
 
             // Standard UNWIND_INFO header (Win x64 unwind spec):
             //   byte 0: Version (low 3 bits) | Flags (high 5 bits)
@@ -164,28 +177,33 @@ namespace OS.Boot.EH
         {
             info = default;
 
-            int currentIdx = FindRecordIndex(ip);
-            if (currentIdx < 0) return false;
+            // Image-aware (step140): resolve which image owns `ip` (kernel or a
+            // loaded app) and get its record array + the local index. With no
+            // app registered this resolves image 0 (kernel) identically to the
+            // old FindRecordIndex path.
+            if (!CoffRuntimeFunctionTable.TryResolvePc(
+                    ip, out byte* imageBase, out RuntimeFunction* records,
+                    out int count, out int currentIdx))
+                return false;
 
-            RuntimeFunction* currentRf = CoffRuntimeFunctionTable.GetRecord(currentIdx);
-            if (currentRf == null) return false;
-
+            RuntimeFunction* currentRf = &records[currentIdx];
             byte currentFlags = ReadUnwindBlockFlags(currentRf);
 
             int rootIdx = currentIdx;
             if ((currentFlags & UBF_FUNC_KIND_MASK) != UBF_FUNC_KIND_ROOT)
             {
-                rootIdx = WalkToRoot(currentIdx);
+                rootIdx = WalkToRootInImage(records, count, currentIdx);
                 if (rootIdx < 0) return false;
             }
 
-            RuntimeFunction* rootRf = CoffRuntimeFunctionTable.GetRecord(rootIdx);
-            if (rootRf == null) return false;
-
+            RuntimeFunction* rootRf = &records[rootIdx];
             byte rootFlags = (rootIdx == currentIdx)
                 ? currentFlags
                 : ReadUnwindBlockFlags(rootRf);
 
+            info.ImageBase = imageBase;
+            info.ImageRecords = records;
+            info.ImageCount = count;
             info.CurrentIndex = currentIdx;
             info.RootIndex = rootIdx;
             info.CurrentRuntimeFunction = currentRf;
@@ -193,6 +211,26 @@ namespace OS.Boot.EH
             info.CurrentBlockFlags = currentFlags;
             info.RootBlockFlags = rootFlags;
             return true;
+        }
+
+        // Image-scoped funclet -> ROOT walk (step140). Same algorithm as
+        // WalkToRoot but bounded to one image's record array, so an app funclet
+        // resolves to its app ROOT and never walks into the kernel's records.
+        private static int WalkToRootInImage(RuntimeFunction* records, int count, int startIndex)
+        {
+            if (records == null || startIndex < 0 || startIndex >= count) return -1;
+
+            const int MaxWalk = 64;
+            int idx = startIndex;
+            for (int step = 0; step < MaxWalk; step++)
+            {
+                if (idx < 0) return -1;
+                byte blockFlags = ReadUnwindBlockFlags(&records[idx]);
+                if ((blockFlags & UBF_FUNC_KIND_MASK) == UBF_FUNC_KIND_ROOT)
+                    return idx;
+                idx--;
+            }
+            return -1;
         }
     }
 }

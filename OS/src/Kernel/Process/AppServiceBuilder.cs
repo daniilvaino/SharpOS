@@ -196,6 +196,11 @@ namespace OS.Kernel.Process
             table.InterfaceDispatchBridgeAddress =
                 (ulong)OS.Kernel.Memory.InterfaceDispatchBridge.ShellcodeStart;
 
+            // Kernel RhpThrowEx entry (patched-in-place throw shellcode) so the
+            // app's throw/catch shares the kernel EH engine (step140).
+            table.RhpThrowExAddress =
+                (ulong)OS.Boot.EH.ThrowExStub.GetMethodAddress();
+
             AppServiceTable* serviceTablePointer = Pager.IsPagerRootActive()
                 ? (AppServiceTable*)serviceVirtual
                 : (AppServiceTable*)servicePhysical;
@@ -1289,6 +1294,10 @@ namespace OS.Kernel.Process
         {
             if (endExclusive <= startInclusive)
                 return true;
+
+            // Drop any managed-EH .pdata registration for this base (step140).
+            // No-op unless startInclusive is a registered app image base.
+            global::OS.Boot.EH.CoffRuntimeFunctionTable.UnregisterImage((byte*)startInclusive);
 
             ulong current = AlignDown(startInclusive);
             ulong limit = AlignUp(endExclusive);

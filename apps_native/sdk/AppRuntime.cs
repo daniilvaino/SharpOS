@@ -25,6 +25,11 @@ namespace SharpOS.AppSdk
             InterfaceDispatchTrampoline.PatchToKernelBridge(
                 s_services->InterfaceDispatchBridgeAddress);
 
+            // Wire throw/catch into the kernel's shared EH engine: tail-jump our
+            // RhpThrowEx stub to the kernel's RhpThrowEx entry. No GC needed.
+            ThrowExTrampoline.PatchToKernelThrow(
+                s_services->RhpThrowExAddress);
+
             // Bring up the managed GC heap before any `new string` or `new object()`
             // hits its RhNewString / RhpNewFast export. GcMemorySource backing is
             // GcAppPool (1 MB in .bss), provided via GcMemorySource.AppStatic.cs.

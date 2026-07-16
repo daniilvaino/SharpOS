@@ -46,6 +46,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)AppServiceTable.cs"      Link="sdk\AppServiceTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppRuntime.cs"           Link="sdk\AppRuntime.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)InterfaceDispatchTrampoline.cs" Link="sdk\InterfaceDispatchTrampoline.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ThrowExTrampoline.cs"          Link="sdk\ThrowExTrampoline.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppHost.cs"              Link="sdk\AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StringAlgorithms.cs"     Link="sdk\StringAlgorithms.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)KeyInfo.cs"              Link="sdk\KeyInfo.cs" />
@@ -72,6 +73,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcSweep.cs"              Link="std\GC\GcSweep.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcRoots.cs"              Link="std\GC\GcRoots.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GC.cs"                   Link="std\GC\GC.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Exception.cs"               Link="std\Exception.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Exceptions.Derived.cs"      Link="std\Exceptions.Derived.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Interfaces.cs"          Link="std\Bcl\Interfaces.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\EqualityComparer.cs"    Link="std\Bcl\EqualityComparer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\List.cs"                Link="std\Bcl\List.cs" />

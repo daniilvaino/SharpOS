@@ -59,7 +59,7 @@ namespace OS.Boot.EH
             if (!CoffMethodLookup.TryFindMethod(ip, out CoffMethodLookup.MethodInfo info))
                 return false;
 
-            byte* imageBase = CoffRuntimeFunctionTable.ImageBase;
+            byte* imageBase = info.ImageBase;
             byte* methodStart = imageBase + info.RootRuntimeFunction->BeginAddress;
             byte* methodEnd   = imageBase + info.RootRuntimeFunction->EndAddress;
             byte* unwindInfo  = imageBase + info.RootRuntimeFunction->UnwindInfoAddress;

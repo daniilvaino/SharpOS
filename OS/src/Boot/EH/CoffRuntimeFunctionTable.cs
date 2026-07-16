@@ -57,6 +57,142 @@ namespace OS.Boot.EH
             return &s_records[index];
         }
 
+        // ---- Multi-image registry (step140) --------------------------------
+        //
+        // The primary image (index 0) is the kernel — s_imageBase/s_records/
+        // s_recordCount above, kept EXACTLY as-is so every kernel-only consumer
+        // (SEH engine, GC precise walk, diagnostics) that reads ImageBase/Count/
+        // GetRecord is untouched. This registry holds ADDITIONAL images (loaded
+        // PE apps at 0x400000) whose `.pdata` PeLoader registers after mapping,
+        // so the managed EH walk (CoffMethodLookup/CoffEhDecoder/StackFrameIterator)
+        // can resolve app frames. Apps nest LIFO and unregister on exit.
+        //
+        // Storage is a fixed-capacity value struct (no static reference field →
+        // no ClassConstructorRunner trap); pointers/ints only, zero-initialized.
+        private const int MaxExtraImages = 4;
+
+        private unsafe struct ExtraImageTable
+        {
+            public fixed ulong Bases[MaxExtraImages];
+            public fixed ulong Records[MaxExtraImages];   // RuntimeFunction*
+            public fixed int Counts[MaxExtraImages];
+        }
+
+        private static ExtraImageTable s_extra;
+        private static int s_extraCount;
+
+        // Register an additional image's .pdata. Returns the slot, or -1 if the
+        // table is full. Records must point at `count` RUNTIME_FUNCTION entries
+        // sorted by BeginAddress, addressable at imageBase + rva.
+        public static int RegisterImage(byte* imageBase, RuntimeFunction* records, int count)
+        {
+            if (imageBase == null || records == null || count <= 0) return -1;
+            if (s_extraCount >= MaxExtraImages) return -1;
+            int i = s_extraCount;
+            s_extra.Bases[i] = (ulong)imageBase;
+            s_extra.Records[i] = (ulong)records;
+            s_extra.Counts[i] = count;
+            s_extraCount++;
+            return i;
+        }
+
+        // Remove a registered image by base (LIFO-friendly compaction). No-op if
+        // not found. Called when an app image is torn down.
+        public static void UnregisterImage(byte* imageBase)
+        {
+            for (int i = 0; i < s_extraCount; i++)
+            {
+                if (s_extra.Bases[i] != (ulong)imageBase) continue;
+                for (int j = i; j < s_extraCount - 1; j++)
+                {
+                    s_extra.Bases[j] = s_extra.Bases[j + 1];
+                    s_extra.Records[j] = s_extra.Records[j + 1];
+                    s_extra.Counts[j] = s_extra.Counts[j + 1];
+                }
+                s_extraCount--;
+                return;
+            }
+        }
+
+        // Resolve which image owns `ip`: kernel (image 0) first, then extras.
+        // Yields the owning image's base/records/count plus the record index
+        // within that image. This is the image-aware entry the managed EH walk
+        // uses instead of assuming the kernel base.
+        public static bool TryResolvePc(
+            byte* ip,
+            out byte* imageBase, out RuntimeFunction* records,
+            out int count, out int localIndex)
+        {
+            imageBase = null; records = null; count = 0; localIndex = -1;
+            if (!s_initialized) return false;
+
+            int idx = SearchImage(s_imageBase, s_records, s_recordCount, ip);
+            if (idx >= 0)
+            {
+                imageBase = s_imageBase; records = s_records;
+                count = s_recordCount; localIndex = idx;
+                return true;
+            }
+
+            for (int i = 0; i < s_extraCount; i++)
+            {
+                byte* b = (byte*)s_extra.Bases[i];
+                RuntimeFunction* r = (RuntimeFunction*)s_extra.Records[i];
+                int c = s_extra.Counts[i];
+                idx = SearchImage(b, r, c, ip);
+                if (idx >= 0)
+                {
+                    imageBase = b; records = r; count = c; localIndex = idx;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Given a RUNTIME_FUNCTION pointer, return the base of the image whose
+        // records array contains it. Used to turn rf->UnwindInfoAddress (an RVA)
+        // into an absolute address. Falls back to the kernel base for back-compat
+        // (a kernel rf, or an unknown pointer treated as kernel).
+        public static byte* ImageBaseForRecord(RuntimeFunction* rf)
+        {
+            if (rf != null && s_records != null &&
+                rf >= s_records && rf < s_records + s_recordCount)
+                return s_imageBase;
+
+            for (int i = 0; i < s_extraCount; i++)
+            {
+                RuntimeFunction* r = (RuntimeFunction*)s_extra.Records[i];
+                int c = s_extra.Counts[i];
+                if (rf >= r && rf < r + c) return (byte*)s_extra.Bases[i];
+            }
+            return s_imageBase;
+        }
+
+        // Binary search one image's sorted record array for the record covering
+        // `ip`. Returns the local index, or -1 if `ip` is outside this image or
+        // falls between records. Shared by TryResolvePc; identical algorithm to
+        // CoffMethodLookup's kernel-only FindRecordIndex.
+        private static int SearchImage(byte* imageBase, RuntimeFunction* records, int count, byte* ip)
+        {
+            if (imageBase == null || records == null || count <= 0) return -1;
+            nint diff = (nint)ip - (nint)imageBase;
+            if (diff < 0) return -1;
+            ulong rva = (ulong)diff;
+            if (rva > 0xFFFFFFFFUL) return -1;
+            uint targetRva = (uint)rva;
+
+            int lo = 0, hi = count - 1;
+            while (lo <= hi)
+            {
+                int mid = lo + ((hi - lo) >> 1);
+                RuntimeFunction* rf = &records[mid];
+                if (targetRva < rf->BeginAddress) hi = mid - 1;
+                else if (targetRva >= rf->EndAddress) lo = mid + 1;
+                else return mid;
+            }
+            return -1;
+        }
+
         // Locates the PE image, parses its header, and caches the
         // RUNTIME_FUNCTION array. `anchorInImage` must point into our
         // kernel binary (e.g. an EEType from .rdata, or any kernel code

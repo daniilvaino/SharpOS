@@ -478,6 +478,11 @@ namespace OS.Kernel.Elf
             if (endExclusive <= startInclusive)
                 return true;
 
+            // Drop any managed-EH .pdata registration for this base (step140).
+            // No-op unless startInclusive is a registered app image base (i.e.
+            // not for stack ranges or ELF images).
+            global::OS.Boot.EH.CoffRuntimeFunctionTable.UnregisterImage((byte*)startInclusive);
+
             ulong current = AlignDown(startInclusive);
             ulong limit = AlignUp(endExclusive);
             while (current < limit)

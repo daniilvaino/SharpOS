@@ -1,4 +1,5 @@
 using SharpOS.AppSdk;
+using System;
 using System.Collections.Generic;
 using System.Runtime;
 
@@ -73,6 +74,54 @@ namespace AotTests
             // EqualityComparer<T>.Default (interface dispatch on a value type).
             var cmp = EqualityComparer<int>.Default;
             Check("EqualityComparer<int>", cmp.Equals(5, 5) && !cmp.Equals(5, 6));
+
+            // throw / catch through the shared kernel EH engine (step140):
+            // app throw -> kernel RhpThrowEx -> DispatchEx walks app .pdata ->
+            // app catch funclet.
+            bool threw = false;
+            try
+            {
+                throw new InvalidOperationException("boom");
+            }
+            catch (InvalidOperationException)
+            {
+                threw = true;
+            }
+            Check("throw/catch", threw);
+
+            // try/finally runs the finally block (no throw).
+            int fin = 0;
+            try { fin = 1; } finally { fin += 10; }
+            Check("try/finally", fin == 11);
+
+            // finally runs during unwind; exception propagates to an outer catch.
+            bool outerCaught = false; int finOnUnwind = 0;
+            try
+            {
+                try { throw new InvalidOperationException("x"); }
+                finally { finOnUnwind = 1; }
+            }
+            catch (InvalidOperationException) { outerCaught = true; }
+            Check("finally-on-unwind", outerCaught && finOnUnwind == 1);
+
+            // catch by a base type (throw derived, catch System.Exception).
+            bool baseCaught = false;
+            try { throw new InvalidOperationException("y"); }
+            catch (Exception) { baseCaught = true; }
+            Check("catch-by-base", baseCaught);
+
+            // exception object survives into the catch; Message round-trips.
+            string msg = null;
+            try { throw new InvalidOperationException("hello"); }
+            catch (InvalidOperationException e) { msg = e.Message; }
+            Check("exception message", msg == "hello");
+
+            // non-matching catch skipped, matching catch selected.
+            int which = 0;
+            try { throw new FormatException("z"); }
+            catch (InvalidOperationException) { which = 1; }
+            catch (FormatException) { which = 2; }
+            Check("multi-catch select", which == 2);
 
             AppHost.WriteString("==== ");
             AppHost.WriteUInt(s_pass);

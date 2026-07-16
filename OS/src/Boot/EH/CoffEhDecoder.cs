@@ -49,6 +49,11 @@ namespace OS.Boot.EH
             // calls in EhEnumNext.
             public byte* EHInfo;
 
+            // Base of the image that owns this method (step140 multi-image):
+            // kernel or a loaded app. Used to turn a clause's type RVA into an
+            // absolute MethodTable pointer in EhEnumNext.
+            public byte* ImageBase;
+
             public uint TotalClauses;
             public uint CurrentClauseIndex;
         }
@@ -80,7 +85,7 @@ namespace OS.Boot.EH
             if (!CoffMethodLookup.TryFindMethod(ip, out CoffMethodLookup.MethodInfo info))
                 return false;
 
-            byte* imageBase = CoffRuntimeFunctionTable.ImageBase;
+            byte* imageBase = info.ImageBase;
             byte* unwindInfo = imageBase + info.RootRuntimeFunction->UnwindInfoAddress;
 
             // Standard UNWIND_INFO header.
@@ -113,6 +118,7 @@ namespace OS.Boot.EH
 
             state.MethodStartAddress = methodStart;
             state.EHInfo = ehInfo;
+            state.ImageBase = imageBase;
             state.CurrentClauseIndex = 0;
             state.TotalClauses = VarInt.ReadUnsigned(ref state.EHInfo);
 
@@ -155,7 +161,7 @@ namespace OS.Boot.EH
             if (kind == CoffMethodLookup.UBF_FUNC_KIND_ROOT)
                 return false;   // not a funclet
 
-            byte* imageBase = CoffRuntimeFunctionTable.ImageBase;
+            byte* imageBase = info.ImageBase;
             byte* root = imageBase + info.RootRuntimeFunction->BeginAddress;
             methodStart = root;
 
@@ -209,7 +215,7 @@ namespace OS.Boot.EH
                     // typeRVA — unaligned 4-byte LE int directly from blob.
                     uint typeRva = *(uint*)p;
                     p += 4;
-                    clause.TargetTypeRaw = CoffRuntimeFunctionTable.ImageBase + typeRva;
+                    clause.TargetTypeRaw = state.ImageBase + typeRva;
                     break;
 
                 case ClauseKind.Fault:

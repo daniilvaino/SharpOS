@@ -102,7 +102,7 @@ namespace OS.Boot.EH
                 return false;
             }
 
-            byte* unwindInfo = CoffRuntimeFunctionTable.ImageBase
+            byte* unwindInfo = info.ImageBase
                              + info.RootRuntimeFunction->UnwindInfoAddress;
 
             byte countOfCodes = unwindInfo[2];
