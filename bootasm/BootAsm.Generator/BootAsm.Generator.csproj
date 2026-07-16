@@ -36,8 +36,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\iced\**\*.cs"
-             Exclude="..\..\iced\Intel\StreamCodeWriter.cs"
+    <Compile Include="..\..\vendor\Iced\**\*.cs"
+             Exclude="..\..\vendor\Iced\Intel\StreamCodeWriter.cs"
              LinkBase="Iced" />
   </ItemGroup>
 

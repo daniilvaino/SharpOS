@@ -176,7 +176,7 @@ $results += Get-ProbeStatus -Cat 'Phase4' -Name 'DelegateGcSurvival' `
 # PeNet native-PE parser (milestone 1) -- vendored PeNet cut (PeNet/) parsing
 # a synthetic PE32+ image on our own std (System.Text.Encoding brick,
 # BufferFile forked onto byte[], MemoryMarshal, delegate-backed Array.Sort in
-# the section parser). See NativeAotProbe.Probe_PeNet / PeNet/PROVENANCE.md.
+# the section parser). See NativeAotProbe.Probe_PeNet / vendor/PeNet/PROVENANCE.md.
 # One line per header field walked: DOS -> NT -> optional header -> data
 # directory -> section table.
 $penetProbes = @(
@@ -231,6 +231,34 @@ $linqProbes = @(
 )
 foreach ($p in $linqProbes) {
     $results += Get-ProbeStatus -Cat 'Linq' -Name $p.N `
+        -Detect 'nativeaot probe begin' -Status $p.Re -ExpectRe '^ok$'
+}
+
+# PE loader stage 1 (step136): PeImageLayout.TryFlatten -- flatten a raw PE into
+# its in-memory image layout (SizeOfImage buffer, sections at RVAs, BSS zero).
+# See NativeAotProbe.Probe_PeLoad / OS/src/Kernel/Pe/PeImageLayout.cs.
+$peloadProbes = @(
+    @{ N='PeLoadFlatten';       Re='peload flatten ok: (ok|FAIL)' },
+    @{ N='PeLoadImageSize';     Re='peload image size==0x3000: (ok|FAIL)' },
+    @{ N='PeLoadImageBase';     Re='peload imagebase: (ok|FAIL)' },
+    @{ N='PeLoadEntryPoint';    Re='peload entrypoint==base\+0x1000: (ok|FAIL)' },
+    @{ N='PeLoadSections';      Re='peload sections==1: (ok|FAIL)' },
+    @{ N='PeLoadHeaders';       Re='peload headers \(MZ\) copied: (ok|FAIL)' },
+    @{ N='PeLoadSectionByte';   Re='peload section byte @RVA: (ok|FAIL)' },
+    @{ N='PeLoadBssZero';       Re='peload BSS tail zero: (ok|FAIL)' },
+    # stage 2 (step136): base relocations
+    @{ N='PeRelocPreValue';     Re='pereloc pre value: (ok|FAIL)' },
+    @{ N='PeRelocApply';        Re='pereloc apply ok \(n==1\): (ok|FAIL)' },
+    @{ N='PeRelocValue';        Re='pereloc value \+delta: (ok|FAIL)' },
+    @{ N='PeRelocNoOp';         Re='pereloc no-op at base: (ok|FAIL)' },
+    # stage 3 (step136): import resolution / IAT binding
+    @{ N='PeImportPreSlot';     Re='peimport pre IAT slot: (ok|FAIL)' },
+    @{ N='PeImportResolve';     Re='peimport resolve ok \(1/0\): (ok|FAIL)' },
+    @{ N='PeImportBound';       Re='peimport IAT bound: (ok|FAIL)' },
+    @{ N='PeImportUnresolved';  Re='peimport unresolved counted: (ok|FAIL)' }
+)
+foreach ($p in $peloadProbes) {
+    $results += Get-ProbeStatus -Cat 'PeLoad' -Name $p.N `
         -Detect 'nativeaot probe begin' -Status $p.Re -ExpectRe '^ok$'
 }
 
@@ -533,7 +561,7 @@ $colors = @{
     VALUE   = 'Cyan'
 }
 
-$catsOrder = @('Boot','Phase1','Phase2','Phase3','Phase4','Linq','PeNet','EH','PhaseE','Drivers','CoreCLR','EBS','Launcher','Faults')
+$catsOrder = @('Boot','Phase1','Phase2','Phase3','Phase4','Linq','PeNet','PeLoad','EH','PhaseE','Drivers','CoreCLR','EBS','Launcher','Faults')
 
 Write-Host ""
 Write-Host "=== SharpOS probe report -- $Log ===" -ForegroundColor White

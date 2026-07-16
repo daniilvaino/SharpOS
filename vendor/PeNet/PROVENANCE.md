@@ -6,7 +6,7 @@
 first step of the ELF→PE app-migration (donext.md workstream 2).
 
 This is **not** the full PeNet. It is a milestone-1 *native-PE* subset compiled
-directly into the kernel image (`OS.csproj` glob-include, like `iced/`). It runs
+directly into the kernel image (`OS.csproj` glob-include, like `vendor/Iced/`). It runs
 against our own std (`std/no-runtime/shared/`), not the BCL.
 
 ## Included

@@ -85,7 +85,7 @@
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <!-- Iced lives at repo-root /iced/ (sibling to OS/, std/, apps/) so the
+  <!-- Iced lives at vendor/Iced/ (repo-root vendor/, sibling to OS/, std/) so the
        future compile-time stub generator can reference the same source
        set via the same <Compile Include> shape. Since Iced is outside the
        OS project tree, SDK auto-glob doesn't pick it up — explicit Include
@@ -94,20 +94,21 @@
        Iced.csproj (NuGet-style multi-target one) is marked as None so
        dotnet restore / IDE ignore it. -->
   <ItemGroup>
-    <Compile Include="..\iced\**\*.cs"
-             Exclude="..\iced\Intel\StreamCodeWriter.cs"
+    <Compile Include="..\vendor\Iced\**\*.cs"
+             Exclude="..\vendor\Iced\Intel\StreamCodeWriter.cs"
              LinkBase="Iced" />
-    <None Include="..\iced\Iced.csproj" />
+    <None Include="..\vendor\Iced\Iced.csproj" />
   </ItemGroup>
 
-  <!-- PeNet (PE parser) vendored cut at repo-root /PeNet/ (sibling to iced/).
-       Apache-2.0 — see PeNet/LICENSE. This is a milestone-1 native-PE subset
-       (DOS/NT/section headers via NativeStructureParsers); .NET-metadata,
-       resources, authenticode/crypto, imports/exports and the Editor were cut
-       (see PeNet/PROVENANCE.md). BufferFile is forked onto byte[] (no Memory<T>
-       in our std). Glob-included like Iced; grows as later milestones land. -->
+  <!-- PeNet (PE parser) vendored cut at vendor/PeNet/ (sibling to Iced/).
+       Apache-2.0 — see vendor/PeNet/LICENSE. Native-PE headers +
+       imports/exports/base-relocations (via NativeStructureParsers and the
+       DataDirectory parsers, instantiated directly); .NET-metadata, resources,
+       authenticode/crypto and the Editor were cut (see vendor/PeNet/PROVENANCE.md).
+       BufferFile is forked onto byte[] (no Memory<T> in our std). Glob-included
+       like Iced; grows as later milestones land. -->
   <ItemGroup>
-    <Compile Include="..\PeNet\**\*.cs" LinkBase="PeNet" />
+    <Compile Include="..\vendor\PeNet\**\*.cs" LinkBase="PeNet" />
   </ItemGroup>
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <!-- step 121: kernel-side libcmt cut completed via CoffStub.Generator.

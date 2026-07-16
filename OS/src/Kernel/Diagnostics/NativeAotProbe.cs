@@ -107,6 +107,9 @@ namespace OS.Kernel.Diagnostics
             Probe_Delegates();
             Probe_PeNet();
             Probe_PeNetPhase2();
+            Probe_PeLoad();
+            Probe_PeReloc();
+            Probe_PeImports();
             Probe_Linq();
             Probe_StringFormat();
             Probe_InterfaceCallFromSharedGeneric();
@@ -1566,7 +1569,7 @@ namespace OS.Kernel.Diagnostics
         // on our own std (BufferFile forked onto byte[]; System.Text.Encoding
         // brick; MemoryMarshal.Read; delegate-backed Array.Sort in the section
         // parser). Walks DOS -> NT -> optional header -> data directories ->
-        // section table end to end. See PeNet/PROVENANCE.md.
+        // section table end to end. See vendor/PeNet/PROVENANCE.md.
         private static void Probe_PeNet()
         {
             byte[] image = BuildSyntheticPe64();
@@ -1630,6 +1633,235 @@ namespace OS.Kernel.Diagnostics
             ReportProbe("penet section[1] .data va",
                 secs != null && secs.Length >= 2 && secs[1].Name == ".data" && secs[1].VirtualAddress == 0x2000,
                 secs != null && secs.Length >= 2 ? secs[1].VirtualAddress : 0u);
+        }
+
+        // PE loader stage 3 (step136): PeImports.TryResolve. Flattens a PE whose
+        // .idata section (VA 0x1000 != PointerToRawData 0x200, so RVA != file
+        // offset) imports TESTDLL!MyFunc, resolves it to a fake kernel export
+        // address and checks the IAT slot in the flattened image was bound.
+        private static void Probe_PeImports()
+        {
+            byte[] file = BuildSyntheticPeForImports();
+
+            global::OS.Kernel.Pe.PeImageLayout.TryFlatten(file, out byte[] image, out _, out _, out _);
+
+            ulong beforeSlot = global::OS.Kernel.Pe.PeRelocations.ReadU64(image, 0x1060);
+            ReportProbe("peimport pre IAT slot", beforeSlot == 0x1050UL, (uint)beforeSlot);
+
+            bool ok = global::OS.Kernel.Pe.PeImports.TryResolve(
+                image, file,
+                f => (f.DLL == "TESTDLL" && f.Name == "MyFunc") ? 0xCAFEF00D00001000UL : 0UL,
+                out int resolved, out int unresolved);
+            ReportProbe("peimport resolve ok (1/0)",
+                ok && resolved == 1 && unresolved == 0, (uint)resolved);
+
+            ulong afterSlot = global::OS.Kernel.Pe.PeRelocations.ReadU64(image, 0x1060);
+            ReportProbe("peimport IAT bound", afterSlot == 0xCAFEF00D00001000UL, (uint)afterSlot);
+
+            // unresolved path: resolver returns 0 -> counted, slot left as-is.
+            global::OS.Kernel.Pe.PeImageLayout.TryFlatten(file, out byte[] image2, out _, out _, out _);
+            global::OS.Kernel.Pe.PeImports.TryResolve(image2, file, f => 0UL, out int r2, out int u2);
+            ReportProbe("peimport unresolved counted", r2 == 0 && u2 == 1, (uint)u2);
+        }
+
+        // Raw PE32+ for the import test: section ".idata" (VA=0x1000,
+        // PointerToRawData=0x200 -> RVA != file offset) imports TESTDLL!MyFunc.
+        // ImportDir=DataDirectory[1] @0x1000, IAT=DataDirectory[12] @0x1060.
+        private static byte[] BuildSyntheticPeForImports()
+        {
+            var b = new byte[0x600];
+            const int Opt = 0x98;
+
+            PutU16(b, 0x00, 0x5A4D);
+            PutU32(b, 0x3C, 0x80);
+            PutU32(b, 0x80, 0x00004550);
+            PutU16(b, 0x84, 0x8664);
+            PutU16(b, 0x86, 1);
+            PutU16(b, 0x94, 0xF0);
+
+            PutU16(b, Opt + 0x00, 0x020B);
+            PutU32(b, Opt + 0x10, 0x1000);
+            PutU64(b, Opt + 0x18, 0x140000000UL);
+            PutU32(b, Opt + 0x20, 0x1000);
+            PutU32(b, Opt + 0x24, 0x200);
+            PutU32(b, Opt + 0x38, 0x3000);
+            PutU32(b, Opt + 0x3C, 0x200);
+            PutU32(b, Opt + 0x6C, 16);
+            PutU32(b, Opt + 0x70 + 1 * 8, 0x1000); PutU32(b, Opt + 0x74 + 1 * 8, 0x28);   // [1] Import
+            PutU32(b, Opt + 0x70 + 12 * 8, 0x1060); PutU32(b, Opt + 0x74 + 12 * 8, 0x10);  // [12] IAT
+
+            // section ".idata": VA 0x1000, PtrRaw 0x200 (RVA k -> file 0x200 + (k-0x1000))
+            PutName(b, 0x188, '.', 'i', 'd', 'a', 't');
+            PutU32(b, 0x188 + 0x08, 0x1000);  // VirtualSize
+            PutU32(b, 0x188 + 0x0C, 0x1000);  // VirtualAddress
+            PutU32(b, 0x188 + 0x10, 0x400);   // SizeOfRawData
+            PutU32(b, 0x188 + 0x14, 0x200);   // PointerToRawData
+
+            // import descriptor @ RVA 0x1000 -> file 0x200
+            PutU32(b, 0x200 + 0x00, 0x1030);  // OriginalFirstThunk (ILT RVA)
+            PutU32(b, 0x200 + 0x0C, 0x1040);  // Name (DLL RVA)
+            PutU32(b, 0x200 + 0x10, 0x1060);  // FirstThunk (IAT RVA)
+            // ILT @ RVA 0x1030 -> file 0x230
+            PutU64(b, 0x230, 0x1050);         // thunk[0] -> ImageImportByName RVA
+            // DLL name @ RVA 0x1040 -> file 0x240
+            PutAscii(b, 0x240, "TESTDLL");
+            // ImageImportByName @ RVA 0x1050 -> file 0x250
+            PutU16(b, 0x250, 7);
+            PutAscii(b, 0x252, "MyFunc");
+            // IAT @ RVA 0x1060 -> file 0x260 (initial thunk, overwritten on bind)
+            PutU64(b, 0x260, 0x1050);
+
+            return b;
+        }
+
+        // PE loader stage 2 (step136): PeRelocations.TryApply. Flattens a PE
+        // that bakes an absolute pointer (0x140001234) at RVA 0x1000 and carries
+        // a DIR64 reloc for it, then relocates to a load base 0x10000000 above
+        // the preferred one and checks the pointer moved by exactly delta. Also
+        // checks the no-op path (load at preferred base -> 0 applied).
+        private static void Probe_PeReloc()
+        {
+            byte[] file = BuildSyntheticPeForReloc();
+
+            bool flat = global::OS.Kernel.Pe.PeImageLayout.TryFlatten(
+                file, out byte[] image, out ulong imageBase, out _, out _);
+
+            var raw = new global::PeNet.FileParser.BufferFile(file);
+            var dds = new global::PeNet.HeaderParser.Pe.NativeStructureParsers(raw)
+                .ImageNtHeaders.OptionalHeader.DataDirectory;
+            uint relRva = dds[5].VirtualAddress;
+            uint relSize = dds[5].Size;
+
+            ulong before = global::OS.Kernel.Pe.PeRelocations.ReadU64(image, 0x1000);
+            ReportProbe("pereloc pre value", flat && before == 0x140001234UL, (uint)before);
+
+            bool ok = global::OS.Kernel.Pe.PeRelocations.TryApply(
+                image, imageBase, 0x150000000UL, relRva, relSize, out int applied);
+            ReportProbe("pereloc apply ok (n==1)", ok && applied == 1, (uint)applied);
+
+            ulong after = global::OS.Kernel.Pe.PeRelocations.ReadU64(image, 0x1000);
+            ReportProbe("pereloc value +delta", ok && after == 0x150001234UL, (uint)after);
+
+            // no-op: load at the preferred base -> nothing applied, unchanged.
+            global::OS.Kernel.Pe.PeImageLayout.TryFlatten(file, out byte[] image2, out ulong base2, out _, out _);
+            bool noop = global::OS.Kernel.Pe.PeRelocations.TryApply(
+                image2, base2, base2, relRva, relSize, out int applied2);
+            ulong same = global::OS.Kernel.Pe.PeRelocations.ReadU64(image2, 0x1000);
+            ReportProbe("pereloc no-op at base",
+                noop && applied2 == 0 && same == 0x140001234UL, (uint)applied2);
+        }
+
+        // Raw PE32+ for the reloc test: section ".data" (VA=0x1000, PtrRaw=0x200)
+        // holds a DIR64 pointer 0x140001234 at RVA 0x1000; a reloc block at RVA
+        // 0x1200 (DataDirectory[5]) relocates it. Preferred ImageBase 0x140000000.
+        private static byte[] BuildSyntheticPeForReloc()
+        {
+            var b = new byte[0x600];
+            const int Opt = 0x98;
+
+            PutU16(b, 0x00, 0x5A4D);
+            PutU32(b, 0x3C, 0x80);
+            PutU32(b, 0x80, 0x00004550);
+            PutU16(b, 0x84, 0x8664);
+            PutU16(b, 0x86, 1);
+            PutU16(b, 0x94, 0xF0);
+
+            PutU16(b, Opt + 0x00, 0x020B);          // Magic PE32+
+            PutU32(b, Opt + 0x10, 0x1000);          // AddressOfEntryPoint
+            PutU64(b, Opt + 0x18, 0x140000000UL);   // ImageBase
+            PutU32(b, Opt + 0x20, 0x1000);          // SectionAlignment
+            PutU32(b, Opt + 0x24, 0x200);           // FileAlignment
+            PutU32(b, Opt + 0x38, 0x3000);          // SizeOfImage
+            PutU32(b, Opt + 0x3C, 0x200);           // SizeOfHeaders
+            PutU32(b, Opt + 0x6C, 16);              // NumberOfRvaAndSizes
+            PutU32(b, Opt + 0x70 + 5 * 8, 0x1200);  // DataDirectory[5] BaseReloc VA
+            PutU32(b, Opt + 0x74 + 5 * 8, 0x0C);    // ...Size
+
+            PutName(b, 0x188, '.', 'd', 'a', 't', 'a');
+            PutU32(b, 0x188 + 0x08, 0x1000);  // VirtualSize
+            PutU32(b, 0x188 + 0x0C, 0x1000);  // VirtualAddress
+            PutU32(b, 0x188 + 0x10, 0x400);   // SizeOfRawData
+            PutU32(b, 0x188 + 0x14, 0x200);   // PointerToRawData
+
+            // section raw @file 0x200 (== RVA 0x1000): the pointer to relocate
+            PutU64(b, 0x200, 0x140001234UL);
+            // reloc block @file 0x400 (== RVA 0x1200)
+            PutU32(b, 0x400, 0x1000);   // block page RVA
+            PutU32(b, 0x404, 0x0C);     // SizeOfBlock (8 + 2*2)
+            PutU16(b, 0x408, 0xA000);   // TypeOffset[0]: type=10 (DIR64), off=0
+            PutU16(b, 0x40A, 0);        // TypeOffset[1]: padding
+
+            return b;
+        }
+
+        // PE loader stage 1 (step136): PeImageLayout.TryFlatten. Builds a raw PE
+        // file with a marker byte in a section, flattens it into the in-memory
+        // image layout (SizeOfImage buffer, sections at their RVAs, BSS zero),
+        // and verifies header/section placement + entry-point computation. Pure
+        // buffer transform -- no page tables yet.
+        private static void Probe_PeLoad()
+        {
+            byte[] file = BuildSyntheticPeForLayout();
+
+            bool ok = global::OS.Kernel.Pe.PeImageLayout.TryFlatten(
+                file, out byte[] image, out ulong imageBase, out ulong entryPoint, out uint sectionCount);
+
+            ReportProbe("peload flatten ok", ok && image != null, ok ? 1u : 0u);
+            ReportProbe("peload image size==0x3000",
+                ok && image != null && image.Length == 0x3000,
+                ok && image != null ? (uint)image.Length : 0u);
+            ReportProbe("peload imagebase",
+                ok && imageBase == 0x140000000UL, ok ? (uint)imageBase : 0u);
+            ReportProbe("peload entrypoint==base+0x1000",
+                ok && entryPoint == 0x140001000UL, ok ? (uint)entryPoint : 0u);
+            ReportProbe("peload sections==1", ok && sectionCount == 1, sectionCount);
+            ReportProbe("peload headers (MZ) copied",
+                ok && image != null && image.Length > 1 && image[0] == 0x4D && image[1] == 0x5A,
+                ok && image != null && image.Length > 0 ? image[0] : 0u);
+            // Section ".text" raw data placed at RVA 0x1000; marker 0xAB was at
+            // file offset PointerToRawData(0x200)+0x10 -> image[0x1010].
+            ReportProbe("peload section byte @RVA",
+                ok && image != null && image.Length > 0x1010 && image[0x1010] == 0xAB,
+                ok && image != null && image.Length > 0x1010 ? image[0x1010] : 0u);
+            // BSS: VirtualSize(0x200) > SizeOfRawData(0x100) -> image[0x1100] zero.
+            ReportProbe("peload BSS tail zero",
+                ok && image != null && image.Length > 0x1100 && image[0x1100] == 0,
+                ok && image != null && image.Length > 0x1100 ? image[0x1100] : 0u);
+        }
+
+        // Raw PE32+ for the flatten test: SizeOfImage=0x3000, SizeOfHeaders=0x200,
+        // one section ".text" (VA=0x1000, VirtualSize=0x200, PointerToRawData=
+        // 0x200, SizeOfRawData=0x100) with marker 0xAB at file 0x210.
+        private static byte[] BuildSyntheticPeForLayout()
+        {
+            var b = new byte[0x400];
+            const int Opt = 0x98;
+
+            PutU16(b, 0x00, 0x5A4D);          // "MZ"
+            PutU32(b, 0x3C, 0x80);            // e_lfanew
+            PutU32(b, 0x80, 0x00004550);      // "PE\0\0"
+            PutU16(b, 0x84, 0x8664);          // Machine
+            PutU16(b, 0x86, 1);               // NumberOfSections
+            PutU16(b, 0x94, 0xF0);            // SizeOfOptionalHeader
+
+            PutU16(b, Opt + 0x00, 0x020B);            // Magic PE32+
+            PutU32(b, Opt + 0x10, 0x1000);            // AddressOfEntryPoint
+            PutU64(b, Opt + 0x18, 0x140000000UL);     // ImageBase
+            PutU32(b, Opt + 0x20, 0x1000);            // SectionAlignment
+            PutU32(b, Opt + 0x24, 0x200);             // FileAlignment
+            PutU32(b, Opt + 0x38, 0x3000);            // SizeOfImage
+            PutU32(b, Opt + 0x3C, 0x200);             // SizeOfHeaders
+            PutU32(b, Opt + 0x6C, 16);                // NumberOfRvaAndSizes
+
+            PutName(b, 0x188, '.', 't', 'e', 'x', 't');
+            PutU32(b, 0x188 + 0x08, 0x200);   // VirtualSize
+            PutU32(b, 0x188 + 0x0C, 0x1000);  // VirtualAddress
+            PutU32(b, 0x188 + 0x10, 0x100);   // SizeOfRawData
+            PutU32(b, 0x188 + 0x14, 0x200);   // PointerToRawData
+
+            b[0x210] = 0xAB;                  // marker inside the section raw data
+
+            return b;
         }
 
         // PeNet phase-2 (step135): imports / exports / base relocations. Builds
