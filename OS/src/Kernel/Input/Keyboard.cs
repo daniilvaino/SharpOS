@@ -28,6 +28,31 @@ namespace OS.Kernel.Input
             return KeyReadStatus.DeviceError;
         }
 
+        // Raw-event variant for the app key service (step143) — see
+        // Platform.TryReadKeyRaw for the `raw` packing. Delivers releases
+        // too (legacy fields zero for those).
+        public static KeyReadStatus TryReadKeyRaw(out KeyInfo key, out uint raw)
+        {
+            key = default;
+
+            KeyboardReadStatus status = Platform.TryReadKeyRaw(
+                out ushort unicodeChar, out ushort scanCode, out raw);
+            if (status == KeyboardReadStatus.KeyAvailable)
+            {
+                key.UnicodeChar = unicodeChar;
+                key.ScanCode = scanCode;
+                return KeyReadStatus.KeyAvailable;
+            }
+
+            if (status == KeyboardReadStatus.NoKey)
+                return KeyReadStatus.NoKey;
+
+            if (status == KeyboardReadStatus.Unsupported)
+                return KeyReadStatus.Unsupported;
+
+            return KeyReadStatus.DeviceError;
+        }
+
         public static bool TryReadChar(out char value)
         {
             value = '\0';

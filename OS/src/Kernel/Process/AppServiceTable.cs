@@ -48,6 +48,26 @@ namespace OS.Kernel.Process
         // engine (DispatchEx). Requires the app's .pdata to be registered
         // (PeLoader) so the unwinder can walk app frames. Filled unconditionally.
         public ulong RhpThrowExAddress;
+
+        // GOP linear framebuffer handoff (step143) — raw DATA, not a service:
+        // the FB is identity-mapped in the shared address space (Hal.Framebuffer
+        // maps it into the pager at boot), so the app draws directly. Base==0 =
+        // no graphics (headless / BltOnly). Stride is in PIXELS per scanline;
+        // PixelFormat: 0=RGBX8 1=BGRX8 (mirrors BootInfo/GOP). Appended fields —
+        // old apps simply never read past RhpThrowExAddress; new apps gate on
+        // FramebufferBase != 0. Filled unconditionally, independent of AbiVersion.
+        public ulong FramebufferBase;
+        public uint FramebufferWidth;
+        public uint FramebufferHeight;
+        public uint FramebufferStride;
+        public uint FramebufferPixelFormat;
+
+        // HPET time-source handoff (step143) — raw data like the FB fields:
+        // the main-counter MMIO is identity-mapped in the shared address
+        // space, apps read the free-running counter directly (Stopwatch /
+        // frame pacing). CounterAddress==0 = no HPET.
+        public ulong HpetCounterAddress;
+        public ulong HpetFrequencyHz;
     }
 
     internal unsafe struct AppFileExistsRequest

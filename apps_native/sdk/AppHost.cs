@@ -263,7 +263,26 @@ namespace SharpOS.AppSdk
             AppServiceStatus status = (AppServiceStatus)tryReadKey((ulong)(&request));
             key.UnicodeChar = request.UnicodeChar;
             key.ScanCode = request.ScanCode;
+            key.Raw = request.Reserved; // set-1 make/break event (step143)
             return status;
+        }
+
+        // HPET time source from the service table (step143). False when the
+        // kernel has no HPET. The counter MMIO is identity-mapped in the
+        // shared address space — read it directly (via a NoInlining reader:
+        // ILC hoists non-volatile MMIO reads out of spin loops, see limits).
+        public static bool TryGetHpet(out ulong counterAddress, out ulong frequencyHz)
+        {
+            counterAddress = 0;
+            frequencyHz = 0;
+
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null || services->HpetCounterAddress == 0 || services->HpetFrequencyHz == 0)
+                return false;
+
+            counterAddress = services->HpetCounterAddress;
+            frequencyHz = services->HpetFrequencyHz;
+            return true;
         }
 
         public static AppServiceStatus TryRunApp(
@@ -320,6 +339,31 @@ namespace SharpOS.AppSdk
         public static AppServiceStatus TryRunApp(string path, out int exitCode)
         {
             return TryRunApp(path, AppServiceTable.AutoSelectAbiVersion, AppServiceAbi.Auto, out exitCode);
+        }
+
+        // GOP framebuffer geometry from the service table (step143). False on
+        // headless boots (Base==0) or when services are absent. The FB memory
+        // itself is identity-mapped in the shared address space — the caller
+        // writes pixels directly at Base.
+        public static bool TryGetFramebuffer(
+            out ulong baseAddress, out uint width, out uint height, out uint stridePixels, out uint pixelFormat)
+        {
+            baseAddress = 0;
+            width = 0;
+            height = 0;
+            stridePixels = 0;
+            pixelFormat = 0;
+
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null || services->FramebufferBase == 0)
+                return false;
+
+            baseAddress = services->FramebufferBase;
+            width = services->FramebufferWidth;
+            height = services->FramebufferHeight;
+            stridePixels = services->FramebufferStride;
+            pixelFormat = services->FramebufferPixelFormat;
+            return true;
         }
 
         public static bool TryEncodeAscii(string text, byte* destination, int destinationCapacity, out uint bytesWritten)

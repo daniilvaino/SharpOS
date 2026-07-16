@@ -36,6 +36,10 @@ namespace OS.Hal.Timer
 
         public static bool IsInitialized => s_initialized;
         public static ulong FrequencyHz => s_frequencyHz;
+        // Raw MMIO address of the main counter — handed to apps via the
+        // service table (step143): identity-mapped in the shared address
+        // space, so an app reads the free-running counter directly.
+        public static ulong CounterAddress => s_initialized ? (ulong)(s_base + OFFSET_COUNTER) : 0;
         public static ulong PeriodFemtoseconds => s_periodFs;
         public static bool Is64BitCounter => s_is64Bit;
         public static int NumComparators => s_numComparators;

@@ -125,6 +125,59 @@ namespace OS.Hal
             s_bootInfo.Shutdown();
         }
 
+        // Raw-event variant for the app key service (step143): post-EBS it
+        // reports EVERY keyboard byte — presses AND releases — with the set-1
+        // make code, so an app (DOOM) can track held keys. `raw` packs:
+        //   bits 0..7  set-1 make code
+        //   bit  8     extended (0xE0-prefixed)
+        //   bit  9     1 = key down (make), 0 = key up (break)
+        //   bit  31    raw info present
+        // unicodeChar/scanCode carry the legacy launcher mapping for presses
+        // (zeros for releases/modifiers — the launcher ignores unmatched
+        // keys). Pre-EBS falls back to the legacy UEFI path with raw = 0.
+        public static KeyboardReadStatus TryReadKeyRaw(out ushort unicodeChar, out ushort scanCode, out uint raw)
+        {
+            unicodeChar = 0;
+            scanCode = 0;
+            raw = 0;
+
+            if (BootServicesGone)
+            {
+                if (!Ps2Keyboard.TryReadScancode(out byte psc))
+                    return KeyboardReadStatus.NoKey;
+
+                Ps2Keyboard.KeyKind kind = Ps2Keyboard.DecodeEx(
+                    psc, out char pch, out byte make, out bool extended, out bool isBreak);
+
+                if (psc == 0xE0)
+                    return KeyboardReadStatus.NoKey; // prefix byte — event follows
+
+                raw = (uint)make
+                    | (extended ? 0x100u : 0u)
+                    | (isBreak ? 0u : 0x200u)
+                    | 0x80000000u;
+
+                if (!isBreak)
+                {
+                    switch (kind)
+                    {
+                        case Ps2Keyboard.KeyKind.Char: unicodeChar = pch; break;
+                        case Ps2Keyboard.KeyKind.Enter: unicodeChar = 0x0D; break;
+                        case Ps2Keyboard.KeyKind.Backspace: unicodeChar = 0x08; break;
+                        case Ps2Keyboard.KeyKind.Escape: scanCode = 0x17; break;
+                        case Ps2Keyboard.KeyKind.Up: scanCode = 0x01; break;
+                        case Ps2Keyboard.KeyKind.Down: scanCode = 0x02; break;
+                        case Ps2Keyboard.KeyKind.Right: scanCode = 0x03; break;
+                        case Ps2Keyboard.KeyKind.Left: scanCode = 0x04; break;
+                    }
+                }
+
+                return KeyboardReadStatus.KeyAvailable;
+            }
+
+            return TryReadKey(out unicodeChar, out scanCode);
+        }
+
         public static KeyboardReadStatus TryReadKey(out ushort unicodeChar, out ushort scanCode)
         {
             unicodeChar = 0;

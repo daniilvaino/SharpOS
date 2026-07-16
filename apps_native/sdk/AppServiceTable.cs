@@ -45,6 +45,22 @@ namespace SharpOS.AppSdk
         // RhpThrowEx stub here so throw/catch share the kernel EH engine. See
         // ThrowExTrampoline. Layout must match OS/.../AppServiceTable.cs.
         public ulong RhpThrowExAddress;
+
+        // GOP linear framebuffer handoff (step143) — raw DATA, not a service:
+        // identity-mapped in the shared address space, the app draws directly.
+        // Base==0 = no graphics. Stride in PIXELS per scanline; PixelFormat:
+        // 0=RGBX8 1=BGRX8. Layout must match OS/.../AppServiceTable.cs.
+        public ulong FramebufferBase;
+        public uint FramebufferWidth;
+        public uint FramebufferHeight;
+        public uint FramebufferStride;
+        public uint FramebufferPixelFormat;
+
+        // HPET time-source handoff (step143) — identity-mapped MMIO main
+        // counter + calibrated frequency. CounterAddress==0 = no HPET.
+        // Layout must match OS/.../AppServiceTable.cs.
+        public ulong HpetCounterAddress;
+        public ulong HpetFrequencyHz;
     }
 
     internal unsafe struct AppFileExistsRequest

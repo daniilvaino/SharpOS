@@ -70,13 +70,23 @@ namespace OS.Hal
         // latch for the next byte (extended keys are classed Control
         // here — the line editor only needs Char/Enter/Backspace/Esc).
         public static KeyKind Decode(byte sc, out char ch, out byte make)
+            => DecodeEx(sc, out ch, out make, out _, out _);
+
+        // Full-information variant (step143): also reports the extended
+        // (0xE0) latch and make/break so the app key service can forward
+        // RAW key events (DOOM needs releases for held-key movement). The
+        // legacy Decode contract is unchanged — breaks still classify as
+        // None/Control for the shell/line-editor path.
+        public static KeyKind DecodeEx(byte sc, out char ch, out byte make, out bool extended, out bool isBreak)
         {
             ch = '\0';
             make = (byte)(sc & 0x7F);
-            bool isBreak = (sc & 0x80) != 0;
+            isBreak = (sc & 0x80) != 0;
+            extended = false;
 
             if (sc == 0xE0) { s_extended = true; return KeyKind.None; }
             bool ext = s_extended;
+            extended = ext;
             s_extended = false;
 
             // Modifier make/break (left+right shift = 0x2A/0x36).

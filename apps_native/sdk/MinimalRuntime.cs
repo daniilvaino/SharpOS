@@ -673,6 +673,15 @@ namespace Internal.Runtime.CompilerHelpers
 
     internal static class ThrowHelpers
     {
+        // ILC resolves these by fixed name for checked-arithmetic / div /
+        // covariant-store lowering; a missing one is a hard "Code generation
+        // failed for method ..." at ILC time (surfaced step143 on the first
+        // conv.ovf instantiation). Keep the set a superset of what codegen
+        // can emit — mirrors std/no-runtime/shared/ThrowHelpers.cs.
+        public static void ThrowOverflowException() { while (true) ; }
+        public static void ThrowDivideByZeroException() { while (true) ; }
+        public static void ThrowArrayTypeMismatchException() { while (true) ; }
+
         public static void ThrowFeatureBodyRemoved() { while (true) ; }
         public static void ThrowTypeLoadException() { while (true) ; }
         public static void ThrowTypeLoadExceptionWithArgument(ExceptionStringID id) { while (true) ; }

@@ -83,13 +83,21 @@ namespace System.Runtime.InteropServices
         // Bulk-reinterpret a span of TFrom as a span of TTo. Length scales
         // by sizeof(TFrom)/sizeof(TTo). Only safe for unmanaged element
         // types (no managed refs being misaligned across element boundary).
+        // Upstream shape: ref-based Span ctor, no pointer round-trip — the
+        // old Unsafe.AsPointer + checked-conv form failed ILC codegen on
+        // the first real instantiation (Cast<byte,uint> in ManagedDoom's
+        // Renderer, step143). Length math in long can't overflow the int
+        // result for real span sizes; clamp instead of a checked conv (no
+        // overflow-throw helper needed).
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static unsafe Span<TTo> Cast<TFrom, TTo>(Span<TFrom> span)
             where TFrom : unmanaged
             where TTo : unmanaged
         {
-            int newLen = checked((int)((long)span.Length * sizeof(TFrom) / sizeof(TTo)));
-            return new Span<TTo>(Unsafe.AsPointer(ref Unsafe.As<TFrom, TTo>(ref span._reference)), newLen);
+            long scaled = (long)span.Length * sizeof(TFrom) / sizeof(TTo);
+            if (scaled > int.MaxValue)
+                Halt();
+            return new Span<TTo>(ref Unsafe.As<TFrom, TTo>(ref span._reference), (int)scaled);
         }
 
         // Same pattern as the rest of std (e.g. ArraySegment.Halt): bound-
@@ -104,8 +112,10 @@ namespace System.Runtime.InteropServices
             where TFrom : unmanaged
             where TTo : unmanaged
         {
-            int newLen = checked((int)((long)span.Length * sizeof(TFrom) / sizeof(TTo)));
-            return new ReadOnlySpan<TTo>(Unsafe.AsPointer(ref Unsafe.As<TFrom, TTo>(ref Unsafe.AsRef(in span._reference))), newLen);
+            long scaled = (long)span.Length * sizeof(TFrom) / sizeof(TTo);
+            if (scaled > int.MaxValue)
+                Halt();
+            return new ReadOnlySpan<TTo>(ref Unsafe.As<TFrom, TTo>(ref Unsafe.AsRef(in span._reference)), (int)scaled);
         }
     }
 }

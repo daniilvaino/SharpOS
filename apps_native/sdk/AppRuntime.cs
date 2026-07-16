@@ -47,6 +47,14 @@ namespace SharpOS.AppSdk
             // GcAppPool (64 MB in .bss), provided via GcMemorySource.AppStatic.cs.
             SharpOS.Std.NoRuntime.GcHeap.Init();
 
+            // Wire the HPET time source into Stopwatch (step143). Raw data
+            // from the table — safe before the heap is up.
+            if (s_services->HpetCounterAddress != 0 && s_services->HpetFrequencyHz != 0)
+            {
+                System.Diagnostics.Stopwatch.s_counterAddress = s_services->HpetCounterAddress;
+                System.Diagnostics.Stopwatch.s_frequencyHz = s_services->HpetFrequencyHz;
+            }
+
             // Materialize the app image's GCStaticRegion (lazy `static readonly`
             // blocks — ILC TypePreinit). Needs the heap (allocates the statics
             // objects) and pairs with the DropResilient target in

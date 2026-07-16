@@ -201,6 +201,25 @@ namespace OS.Kernel.Process
             table.RhpThrowExAddress =
                 (ulong)OS.Boot.EH.ThrowExStub.GetMethodAddress();
 
+            // GOP framebuffer geometry (step143): identity-mapped in the shared
+            // pager, so the app blits directly. Base stays 0 on headless boots.
+            if (OS.Hal.Framebuffer.IsAvailable)
+            {
+                table.FramebufferBase = OS.Hal.Framebuffer.BaseAddress;
+                table.FramebufferWidth = OS.Hal.Framebuffer.Width;
+                table.FramebufferHeight = OS.Hal.Framebuffer.Height;
+                table.FramebufferStride = OS.Hal.Framebuffer.Stride;
+                table.FramebufferPixelFormat = OS.Hal.Framebuffer.PixelFormat;
+            }
+
+            // HPET time source (step143): identity-mapped MMIO counter + its
+            // calibrated frequency, for app-side Stopwatch / frame pacing.
+            if (OS.Hal.Timer.Hpet.IsInitialized)
+            {
+                table.HpetCounterAddress = OS.Hal.Timer.Hpet.CounterAddress;
+                table.HpetFrequencyHz = OS.Hal.Timer.Hpet.FrequencyHz;
+            }
+
             AppServiceTable* serviceTablePointer = Pager.IsPagerRootActive()
                 ? (AppServiceTable*)serviceVirtual
                 : (AppServiceTable*)servicePhysical;
@@ -711,7 +730,10 @@ namespace OS.Kernel.Process
             request->ScanCode = 0;
             request->Reserved = 0;
 
-            KeyReadStatus keyReadStatus = Keyboard.TryReadKey(out KeyInfo key);
+            // Raw variant (step143): Reserved carries the set-1 make/break
+            // event (see Platform.TryReadKeyRaw packing) so apps can track
+            // held keys; legacy fields keep the launcher contract.
+            KeyReadStatus keyReadStatus = Keyboard.TryReadKeyRaw(out KeyInfo key, out uint raw);
             if (keyReadStatus == KeyReadStatus.NoKey)
                 return (uint)AppServiceStatus.NoData;
 
@@ -723,6 +745,7 @@ namespace OS.Kernel.Process
 
             request->UnicodeChar = key.UnicodeChar;
             request->ScanCode = key.ScanCode;
+            request->Reserved = raw;
             return (uint)AppServiceStatus.Ok;
         }
 
