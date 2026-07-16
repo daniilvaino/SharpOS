@@ -1,121 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-
-    <NoStdLib>true</NoStdLib>
-    <NoConfig>true</NoConfig>
-    <RuntimeMetadataVersion>v4.0.30319</RuntimeMetadataVersion>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-
-    <PublishAot>true</PublishAot>
     <IlcSystemModule>HelloSharpFs</IlcSystemModule>
-    <EntryPointSymbol>SharpAppEntry</EntryPointSymbol>
-
-    <!-- net8/ILC8: DebuggerSupport (default on) adds an export of
-         DotNetRuntimeDebugHeader (unresolved here / LNK1294 under some
-         subsystems); no debugger attaches to a freestanding app, so off.
-         IlcDehydrate (default on) compresses data sections and relies on the
-         stock bootstrapper to rehydrate at startup (we removed that
-         bootstrapper), so bake the data in directly, else string literals read
-         back as zeros. Both apply to the net8 build (kernel does the same). -->
-    <DebuggerSupport>false</DebuggerSupport>
-    <IlcDehydrate>false</IlcDehydrate>
   </PropertyGroup>
+
+  <!-- Shared freestanding win-x64 PE recipe + base app SDK/std surface. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
 
   <ItemGroup>
     <Compile Include="Program.cs" />
-    <Compile Include="..\sdk\MinimalRuntime.cs" Link="sdk\MinimalRuntime.cs" />
-    <Compile Include="..\sdk\AppStartupBlock.cs" Link="sdk\AppStartupBlock.cs" />
-    <Compile Include="..\sdk\AppServiceTable.cs" Link="sdk\AppServiceTable.cs" />
-    <Compile Include="..\sdk\AppRuntime.cs" Link="sdk\AppRuntime.cs" />
-    <Compile Include="..\sdk\AppHost.cs" Link="sdk\AppHost.cs" />
-    <Compile Include="..\sdk\StringAlgorithms.cs" Link="sdk\StringAlgorithms.cs" />
     <Compile Include="..\sdk\StringExperimentSuite.cs" Link="sdk\StringExperimentSuite.cs" />
-    <Compile Include="..\sdk\KeyInfo.cs" Link="sdk\KeyInfo.cs" />
-    <Compile Include="..\sdk\FileEntry.cs" Link="sdk\FileEntry.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\MemoryPrimitives.cs" Link="std\MemoryPrimitives.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\DefaultMemberAttribute.cs" Link="std\DefaultMemberAttribute.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\SystemString.cs" Link="std\SystemString.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\StringAlgorithms.cs" Link="std\StringAlgorithms.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\CharHelpers.cs" Link="std\CharHelpers.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\StringQueries.cs" Link="std\StringQueries.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\StringTransforms.cs" Link="std\StringTransforms.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\NumberFormatting.cs" Link="std\NumberFormatting.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\MethodTable.cs" Link="std\GC\MethodTable.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="std\GC\OptionalFieldsReader.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\NativeFormatDecoder.cs" Link="std\GC\NativeFormatDecoder.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\GcDescSeries.cs" Link="std\GC\GcDescSeries.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\GcObject.cs" Link="std\GC\GcObject.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\GcSegment.cs" Link="std\GC\GcSegment.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\GcHeap.cs" Link="std\GC\GcHeap.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\GcMemorySource.AppStatic.cs" Link="std\GC\GcMemorySource.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\GcRuntimeExports.cs" Link="std\GC\GcRuntimeExports.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\GcMark.cs" Link="std\GC\GcMark.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\GcSweep.cs" Link="std\GC\GcSweep.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\GcRoots.cs" Link="std\GC\GcRoots.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\GC\GC.cs" Link="std\GC\GC.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\Bcl\Interfaces.cs" Link="std\Bcl\Interfaces.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\Bcl\EqualityComparer.cs" Link="std\Bcl\EqualityComparer.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\Bcl\List.cs" Link="std\Bcl\List.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\Bcl\Dictionary.cs" Link="std\Bcl\Dictionary.cs" />
-    <Compile Include="..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
   </ItemGroup>
-
-  <Target Name="CustomizeReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
-    <ItemGroup>
-      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" />
-      <ReferencePath Remove="@(ReferencePath)" />
-    </ItemGroup>
-  </Target>
-
-  <Target Name="RemoveHostConfigurationOptions" BeforeTargets="WriteIlcRspFileForCompilation" DependsOnTargets="PrepareForILLink">
-    <ItemGroup>
-      <RuntimeHostConfigurationOption Remove="@(RuntimeHostConfigurationOption)" />
-    </ItemGroup>
-  </Target>
-
-  <!-- Freestanding win-x64 PE build: __security_cookie via CoffStub.Generator
-       (like the kernel), not a hand-linked cl.exe stub. Gated on the RID so the
-       ELF (linux-x64) build via WSL is untouched (no CoffDataSymbol attribute,
-       no WinCrtStubs). `dotnet publish -r win-x64` then emits the freestanding
-       PE directly (no manual link.exe) with these LinkerArgs, and the CoffStub
-       __security_cookie .obj auto-links via @(NativeLibrary). -->
-  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
-    <Compile Include="WinCrtStubs.cs" />
-    <LinkerArg Include="/ENTRY:SharpAppBootstrap" />
-    <LinkerArg Include="/SUBSYSTEM:NATIVE" />
-    <LinkerArg Include="/BASE:0x400000" />
-    <LinkerArg Include="/FIXED" />
-    <LinkerArg Include="/DYNAMICBASE:NO" />
-    <LinkerArg Include="/NODEFAULTLIB" />
-  </ItemGroup>
-  <Import Project="..\..\bootasm\CoffStub.Generator\CoffStub.Generator.targets"
-          Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('..\..\bootasm\CoffStub.Generator\CoffStub.Generator.targets')" />
-
-  <!-- net8/ILC8 links the SDK's NativeAOT runtime (Runtime.WorkstationGC.lib +
-       Runtime.VxsortEnabled.lib) and the wmain bootstrapper (bootstrapper.obj)
-       by default. The app supplies its OWN freestanding runtime (the std GC +
-       [RuntimeExport] helpers) and enters via SharpAppBootstrap, so linking the
-       SDK's runtime double-defines RhpAssignRef/RhpReversePInvoke/... and drags
-       in a CRT cascade (_tls_index, operator new/delete, __GSHandlerCheck,
-       strlen, RhThrowEx, ...). Mirror the kernel's ExcludeNativeAotRuntime
-       (OS.csproj): drop them from BOTH NativeLibrary and LinkerArg (Windows.
-       targets snapshots NativeLibrary into LinkerArg in SetupOSSpecificProps
-       before this Target runs). win-x64 only. -->
-  <Target Name="ExcludeNativeAotRuntime"
-          AfterTargets="SetupOSSpecificProps" BeforeTargets="LinkNative"
-          Condition="'$(RuntimeIdentifier)' == 'win-x64'">
-    <ItemGroup>
-      <NativeLibrary Remove="$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)" />
-      <LinkerArg Remove="&quot;$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)&quot;" />
-      <NativeLibrary Remove="$(IlcSdkPath)Runtime.VxsortEnabled$(LibrarySuffix)" />
-      <LinkerArg Remove="&quot;$(IlcSdkPath)Runtime.VxsortEnabled$(LibrarySuffix)&quot;" />
-      <NativeLibrary Remove="$(IlcSdkPath)bootstrapper$(ObjectSuffix)" />
-      <LinkerArg Remove="&quot;$(IlcSdkPath)bootstrapper$(ObjectSuffix)&quot;" />
-    </ItemGroup>
-  </Target>
 </Project>

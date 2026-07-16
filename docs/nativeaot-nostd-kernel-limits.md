@@ -412,6 +412,20 @@ Milestone-1 срез [PeNet](https://github.com/secana/PeNet) (Apache-2.0, `vend
 
 **Build-side (без WSL):** freestanding win-x64 PE через `dotnet publish -r win-x64` (рецепт в app-csproj, gated win-x64): `/ENTRY:SharpAppBootstrap /SUBSYSTEM:NATIVE /BASE:0x400000 /FIXED /NODEFAULTLIB` + снятие SDK-рантайма (`ExcludeNativeAotRuntime`: `Runtime.WorkstationGC`/`VxsortEnabled`/`bootstrapper.obj`) + `DebuggerSupport=false` + `IlcDehydrate=false` + `__security_cookie` через CoffStub.Generator + `__managed__Startup` no-op стаб. Апп на net8.0. HelloSharpFs исполнен на bare metal, TUI-файлпикер видит `.EXE`, self-launch с nested-лимитом. ELF выпилен из app-batch (kernel ELF-файлы — Stage B, пока живут unused).
 
+### ⚙️ PE-app tier — общий SDK + тест-батарея (step138), и его REDUCED runtime
+
+Общий рецепт вынесен в `apps_native/sdk/FreestandingPe.props` (импортится каждым app-csproj — тот несёт только `IlcSystemModule` + свои исходники). `FetchApp` мигрирован на PE (первый non-launcher PE-апп). Новый `apps_native/AotTests/` — батарея из 14 проверок app-рантайма (`new object()`/`new int[]`/`new string(char[])`/string-ops/`List<T>`/`Dictionary<K,V>`/`EqualityComparer<T>`), печатает `ok`/`FAIL` + exit=pass-count. Build-скрипты PE-only: `build_launcher.ps1` (был `_win`), `build_fetch.ps1`, `build_aottests.ps1`; WSL/ELF-скрипты удалены.
+
+**Батарея вскрыла границу app-tier рантайма: 11/14.** Freestanding PE-апп несёт **минимальный** рантайм (GC + прямые вызовы), НО **НЕ interface dispatch** (машинерия `OS/src/Kernel/Memory/InterfaceDispatch*.cs` — kernel-only) и **НЕ EH** (нет типа `System.Exception`, ThrowHelpers = halt → **Tier-B halt-on-throw**). Поэтому в аппе падают ровно те операции, что идут через `IEquatable<T>`-dispatch:
+
+| App-tier операция | Статус | Причина |
+|---|---|---|
+| `new object/int[]/string(char[])`, string concat/eq/PadRight, `List<T>` add/index/count/ToArray, `Dictionary` add/count/missing-key | ✅ | Прямые вызовы + GC — есть |
+| `List<T>.Contains`, `Dictionary.TryGetValue`, `EqualityComparer<int>.Default.Equals` | ❌ | `DefaultComparer.Equals` → `x is IEquatable<T>` + `eq.Equals(y)` = interface isinst + dispatch → у аппа нет resolver'а |
+| `throw` / `catch` | ❌ (Tier-B) | Нет `System.Exception` + EH-машинерии (kernel-only `OS/src/Boot/EH/*`) |
+
+**Путь к разблокировке (оба вместе):** апп исполняется **внутри адресного пространства ядра** → должен **шарить** kernel-рантайм, а не переизобретать. Механизм — kernel export table (`RhpInterfaceDispatch`/resolver/`RhpThrowEx`/personality) + PE-imports у аппа + `PeLoader.TryResolve` (M3, готов) биндит их + `.pdata` registration аппа в kernel function-table + cross-image MethodTable identity. Тогда interface dispatch **и** исключения включаются одним архитектурным ходом. FAIL'ы в батарее перевернутся в `ok` — регрессионный gate для этой работы.
+
 ---
 
 ## 9. Self-modifying code: serializing instruction missing (QEMU-only correct)

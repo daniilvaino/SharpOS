@@ -456,19 +456,26 @@ foreach ($staleElf in @("HELLO.ELF", "ABIINFO.ELF", "MARKER.ELF", "HELLOCS.ELF",
     if (Test-Path -LiteralPath "$stalePath.abi") { Remove-Item -LiteralPath "$stalePath.abi" -Force }
 }
 
-# step137: freestanding win-x64 PE launcher (HelloSharpFs.exe, built by
-# build_launcher_win.ps1). Stage to ESP as HELLO.EXE + .abi (AbiV2, ServiceAbi
-# 0 = WindowsX64). The kernel dispatches on the MZ magic to PeLoader. Optional:
-# absent PE just skips (ELF-only ESP still boots).
-$peHelloExe = Join-Path $espBootDir "HELLO.EXE"
-$peHelloSrc = "C:\work\OS\apps_native\HelloSharpFs\bin\Release\out-win-x64\HelloSharpFs.exe"
-if (Test-Path -LiteralPath $peHelloSrc) {
-    Copy-Item -LiteralPath $peHelloSrc -Destination $peHelloExe -Force
-    [System.IO.File]::WriteAllBytes("$peHelloExe.abi", (New-AppAbiManifest -AppAbiVersion 2 -ServiceAbi 0))
-    Write-Host "Prepared app PE: $peHelloExe"
-}
-elseif (Test-Path -LiteralPath "$peHelloExe.abi") {
-    Remove-Item -LiteralPath "$peHelloExe.abi" -Force
+# step137/138: freestanding win-x64 PE apps (built by build_launcher.ps1 /
+# build_fetch.ps1 / build_aottests.ps1). Stage each to ESP as <NAME>.EXE + .abi (AbiV2,
+# ServiceAbi 0 = WindowsX64); the kernel dispatches on the MZ magic to PeLoader.
+# Absent build output just skips (that app won't appear in the launcher).
+$peApps = @(
+    @{ Src = "apps_native\HelloSharpFs\bin\Release\out-win-x64\HelloSharpFs.exe"; Dest = "HELLO.EXE" },
+    @{ Src = "apps_native\FetchApp\bin\Release\out-win-x64\FetchApp.exe";         Dest = "FETCH.EXE" },
+    @{ Src = "apps_native\AotTests\bin\Release\out-win-x64\AotTests.exe";         Dest = "AOTTESTS.EXE" }
+)
+foreach ($peApp in $peApps) {
+    $peSrc = Join-Path $repoRoot $peApp.Src
+    $peDst = Join-Path $espBootDir $peApp.Dest
+    if (Test-Path -LiteralPath $peSrc) {
+        Copy-Item -LiteralPath $peSrc -Destination $peDst -Force
+        [System.IO.File]::WriteAllBytes("$peDst.abi", (New-AppAbiManifest -AppAbiVersion 2 -ServiceAbi 0))
+        Write-Host "Prepared app PE: $peDst"
+    }
+    elseif (Test-Path -LiteralPath "$peDst.abi") {
+        Remove-Item -LiteralPath "$peDst.abi" -Force
+    }
 }
 
 Write-Host "Prepared EFI image: $bootx64"

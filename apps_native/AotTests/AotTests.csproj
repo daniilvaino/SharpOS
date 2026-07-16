@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>AotTests</IlcSystemModule>
+  </PropertyGroup>
+
+  <!-- Shared freestanding win-x64 PE recipe + base app SDK/std surface. The
+       base props already carries List/Dictionary/EqualityComparer/Interfaces,
+       which is all this battery needs. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>

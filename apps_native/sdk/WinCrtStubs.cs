@@ -1,11 +1,10 @@
 using System.Runtime;
 
-namespace HelloSharpFs
+namespace SharpOS.AppSdk
 {
-    // Freestanding win-x64 PE CRT stubs. Only compiled for the win-x64 build
-    // (HelloSharpFs.csproj gates this + the CoffStub.Generator import on the
-    // RID); the ELF (linux-x64) build supplies __security_cookie via its own
-    // security_cookie.o in build_launcher_wsl.ps1.
+    // Freestanding win-x64 PE CRT stubs. Compiled by every native app via the
+    // shared FreestandingPe.props (win-x64 gated, alongside the CoffStub.Generator
+    // import). ELF support is gone; this is the only path.
     //
     // Mirrors the kernel's CrtGlobals (OS/src/PAL/SharpOSHost/CrtAndEhStubs.cs):
     //   - __security_cookie as a native DATA symbol via CoffStub.Generator --

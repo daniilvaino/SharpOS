@@ -44,7 +44,7 @@ namespace OS.Kernel.Elf
 
             // step137: the app batch is PE-only now. ELF support is gone; the
             // only app is HelloSharpFs built as a freestanding win-x64 PE
-            // (HELLO.EXE, build_launcher_win.ps1). PeLoader flattens/maps/jumps
+            // (HELLO.EXE, build_launcher.ps1). PeLoader flattens/maps/jumps
             // it. Same code as the old HELLOCS ELF -> same expected exit code;
             // WindowsX64 service ABI (win-x64 calling convention). (Fetch is
             // dormant until migrated to PE.)
@@ -125,7 +125,7 @@ namespace OS.Kernel.Elf
             DebugLog.EndLine();
 
             // PE-only loader (step137). ELF support is removed; apps are
-            // freestanding win-x64 PEs (see build_launcher_win.ps1). PeLoader
+            // freestanding win-x64 PEs (see build_launcher.ps1). PeLoader
             // flattens + maps the image at its ImageBase and yields the same
             // ElfLoadedImage the ProcessImageBuilder pipeline below consumes.
             if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out ElfLoadedImage loadedImage, out int peStage))

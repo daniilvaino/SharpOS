@@ -1,0 +1,133 @@
+<Project>
+
+  <!-- Shared freestanding win-x64 PE recipe for SharpOS native apps (step138).
+       Imported by each app csproj (HelloSharpFs, FetchApp, AotTests, ...). Turns
+       `dotnet publish -r win-x64` into a self-contained PE the kernel's PeLoader
+       maps + jumps (see done/step137.md). ELF (linux-x64) builds are gone; this
+       is win-x64 only, gated on the RID so a non-win-x64 evaluation is a no-op.
+
+       The app csproj keeps only what differs: IlcSystemModule (per-app corelib
+       name) and its own Program.cs / app-specific sources. -->
+
+  <PropertyGroup>
+    <!-- net8/ILC8 (matches the kernel / major-9 GC layout). -->
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net8.0</TargetFramework>
+    <!-- Unconditional: Sdk.props already defaulted OutputType to Library before
+         this import, so a `== ''` guard would leave it Library and NativeAOT
+         would link bootstrapperdll.obj (the DLL runtime bootstrap) which our
+         ExcludeNativeAotRuntime (bootstrapper.obj, the EXE one) doesn't strip. -->
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <RuntimeMetadataVersion>v4.0.30319</RuntimeMetadataVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <PublishAot>true</PublishAot>
+    <EntryPointSymbol>SharpAppEntry</EntryPointSymbol>
+
+    <!-- net8/ILC8: DebuggerSupport (default on) exports DotNetRuntimeDebugHeader
+         (unresolved / LNK1294); no debugger attaches to a freestanding app.
+         IlcDehydrate (default on) compresses data + relies on the stock
+         bootstrapper to rehydrate at startup, which we exclude below, so bake
+         data in directly, else string literals read back as zeros. -->
+    <DebuggerSupport>false</DebuggerSupport>
+    <IlcDehydrate>false</IlcDehydrate>
+  </PropertyGroup>
+
+  <!-- Base app SDK + std surface shared by every native app. sdk/* are next to
+       this .props ($(MSBuildThisFileDirectory)); std/* are two levels up. The
+       app csproj adds only its Program.cs and any app-specific extras (e.g. a
+       richer std slice for the test battery). -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)MinimalRuntime.cs"       Link="sdk\MinimalRuntime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppStartupBlock.cs"      Link="sdk\AppStartupBlock.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppServiceTable.cs"      Link="sdk\AppServiceTable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppRuntime.cs"           Link="sdk\AppRuntime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppHost.cs"              Link="sdk\AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringAlgorithms.cs"     Link="sdk\StringAlgorithms.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)KeyInfo.cs"              Link="sdk\KeyInfo.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FileEntry.cs"            Link="sdk\FileEntry.cs" />
+
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\MemoryPrimitives.cs"        Link="std\MemoryPrimitives.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\DefaultMemberAttribute.cs"  Link="std\DefaultMemberAttribute.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\SystemString.cs"            Link="std\SystemString.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringAlgorithms.cs"        Link="std\StringAlgorithms.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\CharHelpers.cs"             Link="std\CharHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringQueries.cs"           Link="std\StringQueries.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringTransforms.cs"        Link="std\StringTransforms.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\NumberFormatting.cs"        Link="std\NumberFormatting.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\MethodTable.cs"          Link="std\GC\MethodTable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="std\GC\OptionalFieldsReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\NativeFormatDecoder.cs"  Link="std\GC\NativeFormatDecoder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcDescSeries.cs"         Link="std\GC\GcDescSeries.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcObject.cs"             Link="std\GC\GcObject.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcSegment.cs"            Link="std\GC\GcSegment.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcHeap.cs"               Link="std\GC\GcHeap.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcMemorySource.AppStatic.cs" Link="std\GC\GcMemorySource.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcRuntimeExports.cs"     Link="std\GC\GcRuntimeExports.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcMark.cs"               Link="std\GC\GcMark.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcSweep.cs"              Link="std\GC\GcSweep.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcRoots.cs"              Link="std\GC\GcRoots.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GC.cs"                   Link="std\GC\GC.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Interfaces.cs"          Link="std\Bcl\Interfaces.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\EqualityComparer.cs"    Link="std\Bcl\EqualityComparer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\List.cs"                Link="std\Bcl\List.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Dictionary.cs"          Link="std\Bcl\Dictionary.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
+  </ItemGroup>
+
+  <!-- Freestanding CRT stubs (__security_cookie via CoffStub.Generator,
+       __security_check_cookie / __managed__Startup no-ops) + the freestanding
+       linker recipe. win-x64 only; the CoffStub .targets is imported only here
+       so the [CoffDataSymbol] attribute is compiled for exactly this build. -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <Compile Include="$(MSBuildThisFileDirectory)WinCrtStubs.cs" Link="sdk\WinCrtStubs.cs" />
+    <LinkerArg Include="/ENTRY:SharpAppBootstrap" />
+    <LinkerArg Include="/SUBSYSTEM:NATIVE" />
+    <LinkerArg Include="/BASE:0x400000" />
+    <LinkerArg Include="/FIXED" />
+    <LinkerArg Include="/DYNAMICBASE:NO" />
+    <LinkerArg Include="/NODEFAULTLIB" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\bootasm\CoffStub.Generator\CoffStub.Generator.targets"
+          Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(MSBuildThisFileDirectory)..\..\bootasm\CoffStub.Generator\CoffStub.Generator.targets')" />
+
+  <!-- net8/ILC8 links the SDK NativeAOT runtime (Runtime.WorkstationGC /
+       Runtime.VxsortEnabled) + wmain bootstrapper by default. The app ships its
+       own freestanding runtime (std GC + [RuntimeExport] helpers) and enters via
+       SharpAppBootstrap, so linking the SDK runtime double-defines helpers and
+       drags in a CRT cascade. Drop them from BOTH NativeLibrary and LinkerArg
+       (Windows.targets snapshots NativeLibrary into LinkerArg in
+       SetupOSSpecificProps before this Target). Mirrors OS.csproj. -->
+  <Target Name="ExcludeNativeAotRuntime"
+          AfterTargets="SetupOSSpecificProps" BeforeTargets="LinkNative"
+          Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <ItemGroup>
+      <NativeLibrary Remove="$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)" />
+      <LinkerArg Remove="&quot;$(IlcSdkPath)Runtime.WorkstationGC$(LibrarySuffix)&quot;" />
+      <NativeLibrary Remove="$(IlcSdkPath)Runtime.VxsortEnabled$(LibrarySuffix)" />
+      <LinkerArg Remove="&quot;$(IlcSdkPath)Runtime.VxsortEnabled$(LibrarySuffix)&quot;" />
+      <NativeLibrary Remove="$(IlcSdkPath)bootstrapper$(ObjectSuffix)" />
+      <LinkerArg Remove="&quot;$(IlcSdkPath)bootstrapper$(ObjectSuffix)&quot;" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Strip ref-assembly + host-config plumbing the SDK adds (freestanding, no
+       host). Shared by all apps. -->
+  <Target Name="CustomizeReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
+    <ItemGroup>
+      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" />
+      <ReferencePath Remove="@(ReferencePath)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="RemoveHostConfigurationOptions" BeforeTargets="WriteIlcRspFileForCompilation" DependsOnTargets="PrepareForILLink">
+    <ItemGroup>
+      <RuntimeHostConfigurationOption Remove="@(RuntimeHostConfigurationOption)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

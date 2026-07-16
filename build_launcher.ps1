@@ -1,11 +1,13 @@
-# build_launcher_win.ps1 -- freestanding win-x64 PE launcher, one publish.
+# build_launcher.ps1 -- build a freestanding win-x64 PE app, one publish.
 #
-# The whole freestanding-link recipe (/ENTRY:SharpAppBootstrap, /SUBSYSTEM,
-# /BASE, /FIXED, /NODEFAULTLIB) lives in HelloSharpFs.csproj (win-x64 gated),
-# and __security_cookie comes from CoffStub.Generator via @(NativeLibrary). So
-# `dotnet publish -r win-x64` emits the PE directly -- no manual link.exe, no
-# cl.exe, no collect-obj step. Run inside a VS dev environment (vcvars64) so the
-# SDK's link.exe resolves. PeLoader (step137) maps the PE at ImageBase 0x400000.
+# Generic native-app builder (default: the HelloSharpFs launcher; -AppProject to
+# build any other). The freestanding-link recipe (/ENTRY:SharpAppBootstrap,
+# /SUBSYSTEM, /BASE, /FIXED, /NODEFAULTLIB) + base std/sdk surface live in the
+# shared apps_native/sdk/FreestandingPe.props (win-x64 gated); __security_cookie
+# comes from CoffStub.Generator via @(NativeLibrary). So `dotnet publish -r
+# win-x64` emits the PE directly -- no WSL, no cl.exe, no manual link. Run inside
+# a VS dev environment (vcvars64). PeLoader maps the PE at ImageBase 0x400000.
+# Per-app wrappers: build_fetch.ps1, build_aottests.ps1.
 
 param(
     [string]$AppProject = "apps_native/HelloSharpFs/HelloSharpFs.csproj",
