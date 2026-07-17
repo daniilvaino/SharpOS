@@ -1,3 +1,11 @@
+> **⚠️ ИСТОРИЧЕСКИЙ ДОКУМЕНТ.** ELF-tier удалён: приложения собираются
+> как freestanding **win-x64 PE** (`apps_native/`, общий
+> `apps_native/sdk/FreestandingPe.props`) и компилят **тот же std, что и
+> ядро** — актуальная карта ограничений PE-приложений =
+> [`nativeaot-nostd-kernel-limits.md`](nativeaot-nostd-kernel-limits.md)
+> (app-специфика помечена в тексте). Ниже — снимок эпохи ELF-апп,
+> сохранён для истории.
+
 # NativeAOT + NoStdLib (ELF-app tier): карта ограничений
 
 Живой документ. Перечень того, что **доступно / не доступно** для **ELF-приложений** в SharpOS: managed C# код в `apps/`, скомпилированный NativeAOT-ом в self-contained ELF (`HELLO.ELF`, `HELLOCS.ELF`, `ABIINFO.ELF`, `MARKER.ELF`, `FETCH.ELF`).

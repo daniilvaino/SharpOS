@@ -194,6 +194,9 @@ FAT читает через DMA scratch buffers (`s_sec`, `s_bulk`, `s_fatCache`
 
 ## 9. Что стоит отделить следующим
 
+> **Статус:** M1–M5 закрыты вместе с precise-GC walker'ом (см.
+> done/step110.md); список сохранён как контекст решений.
+
 M1. Выделить CoreCLR native arena для `malloc/calloc/realloc`: page-backed
    slab или отдельный arena allocator, не `GcHeap`.
 

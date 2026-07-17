@@ -1,5 +1,12 @@
 # Модель исключений SharpOS
 
+> **Обновление:** PE-миграция апп состоялась — Tier B (ELF, halt-on-throw)
+> исчез; freestanding PE-приложения шарят Tier A EH-движок ядра через
+> AppServiceTable-handoff (RhpThrowEx + per-image .pdata registry,
+> multi-image function table). Секции ниже, описывающие Tier B и
+> «PE-миграцию» в будущем времени, — исторический контекст.
+
+
 Статическое описание EH-стеков проекта: что есть, как устроено, где
 лежит. Для живых статусов фич / open issues — см.
 [`coreclr-hosted-limits.md`](coreclr-hosted-limits.md) (§0, §11) и
