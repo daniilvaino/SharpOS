@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TermRace/TermRace.csproj" />
+  </Folder>
+  <Project Path="../../vendor/XtermSharp/XtermSharp/XtermSharp.csproj" />
+  <Project Path="../XTerm.NET/src/XTerm.NET/XTerm.NET.csproj" />
+</Solution>

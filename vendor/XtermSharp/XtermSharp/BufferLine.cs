@@ -147,7 +147,7 @@ namespace XtermSharp {
 				if (data [i].Code != 0) {
 					int width = 0;
 					for (int j = 0; j <= i; j++)
-						width += data [i].Width;
+						width += data [j].Width;
 					return width;
 				}
 			return 0;

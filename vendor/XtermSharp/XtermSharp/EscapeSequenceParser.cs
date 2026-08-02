@@ -352,6 +352,13 @@ namespace XtermSharp {
 		public void SetPrintHandler (PrintHandler printHandler) => this.printHandler = printHandler;
 		public void ClearPrintHandler () => printHandler = PrintHandlerFallback;
 
+		/// <summary>
+		/// Raised just before a C0/C1 or CSI function is dispatched, with the function's final
+		/// byte. REP (CSI b) repeats the last *printed* character, so the input handler needs
+		/// to know when something other than printing happened.
+		/// </summary>
+		public Action<byte> ControlDispatched;
+
 		public void SetExecuteHandler (byte flag, ExecuteHandler handler) => ExecuteHandlers [flag] = handler;
 		public void ClearExecuteHandler (byte flag) => ExecuteHandlers.Remove (flag);
 		public void SetExecuteHandlerFallback (Action<byte> fallback) => ExecuteHandlerFallback = fallback;
@@ -494,6 +501,7 @@ namespace XtermSharp {
 						printHandler (data, print, i);
 						print = -1;
 					}
+					ControlDispatched?.Invoke (code);
 					if (ExecuteHandlers.TryGetValue (code, out var callback))
 						callback ();
 					else
@@ -551,6 +559,7 @@ namespace XtermSharp {
 					}
 					break;
 				case ParserAction.CsiDispatch:
+					ControlDispatched?.Invoke (code);
 					// Trigger CSI handler
 					if (CsiHandlers.TryGetValue (code, out var csiHandlers)) {
 

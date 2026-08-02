@@ -20,6 +20,9 @@ namespace XtermSharp {
 	// 
 	class InputHandler {
 		readonly ReadingBuffer readingBuffer;
+
+		/// <summary>Last printed code point, or -1 when a control function intervened.</summary>
+		int precedingCodepoint = -1;
 		readonly Terminal terminal;
 		readonly EscapeSequenceParser parser;
 
@@ -41,6 +44,13 @@ namespace XtermSharp {
 			parser.SetOscHandlerFallback ((int identifier, string data) => {
 				terminal.Error ("Unknown OSC code", identifier, data);
 			});
+
+			// REP repeats the preceding *printed* character; any control function in between
+			// invalidates it (ECMA-48 leaves that case undefined, xterm.js makes it a no-op).
+			parser.ControlDispatched = (code) => {
+				if (code != (byte)'b')
+					precedingCodepoint = -1;
+			};
 
 			// Print handler
 			unsafe { parser.SetPrintHandler (Print); }
@@ -303,6 +313,7 @@ namespace XtermSharp {
 		// 
 		private void InsertLines (int [] pars)
 		{
+			terminal.RestrictCursor ();
 			var p = Math.Max (pars.Length == 0 ? 1 : pars [0], 1);
 			var buffer = terminal.Buffer;
 			var row = buffer.Y + buffer.YBase;
@@ -311,6 +322,7 @@ namespace XtermSharp {
 			var scrollBottomAbsolute = terminal.Rows - 1 + buffer.YBase - scrollBottomRowsOffset + 1;
 
 			var eraseAttr = terminal.EraseAttr ();
+			p = Math.Min (p, buffer.ScrollBottom - buffer.ScrollTop + 1);
 			while (p-- != 0) {
 				// test: echo -e '\e[44m\e[1L\e[0m'
 				// blankLine(true) - xterm/linux behavior
@@ -749,7 +761,12 @@ namespace XtermSharp {
 					bg = CharData.DefaultAttr & 0x1ff;
 				} else if (p == 38) {
 					// fg color 256
-					if (pars [i + 1] == 2) {
+					// A truncated sequence (CSI 38 m, CSI 38;2;1 m) leaves fewer parameters
+					// than the selector promises; without these bounds every such sequence
+					// read past the end of pars.
+					if (i + 1 < pars.Length && pars [i + 1] == 2) {
+						if (i + 4 >= pars.Length)
+							break;
 						i += 2;
 						fg = terminal.MatchColor (
 							pars [i] & 0xff,
@@ -758,14 +775,18 @@ namespace XtermSharp {
 						if (fg == -1)
 							fg = 0x1ff;
 						i += 2;
-					} else if (pars [i + 1] == 5) {
+					} else if (i + 1 < pars.Length && pars [i + 1] == 5) {
+						if (i + 2 >= pars.Length)
+							break;
 						i += 2;
 						p = pars [i] & 0xff;
 						fg = p;
 					}
 				} else if (p == 48) {
 					// bg color 256
-					if (pars [i + 1] == 2) {
+					if (i + 1 < pars.Length && pars [i + 1] == 2) {
+						if (i + 4 >= pars.Length)
+							break;
 						i += 2;
 						bg = terminal.MatchColor (
 							pars [i] & 0xff,
@@ -774,7 +795,9 @@ namespace XtermSharp {
 						if (bg == -1)
 							bg = 0x1ff;
 						i += 2;
-					} else if (pars [i + 1] == 5) {
+					} else if (i + 1 < pars.Length && pars [i + 1] == 5) {
+						if (i + 2 >= pars.Length)
+							break;
 						i += 2;
 						p = pars [i] & 0xff;
 						bg = p;
@@ -907,13 +930,40 @@ namespace XtermSharp {
 		{
 			var p = Math.Max (pars.Length == 0 ? 1 : pars [0], 1);
 
+			if (precedingCodepoint < 0)
+				return;
+
+			terminal.RestrictCursor ();
 			var buffer = terminal.Buffer;
 			var line = buffer.Lines [buffer.YBase + buffer.Y];
 			CharData cd = buffer.X - 1 < 0 ? new CharData (CharData.DefaultAttr) : line [buffer.X - 1];
-			line.ReplaceCells (buffer.X,
-				  buffer.X + p,
-				      cd);
-			// FIXME: no UpdateRange here?
+			var right = terminal.MarginMode ? buffer.MarginRight : terminal.Cols - 1;
+			var left = terminal.MarginMode ? buffer.MarginLeft : 0;
+
+			// The copies are written as if printed: the cursor ends up past them, and a run
+			// that does not fit wraps onto the next line just like ordinary output would.
+			while (p > 0) {
+				var room = right - buffer.X + 1;
+				if (room > 0) {
+					var count = Math.Min (room, p);
+					line.ReplaceCells (buffer.X, buffer.X + count, cd);
+					terminal.UpdateRange (buffer.Y);
+					buffer.X += count;
+					p -= count;
+				}
+				if (p == 0)
+					break;
+				if (!terminal.Wraparound)
+					break;
+
+				buffer.X = left;
+				if (buffer.Y >= buffer.ScrollBottom) {
+					terminal.Scroll (isWrapped: true);
+				} else {
+					buffer.Lines [++buffer.Y].IsWrapped = true;
+				}
+				line = buffer.Lines [buffer.YBase + buffer.Y];
+			}
 		}
 
 		//
@@ -951,6 +1001,7 @@ namespace XtermSharp {
 		// 
 		void EraseChars (int [] pars)
 		{
+			terminal.RestrictCursor ();
 			var p = Math.Max (pars.Length == 0 ? 1 : pars [0], 1);
 
 			var buffer = terminal.Buffer;
@@ -967,10 +1018,17 @@ namespace XtermSharp {
 		{
 			var p = Math.Max (pars.Length == 0 ? 1 : pars [0], 1);
 			var buffer = terminal.Buffer;
+			// A count larger than the scroll region is indistinguishable from one that
+			// exactly clears it, and the loop below is a splice per line: CSI 10000004 S used
+			// to run for minutes.
+			p = Math.Min (p, buffer.ScrollBottom - buffer.ScrollTop + 1);
 
 			while (p-- != 0) {
+				// SD removes the bottom line of the region and opens a blank one at its top.
+				// Inserting at the bottom instead just wiped the last line in place, so the
+				// region never moved.
 				buffer.Lines.Splice (buffer.YBase + buffer.ScrollBottom, 1);
-				buffer.Lines.Splice (buffer.YBase + buffer.ScrollBottom, 0, buffer.GetBlankLine (CharData.DefaultAttr));
+				buffer.Lines.Splice (buffer.YBase + buffer.ScrollTop, 0, buffer.GetBlankLine (CharData.DefaultAttr));
 			}
 			// this.maxRange();
 			terminal.UpdateRange (buffer.ScrollTop);
@@ -985,6 +1043,10 @@ namespace XtermSharp {
 		{
 			var p = Math.Max (pars.Length == 0 ? 1 : pars [0], 1);
 			var buffer = terminal.Buffer;
+			// A count larger than the scroll region is indistinguishable from one that
+			// exactly clears it, and the loop below is a splice per line: CSI 10000004 S used
+			// to run for minutes.
+			p = Math.Min (p, buffer.ScrollBottom - buffer.ScrollTop + 1);
 
 			while (p-- != 0) {
 				buffer.Lines.Splice (buffer.YBase + buffer.ScrollTop, 1);
@@ -1001,6 +1063,7 @@ namespace XtermSharp {
 		// 
 		void DeleteLines (int [] pars)
 		{
+			terminal.RestrictCursor ();
 			var p = Math.Max (pars.Length == 0 ? 1 : pars [0], 1);
 			var buffer = terminal.Buffer;
 			var row = buffer.Y + buffer.YBase;
@@ -1008,6 +1071,7 @@ namespace XtermSharp {
 			j = terminal.Rows - 1 - buffer.ScrollBottom;
 			j = terminal.Rows - 1 + buffer.YBase - j;
 			var eraseAttr = terminal.EraseAttr ();
+			p = Math.Min (p, buffer.ScrollBottom - buffer.ScrollTop + 1);
 			while (p-- != 0) {
 				// test: echo -e '\e[44m\e[1M\e[0m'
 				// blankLine(true) - xterm/linux behavior
@@ -1034,6 +1098,7 @@ namespace XtermSharp {
 		// 
 		void EraseInLine (int [] pars)
 		{
+			terminal.RestrictCursor ();
 			var p = pars.Length == 0 ? 0 : pars [0];
 			var buffer = terminal.Buffer;
 			switch (p) {
@@ -1064,6 +1129,7 @@ namespace XtermSharp {
 		// 
 		void EraseInDisplay (int [] pars)
 		{
+			terminal.RestrictCursor ();
 			var p = pars.Length == 0 ? 0 : pars [0];
 			var buffer = terminal.Buffer;
 			int j;
@@ -1082,8 +1148,9 @@ namespace XtermSharp {
 				terminal.UpdateRange (j);
 				// Deleted front part of line and everything before. This line will no longer be wrapped.
 				EraseInBufferLine (j, 0, buffer.X + 1, true);
-				if (buffer.X + 1 >= terminal.Cols) {
+				if (buffer.X + 1 >= terminal.Cols && j + 1 < buffer.Lines.Length) {
 					// Deleted entire previous line. This next line can no longer be wrapped.
+					// There is no next line to unwrap when erasing on the last row.
 					buffer.Lines [j + 1].IsWrapped = false;
 				}
 				while (j-- != 0) {
@@ -1118,6 +1185,7 @@ namespace XtermSharp {
 		// 
 		void CursorForwardTab (int [] pars)
 		{
+			terminal.RestrictCursor ();
 			int param = Math.Max (pars.Length > 0 ? pars [0] : 1, 1);
 			var buffer = terminal.Buffer;
 			while (param-- != 0)
@@ -1169,6 +1237,7 @@ namespace XtermSharp {
 		//
 		void InsertChars (int [] pars)
 		{
+			terminal.RestrictCursor ();
 			terminal.RestrictCursor ();
 			var buffer = terminal.Buffer;
 			var cd = new CharData (terminal.EraseAttr ());
@@ -1235,13 +1304,17 @@ namespace XtermSharp {
 				// calculate print space
 				// expensive call, therefore we save width in line buffer
 
-				// TODO: This is wrong, we only have one byte at this point, we do not have a full rune.
-				// The correct fix includes the upper parser tracking the "pending" data across invocations
-				// until a valid UTF-8 string comes in, and *then* we can call this method
-				// var chWidth = Rune.ColumnWidth ((Rune)code);
-
-				// 1 until we get a fixed NStack
-				var chWidth = 1;
+				// `code` is a fully decoded rune by this point (the branch above assembles the
+				// whole UTF-8 sequence and puts the bytes back when it is split across feeds),
+				// so the real column width is available here. Hardcoding 1 made every CJK
+				// glyph and emoji occupy a single cell.
+				// `code` is a fully decoded rune by this point — the branch above assembles the
+				// whole UTF-8 sequence and puts bytes back when it is split across feeds — so
+				// the real column width is available. NStack's Rune.ColumnWidth is not usable
+				// (its bisearch throws IndexOutOfRange on CJK, which is what the upstream
+				// "1 until we get a fixed NStack" comment was about); XtermSharp already ships
+				// its own wcwidth port, so use that.
+				var chWidth = ((uint)code).ConsoleWidth ();
 
 				// get charset replacement character
 				// charset are only defined for ASCII, therefore we only
@@ -1338,6 +1411,7 @@ namespace XtermSharp {
 				// write current char to buffer and advance cursor
 				var charData = new CharData (curAttr, (uint)code, chWidth, ch);
 				bufferRow [buffer.X++] = charData;
+				precedingCodepoint = code;
 
 				// fullwidth char - also set next cell to placeholder stub and advance cursor
 				// for graphemes bigger than fullwidth we can simply loop to zero

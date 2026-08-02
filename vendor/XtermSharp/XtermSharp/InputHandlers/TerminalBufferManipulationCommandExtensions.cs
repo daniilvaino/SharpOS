@@ -120,7 +120,9 @@ namespace XtermSharp.CommandExtensions {
 							var line = buffer.Lines [row + rowTarget + buffer.YBase];
 							var lr = lines [row];
 							for (int col = 0; col <= cright - rect.left; col++) {
-								if (col >= buffer.Cols) {
+								// The destination column is colTarget + col; bounding the source
+								// offset alone let the copy run off the right edge of the line.
+								if (colTarget + col >= buffer.Cols) {
 									break;
 								}
 
@@ -210,17 +212,23 @@ namespace XtermSharp.CommandExtensions {
 			if (right < 0) {
 				right = buffer.Cols;
 			}
-			if (right > buffer.Cols) {
-				right = buffer.Cols;
-			}
-			if (bottom > buffer.Rows) {
-				bottom = buffer.Rows;
-			}
 			if (originMode) {
 				top += buffer.ScrollTop;
 				bottom += buffer.ScrollTop;
 				left += buffer.MarginLeft;
 				right += buffer.MarginLeft;
+			}
+
+			// Clamping happens after the origin offsets, not before: adding ScrollTop to an
+			// already-clamped bottom pushed the rectangle straight back off the page, and the
+			// callers index buffer.Lines with it.
+			top = Math.Max (top, 1);
+			left = Math.Max (left, 1);
+			if (right > buffer.Cols) {
+				right = buffer.Cols;
+			}
+			if (bottom > buffer.Rows) {
+				bottom = buffer.Rows;
 			}
 
 			if (top > bottom || left > right) {

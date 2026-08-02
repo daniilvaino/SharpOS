@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>termrace</AssemblyName>
+    <RootNamespace>TermRace</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\vendor\XtermSharp\XtermSharp\XtermSharp.csproj" />
+    <ProjectReference Include="..\..\..\XTerm.NET\src\XTerm.NET\XTerm.NET.csproj" />
+  </ItemGroup>
+
+</Project>

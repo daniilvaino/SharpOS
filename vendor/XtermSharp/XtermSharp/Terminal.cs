@@ -495,9 +495,13 @@ namespace XtermSharp {
 
 		public event Action<Terminal> LineFeedEvent;
 
+		/// <summary>
+		/// Accessibility hook, raised from the HT handler with the number of columns the
+		/// cursor moved. Nothing consumes it here, and it is on the path of every tab, so it
+		/// is a no-op rather than a throw.
+		/// </summary>
 		internal void EmitA11yTab (object p)
 		{
-			throw new NotImplementedException ();
 		}
 
 		internal void SetgLevel (int v)
@@ -680,9 +684,32 @@ namespace XtermSharp {
 
 		}
 
+		/// <summary>
+		/// Maps a 24-bit color onto the closest entry of the 256-color ANSI palette, by
+		/// squared distance in RGB. Called for SGR 38;2 / 48;2 (direct color), where the
+		/// cell attribute has room for a palette index only.
+		/// </summary>
+		/// <returns>Palette index, or -1 if the palette is unavailable.</returns>
 		public int MatchColor (int r1, int g1, int b1)
 		{
-			throw new NotImplementedException ();
+			var palette = Color.DefaultAnsiColors;
+			if (palette == null || palette.Count == 0)
+				return -1;
+
+			int best = 0;
+			int bestDistance = int.MaxValue;
+			for (int i = 0; i < palette.Count; i++) {
+				var color = palette [i];
+				int dr = color.Red - r1, dg = color.Green - g1, db = color.Blue - b1;
+				int distance = dr * dr + dg * dg + db * db;
+				if (distance >= bestDistance)
+					continue;
+				if (distance == 0)
+					return i;
+				bestDistance = distance;
+				best = i;
+			}
+			return best;
 		}
 
 		internal void EmitData (string txt)
@@ -711,7 +738,9 @@ namespace XtermSharp {
 				buffer.Lines [buffer.Y + buffer.YBase] = buffer.GetBlankLine (EraseAttr ());
 				UpdateRange (buffer.ScrollTop);
 				UpdateRange (buffer.ScrollBottom);
-			} else {
+			} else if (buffer.Y > 0) {
+				// RI issued above the scroll region (DECSTBM with a non-zero top, cursor still
+				// homed) used to walk the cursor to row -1.
 				buffer.Y--;
 			}
 		}
@@ -730,8 +759,11 @@ namespace XtermSharp {
 			row = Math.Min (Math.Max (row, 0), buffer.Rows - 1);
 
 			if (OriginMode) {
-				buffer.X = col + (IsUsingMargins () ? buffer.MarginLeft : 0);
-				buffer.Y = buffer.ScrollTop + row;
+				// In origin mode the cursor is confined to the scroll region, and the region
+				// offset is added after the clamp above — so clamp again here, or CUP inside a
+				// region whose top is non-zero parks the cursor past the last line.
+				buffer.X = Math.Min (col + (IsUsingMargins () ? buffer.MarginLeft : 0), buffer.Cols - 1);
+				buffer.Y = Math.Min (buffer.ScrollTop + row, Math.Min (buffer.ScrollBottom, buffer.Rows - 1));
 			} else {
 				buffer.X = col;
 				buffer.Y = row;
@@ -740,8 +772,26 @@ namespace XtermSharp {
 		/// <summary>
 		// Moves the cursor up by rows
 		/// </summary>
+		/// <summary>
+		/// Collapses a deferred wrap before a command reads the cursor.
+		/// </summary>
+		/// <remarks>
+		/// Printing into the last column leaves X one past the right edge — the wrap itself is
+		/// deferred until the next character, so that a character ending a line does not
+		/// scroll the screen on its own. Every command that reads or moves the cursor must
+		/// first bring it back onto the page, or it measures from a column that does not
+		/// exist; that is the off-by-one behind the CUB/EL/ED/HT fixture failures.
+		/// </remarks>
+		internal void RestrictCursor ()
+		{
+			var buffer = Buffer;
+			buffer.X = Math.Min (Cols - 1, Math.Max (0, buffer.X));
+			buffer.Y = Math.Min (Rows - 1, Math.Max (0, buffer.Y));
+		}
+
 		public void CursorUp (int rows)
 		{
+			RestrictCursor ();
 			var buffer = Buffer;
 			var top = buffer.ScrollTop;
 
@@ -760,6 +810,7 @@ namespace XtermSharp {
 		/// </summary>
 		public void CursorDown (int rows)
 		{
+			RestrictCursor ();
 			var buffer = Buffer;
 			var bottom = buffer.ScrollBottom;
 
@@ -776,9 +827,6 @@ namespace XtermSharp {
 			else
 				buffer.Y = newY;
 
-			// If the end of the line is hit, prevent this action from wrapping around to the next line.
-			if (buffer.X >= Cols)
-				buffer.X--;
 		}
 
 		/// <summary>
@@ -786,6 +834,7 @@ namespace XtermSharp {
 		/// </summary>
 		public void CursorForward (int cols)
 		{
+			RestrictCursor ();
 			var buffer = Buffer;
 			var right = MarginMode ? buffer.MarginRight : buffer.Cols - 1;
 
@@ -804,6 +853,7 @@ namespace XtermSharp {
 		/// </summary>
 		public void CursorBackward (int cols)
 		{
+			RestrictCursor ();
 			var buffer = Buffer;
 
 			// What is our left margin - depending on the settings.
@@ -825,6 +875,7 @@ namespace XtermSharp {
 		/// </summary>
 		public void CursorBackwardTab (int tabs)
 		{
+			RestrictCursor ();
 			var buffer = Buffer;
 			while (tabs-- != 0) {
 				buffer.X = buffer.PreviousTabStop ();
@@ -836,6 +887,7 @@ namespace XtermSharp {
 		/// </summary>
 		public void CursorCharAbsolute (int col)
 		{
+			RestrictCursor ();
 			var buffer = Buffer;
 			buffer.X = (IsUsingMargins () ? buffer.MarginLeft : 0) + Math.Min (col - 1, buffer.Cols - 1);
 		}
@@ -1004,6 +1056,7 @@ namespace XtermSharp {
 		/// </summary>
 		public void DeleteChars (int charsToDelete)
 		{
+			RestrictCursor ();
 			var buffer = Buffer;
 
 			if (MarginMode) {
@@ -1011,6 +1064,11 @@ namespace XtermSharp {
 					charsToDelete = buffer.MarginRight - buffer.X;
 				}
 			}
+
+			// The clamp above goes negative once the cursor sits past the right margin, and
+			// DeleteCells reads a negative count as "copy from before the start of the line".
+			if (charsToDelete <= 0)
+				return;
 
 			buffer.Lines [buffer.Y + buffer.YBase].DeleteCells (buffer.X, charsToDelete, MarginMode ? buffer.MarginRight : buffer.Cols - 1, new CharData (EraseAttr ()));
 

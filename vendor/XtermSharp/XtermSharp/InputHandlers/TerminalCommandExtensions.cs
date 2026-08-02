@@ -106,8 +106,11 @@ namespace XtermSharp.CommandExtensions {
 		public static void csiDECSLRM (this Terminal terminal, params int [] pars)
 		{
 			var buffer = terminal.Buffer;
-			var left = Math.Max (0, (pars.Length > 0 ? pars [0] : 1) - 1);
-			var right = Math.Max (0, (pars.Length > 1 ? pars [1] : buffer.Cols) - 1);
+			// An omitted parameter arrives as 0, and 0 means "use the default" — not column
+			// zero. Reading it literally collapsed both margins onto column 0, after which
+			// DCH computed a negative delete count and walked off the line.
+			var left = (pars.Length > 0 && pars [0] > 0 ? pars [0] : 1) - 1;
+			var right = (pars.Length > 1 && pars [1] > 0 ? pars [1] : buffer.Cols) - 1;
 
 			buffer.SetMargins (left, right);
 		}
@@ -307,11 +310,13 @@ namespace XtermSharp.CommandExtensions {
 					terminal.SendResponse (response);
 					return;
 				case 20:
-					response = terminal.IconTitle.Replace ("\\", "");
+					// Title/IconTitle stay null until OSC 0/1/2 sets them; a report request
+					// before that dereferenced null.
+					response = (terminal.IconTitle ?? "").Replace ("\\", "");
 					terminal.SendResponse ($"{terminal.ControlCodes.OSC}l{response}{terminal.ControlCodes.ST}");
 					return;
 				case 21:
-					response = terminal.Title.Replace ("\\", "");
+					response = (terminal.Title ?? "").Replace ("\\", "");
 					terminal.SendResponse ($"{terminal.ControlCodes.OSC}l{response}{terminal.ControlCodes.ST}");
 					return;
 				default:

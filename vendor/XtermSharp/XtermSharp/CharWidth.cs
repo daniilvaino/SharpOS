@@ -86,7 +86,10 @@ namespace XtermSharp {
 			if (rune >= 0x7f && rune <= 0xa0)
 				return 0;
 			/* binary search in table of non-spacing characters */
-			if (bisearch (rune, combining, combining.GetLength (0)) != 0)
+			// bisearch treats max as the last valid index (it reads table[max,1]), so it takes
+			// the count minus one; passing the count read one row past the end. Same off-by-one
+			// as NStack's Rune.ColumnWidth, which shares this wcwidth.c ancestry.
+			if (bisearch (rune, combining, combining.GetLength (0) - 1) != 0)
 				return 0;
 			/* if we arrive here, ucs is not a combining or C0/C1 control character */
 			return 1 +

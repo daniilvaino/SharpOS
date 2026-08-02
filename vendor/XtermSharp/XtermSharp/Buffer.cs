@@ -159,7 +159,13 @@ namespace XtermSharp {
 		/// </summary>
 		public void SetMargins (int left, int right)
 		{
-			left = Math.Min (left, right);
+			// DECSLRM parameters are not validated against the page width, and MarginRight is
+			// what Print/NextTabStop/InsertCells use as the right edge: an out-of-range right
+			// margin let the cursor walk past the end of a BufferLine. Margins are a screen
+			// coordinate, so they belong inside [0, Cols-1]; enforcing it here means every
+			// consumer inherits the invariant.
+			right = Math.Min (Math.Max (right, 0), Cols - 1);
+			left = Math.Min (Math.Max (left, 0), right);
 			MarginLeft = left;
 			MarginRight = right;
 		}
@@ -380,6 +386,10 @@ namespace XtermSharp {
 		{
 			if (index == -1)
 				index = X;
+			// X (and an explicit index) may sit past the last tab stop after a resize or a
+			// cursor move to the right margin; tabStops is only Cols wide.
+			if (index > tabStops.Length)
+				index = tabStops.Length;
 			while (index > 0 && !tabStops [--index])
 				;
 
@@ -395,6 +405,10 @@ namespace XtermSharp {
 		{
 			// Users marginMode because apparently for tabs, there is no need to have originMode set
 			var limit = Terminal.MarginMode ? MarginRight : (Cols - 1);
+			// MarginRight comes from DECSLRM and may name the column past the last tab stop,
+			// and tabStops can lag Cols across a resize; either way indexing at limit blew up.
+			if (limit > tabStops.Length - 1)
+				limit = tabStops.Length - 1;
 			if (index == -1)
 				index = X;
 

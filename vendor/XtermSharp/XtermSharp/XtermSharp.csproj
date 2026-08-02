@@ -23,7 +23,10 @@
   </ItemGroup>
     
   <ItemGroup>
-    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute" Visible="False">
+    <!-- Visible="False" is item metadata, but modern SDKs feed every metadata entry to the
+         attribute constructor, so this used to emit InternalsVisibleTo("Tests", Visible)
+         and fail to compile. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Tests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>    

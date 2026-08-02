@@ -97,9 +97,9 @@
 					terminal.InsertMode = true;
 					break;
 				case 20:
-
-					// Automatic New Line (LNM)
-					// this._t.convertEol = true;
+					// Automatic New Line (LNM): LF/FF/VT also perform a carriage return.
+					// ConvertEol is exactly that behaviour in LineFeed.
+					terminal.Options.ConvertEol = true;
 					break;
 				}
 			} else if (collect == "?") {
@@ -308,7 +308,8 @@
 					terminal.InsertMode = false;
 					break;
 				case 20:
-					// this._t.convertEol = false;
+					// Reset LNM: LF no longer implies CR.
+					terminal.Options.ConvertEol = false;
 					break;
 				}
 			} else if (collect == "?") {

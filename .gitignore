@@ -100,6 +100,11 @@ dotnet-runtime-vanilla-wsl/
 # app source now lives under apps_native/ and apps_managed/ (tracked;
 # their bin/obj are covered by the global build-output ignore above).
 work/*
+# …except the terminal-engine test runner: it is the artifact behind the
+# XtermSharp-vs-XTerm.NET decision (vendor/XtermSharp/PROVENANCE.md) and gets re-run
+# after every fork patch. Desktop .NET + JIT, never part of the kernel build; its own
+# .gitignore covers bin/obj/reports.
+!work/TermRace/
 hello/
 last_build.log
 *.lscache
