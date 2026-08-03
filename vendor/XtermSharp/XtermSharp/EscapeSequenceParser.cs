@@ -5,7 +5,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using NStack;
 
 namespace XtermSharp {
 
@@ -301,7 +300,7 @@ namespace XtermSharp {
 		// Fallback handlers
 		public unsafe PrintHandler PrintHandlerFallback = (data, start, end) => { };
 		public Action<byte> ExecuteHandlerFallback = EmptyExecuteHandler;
-		public Action<string, int [], int> CsiHandlerFallback = (collect, parameters, flag) => { Console.WriteLine ("Can not handle ESC-[" + flag); };
+		public Action<string, int [], int> CsiHandlerFallback = (collect, parameters, flag) => { TerminalLog.Write ("Can not handle ESC-[" + flag); };
 		public EscHandler EscHandlerFallback = (collect, flag) => { };
 		public Action<int, string> OscHandlerFallback = (identifier, data) => { };
 		public IDcsHandler DcsHandlerFallback = new DcsDummy ();

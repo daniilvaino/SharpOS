@@ -112,6 +112,37 @@ namespace SharpOS.Std.NoRuntime
             return IndexOf(str, value, 0) >= 0;
         }
 
+        // Ported from dotnet/runtime v8.0.27 String.Comparison.cs StartsWith(string,
+        // StringComparison). Cuts: the culture-aware branches (CurrentCulture /
+        // InvariantCulture) fall back to the ordinal path — std is Ordinal-only by
+        // design, see the header of this file.
+        public static bool StartsWith(string str, string value, System.StringComparison comparisonType)
+        {
+            if (str == null || value == null)
+                return false;
+            if (value.Length == 0)
+                return true;
+            if (value.Length > str.Length)
+                return false;
+
+            bool ignoreCase = comparisonType == System.StringComparison.OrdinalIgnoreCase
+                || comparisonType == System.StringComparison.CurrentCultureIgnoreCase
+                || comparisonType == System.StringComparison.InvariantCultureIgnoreCase;
+
+            for (int i = 0; i < value.Length; i++)
+            {
+                char a = str[i];
+                char b = value[i];
+                if (a == b)
+                    continue;
+                if (!ignoreCase)
+                    return false;
+                if (CharHelpers.ToUpperInvariant(a) != CharHelpers.ToUpperInvariant(b))
+                    return false;
+            }
+            return true;
+        }
+
         public static bool StartsWith(string str, string value)
         {
             if (str == null || value == null)

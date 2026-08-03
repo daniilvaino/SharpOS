@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Phase 1 of taking the fork toward the kernel: does XtermSharp survive NativeAOT at all,
+    on the full BCL? No SharpOS std involved yet — this only answers "is the code
+    AOT-compatible" (no dynamic codegen, no reflection the trimmer cannot see).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AssemblyName>xtermaot</AssemblyName>
+    <RootNamespace>TermRace.Aot</RootNamespace>
+    <!-- Report every trim/AOT warning: those are exactly what we are looking for. -->
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <SuppressTrimAnalysisWarnings>false</SuppressTrimAnalysisWarnings>
+    <IlcGenerateCompleteTypeMetadata>false</IlcGenerateCompleteTypeMetadata>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\vendor\XtermSharp\XtermSharp\XtermSharp.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -4,7 +4,7 @@ using System.Text;
 
 namespace XtermSharp {
 
-	public class Terminal {
+	public partial class Terminal {
 		const int MINIMUM_COLS = 2;
 		const int MINIMUM_ROWS = 1;
 
@@ -143,26 +143,6 @@ namespace XtermSharp {
 		public bool InsertMode;
 		public int CurAttr;
 
-		/// <summary>
-		/// Provides a baseline set of environment variables that would be useful to run the terminal,
-		/// you can customzie these accordingly.
-		/// </summary>
-		public static string [] GetEnvironmentVariables (string termName = null)
-		{
-			var l = new List<string> ();
-			if (termName == null)
-				termName = "xterm-256color";
-
-			l.Add ("TERM=" + termName);
-
-			// Without this, tools like "vi" produce sequences that are not UTF-8 friendly
-			l.Add ("LANG=en_US.UTF-8");
-			var env = Environment.GetEnvironmentVariables ();
-			foreach (var x in new [] { "LOGNAME", "USER", "DISPLAY", "LC_TYPE", "USER", "HOME", "PATH" })
-				if (env.Contains (x))
-					l.Add ($"{x}={env [x]}");
-			return l.ToArray ();
-		}
 
 		/// <summary>
 		/// Called by input handlers to set the title
@@ -273,7 +253,7 @@ namespace XtermSharp {
 					}
 					bufferIndex--;
 				} else {
-					Error ("Unsupported type in SendResponse", args[i].GetType());
+					Error ("Unsupported type in SendResponse", args [i]);
 				}
 
 				bufferIndex++;
@@ -1249,9 +1229,9 @@ namespace XtermSharp {
 		/// </summary>
 		void Report (string prefix, string text, object [] args)
 		{
-			Console.WriteLine ($"{prefix}: {text}");
+			TerminalLog.Write ($"{prefix}: {text}");
 			for (int i = 0; i < args.Length; i++)
-				Console.WriteLine ("    {0}: {1}", i, args [i]);
+				TerminalLog.Write ($"    {i}: {args [i]}");
 		}
 
 		/// <summary>

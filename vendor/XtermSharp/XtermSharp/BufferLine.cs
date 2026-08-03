@@ -4,7 +4,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using NStack;
 
 namespace XtermSharp {
 	[DebuggerDisplay ("Line: {DebuggerDisplay}")]
@@ -158,7 +157,7 @@ namespace XtermSharp {
 			Array.Copy (src.data, srcCol, data, dstCol, len); 
 		}
 
-		public ustring TranslateToString (bool trimRight = false, int startCol = 0, int endCol = -1)
+		public string TranslateToString (bool trimRight = false, int startCol = 0, int endCol = -1)
 		{
 			if (endCol == -1)
 				endCol = data.Length;
@@ -167,11 +166,11 @@ namespace XtermSharp {
 				endCol = Math.Max (Math.Min (endCol, GetTrimmedLength ()), startCol);
 			}
 
-			Rune [] runes = new Rune [endCol - startCol];
+			var text = new System.Text.StringBuilder (endCol - startCol);
 			for (int i = startCol; i < endCol; i++)
-				runes [i - startCol] = data [i].Rune;
+				RuneExt.AppendRune (text, data [i].Rune);
 
-			return ustring.Make (runes);
+			return text.ToString ();
 		}
 	}
 }

@@ -66,6 +66,73 @@ namespace XtermSharp {
 			new AcceptRange (locb, 0x8f),
 		};
 
+		/// <summary>
+		/// Decodes the first rune of a UTF-8 sequence, returning it and how many bytes it
+		/// used. Replaces NStack's Rune.DecodeRune: the fork carries code points as ints,
+		/// and the kernel tier ships no NStack.
+		/// </summary>
+		public static void DecodeRune (byte [] bytes, out int rune, out int size)
+		{
+			rune = 0xFFFD;
+			size = 1;
+			if (bytes == null || bytes.Length == 0)
+				return;
+
+			var x = first [bytes [0]];
+			if (x == a1) {
+				rune = bytes [0];
+				return;
+			}
+			if (x == xx)
+				return;
+
+			int need = x & 7;
+			if (bytes.Length < need)
+				return;
+
+			var accept = AcceptRanges [x >> 4];
+			var b1 = bytes [1];
+			if (b1 < accept.Lo || accept.Hi < b1)
+				return;
+
+			if (need == 2) {
+				rune = ((bytes [0] & 0x1f) << 6) | (b1 & 0x3f);
+				size = 2;
+				return;
+			}
+
+			var b2 = bytes [2];
+			if (b2 < locb || hicb < b2)
+				return;
+
+			if (need == 3) {
+				rune = ((bytes [0] & 0x0f) << 12) | ((b1 & 0x3f) << 6) | (b2 & 0x3f);
+				size = 3;
+				return;
+			}
+
+			var b3 = bytes [3];
+			if (b3 < locb || hicb < b3)
+				return;
+
+			rune = ((bytes [0] & 0x07) << 18) | ((b1 & 0x3f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+			size = 4;
+		}
+
+		/// <summary>Appends a code point to a builder, as a surrogate pair when needed.</summary>
+		public static void AppendRune (System.Text.StringBuilder builder, int rune)
+		{
+			if (rune < 0 || rune > 0x10FFFF || (rune >= 0xD800 && rune <= 0xDFFF))
+				rune = 0xFFFD;
+			if (rune <= 0xFFFF) {
+				builder.Append ((char)rune);
+				return;
+			}
+			rune -= 0x10000;
+			builder.Append ((char)(0xD800 + (rune >> 10)));
+			builder.Append ((char)(0xDC00 + (rune & 0x3FF)));
+		}
+
 		public unsafe static bool FullRune (byte * p, int n)
 		{
 			if (p == null)

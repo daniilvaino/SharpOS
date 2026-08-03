@@ -31,13 +31,20 @@ Against it: XtermSharp is not crash-hardened. Of its corpus failures ~1688 are a
 the genuine memory bugs are ~47 `IndexOutOfRange` + 15 `NullReference` + 12
 `ArgumentOutOfRange`, plus one hang. Closing those is the first work item of the fork.
 
-## Not in the kernel build yet
+## Tiers
 
-`OS.csproj` includes vendored source per directory by name ([Iced](../../OS/OS.csproj),
-PeNet); no `<Compile Include>` points here. This tree is currently consumed only by the
-desktop-.NET test runner in `work/TermRace`, which runs on the full BCL with JIT. The
-kernel case — NativeAOT against `std/no-runtime/` — is a separate exercise and has not
-started.
+The engine now compiles on all three:
+
+- **Desktop .NET (JIT)** — `work/TermRace` runs the corpus against it.
+- **NativeAOT on the full BCL** — `work/TermRace/aot` publishes a 1.5 MB native image.
+- **NativeAOT against SharpOS's std** — `OS.csproj` compiles the engine into the kernel
+  image (`Pty`, `Terminal.Environment`, `SelectionService`, `SearchService` excluded).
+  Getting there needed `BitArray`, `ValueTuple`, `Array.CopyTo`, `List<T>.ForEach` and
+  `string.StartsWith(string, StringComparison)` added to std, plus the fork changes listed
+  below (NStack, HasFlag, the flattened wcwidth table, `Console`).
+
+Nothing in the kernel drives it yet — the front-end that feeds it bytes and paints the
+cell grid is the next step.
 
 ## Our changes
 
@@ -83,6 +90,13 @@ started.
 | `EscapeSequenceParser.EXECUTABLES` — exclude 0x18/0x1a, include 0x19 | CAN was listed as an ordinary executable, so a per-state rule overrode the anywhere-rule and CAN no longer cancelled a sequence in progress |
 | `csiDECSET`/`csiDECRESET` mode 6 (DECOM) — home the cursor to the region origin | setting or resetting origin mode left the cursor where it was |
 | `RepeatPrecedingCharacter` — honour IRM, and wrap instead of collapsing a pending wrap | REP overwrote under insert mode and repeated onto the character it was copying |
+| `XtermSharp.csproj` — `AllowUnsafeBlocks` unconditional | it was set per `Configuration|Platform` for AnyCPU only, so any build with an explicit RID (a NativeAOT publish) failed with CS0227 |
+| NStack dropped entirely: `CharData.Rune` is a code point, `TranslateToString` returns `string`, `RuneExt` grew its own `DecodeRune`/`AppendRune` | the package is third-party, unavailable on the kernel tier, and its `Rune.ColumnWidth` was broken anyway (see the bisearch entry above) |
+| `Enum.HasFlag` → bitwise tests in `CharacterAttribute` | HasFlag needs the reflection-backed Enum helpers; the kernel's own `NativeAotProbe` documents the same substitution |
+| `RuneHelper.combining` — `uint[,]` flattened to `uint[]` pairs | multidimensional arrays need runtime support the kernel tier does not ship |
+| `Terminal.GetEnvironmentVariables` split into `Terminal.Environment.cs` | the one place that needs `System.Environment`; only a hosted build seeds a child process, so the kernel build leaves the file out |
+| `Encoding.Default` → `Encoding.UTF8` in DECRQSS | std ships no code-page table, and the DCS payload is UTF-8 like everything else here |
+| `TerminalLog` (new) replaces direct `Console.WriteLine` in the parser and `Terminal.Report` | the kernel has several consoles and picks per boot; the engine should not choose one |
 
 All of the above were found by the corpus runner in `work/TermRace` and confirmed with its
 `--reduce` mode, which shrinks a failing corpus file to a minimal input that still fails at

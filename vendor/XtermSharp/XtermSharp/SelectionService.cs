@@ -10,16 +10,20 @@ namespace XtermSharp {
 	public class SelectionService {
 		readonly PointComparer comparer;
 		readonly Terminal terminal;
-		readonly NStack.ustring nullString;
-		readonly NStack.ustring spaceString;
+		readonly string nullString;
+		readonly string spaceString;
 		private bool active;
 
 		public SelectionService (Terminal terminal)
 		{
 			this.terminal = terminal;
 			comparer = new PointComparer ();
-			nullString = NStack.ustring.Make (CharData.Null.Rune);
-			spaceString = NStack.ustring.Make (" ");
+			// The null cell's rune rendered as text, so a copied selection shows blanks
+			// rather than the sentinel.
+			var sentinel = new System.Text.StringBuilder ();
+			RuneExt.AppendRune (sentinel, CharData.Null.Rune);
+			nullString = sentinel.ToString ();
+			spaceString = " ";
 		}
 
 		/// <summary>
@@ -172,7 +176,7 @@ namespace XtermSharp {
 			Func<CharData, bool> isLetterOrChar = (cd) => {
 				if (cd.IsNullChar ())
 					return false;
-				return Rune.IsLetterOrDigit (cd.Rune);
+				return cd.Rune <= 0xFFFF && char.IsLetterOrDigit ((char)cd.Rune);
 			};
 
 			var chr = buffer.GetChar (col, row);
@@ -350,7 +354,7 @@ namespace XtermSharp {
 
 		string TranslateBufferLineToString(Buffer buffer, int line, int start, int end)
 		{
-			return buffer.TranslateBufferLineToString (line, true, start, end).Replace (nullString, spaceString).ToString();
+			return buffer.TranslateBufferLineToString (line, true, start, end).Replace (nullString, spaceString);
 		}
 
 		/// <summary>

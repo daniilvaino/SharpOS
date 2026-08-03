@@ -20,20 +20,22 @@ namespace XtermSharp {
 		{
 			var result = "0";
 
+			// Bitwise instead of Enum.HasFlag: HasFlag needs the reflection-backed Enum
+			// helpers, which the kernel tier does not have (cast + bitwise are IL-level ops).
 			var ca = (FLAGS)(attribute >> 18);
-			if (ca.HasFlag (FLAGS.BOLD)) {
+			if ((ca & FLAGS.BOLD) != 0) {
 				result += ";1";
 			}
-			if (ca.HasFlag (FLAGS.UNDERLINE)) {
+			if ((ca & FLAGS.UNDERLINE) != 0) {
 				result += ";4";
 			}
-			if (ca.HasFlag (FLAGS.BLINK)) {
+			if ((ca & FLAGS.BLINK) != 0) {
 				result += ";5";
 			}
-			if (ca.HasFlag (FLAGS.INVERSE)) {
+			if ((ca & FLAGS.INVERSE) != 0) {
 				result += ";7";
 			}
-			if (ca.HasFlag (FLAGS.INVISIBLE)) {
+			if ((ca & FLAGS.INVISIBLE) != 0) {
 				result += ";8";
 			}
 

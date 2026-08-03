@@ -8,7 +8,7 @@ namespace XtermSharp {
 	[DebuggerDisplay("[CharData (Attr={Attribute},Rune={Rune},W={Width},Code={Code})]")]
 	public struct CharData {
 		public int Attribute;
-		public Rune Rune;
+		public int Rune;
 		public int Width;
 		public int Code;
 
@@ -27,7 +27,7 @@ namespace XtermSharp {
 		public static CharData RightParenthesis = new CharData (DefaultAttr, ')', 1, 41);
 		public static CharData Period = new CharData (DefaultAttr, '.', 1, 46);
 
-		public CharData (int attribute, Rune rune, int width, int code)
+		public CharData (int attribute, int rune, int width, int code)
 		{
 			Attribute = attribute;
 			Rune = rune;
@@ -47,7 +47,7 @@ namespace XtermSharp {
 		/// <summary>
 		/// Returns true if this CharData matches the given Rune, irrespective of character attributes
 		/// </summary>
-		public bool MatchesRune(Rune rune)
+		public bool MatchesRune(int rune)
 		{
 			return rune == Rune;
 		}

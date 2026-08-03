@@ -110,6 +110,25 @@
   <ItemGroup>
     <Compile Include="..\vendor\PeNet\**\*.cs" LinkBase="PeNet" />
   </ItemGroup>
+
+  <!-- XtermSharp (terminal engine) forked at vendor/XtermSharp/ — MIT, see its
+       LICENSE and PROVENANCE.md. Compiled into the kernel image the same way as
+       Iced/PeNet. Excluded: Pty (host process plumbing), Terminal.Environment
+       (System.Environment), SelectionService / SearchService (UI-side services)
+       and the Mac/GuiCsHost projects, which are outside XtermSharp/ anyway.
+       The engine takes bytes in and exposes a cell grid; the console front-end
+       that draws it is a separate step. -->
+  <ItemGroup>
+    <Compile Include="..\vendor\XtermSharp\XtermSharp\**\*.cs"
+             Exclude="..\vendor\XtermSharp\XtermSharp\Pty.cs;
+                      ..\vendor\XtermSharp\XtermSharp\Terminal.Environment.cs;
+                      ..\vendor\XtermSharp\XtermSharp\SelectionService.cs;
+                      ..\vendor\XtermSharp\XtermSharp\SearchService.cs;
+                      ..\vendor\XtermSharp\XtermSharp\GlobalSuppressions.cs;
+                      ..\vendor\XtermSharp\XtermSharp\obj\**\*.cs;
+                      ..\vendor\XtermSharp\XtermSharp\bin\**\*.cs"
+             LinkBase="XtermSharp" />
+  </ItemGroup>
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
     <!-- step 121: kernel-side libcmt cut completed via CoffStub.Generator.
          OS.obj's единственный native ref (__security_cookie) теперь покрыт
@@ -360,6 +379,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Runtime\CodeAnalysisAttributes.cs" Link="src\Std\Runtime\CodeAnalysisAttributes.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\ByReference.cs" Link="src\Std\Runtime\ByReference.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Unsafe.cs" Link="src\Std\Runtime\Unsafe.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\ValueTuple.cs" Link="src\Std\Runtime\ValueTuple.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Span.cs" Link="src\Std\Runtime\Span.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\ReadOnlySpan.cs" Link="src\Std\Runtime\ReadOnlySpan.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\MemoryExtensions.cs" Link="src\Std\Runtime\MemoryExtensions.cs" />
@@ -401,6 +421,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Bcl\Comparer.cs" Link="src\Std\Bcl\Comparer.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\List.cs" Link="src\Std\Bcl\List.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Dictionary.cs" Link="src\Std\Bcl\Dictionary.cs" />
+    <Compile Include="..\std\no-runtime\shared\Bcl\BitArray.cs" Link="src\Std\Bcl\BitArray.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\HashSet.cs" Link="src\Std\Bcl\HashSet.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Stack.cs" Link="src\Std\Bcl\Stack.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Queue.cs" Link="src\Std\Bcl\Queue.cs" />

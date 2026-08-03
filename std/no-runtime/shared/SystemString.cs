@@ -242,6 +242,11 @@ namespace System
             return SharpOS.Std.NoRuntime.StringQueries.StartsWith(this, value);
         }
 
+        public bool StartsWith(string value, StringComparison comparisonType)
+        {
+            return SharpOS.Std.NoRuntime.StringQueries.StartsWith(this, value, comparisonType);
+        }
+
         public bool EndsWith(string value)
         {
             return SharpOS.Std.NoRuntime.StringQueries.EndsWith(this, value);

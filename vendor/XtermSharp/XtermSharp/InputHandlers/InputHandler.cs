@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
-using NStack;
 using XtermSharp.CommandExtensions;
 
 // 
@@ -1316,8 +1315,8 @@ namespace XtermSharp {
 						for (int j = 1; j < n; j++)
 							x [j] = readingBuffer.GetNext ();
 
-						(var r, var size) = Rune.DecodeRune (x);
-						code = (int)(uint)r;
+						RuneExt.DecodeRune (x, out var r, out var size);
+						code = r;
 					} else {
 						readingBuffer.Putback (bufferValue);
 						return;
@@ -1374,12 +1373,12 @@ namespace XtermSharp {
 								var chMinusTwo = bufferRow [buffer.X - 2];
 
 								chMinusTwo.Code += ch;
-								chMinusTwo.Rune = (uint)code;
+								chMinusTwo.Rune = code;
 								bufferRow [buffer.X - 2] = chMinusTwo; // must be set explicitly now
 							}
 						} else {
 							chMinusOne.Code += ch;
-							chMinusOne.Rune = (uint)code;
+							chMinusOne.Rune = code;
 							bufferRow [buffer.X - 1] = chMinusOne; // must be set explicitly now
 						}
 					}
@@ -1438,7 +1437,7 @@ namespace XtermSharp {
 				}
 
 				// write current char to buffer and advance cursor
-				var charData = new CharData (curAttr, (uint)code, chWidth, ch);
+				var charData = new CharData (curAttr, code, chWidth, ch);
 				bufferRow [buffer.X++] = charData;
 				precedingCodepoint = code;
 

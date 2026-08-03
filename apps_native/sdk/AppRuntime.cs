@@ -37,6 +37,11 @@ namespace SharpOS.AppSdk
             InterfaceDispatchTrampoline.PatchToKernelBridge(
                 s_services->InterfaceDispatchBridgeAddress);
 
+            // Byref struct copies (List<T> element moves, Dictionary entries) go through
+            // RhpByRefAssignRef; unlike the dispatch bridge this one needs nothing from the
+            // kernel — our GC has no write barrier, so the app writes the 15 bytes itself.
+            ByRefAssignRefStub.TryInstall();
+
             // Wire throw/catch into the kernel's shared EH engine: tail-jump our
             // RhpThrowEx stub to the kernel's RhpThrowEx entry. No GC needed.
             ThrowExTrampoline.PatchToKernelThrow(

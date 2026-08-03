@@ -127,6 +127,19 @@ namespace System.Collections.Generic
                 array[arrayIndex + i] = _items[i];
         }
 
+        // Ported from dotnet/runtime v8.0.27 List.cs. Cut: the _version check (this port
+        // does not track versions, see the header).
+        public void ForEach(Action<T> action)
+        {
+            if (action == null)
+                throw new ArgumentNullException(nameof(action));
+
+            for (int i = 0; i < _size; i++)
+            {
+                action(_items[i]);
+            }
+        }
+
         public void Reverse() => Reverse(0, _size);
 
         public void Reverse(int index, int count)

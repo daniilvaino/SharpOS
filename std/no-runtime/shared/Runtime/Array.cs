@@ -25,6 +25,14 @@ namespace System
     {
         public static T[] Empty<T>() => new T[0];
 
+        // Ported from dotnet/runtime v8.0.27 Array.cs. The compiler binds `array.CopyTo(...)`
+        // against System.Array, so the generic System.Array<T>.CopyTo is not enough.
+        // Cut: the Rank != 1 check (std has no multidimensional arrays).
+        public void CopyTo(Array array, int index)
+        {
+            Copy(this, 0, array, index, Length);
+        }
+
         public static unsafe void Copy(Array sourceArray, Array destinationArray, int length)
         {
             Copy(sourceArray, 0, destinationArray, 0, length);

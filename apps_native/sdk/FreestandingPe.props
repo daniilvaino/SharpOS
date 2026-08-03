@@ -45,6 +45,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)AppStartupBlock.cs"      Link="sdk\AppStartupBlock.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppServiceTable.cs"      Link="sdk\AppServiceTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppRuntime.cs"           Link="sdk\AppRuntime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ByRefAssignRefStub.cs" Link="sdk\ByRefAssignRefStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)InterfaceDispatchTrampoline.cs" Link="sdk\InterfaceDispatchTrampoline.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StackProbeStub.cs"       Link="sdk\StackProbeStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ThrowExTrampoline.cs"          Link="sdk\ThrowExTrampoline.cs" />
@@ -88,6 +89,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\CodeAnalysisAttributes.cs" Link="std\Runtime\CodeAnalysisAttributes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ByReference.cs"     Link="std\Runtime\ByReference.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Unsafe.cs"          Link="std\Runtime\Unsafe.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ValueTuple.cs"      Link="std\Runtime\ValueTuple.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Span.cs"            Link="std\Runtime\Span.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ReadOnlySpan.cs"    Link="std\Runtime\ReadOnlySpan.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\MemoryExtensions.cs" Link="std\Runtime\MemoryExtensions.cs" />
@@ -131,6 +133,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Comparer.cs"            Link="std\Bcl\Comparer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\List.cs"                Link="std\Bcl\List.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Dictionary.cs"          Link="std\Bcl\Dictionary.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BitArray.cs"            Link="std\Bcl\BitArray.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\HashSet.cs"             Link="std\Bcl\HashSet.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Stack.cs"               Link="std\Bcl\Stack.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Queue.cs"               Link="std\Bcl\Queue.cs" />

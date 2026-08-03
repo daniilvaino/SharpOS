@@ -38,7 +38,7 @@ namespace XtermSharp {
 
 		public void Unhook ()
 		{
-			var newData = System.Text.Encoding.Default.GetString (data.ToArray ());
+			var newData = System.Text.Encoding.UTF8.GetString (data.ToArray ());
 			int ok = 1; // 0 means the request is valid according to docs, but tests expect 0?
 			string result = null;
 
