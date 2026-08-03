@@ -137,7 +137,10 @@ namespace XtermSharp {
 			}
 		}
 		static int [] PRINTABLES = r (0x20, 0x7f);
-		static int [] EXECUTABLES = r (0x00, 0x19).Concat (r (0x1c, 0x20)).ToArray ();
+		// 0x18 (CAN) and 0x1a (SUB) are deliberately absent: they are handled by the
+		// anywhere-rules, which cancel a sequence in progress. Listing them here let a
+		// per-state rule override that, so CAN inside an escape sequence did not cancel it.
+		static int [] EXECUTABLES = r (0x00, 0x18).Concat (new [] { 0x19 }).Concat (r (0x1c, 0x20)).ToArray ();
 
 		static int [] r (int low, int high)
 		{

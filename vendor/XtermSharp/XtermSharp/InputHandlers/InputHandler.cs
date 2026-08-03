@@ -57,8 +57,20 @@ namespace XtermSharp {
 			parser.PrintStateReset = PrintStateReset;
 
 			// CSI handler
-			parser.SetCsiHandler ('@', (pars, collect) => InsertChars (pars));
-			parser.SetCsiHandler ('A', (pars, collect) => terminal.csiCUU (pars));
+			// A space intermediate changes the meaning of both finals: CSI Ps SP @ is SL and
+			// CSI Ps SP A is SR. Ignoring `collect` turned SR into a plain cursor-up.
+			parser.SetCsiHandler ('@', (pars, collect) => {
+				if (collect == " ")
+					terminal.ShiftColumns (Math.Max (pars.Length == 0 ? 1 : pars [0], 1), right: false);
+				else
+					InsertChars (pars);
+			});
+			parser.SetCsiHandler ('A', (pars, collect) => {
+				if (collect == " ")
+					terminal.ShiftColumns (Math.Max (pars.Length == 0 ? 1 : pars [0], 1), right: true);
+				else
+					terminal.csiCUU (pars);
+			});
 			parser.SetCsiHandler ('B', (pars, collect) => terminal.csiCUD (pars));
 			parser.SetCsiHandler ('C', (pars, collect) => terminal.csiCUF (pars));
 			parser.SetCsiHandler ('D', (pars, collect) => terminal.csiCUB (pars));
@@ -86,6 +98,9 @@ namespace XtermSharp {
 			parser.SetCsiHandler ('g', (pars, collect) => TabClear (pars));
 			parser.SetCsiHandler ('h', (pars, collect) => SetMode (pars, collect));
 			parser.SetCsiHandler ('l', (pars, collect) => ResetMode (pars, collect));
+			// ECMA-48 8.3.58 HPB: move the active position backward. xterm.js has no handler
+			// for it, which is why the libvterm suite saw it as a no-op.
+			parser.SetCsiHandler ('j', (pars, collect) => terminal.csiCUB (pars));
 			parser.SetCsiHandler ('m', (pars, collect) => CharAttributes (pars));
 			parser.SetCsiHandler ('n', (pars, collect) => terminal.csiDSR (pars, collect));
 			parser.SetCsiHandler ('p', (pars, collect) => {
@@ -181,8 +196,9 @@ namespace XtermSharp {
 			// Execute Handler
 			parser.SetExecuteHandler (7, terminal.Bell);
 			parser.SetExecuteHandler (10, terminal.LineFeed);
-			parser.SetExecuteHandler (11, terminal.LineFeedBasic);   // VT Vertical Tab - ignores auto-new-line behavior in ConvertEOL
-			parser.SetExecuteHandler (12, terminal.LineFeedBasic);
+			// VT and FF move like LF, including the carriage return that LNM adds.
+			parser.SetExecuteHandler (11, terminal.LineFeed);
+			parser.SetExecuteHandler (12, terminal.LineFeed);
 			parser.SetExecuteHandler (13, terminal.CarriageReturn);
 			parser.SetExecuteHandler (8, terminal.Backspace);
 			parser.SetExecuteHandler (9, Tab);
@@ -314,6 +330,10 @@ namespace XtermSharp {
 		private void InsertLines (int [] pars)
 		{
 			terminal.RestrictCursor ();
+			// Outside the scroll region IL and DL do nothing at all; without this they edited
+			// lines the region does not own.
+			if (terminal.Buffer.Y < terminal.Buffer.ScrollTop || terminal.Buffer.Y > terminal.Buffer.ScrollBottom)
+				return;
 			var p = Math.Max (pars.Length == 0 ? 1 : pars [0], 1);
 			var buffer = terminal.Buffer;
 			var row = buffer.Y + buffer.YBase;
@@ -330,6 +350,9 @@ namespace XtermSharp {
 				var newLine = buffer.GetBlankLine (eraseAttr);
 				buffer.Lines.Splice (row, 0, newLine);
 			}
+
+			// IL leaves the cursor at the left margin, same as DL.
+			buffer.X = terminal.MarginMode ? buffer.MarginLeft : 0;
 
 			// this.maxRange();
 			terminal.UpdateRange (buffer.Y);
@@ -537,6 +560,11 @@ namespace XtermSharp {
 		//
 		void Tab ()
 		{
+			// A tab issued while a wrap is pending does nothing: the cursor is already past
+			// the last column and the next character will start the following line.
+			if (terminal.Buffer.X >= terminal.Cols)
+				return;
+
 			var originalX = terminal.Buffer.X;
 			terminal.Buffer.X = terminal.Buffer.NextTabStop ();
 			if (terminal.Options.ScreenReaderMode)
@@ -933,10 +961,10 @@ namespace XtermSharp {
 			if (precedingCodepoint < 0)
 				return;
 
-			terminal.RestrictCursor ();
 			var buffer = terminal.Buffer;
 			var line = buffer.Lines [buffer.YBase + buffer.Y];
-			CharData cd = buffer.X - 1 < 0 ? new CharData (CharData.DefaultAttr) : line [buffer.X - 1];
+			var source = Math.Min (buffer.X, terminal.Cols) - 1;
+			CharData cd = source < 0 ? new CharData (CharData.DefaultAttr) : line [source];
 			var right = terminal.MarginMode ? buffer.MarginRight : terminal.Cols - 1;
 			var left = terminal.MarginMode ? buffer.MarginLeft : 0;
 
@@ -946,6 +974,10 @@ namespace XtermSharp {
 				var room = right - buffer.X + 1;
 				if (room > 0) {
 					var count = Math.Min (room, p);
+					// Under IRM the copies push the rest of the line right, exactly as if the
+					// character had been typed again.
+					if (terminal.InsertMode)
+						line.InsertCells (buffer.X, count, right, new CharData (terminal.EraseAttr ()));
 					line.ReplaceCells (buffer.X, buffer.X + count, cd);
 					terminal.UpdateRange (buffer.Y);
 					buffer.X += count;
@@ -1064,6 +1096,8 @@ namespace XtermSharp {
 		void DeleteLines (int [] pars)
 		{
 			terminal.RestrictCursor ();
+			if (terminal.Buffer.Y < terminal.Buffer.ScrollTop || terminal.Buffer.Y > terminal.Buffer.ScrollBottom)
+				return;
 			var p = Math.Max (pars.Length == 0 ? 1 : pars [0], 1);
 			var buffer = terminal.Buffer;
 			var row = buffer.Y + buffer.YBase;
@@ -1078,6 +1112,9 @@ namespace XtermSharp {
 				buffer.Lines.Splice (row, 1);
 				buffer.Lines.Splice (j, 0, buffer.GetBlankLine (eraseAttr));
 			}
+
+			// IL leaves the cursor at the left margin.
+			buffer.X = terminal.MarginMode ? buffer.MarginLeft : 0;
 
 			// this.maxRange();
 			terminal.UpdateRange (buffer.Y);
@@ -1185,7 +1222,8 @@ namespace XtermSharp {
 		// 
 		void CursorForwardTab (int [] pars)
 		{
-			terminal.RestrictCursor ();
+			if (terminal.Buffer.X >= terminal.Cols)
+				return;
 			int param = Math.Max (pars.Length > 0 ? pars [0] : 1, 1);
 			var buffer = terminal.Buffer;
 			while (param-- != 0)
@@ -1202,12 +1240,7 @@ namespace XtermSharp {
 			int param = Math.Max (pars.Length > 0 ? pars [0] : 1, 1);
 			var buffer = terminal.Buffer;
 
-			buffer.Y -= param;
-			var newY = buffer.Y - param;
-			if (newY < 0)
-				buffer.Y = 0;
-			else
-				buffer.Y = newY;
+			terminal.CursorUp (param);
 			buffer.X = 0;
 		}
 
@@ -1221,13 +1254,7 @@ namespace XtermSharp {
 			int param = Math.Max (pars.Length > 0 ? pars [0] : 1, 1);
 			var buffer = terminal.Buffer;
 
-			var newY = buffer.Y + param;
-
-			if (newY >= terminal.Rows)
-				buffer.Y = terminal.Rows - 1;
-			else
-				buffer.Y = newY;
-
+			terminal.CursorDown (param);
 			buffer.X = 0;
 		}
 
@@ -1237,7 +1264,6 @@ namespace XtermSharp {
 		//
 		void InsertChars (int [] pars)
 		{
-			terminal.RestrictCursor ();
 			terminal.RestrictCursor ();
 			var buffer = terminal.Buffer;
 			var cd = new CharData (terminal.EraseAttr ());
@@ -1372,9 +1398,12 @@ namespace XtermSharp {
 					if (wrapAroundMode) {
 						buffer.X = terminal.MarginMode ? buffer.MarginLeft : 0;
 
-						if (buffer.Y >= buffer.ScrollBottom) {
+						// Only a wrap *at* the bottom of the region scrolls it. With `>=` a wrap
+						// anywhere below the region (cursor parked on the last screen row)
+						// scrolled the region as well, losing one line of it per wrap.
+						if (buffer.Y == buffer.ScrollBottom) {
 							terminal.Scroll (isWrapped: true);
-						} else {
+						} else if (buffer.Y + 1 < terminal.Rows) {
 							// The line already exists (eg. the initial viewport), mark it as a
 							// wrapped line
 							buffer.Lines [++buffer.Y].IsWrapped = true;

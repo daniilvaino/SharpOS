@@ -185,23 +185,25 @@ public sealed class LibVtermSuite : ISuite
 		case "?screen_row": {
 			if (!int.TryParse (args, out var row))
 				return new Verdict { Supported = false, Actual = "unparsable ?screen_row" };
-			return Compare (screen.RowText (row).TrimEnd (), expected);
+			return Compare (RowContent (screen, row), expected);
 		}
 		case "?screen_chars":
 		case "?screen_text": {
 			var rect = args.Split (',').Select (p => int.Parse (p.Trim ())).ToArray ();
 			if (rect.Length != 4)
 				return new Verdict { Supported = false, Actual = "unparsable rectangle" };
-			var sb = new StringBuilder ();
+			// A rectangle spanning several rows comes back as rows joined by newlines, each
+			// ending where its content ends.
+			var parts = new List<string> ();
 			for (int y = rect [0]; y < rect [2] && y < screen.Rows; y++)
-				sb.Append (screen.RowText (y, rect [1], Math.Min (rect [3], screen.Cols)));
-			return Compare (sb.ToString ().TrimEnd (), expected);
+				parts.Add (RowContent (screen, y, rect [1], Math.Min (rect [3], screen.Cols)));
+			return Compare (string.Join ("\n", parts), expected);
 		}
 		case "?screen_eol": {
 			var parts = args.Split (',').Select (p => int.Parse (p.Trim ())).ToArray ();
 			if (parts.Length != 2)
 				return new Verdict { Supported = false, Actual = "unparsable ?screen_eol" };
-			var text = screen.RowText (parts [0]).TrimEnd ();
+			var text = RowContent (screen, parts [0]);
 			var eol = parts [1] >= text.Length ? 1 : 0;
 			return new Verdict { Supported = true, Ok = eol.ToString () == expected, Actual = eol.ToString () };
 		}
@@ -209,6 +211,15 @@ public sealed class LibVtermSuite : ISuite
 			return new Verdict { Supported = false, Actual = $"unsupported query {kind}" };
 		}
 	}
+
+	/// <summary>
+	/// Row content up to its end. Engines that track unwritten cells get the precise answer;
+	/// the others can only be trimmed, which silently drops trailing printed spaces.
+	/// </summary>
+	static string RowContent (Screen screen, int row, int startCol = 0, int endCol = -1)
+		=> screen.TracksUnwritten
+			? screen.RowToEol (row, startCol, endCol)
+			: screen.RowText (row, startCol, endCol).TrimEnd ();
 
 	/// <summary>
 	/// Expected values come either quoted ("ABC") or as a comma-separated list of numbers:
@@ -247,8 +258,25 @@ public static class Dsl
 			? Convert.ToInt32 (text.Substring (2), 16)
 			: int.Parse (text);
 
-	/// <summary>Decodes a libvterm DSL double-quoted byte string.</summary>
+	/// <summary>
+	/// Decodes a libvterm DSL double-quoted byte string, including the `"A"x5` repeat suffix.
+	/// </summary>
 	public static byte [] Unquote (string text)
+	{
+		var body = Decode (text, out var end);
+		// A trailing xN repeats the literal; without it a five-column write pushed one byte.
+		var tail = text.Substring (Math.Min (end, text.Length)).Trim ();
+		if (tail.StartsWith ("x", StringComparison.OrdinalIgnoreCase)
+			&& int.TryParse (tail.Substring (1).Trim (), out var repeat) && repeat > 1) {
+			var repeated = new List<byte> (body.Length * repeat);
+			for (int i = 0; i < repeat; i++)
+				repeated.AddRange (body);
+			return repeated.ToArray ();
+		}
+		return body;
+	}
+
+	static byte [] Decode (string text, out int end)
 	{
 		var output = new List<byte> ();
 		int i = 0;
@@ -258,8 +286,10 @@ public static class Dsl
 			i++;
 		for (; i < text.Length; i++) {
 			var c = text [i];
-			if (c == '"')
+			if (c == '"') {
+				i++;
 				break;
+			}
 			if (c != '\\') {
 				foreach (var b in Encoding.UTF8.GetBytes (c.ToString ()))
 					output.Add (b);
@@ -306,6 +336,7 @@ public static class Dsl
 				break;
 			}
 		}
+		end = i;
 		return output.ToArray ();
 	}
 }

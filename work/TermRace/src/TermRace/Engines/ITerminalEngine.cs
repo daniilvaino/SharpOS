@@ -23,6 +23,17 @@ public sealed class Screen
 	public int CursorY;
 	public Cell[][] Cells;
 
+	/// <summary>
+	/// True when the engine distinguishes a cell never written to from one holding a printed
+	/// space. XtermSharp does (blank cells carry code point 0); XTerm.NET fills blanks with
+	/// Space, so the distinction is unobservable there and oracles must fall back to trimming.
+	/// </summary>
+	public bool TracksUnwritten;
+
+	/// <summary>Scroll region, inclusive, in viewport rows.</summary>
+	public int ScrollTop;
+	public int ScrollBottom;
+
 	public string RowText (int row, int startCol = 0, int endCol = -1)
 	{
 		if (row < 0 || row >= Rows)
@@ -42,6 +53,25 @@ public sealed class Screen
 
 	/// <summary>Row text with trailing blanks removed, the xterm.js fixture convention.</summary>
 	public string RowTextTrimmed (int row) => RowText (row).TrimEnd ();
+
+	/// <summary>
+	/// Row text up to the end of what was actually written. A space that a program printed is
+	/// content and stays; a cell never written to is not. libvterm's `?screen_row` draws that
+	/// distinction, and blanket trimming loses it.
+	/// </summary>
+	public string RowToEol (int row, int startCol = 0, int endCol = -1)
+	{
+		if (row < 0 || row >= Rows)
+			return string.Empty;
+		var cells = Cells [row];
+		if (endCol < 0 || endCol > cells.Length)
+			endCol = cells.Length;
+		int last = startCol - 1;
+		for (int x = startCol; x < endCol; x++)
+			if (cells [x].CodePoint != 0)
+				last = x;
+		return RowText (row, startCol, last + 1);
+	}
 
 	static int Sane (int cp)
 		=> cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) ? 0xFFFD : cp;

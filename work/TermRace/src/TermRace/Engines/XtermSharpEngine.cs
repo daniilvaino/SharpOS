@@ -55,9 +55,14 @@ public sealed class XtermSharpEngine : ITerminalEngine
 		return new Screen {
 			Cols = cols,
 			Rows = rows,
-			CursorX = buffer.X,
+			// A renderer cannot draw outside the grid: the pending-wrap column reads back as
+			// the last column, which is where the cursor is actually shown.
+			CursorX = Math.Min (buffer.X, cols - 1),
 			CursorY = buffer.YBase + buffer.Y - buffer.YDisp,
-			Cells = cells
+			Cells = cells,
+			TracksUnwritten = true,
+			ScrollTop = buffer.ScrollTop,
+			ScrollBottom = buffer.ScrollBottom
 		};
 	}
 }

@@ -66,12 +66,41 @@ started.
 | `csiDECSET`/`csiDECRESET` mode 20 (LNM) — drive `Options.ConvertEol` instead of a TODO comment | the mode was parsed and dropped, so LF after `CSI 20 h` did not imply CR |
 | `EscapeSequenceParser.ControlDispatched` (new hook) + `InputHandler.precedingCodepoint` | REP repeats the preceding *printed* character; ECMA-48 leaves the post-control case undefined and xterm.js makes it a no-op, but we repeated whatever cell happened to be to the left |
 | `InputHandler.RepeatPrecedingCharacter` — advance the cursor past the copies and wrap the run across lines | REP left the cursor in place (the next print overwrote the copies) and clipped at the right margin instead of wrapping |
+| `Terminal.Reset` (RIS) — clear both buffers and refill the viewport | `Setup` restored only the modes, so a full reset left the screen and scrollback intact; `Buffer.Clear` drops the lines without recreating them, hence the explicit `FillViewportRows` |
+| `csiDECRESET` 1049 — always clear the alt buffer when activating the normal one | only 1047 asked for the clear, so leaving via 1049l left the alt screen stale and the next 1049h re-entered the old content |
+| `Terminal.SaveCursor`/`RestoreCursor` — actually save the modes and the charset, and restrict the cursor on restore | `savedMarginMode`/`savedOriginMode`/`savedWraparound`/`savedReverseWraparound` were only ever written by `SoftReset`, so every DECRC restored zeroes — in particular it silently switched wraparound off |
+| `InputHandler.CursorPrecedingLine` (CPL) — subtract the parameter once | it did `Y -= param` and then `newY = Y - param`, moving two lines per requested line |
+| `CSI j` (HPB) — registered as a backward cursor move | ECMA-48 8.3.58; xterm.js has no handler, so it silently did nothing |
+| `InputHandler.Print` wrap — scroll only when the cursor is exactly at the region bottom | `>=` also scrolled the region whenever the cursor sat below it, costing the region one line per wrap |
+| `Terminal.Index` (IND) — same equality fix, plus stop at the last row | it scrolled the region whenever the next line was past the region bottom |
+| `Terminal.Index` / `ReverseIndex` — collapse a pending wrap first | both read the cursor, so a wrap left pending sent the next character to the following line |
+| `InsertLines` / `DeleteLines` / `ShiftColumns` / `InsertColumn` — no-op outside the scroll region, and cover its last line (`<=`) | IL/DL/DECIC edited lines the region does not own, and the loops stopped one line short |
+| `InsertLines` / `DeleteLines` — leave the cursor at the left margin | xterm.js does; libvterm notes real xterm does not, see the divergences below |
+| `CSI Ps SP @` / `CSI Ps SP A` (SL/SR) — implemented as `Terminal.ShiftColumns` | the space intermediate was ignored, so SR ran as a plain cursor-up |
+| `Tab` / `CursorForwardTab` / `CursorBackwardTab` — do nothing while a wrap is pending | tabbing collapsed the pending column, so the next character overwrote the last one instead of wrapping |
+| `CursorNextLine` / `CursorPrecedingLine` — delegate to `CursorDown`/`CursorUp` | they had their own bounds and ignored the scroll region |
+| Execute handlers 11/12 (VT, FF) — route through `LineFeed` | they bypassed the carriage return that LNM adds |
+| `EscapeSequenceParser.EXECUTABLES` — exclude 0x18/0x1a, include 0x19 | CAN was listed as an ordinary executable, so a per-state rule overrode the anywhere-rule and CAN no longer cancelled a sequence in progress |
+| `csiDECSET`/`csiDECRESET` mode 6 (DECOM) — home the cursor to the region origin | setting or resetting origin mode left the cursor where it was |
+| `RepeatPrecedingCharacter` — honour IRM, and wrap instead of collapsing a pending wrap | REP overwrote under insert mode and repeated onto the character it was copying |
 
 All of the above were found by the corpus runner in `work/TermRace` and confirmed with its
 `--reduce` mode, which shrinks a failing corpus file to a minimal input that still fails at
 the same stack frame. State as of 2026-08-02: **every byte corpus is clean** — corpus 16/16, tmux 4166/4166,
-mosh 16/16 + 11/11, ghostty 616/616 + 3271/3271 + 20/20, fuzz 400/400. Grid fixtures are
-xterm.js 53/76 and libvterm 359/431, up from 46/76 and 330/431 at import.
+mosh 16/16 + 11/11, ghostty 616/616 + 3271/3271 + 20/20, fuzz 400/400. Grid fixtures are xterm.js 74/76,
+libvterm 376/431 and alacritty 31/45, up from 46/76, 330/431 and 28/45 at import.
+
+Two known divergences, both on the same axis — whether an operation preserves a pending
+wrap. xterm.js restricts the cursor with `maxCol = cols` in the erase and
+character-insert family, preserving a pending wrap. Doing that here passes alacritty's
+`erase_in_line` but fails the xterm.js fixtures `t0050-ICH` and `t0055-EL` — the two
+reference corpora genuinely disagree, and XTerm.NET (the other port) splits the other way.
+The same split shows up on DECRC: alacritty's `wrapline_alt_toggle` wants the saved
+pending-wrap column to survive the restore, xterm.js's `t0060-DECSC` and `t0061-CSI_s` want
+it collapsed. A third one: xterm.js moves the cursor to the left margin after IL/DL, while libvterm's
+`13state_edit` records that neither xterm nor xfce4-terminal do, and its block fails for us
+now. We follow xterm.js's own fixtures in all three cases; see the remark on
+`RestrictCursor`.
 
 Keep this table growing as the fork diverges — once the naming discipline of
 `CLAUDE.md` §"Инвариант 2" applies (partial types moving to `SharpOS.*` namespaces), this

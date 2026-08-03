@@ -56,6 +56,23 @@ public static class Reducer
 		return 1;
 	}
 
+	/// <summary>
+	/// Feeds one file and prints the resulting grid — the quickest way to see what a sequence
+	/// actually does to an engine, next to what a fixture expects.
+	/// </summary>
+	public static int Dump (TextWriter stdout, string engineName, string path, int cols, int rows)
+	{
+		var data = File.ReadAllBytes (path);
+		var engine = Engines.Engines.Create (engineName);
+		engine.Reset (cols, rows);
+		engine.Feed (data, 0, data.Length);
+		var screen = engine.Snapshot ();
+		stdout.WriteLine ($"{engineName}: {cols}x{rows}, cursor {screen.CursorX},{screen.CursorY}");
+		for (int y = 0; y < screen.Rows; y++)
+			stdout.WriteLine ($"{y,3}|{Diff.Visible (screen.RowTextTrimmed (y))}");
+		return 0;
+	}
+
 	sealed class Crash
 	{
 		public string Summary;

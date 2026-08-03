@@ -27,6 +27,8 @@ namespace XtermSharp {
 		bool savedOriginMode;
 		bool savedWraparound;
 		bool savedReverseWraparound;
+		Dictionary<byte, string> savedCharset;
+		int savedGLevel;
 
 		// unsorted
 		bool applicationKeypad, applicationCursor;
@@ -351,6 +353,16 @@ namespace XtermSharp {
 			var savedCursorHidden = cursorHidden;
 			Setup ();
 			cursorHidden = savedCursorHidden;
+
+			// RIS discards the screen and the scrollback as well; Setup only restored the
+			// modes, so everything printed before the reset stayed on screen.
+			// Clear() drops the lines without recreating them, so the viewport has to be
+			// refilled — an empty buffer has nowhere to print.
+			buffers.ActivateNormalBuffer (clearAlt: true);
+			buffers.Normal.Clear ();
+			buffers.Normal.FillViewportRows ();
+			buffers.Alt.Clear ();
+
 			Refresh (0, Rows - 1);
 			SyncScrollArea ();
 		}
@@ -360,12 +372,16 @@ namespace XtermSharp {
 		//
 		internal void Index ()
 		{
+			// IND and RI read the cursor, so a deferred wrap has to collapse first.
+			RestrictCursor ();
 			var buffer = Buffer;
-			var newY = buffer.Y + 1;
-			if (newY > buffer.ScrollBottom) {
+			// Only an index *at* the bottom of the region scrolls it. Comparing against
+			// "past the bottom" also scrolled the region when the cursor sat below it,
+			// which is where the cursor lives after the region has been shrunk.
+			if (buffer.Y == buffer.ScrollBottom) {
 				Scroll ();
-			} else {
-				buffer.Y = newY;
+			} else if (buffer.Y < buffer.Rows - 1) {
+				buffer.Y++;
 			}
 			// If the end of the line is hit, prevent this action from wrapping around to the next line.
 			if (buffer.X > Cols)
@@ -727,6 +743,7 @@ namespace XtermSharp {
 
 		internal void ReverseIndex ()
 		{
+			RestrictCursor ();
 			var buffer = Buffer;
 
 			if (buffer.Y == buffer.ScrollTop) {
@@ -772,23 +789,6 @@ namespace XtermSharp {
 		/// <summary>
 		// Moves the cursor up by rows
 		/// </summary>
-		/// <summary>
-		/// Collapses a deferred wrap before a command reads the cursor.
-		/// </summary>
-		/// <remarks>
-		/// Printing into the last column leaves X one past the right edge — the wrap itself is
-		/// deferred until the next character, so that a character ending a line does not
-		/// scroll the screen on its own. Every command that reads or moves the cursor must
-		/// first bring it back onto the page, or it measures from a column that does not
-		/// exist; that is the off-by-one behind the CUB/EL/ED/HT fixture failures.
-		/// </remarks>
-		internal void RestrictCursor ()
-		{
-			var buffer = Buffer;
-			buffer.X = Math.Min (Cols - 1, Math.Max (0, buffer.X));
-			buffer.Y = Math.Min (Rows - 1, Math.Max (0, buffer.Y));
-		}
-
 		public void CursorUp (int rows)
 		{
 			RestrictCursor ();
@@ -875,7 +875,8 @@ namespace XtermSharp {
 		/// </summary>
 		public void CursorBackwardTab (int tabs)
 		{
-			RestrictCursor ();
+			if (Buffer.X >= Cols)
+				return;
 			var buffer = Buffer;
 			while (tabs-- != 0) {
 				buffer.X = buffer.PreviousTabStop ();
@@ -946,6 +947,16 @@ namespace XtermSharp {
 		{
 			var buffer = Buffer;
 			buffer.SaveCursor (CurAttr);
+
+			// DECSC saves the modes and the active charset alongside the position. These
+			// fields existed but were only ever written by SoftReset, so every DECRC restored
+			// zeroes - in particular it switched wraparound off.
+			savedMarginMode = MarginMode;
+			savedOriginMode = OriginMode;
+			savedWraparound = Wraparound;
+			savedReverseWraparound = ReverseWraparound;
+			savedCharset = charset;
+			savedGLevel = gLevel;
 		}
 
 		/// <summary>
@@ -959,11 +970,27 @@ namespace XtermSharp {
 			OriginMode = savedOriginMode;
 			Wraparound = savedWraparound;
 			ReverseWraparound = savedReverseWraparound;
+			charset = savedCharset;
+			gLevel = savedGLevel;
+
+			// A saved position may be the pending-wrap column; DECRC brings it back onto the
+			// page rather than letting the next character wrap.
+			RestrictCursor ();
 		}
 
 		/// <summary>
 		/// Restrict cursor to viewport size / scroll margin (origin mode)
 		/// - Parameter limitCols: by default it is true, but the reverseWraparound mechanism in Backspace needs `x` to go beyond.
+		///
+		/// Printing into the last column leaves X one past the right edge with the wrap
+		/// deferred until the next character; calling this collapses that state, which is what
+		/// every command reading the cursor needs.
+		///
+		/// xterm.js calls it with maxCol = cols (keeping the pending wrap) in the erase and
+		/// character-insert family. Doing the same here passes alacritty's erase_in_line but
+		/// breaks the xterm.js fixtures t0050-ICH and t0055-EL, and the two reference corpora
+		/// genuinely disagree: XTerm.NET, the other xterm.js port, splits the other way and
+		/// fails those two while passing erase_in_line. We follow xterm.js's own fixtures.
 		/// </summary>
 		public void RestrictCursor (bool limitCols = true)
 		{
@@ -1078,11 +1105,49 @@ namespace XtermSharp {
 		/// <summary>
 		/// Inserts columns
 		/// </summary>
+		/// <summary>
+		/// SL / SR (CSI Ps SP @ / CSI Ps SP A): shift every line of the scroll region left or
+		/// right within the horizontal margins, filling the vacated cells with blanks.
+		/// </summary>
+		public void ShiftColumns (int columns, bool right)
+		{
+			var buffer = Buffer;
+			// Like IL/DL, a shift issued while the cursor sits outside the scroll region does
+			// nothing: the fixture fires SR three times and expects only the one inside to
+			// land.
+			if (buffer.Y < buffer.ScrollTop || buffer.Y > buffer.ScrollBottom)
+				return;
+
+			var left = MarginMode ? buffer.MarginLeft : 0;
+			var rightMargin = MarginMode ? buffer.MarginRight : buffer.Cols - 1;
+			columns = Math.Min (Math.Max (columns, 0), rightMargin - left + 1);
+			if (columns == 0)
+				return;
+
+			var fill = new CharData (EraseAttr ());
+			for (int row = buffer.ScrollTop; row <= buffer.ScrollBottom; row++) {
+				var line = buffer.Lines [row + buffer.YBase];
+				if (right)
+					line.InsertCells (left, columns, rightMargin, fill);
+				else
+					line.DeleteCells (left, columns, rightMargin, fill);
+				line.IsWrapped = false;
+			}
+
+			UpdateRange (buffer.ScrollTop);
+			UpdateRange (buffer.ScrollBottom);
+		}
+
 		public void InsertColumn (int columns)
 		{
 			var buffer = Buffer;
 
-			for (int row = buffer.ScrollTop; row < buffer.ScrollBottom; row++) {
+			// DECIC is a no-op outside the scroll region (DECDC already had this guard), and
+			// the region's last line belongs to it as well.
+			if (buffer.Y > buffer.ScrollBottom || buffer.Y < buffer.ScrollTop)
+				return;
+
+			for (int row = buffer.ScrollTop; row <= buffer.ScrollBottom; row++) {
 				var line = buffer.Lines [row + buffer.YBase];
 				// TODO:is this the right filldata?
 				line.InsertCells (buffer.X, columns, MarginMode ? buffer.MarginRight : buffer.Cols - 1, CharData.WhiteSpace);
@@ -1103,7 +1168,7 @@ namespace XtermSharp {
 			if (buffer.Y > buffer.ScrollBottom || buffer.Y < buffer.ScrollTop)
 				return;
 
-			for (int row = buffer.ScrollTop; row < buffer.ScrollBottom; row++) {
+			for (int row = buffer.ScrollTop; row <= buffer.ScrollBottom; row++) {
 				var line = buffer.Lines [row + buffer.YBase];
 				line.DeleteCells (buffer.X, columns, MarginMode ? buffer.MarginRight : buffer.Cols - 1, CharData.Null);
 				line.IsWrapped = false;
@@ -1166,6 +1231,8 @@ namespace XtermSharp {
 			savedMarginMode = false;
 			savedWraparound = false;
 			savedReverseWraparound = false;
+			savedCharset = null;
+			savedGLevel = 0;
 
 			buffer.ScrollTop = 0;
 			buffer.ScrollBottom = buffer.Rows - 1;

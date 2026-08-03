@@ -126,7 +126,10 @@
 					terminal.CurAttr = CharData.InvertedAttr;
 					break;
 				case 6:
+					// DECOM homes the cursor to the origin of the scroll region; both setting
+					// and resetting it move the cursor there.
 					terminal.OriginMode = true;
+					terminal.SetCursor (0, 0);
 					break;
 				case 7:
 					terminal.Wraparound = true;
@@ -330,6 +333,7 @@
 					break;
 				case 6:
 					terminal.OriginMode = false;
+					terminal.SetCursor (0, 0);
 					break;
 				case 7:
 					terminal.Wraparound = false;
@@ -388,7 +392,10 @@
 				case 47: // normal screen buffer
 				case 1047: // normal screen buffer - clearing it first
 					   // Ensure the selection manager has the correct buffer
-					terminal.Buffers.ActivateNormalBuffer (par == 1047);
+					// The alt buffer is cleared whenever the normal one is activated, whatever
+					// mode did the switch: 1049l left it stale, so the next 1049h re-entered
+					// the old screen instead of a blank one.
+					terminal.Buffers.ActivateNormalBuffer (clearAlt: true);
 					if (par == 1049)
 						terminal.RestoreCursor ();
 					terminal.Refresh (0, terminal.Rows - 1);

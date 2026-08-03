@@ -54,9 +54,12 @@ public sealed class XtermNetEngine : ITerminalEngine
 		return new Screen {
 			Cols = cols,
 			Rows = rows,
-			CursorX = buffer.X,
+			// Same pending-wrap clamp as the other adapter: report where a renderer draws.
+			CursorX = Math.Min (buffer.X, cols - 1),
 			CursorY = buffer.YBase + buffer.Y - buffer.YDisp,
-			Cells = cells
+			Cells = cells,
+			ScrollTop = buffer.ScrollTop,
+			ScrollBottom = buffer.ScrollBottom
 		};
 	}
 }

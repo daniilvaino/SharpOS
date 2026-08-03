@@ -24,6 +24,9 @@ public static class Program
 		string runsRoot = null;
 		string label = null;
 		string reducePath = null;
+		string dumpPath = null;
+		string tracePath = null;
+		int dumpCols = 80, dumpRows = 25;
 		bool showDetail = true;
 
 		for (int i = 0; i < args.Length; i++) {
@@ -42,6 +45,14 @@ public static class Program
 			case "--label": label = Next (arg); break;
 			case "--no-runs": runsRoot = ""; break;
 			case "--reduce": reducePath = Next (arg); break;
+			case "--dump": dumpPath = Next (arg); break;
+			case "--trace": tracePath = Next (arg); break;
+			case "--size": {
+				var parts = Next (arg).Split ('x');
+				dumpCols = int.Parse (parts [0]);
+				dumpRows = int.Parse (parts [1]);
+				break;
+			}
 			case "--quiet": showDetail = false; break;
 			case "--verbose": context.Verbose = true; break;
 			case "-h":
@@ -96,6 +107,20 @@ public static class Program
 			suites.AddRange (suite);
 		}
 
+		if (tracePath != null) {
+			if (engineNames.Count < 2)
+				engineNames = Engines.Engines.Names.ToList ();
+			var code = Tracer.Run (stdout, engineNames [0], engineNames [1], tracePath, dumpCols, dumpRows, context.Limit > 0 ? context.Limit : 5);
+			transcript?.Dispose ();
+			return code;
+		}
+
+		if (dumpPath != null) {
+			var code = Reducer.Dump (stdout, engineNames [0], dumpPath, dumpCols, dumpRows);
+			transcript?.Dispose ();
+			return code;
+		}
+
 		if (reducePath != null) {
 			var reduced = runDirectory == null ? null : Path.Combine (runDirectory, "repro.bin");
 			var code = Reducer.Run (stdout, engineNames [0], reducePath, context.Timeout, reduced);
@@ -140,10 +165,11 @@ public static class Program
 	static IEnumerable<ISuite> MakeSuite (string name) => name switch {
 		"xtermjs" => new ISuite [] { new XtermJsSuite () },
 		"libvterm" => new ISuite [] { new LibVtermSuite () },
+		"alacritty" => new ISuite [] { new AlacrittySuite () },
 		"bench" => new ISuite [] { new BenchSuite () },
 		_ when CrashSuite.All ().Any (s => s.Name == name) => CrashSuite.All ().Where (s => s.Name == name),
 		"crash" => CrashSuite.All (),
-		"all" => new ISuite [] { new XtermJsSuite (), new LibVtermSuite () }.Concat (CrashSuite.All ()).Append (new BenchSuite ()),
+		"all" => new ISuite [] { new XtermJsSuite (), new LibVtermSuite (), new AlacrittySuite () }.Concat (CrashSuite.All ()).Append (new BenchSuite ()),
 		_ => null
 	};
 
@@ -203,7 +229,7 @@ public static class Program
 usage: termrace [options]
 
   --tests PATH     root of the shitty corpus (default: auto-detected work/shitty/tests)
-  --suite LIST     xtermjs, libvterm, bench, all, crash (every byte corpus), or one of
+  --suite LIST     xtermjs, libvterm, alacritty, bench, all, crash (every byte corpus), or
                    corpus, tmux, mosh, moshparser, ghostty-parser, ghostty-stream,
                    ghostty-osc, fuzz
                    (default: xtermjs,libvterm,corpus)
@@ -213,6 +239,9 @@ usage: termrace [options]
   --timeout SECS   per-case watchdog, default 10
   --json PATH      write machine-readable results
   --out PATH       also write everything printed here to a text report
+  --dump FILE      feed one file and print the resulting grid, then exit (--size COLSxROWS)
+  --trace FILE     feed one file to two engines byte by byte and report where they first
+                   disagree on cursor, scroll region or grid (--limit N divergences)
   --reduce FILE    shrink one corpus file to a minimal input that still fails, then exit
                    (uses the first --engine; writes repro.bin into the run directory)
   --label TEXT     tag for this run's directory name, e.g. the patch it tests
