@@ -1,5 +1,6 @@
 using System.Runtime;
 using System.Runtime.InteropServices;
+using OS.Kernel.Diagnostics;
 
 namespace OS.PAL.SharpOSHost
 {
@@ -74,6 +75,25 @@ namespace OS.PAL.SharpOSHost
             return h == HandleStdIn || h == HandleStdOut || h == HandleStdErr;
         }
 
+        // PSReadLine renders by writing and by asking where the cursor is. Any
+        // one of those calls quietly returning failure leaves it with nothing on
+        // screen and no exception to show, which is indistinguishable from a
+        // dead keyboard. Report the first few, with the handle that was refused.
+        private static int s_apiTraceLeft = 24;
+
+        private static void ApiTrace(string what, ulong handle, uint extra)
+        {
+            if (!Probes.ConsoleInputTrace || s_apiTraceLeft <= 0) return;
+            s_apiTraceLeft--;
+            OS.Hal.Console.Write("[capi] ");
+            OS.Hal.Console.Write(what);
+            OS.Hal.Console.Write(" h=");
+            OS.Hal.Console.WriteHexRaw(handle, 2);
+            OS.Hal.Console.Write(" n=");
+            OS.Hal.Console.WriteHexRaw(extra, 1);
+            OS.Hal.Console.Write("\n");
+        }
+
         // WriteConsoleW — converts UTF-16 input to UTF-8 byte stream and
         // forwards to existing UART writer. BCL uses this for Console.Write,
         // Console.WriteLine when the underlying stream identifies as a
@@ -87,7 +107,8 @@ namespace OS.PAL.SharpOSHost
         {
             if (numCharsWritten != null) *numCharsWritten = 0;
             if (buffer == null || nChars == 0) return 1; // empty write succeeds
-            if (!IsStdHandle(hConsole)) return 0;
+            if (!IsStdHandle(hConsole)) { ApiTrace("write REJECT", hConsole, nChars); return 0; }
+            ApiTrace("write", hConsole, nChars);
             // Convert UTF-16 → bytes (BMP only — surrogate pairs would
             // produce replacement chars; acceptable for kernel console).
             for (uint i = 0; i < nChars; i++)
@@ -181,28 +202,151 @@ namespace OS.PAL.SharpOSHost
         public static int GetConsoleScreenBufferInfo(ulong hConsole, void* outInfo)
         {
             if (outInfo == null) return 0;
-            if (!IsStdHandle(hConsole)) return 0;
+            if (!IsStdHandle(hConsole)) { ApiTrace("sbinfo REJECT", hConsole, 0); return 0; }
+            // Real geometry and cursor when the terminal engine owns the screen; the
+            // synthetic 80x25 stays as the headless/no-framebuffer fallback. PSReadLine
+            // and anything else that positions text needs these to be true, not polite.
+            short cols = DefaultCols;
+            short rows = DefaultRows;
+            short curX = 0;
+            short curY = 0;
+            if (OS.Hal.TerminalConsole.IsReady)
+            {
+                var engine = OS.Hal.TerminalConsole.Engine;
+                cols = (short)engine.Cols;
+                rows = (short)engine.Rows;
+                var termBuffer = engine.Buffer;
+                curX = (short)termBuffer.X;
+                curY = (short)(termBuffer.YBase + termBuffer.Y - termBuffer.YDisp);
+            }
+
             short* p = (short*)outInfo;
-            p[0] = DefaultCols;  // dwSize.X (buffer width)
-            p[1] = DefaultRows;  // dwSize.Y (buffer height)
-            p[2] = 0;            // cursor X
-            p[3] = 0;            // cursor Y
+            p[0] = cols;         // dwSize.X (buffer width)
+            p[1] = rows;         // dwSize.Y (buffer height)
+            p[2] = curX;         // cursor X
+            p[3] = curY;         // cursor Y
             ((ushort*)outInfo)[4] = 0x0007; // wAttributes (light gray on black)
             p[5] = 0;            // srWindow.Left
             p[6] = 0;            // srWindow.Top
-            p[7] = (short)(DefaultCols - 1);  // srWindow.Right
-            p[8] = (short)(DefaultRows - 1);  // srWindow.Bottom
-            p[9]  = DefaultCols; // dwMaxWindowSize.X
-            p[10] = DefaultRows; // dwMaxWindowSize.Y
+            p[7] = (short)(cols - 1);  // srWindow.Right
+            p[8] = (short)(rows - 1);  // srWindow.Bottom
+            p[9]  = cols;        // dwMaxWindowSize.X
+            p[10] = rows;        // dwMaxWindowSize.Y
             return 1;
         }
+
+        // GetCurrentConsoleFontEx — PSReadLine asks for the console font to decide
+        // how wide a cell is before it draws. CONSOLE_FONT_INFO_EX on x64:
+        //   +0  ULONG cbSize        +4  DWORD nFont
+        //   +8  COORD dwFontSize    +12 UINT  FontFamily
+        //   +16 UINT  FontWeight    +20 WCHAR FaceName[32]   (84 bytes total)
+        // cbSize belongs to the caller and bounds what may be written — a blind
+        // fixed-size fill here is what corrupted a P/Invoke stub's saved registers
+        // once already (see SharpOSHost_SystemParametersInfo).
+        [RuntimeExport("SharpOSHost_GetCurrentConsoleFontEx")]
+        public static int GetCurrentConsoleFontEx(ulong hConsole, int bMaximumWindow, void* outFontEx)
+        {
+            _ = bMaximumWindow;
+            if (outFontEx == null) return 0;
+            if (!IsStdHandle(hConsole)) { ApiTrace("fontex REJECT", hConsole, 0); return 0; }
+
+            uint cbSize = *(uint*)outFontEx;
+            if (cbSize < 20) return 0;
+
+            byte* p = (byte*)outFontEx;
+            *(uint*)(p + 4) = 0;                       // nFont — index 0, the only one
+            *(short*)(p + 8) = FontCellWidth;
+            *(short*)(p + 10) = FontCellHeight;
+            *(uint*)(p + 12) = 48;                     // FF_MODERN, no TMPF_TRUETYPE:
+            *(uint*)(p + 16) = 400;                    // this really is a bitmap font
+            if (cbSize < 20 + 2 * 9) return 1;         // no room for the name + NUL
+
+            // "Terminal" — the name Windows itself reports for its raster font.
+            char* face = (char*)(p + 20);
+            face[0] = 'T'; face[1] = 'e'; face[2] = 'r'; face[3] = 'm';
+            face[4] = 'i'; face[5] = 'n'; face[6] = 'a'; face[7] = 'l';
+            face[8] = '\0';
+            return 1;
+        }
+
+        // GetConsoleCursorInfo / SetConsoleCursorInfo — PSReadLine reads the
+        // cursor shape before it starts editing and hides the cursor while it
+        // repaints. CONSOLE_CURSOR_INFO is { DWORD dwSize; BOOL bVisible; },
+        // dwSize being the filled percentage of the cell (1..100).
+        //
+        // The block cursor is drawn by TerminalConsole, which has no shape or
+        // visibility control yet, so report a plain visible cursor and accept
+        // whatever is set. Answering at all is what matters: the missing export
+        // threw EntryPointNotFound on the first keystroke and took PSReadLine's
+        // whole render path down with it.
+        [RuntimeExport("SharpOSHost_GetConsoleCursorInfo")]
+        public static int GetConsoleCursorInfo(ulong hConsole, void* outInfo)
+        {
+            if (outInfo == null) return 0;
+            if (!IsStdHandle(hConsole)) { ApiTrace("curinfo REJECT", hConsole, 0); return 0; }
+            *(uint*)outInfo = 25;                    // dwSize — a normal underline
+            *(int*)((byte*)outInfo + 4) = 1;         // bVisible
+            return 1;
+        }
+
+        [RuntimeExport("SharpOSHost_SetConsoleCursorInfo")]
+        public static int SetConsoleCursorInfo(ulong hConsole, void* info)
+        {
+            _ = info;
+            if (!IsStdHandle(hConsole)) { ApiTrace("setcurinfo REJECT", hConsole, 0); return 0; }
+            return 1;
+        }
+
+        // Glyph box of the framebuffer console. Kept in sync with
+        // TerminalConsole's CellW/CellH, which come from Font8x8 at scale 1.
+        private const short FontCellWidth = 8;
+        private const short FontCellHeight = 8;
 
         // SetConsoleCursorPosition — no-op (UART has no positionable cursor).
         // Returns success so BCL doesn't propagate failure.
         [RuntimeExport("SharpOSHost_SetConsoleCursorPosition")]
         public static int SetConsoleCursorPosition(ulong hConsole, int packedCoord)
         {
-            return IsStdHandle(hConsole) ? 1 : 0;
+            if (!IsStdHandle(hConsole)) { ApiTrace("setcur REJECT", hConsole, 0); return 0; }
+            ApiTrace("setcur", hConsole, (uint)packedCoord);
+
+            // COORD packs Y in the high half, X in the low half; both are signed.
+            short x = (short)(packedCoord & 0xFFFF);
+            short y = (short)((packedCoord >> 16) & 0xFFFF);
+            if (x < 0) x = 0;
+            if (y < 0) y = 0;
+
+            // The engine is the one that knows where the cursor is, so move it the way
+            // any other program would: CUP is 1-based. Writing through Platform keeps
+            // the UART log in sync too.
+            if (OS.Hal.TerminalConsole.IsReady)
+            {
+                WriteCsi();
+                WriteNumber(y + 1);
+                OS.Hal.Platform.WriteChar(';');
+                WriteNumber(x + 1);
+                OS.Hal.Platform.WriteChar('H');
+            }
+            return 1;
+        }
+
+        private static void WriteCsi()
+        {
+            OS.Hal.Platform.WriteChar((char)0x1B);
+            OS.Hal.Platform.WriteChar('[');
+        }
+
+        // Digits without allocating: this runs on the console write path.
+        private static void WriteNumber(int value)
+        {
+            if (value <= 0) { OS.Hal.Platform.WriteChar('0'); return; }
+            int divisor = 1;
+            while (value / divisor >= 10) divisor *= 10;
+            while (divisor > 0)
+            {
+                OS.Hal.Platform.WriteChar((char)('0' + (value / divisor) % 10));
+                divisor /= 10;
+            }
         }
 
         // SetConsoleTextAttribute — no-op success.

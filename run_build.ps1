@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     # step113-followup: which CoreCLR fork build the kernel links + ships.
@@ -259,6 +259,20 @@ if (Test-Path -LiteralPath $tagFile) {
     }
 }
 
+# CoffStub.Generator hosts an MSBuild task that OS.csproj imports through a
+# .targets file rather than a ProjectReference, so — unlike BootAsm.Generator —
+# nothing builds it implicitly. On a fresh clone the publish below fails with
+# MSB4062 ("BootAsm.EmitCoffStubsTask could not be loaded"). Build it first;
+# the step is incremental and costs nothing once it is up to date.
+$coffStubProj = Join-Path $repoRoot "bootasm\CoffStub.Generator\CoffStub.Generator.csproj"
+if (Test-Path -LiteralPath $coffStubProj) {
+    Write-Host "Building CoffStub.Generator (MSBuild task host)..."
+    & dotnet build $coffStubProj -c Release --nologo -v quiet | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "CoffStub.Generator build failed with exit code $LASTEXITCODE"
+    }
+}
+
 Write-Host "Building OS ($Configuration, BuildId=$buildId)..."
 Push-Location $efiProjectDir
 try {
@@ -290,7 +304,7 @@ Copy-Item -LiteralPath $builtEfi -Destination $bootx64 -Force
 # (our Path.GetFullPath prepends "\sharpos\" to relative paths). Place the DLL there
 # on the EFI partition so CreateFileW -> SharpOSHost_FileOpen -> Platform.TryReadFile
 # via UEFI SimpleFileSystem can find it.
-$spcDll = Join-Path "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\coreclr\windows.x64.$ForkConfig" "System.Private.CoreLib.dll"
+$spcDll = Join-Path (Join-Path $repoRoot "dotnet-runtime-sharpos\artifacts\bin\coreclr\windows.x64.$ForkConfig") "System.Private.CoreLib.dll"
 $espSharpOSDir = Join-Path $qemuWorkDir "esp\sharpos"
 if (Test-Path -LiteralPath $spcDll) {
     New-Item -ItemType Directory -Force -Path $espSharpOSDir | Out-Null
@@ -309,6 +323,30 @@ else {
 New-Item -ItemType Directory -Force -Path (Join-Path $espSharpOSDir "tmp")      | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $espSharpOSDir "system32") | Out-Null
 Write-Host "Prepared empty dirs: \sharpos\tmp\ \sharpos\system32\"
+
+# PSReadLine reads its saved history on the first Up-arrow. The file is created
+# on demand by a normal host, but we have no writable filesystem yet, so stage an
+# empty one: a missing file makes every history navigation re-probe the path.
+$psrlHistoryDir  = Join-Path $espSharpOSDir "Microsoft\Windows\PowerShell\PSReadLine"
+$psrlHistoryFile = Join-Path $psrlHistoryDir "ConsoleHost_history.txt"
+New-Item -ItemType Directory -Force -Path $psrlHistoryDir | Out-Null
+if (-not (Test-Path -LiteralPath $psrlHistoryFile)) {
+    New-Item -ItemType File -Path $psrlHistoryFile | Out-Null
+}
+Write-Host "Prepared PSReadLine history: \sharpos\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt"
+
+# ...and tell PSReadLine not to write it back. The media is read-only, so every
+# accepted command otherwise ends in "Access to the path ... is denied" printed
+# in red. $PSHome\profile.ps1 is the all-hosts profile; it is already probed at
+# startup. Guarded, because a throwing profile would break the prompt itself.
+$espProfile = Join-Path $espSharpOSDir "pwsh\profile.ps1"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $espProfile) | Out-Null
+@'
+# SharpOS: the boot media is read-only, so history cannot be persisted.
+# Keep in-session history (Up-arrow still works) but never touch the file.
+try { Set-PSReadLineOption -HistorySaveStyle SaveNothing -ErrorAction Stop } catch { }
+'@ | Set-Content -LiteralPath $espProfile -Encoding UTF8
+Write-Host "Prepared PS profile: \sharpos\pwsh\profile.ps1 (history SaveNothing)"
 
 # Stock PowerShell module manifests: required for built-in cmdlet registration.
 # Microsoft.PowerShell.Utility (Write-Output etc.), Microsoft.PowerShell.Management
@@ -349,17 +387,17 @@ else {
 # Filter set comes from coreclr-pack (linux-x64) — same 171 BCL names —
 # so we don't pull tooling assemblies (ILCompiler.*, crossgen2.*) that
 # happen to live next to BCL in crossgen2_publish.
-$forkFxNames  = "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\coreclr-pack\Debug\net10.0\linux-x64"
-$forkFxWinSrc = "C:\work\OS\dotnet-runtime-sharpos\artifacts\bin\crossgen2_publish\x64\Release"
+$forkFxNames  = Join-Path $repoRoot "dotnet-runtime-sharpos\artifacts\bin\coreclr-pack\Debug\net10.0\linux-x64"
+$forkFxWinSrc = Join-Path $repoRoot "dotnet-runtime-sharpos\artifacts\bin\crossgen2_publish\x64\Release"
 $fxDest   = Join-Path $espSharpOSDir "fx"
-$normalProj = "C:\work\OS\apps_managed\normal-hello"
+$normalProj = Join-Path $repoRoot "apps_managed\normal-hello"
 $normalDllSrc = Join-Path $normalProj "bin\Release\net10.0\NormalHello.dll"
 # step128 — PowerShell bootstrap shim. A managed wrapper that reflection-
 # sets SystemPolicy.s_systemLockdownPolicy = None before invoking
 # ManagedPSEntry.Main(). Lets PS 7.5 run in FullLanguage mode on bare
 # metal (CLM detection in PS 7.5 has no env-var override). See
 # apps_managed/PowerShellBootstrap/Program.cs for the override logic.
-$psBootstrapProj   = "C:\work\OS\apps_managed\PowerShellBootstrap"
+$psBootstrapProj   = Join-Path $repoRoot "apps_managed\PowerShellBootstrap"
 $psBootstrapDllSrc = Join-Path $psBootstrapProj "bin\Release\net10.0\PowerShellBootstrap.dll"
 if (Test-Path -LiteralPath $forkFxNames) {
     New-Item -ItemType Directory -Force -Path $fxDest | Out-Null

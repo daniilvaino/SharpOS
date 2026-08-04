@@ -294,6 +294,22 @@ namespace OS.Boot
         // ─────────────────────────────────────────────────────────────────
         private static void Phase4_Probes(BootInfo bootInfo)
         {
+            // Terminal engine (vendor/XtermSharp). Runs here and not earlier because it
+            // needs two things Phase 2/3 provide: materialized GC statics (its 256-colour
+            // palette is a static List<Color> behind a class constructor) and the mapped
+            // framebuffer. Self-test first on a private instance, then the live console
+            // front-end takes over from FbTty — so a broken engine is reported by the
+            // probe rather than by a blank screen.
+            if (Probes.TerminalEngine)
+            {
+                TerminalProbe.Run();
+
+                if (TerminalConsole.TryInit(0, 0, 0))
+                    Log.Write(LogLevel.Info, "[term] console front-end active");
+                else
+                    Log.Write(LogLevel.Warn, "[term] console front-end unavailable (no framebuffer)");
+            }
+
             if (Probes.SerialSmoke)
                 SerialProbe.Run();
 

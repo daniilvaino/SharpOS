@@ -112,6 +112,52 @@ namespace OS.Hal
             }
         }
 
+        // Moves a pixel region up by dy rows (a scrolling console's inner loop).
+        // memmove semantics: source rows are read before their destination is
+        // overwritten, which holds here because the copy walks top-down and the
+        // destination is always above the source.
+        public static void ScrollUp(int x, int y, int w, int h, int dy)
+        {
+            if (!Framebuffer.IsAvailable || w <= 0 || h <= 0 || dy <= 0) return;
+            if (dy >= h) return;
+
+            int fbW = (int)Framebuffer.Width;
+            int fbH = (int)Framebuffer.Height;
+            uint stride = Framebuffer.Stride;
+            uint* fb = (uint*)Framebuffer.BaseAddress;
+
+            int x0 = x < 0 ? 0 : x;
+            int x1 = x + w; if (x1 > fbW) x1 = fbW;
+            int y0 = y < 0 ? 0 : y;
+            int y1 = y + h; if (y1 > fbH) y1 = fbH;
+            if (x0 >= x1 || y0 + dy >= y1) return;
+
+            for (int row = y0; row + dy < y1; row++)
+            {
+                uint* dst = fb + (ulong)row * stride + (ulong)x0;
+                uint* src = fb + (ulong)(row + dy) * stride + (ulong)x0;
+                for (int col = x0; col < x1; col++)
+                    *dst++ = *src++;
+            }
+        }
+
+        // Single glyph, scale 1, caller guarantees the 8x8 box is inside the
+        // framebuffer. Skips the per-pixel clipping and the scale loops of
+        // DrawChar — this is the one that runs cols*rows times per repaint.
+        public static void DrawCharFast(int px, int py, char ch, uint fg, uint bg)
+        {
+            uint stride = Framebuffer.Stride;
+            uint* fb = (uint*)Framebuffer.BaseAddress + (ulong)py * stride + (ulong)px;
+
+            for (int row = 0; row < Font8x8.CharHeight; row++)
+            {
+                byte bits = Font8x8.Row(ch, row);
+                uint* line = fb + (ulong)row * stride;
+                for (int col = 0; col < Font8x8.CharWidth; col++)
+                    line[col] = (bits & (1 << col)) != 0 ? fg : bg;
+            }
+        }
+
         // FNV-1a over the packed pixels of a clipped region — a stable,
         // headless-verifiable fingerprint of what was rendered. Same
         // region + same draw calls => same value across runs.

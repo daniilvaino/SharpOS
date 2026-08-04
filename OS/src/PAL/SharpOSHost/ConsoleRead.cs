@@ -44,6 +44,12 @@ namespace OS.PAL.SharpOSHost
             {
                 if (!Ps2Keyboard.TryReadScancode(out byte sc))
                 {
+                    // Nothing typed yet: paint whatever is pending before blocking.
+                    // The terminal front-end batches drawing until a newline, and a
+                    // prompt has none -- without this the prompt (and every echoed
+                    // character) would only appear after Enter.
+                    if (OS.Hal.TerminalConsole.HasPendingOutput)
+                        OS.Hal.TerminalConsole.Flush();
                     OS.Kernel.Threading.Scheduler.Yield();
                     continue;
                 }

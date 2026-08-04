@@ -85,6 +85,16 @@ namespace OS.PAL.SharpOSHost
             // static ctor and caches the result for the lifetime of the
             // runspace.
             if (NameEquals(name, nameLen, "__PSLockdownPolicy")) return "0";
+
+            // Execution policy. On Windows the default is Restricted, so PowerShell
+            // refuses to run any .ps1/.psm1 — which is what stopped PSReadLine's
+            // PSReadLine.psm1 after its DLL and cmdlets had already loaded.
+            // PSExecutionPolicyPreference is the same process-scoped override the
+            // -ExecutionPolicy switch sets, and SecuritySupport.GetExecutionPolicy
+            // reads it before consulting Group Policy or the registry. Bypass is the
+            // honest answer here: a unikernel has no signing infrastructure and no
+            // multi-user boundary for the policy to protect.
+            if (NameEquals(name, nameLen, "PSExecutionPolicyPreference")) return "Bypass";
             return null;
         }
     }

@@ -1,6 +1,7 @@
 using System.Runtime;
 using System.Runtime.InteropServices;
 using OS.Hal.Timer;
+using OS.Kernel.Diagnostics;
 using OS.Kernel.Threading;
 
 namespace OS.PAL.SharpOSHost
@@ -221,7 +222,19 @@ namespace OS.PAL.SharpOSHost
 
             if (target is Event e)
             {
-                if (poll) return e.IsSet ? WAIT_OBJECT_0 : WAIT_TIMEOUT;
+                // A zero-timeout wait is still a wait: Win32 consumes the signal
+                // of an auto-reset event on a successful poll, exactly as the
+                // blocking paths below do. Reporting "signaled" without taking it
+                // left the event set forever, and since WaitForMultipleObjects is
+                // built out of these polls, WaitAny returned index 0 instantly on
+                // every call — PSReadLine's editor span in that loop rather than
+                // waiting for a key, and never drew anything.
+                if (poll)
+                {
+                    if (!e.IsSet) return WAIT_TIMEOUT;
+                    if (!e.IsManualReset) e.IsSet = false;
+                    return WAIT_OBJECT_0;
+                }
                 if (infinite) { e.Wait(); return WAIT_OBJECT_0; }
                 ulong deadlineE = ComputeDeadline(timeoutMs);
                 while (true)
@@ -238,7 +251,8 @@ namespace OS.PAL.SharpOSHost
 
             if (target is Semaphore s)
             {
-                if (poll) return s.Count > 0 ? WAIT_OBJECT_0 : WAIT_TIMEOUT;
+                // Same rule as the event above: a successful poll takes a count.
+                if (poll) return s.TryAcquire() ? WAIT_OBJECT_0 : WAIT_TIMEOUT;
                 if (infinite) { s.Wait(); return WAIT_OBJECT_0; }
                 ulong deadlineS = ComputeDeadline(timeoutMs);
                 while (true)
@@ -294,6 +308,24 @@ namespace OS.PAL.SharpOSHost
             return WAIT_FAILED;
         }
 
+        // Bounded counterpart to the fork's "[weakstub]" markers: PSReadLine reads
+        // keys on its own thread and hands them over through a wait handle, so a
+        // wait that never really waits looks exactly like a dead keyboard.
+        private static int s_waitTraceLeft = 24;
+
+        private static void WaitTrace(string tag, uint a, uint b, uint c)
+        {
+            if (!Probes.ConsoleInputTrace || !ConsoleInput.SawKey || s_waitTraceLeft <= 0) return;
+            s_waitTraceLeft--;
+            OS.Hal.Console.Write(tag);
+            OS.Hal.Console.WriteHexRaw(a, 1);
+            OS.Hal.Console.Write(" all=");
+            OS.Hal.Console.WriteHexRaw(b, 1);
+            OS.Hal.Console.Write(" ms=");
+            OS.Hal.Console.WriteHexRaw(c, 1);
+            OS.Hal.Console.Write("\n");
+        }
+
         // SharpOSHost_WaitForMultipleObjects — wait-any over an array of
         // handles (bWaitAll=0 only). PowerShell ConsoleHost error reporting
         // hits this via WaitHandle.WaitAny(new[] { writeHandle, closedHandle }).
@@ -319,6 +351,8 @@ namespace OS.PAL.SharpOSHost
             const uint MAXIMUM_WAIT_OBJECTS = 64;
             const uint WAIT_ABANDONED_0     = 0x00000080;
 
+            WaitTrace("[wait] wfmo n=", count, (uint)waitAll, timeoutMs);
+
             if (count == 0 || count > MAXIMUM_WAIT_OBJECTS || handles == null)
                 return WAIT_FAILED;
             if (waitAll != 0)
@@ -333,7 +367,7 @@ namespace OS.PAL.SharpOSHost
                 for (uint i = 0; i < count; i++)
                 {
                     uint rc = WaitForSingleObject(handles[i], 0);
-                    if (rc == WAIT_OBJECT_0)  return WAIT_OBJECT_0 + i;
+                    if (rc == WAIT_OBJECT_0)  { WaitTrace("[wait] wfmo hit i=", i, count, timeoutMs); return WAIT_OBJECT_0 + i; }
                     if (rc == WAIT_ABANDONED) return WAIT_ABANDONED_0 + i;
                     // WAIT_TIMEOUT / WAIT_FAILED → keep scanning
                 }

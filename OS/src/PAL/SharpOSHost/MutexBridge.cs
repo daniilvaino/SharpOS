@@ -36,6 +36,24 @@ namespace OS.PAL.SharpOSHost
             return HandleTable.Alloc(mtx);
         }
 
+        // OpenMutexW asks for an EXISTING named mutex. We have no namespace: every
+        // CreateMutex here makes a fresh unnamed object, so nothing can ever be
+        // "found" by name. Report that honestly — NULL handle with
+        // ERROR_FILE_NOT_FOUND — which is what Windows returns for an unknown name
+        // and what Mutex.TryOpenExisting expects for "no, it is not there".
+        //
+        // Returning success instead would be worse than useless: the caller would
+        // get a handle to a mutex nobody owns and conclude another instance is
+        // running.
+        public const uint ErrorFileNotFound = 2;
+
+        [RuntimeExport("SharpOSHost_OpenMutex")]
+        public static ulong OpenMutex(uint* outLastError)
+        {
+            if (outLastError != null) *outLastError = ErrorFileNotFound;
+            return 0;
+        }
+
         [RuntimeExport("SharpOSHost_ReleaseMutex")]
         public static int ReleaseMutex(ulong handle)
         {

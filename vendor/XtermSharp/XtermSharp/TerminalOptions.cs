@@ -10,8 +10,11 @@ namespace XtermSharp {
 		public string TermName;
 		public CursorStyle CursorStyle;
 		public bool ScreenReaderMode;
-		public int? Scrollback { get; }
-		public int? TabStopWidth { get; }
+		// Settable: a host sizes these. The kernel front-end wants a small scrollback
+		// (it is only memory until something can page back through it), and the
+		// defaults below still apply when a host says nothing.
+		public int? Scrollback { get; set; }
+		public int? TabStopWidth { get; set; }
 
 		public TerminalOptions ()
 		{

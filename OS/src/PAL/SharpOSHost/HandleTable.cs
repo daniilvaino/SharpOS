@@ -1,4 +1,5 @@
 using OS.Hal;
+using OS.Kernel.Diagnostics;
 using OS.Kernel.Threading;
 
 namespace OS.PAL.SharpOSHost
@@ -79,14 +80,19 @@ namespace OS.PAL.SharpOSHost
         }
 
         // Release the slot. Returns true if a non-null entry was present.
-        // Emits a one-line trace when a CloseHandle attempts to free an
-        // already-empty slot — helps spot double-close / dangling references.
+        // The out-of-range / already-empty cases used to emit a trace line each;
+        // both are commented out below because they are ordinary traffic, not
+        // faults, and they bypassed the interactive-mode muting.
         public static bool Free(ulong handle)
         {
             if (!s_initialized) return false;
             if (handle == 0 || handle > (ulong)MaxHandles)
             {
-                EmitStr("[HT-Free-OOR] handle=0x"); EmitHex(handle); EmitStr("\n");
+                // Silenced: CoreCLR routinely closes handles this table never
+                // issued (pseudo-handles, fork-side fakes), so this fires as
+                // normal traffic rather than as a fault. Uncomment to chase a
+                // suspected double-close.
+                // EmitStr("[HT-Free-OOR] handle=0x"); EmitHex(handle); EmitStr("\n");
                 return false;
             }
             int idx = (int)(handle - 1);
@@ -97,7 +103,8 @@ namespace OS.PAL.SharpOSHost
                 s_freeTotal++;
                 return true;
             }
-            EmitStr("[HT-Free-empty] handle=0x"); EmitHex(handle); EmitStr("\n");
+            // Silenced for the same reason as [HT-Free-OOR] above.
+            // EmitStr("[HT-Free-empty] handle=0x"); EmitHex(handle); EmitStr("\n");
             return false;
         }
 

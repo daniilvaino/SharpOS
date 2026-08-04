@@ -73,8 +73,14 @@ namespace OS.Hal
         {
             if (s_ownConsole)
             {
+                // Serial stays raw and unconditional: if the terminal engine breaks, the
+                // UART log has to survive to say so.
                 Serial.WriteChar(value);
-                FbTty.Putc(value);
+
+                if (TerminalConsole.IsReady)
+                    TerminalConsole.Putc(value);
+                else
+                    FbTty.Putc(value);
                 return;
             }
 
@@ -97,12 +103,17 @@ namespace OS.Hal
 
             for (int i = 0; i < text.Length; i++)
                 WriteChar(text[i]);
+
+            // Painting is batched: the engine marks dirty rows while the string is fed,
+            // and one flush per write draws them.
+            TerminalConsole.Flush();
         }
 
         public static void WriteLine(string text)
         {
             Write(text);
             WriteChar('\n');
+            TerminalConsole.Flush();
         }
 
         public static void Shutdown()

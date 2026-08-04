@@ -169,6 +169,38 @@ Unix, лезет в `\proc\self\stat`. По-прежнему deferred (`Process`
 
 ---
 
+## 4a. Интерактивная консоль (step 147)
+
+Поверхность, которую требует PSReadLine. Ввод — событийный
+(`ReadConsoleInput`), а не построчный: редактор ведёт эхо и отрисовку сам.
+
+- ✅ `ReadConsoleInput` / `PeekConsoleInput` / `GetNumberOfConsoleInputEvents`
+  — `INPUT_RECORD` с key-down, VK и `dwControlKeyState`. Реализация блокирующая
+  и кооперативная: пока клавиш нет, отдаёт процессор планировщику.
+- ✅ `GetConsoleScreenBufferInfo` — реальная геометрия и позиция курсора из
+  движка терминала (синтетические 80×25 остались как headless-фолбэк).
+- ✅ `GetConsoleCursorInfo` / `SetConsoleCursorInfo` — форма курсора
+  сообщается, установка принимается. **Отсутствие этого экспорта роняло
+  `EntryPointNotFound` на первой же нажатой клавише** и валило весь рендер
+  PSReadLine — внешне выглядело как мёртвая клавиатура.
+- ✅ `GetCurrentConsoleFontEx` — клетка `8×8`, `FF_MODERN` без
+  `TMPF_TRUETYPE`. Запись ограничена переданным `cbSize`.
+- ✅ `SetConsoleOutputCP` / `SetConsoleCP` — успех; движок декодирует UTF-8
+  независимо от кодовой страницы.
+- ✅ Клавиатура: буквы/цифры/пунктуация, Enter, Backspace, Escape, Tab и
+  Shift+Tab, стрелки, `Delete`/`Insert`/`Home`/`End`/`PageUp`/`PageDown`.
+- 🟡 История PSReadLine читается, но не пишется — носитель read-only.
+  Профиль в `$PSHome\profile.ps1` ставит `HistorySaveStyle SaveNothing`,
+  иначе каждая команда заканчивается красным `Access denied`.
+- ❌ Мышь, изменение размера окна, `ReadConsoleOutput` / `ScrollConsoleScreenBuffer`
+  — не реализованы; PSReadLine их не требует.
+
+Диагностический рычаг: `Probes.HostedAppQuietConsole = false` возвращает
+строки `[GetProcAddress ...] unknown name=`, которые называют недостающий
+экспорт прямым текстом. За step147 они трижды указали корень.
+
+---
+
 ## 5. Threading
 
 После step 98 (Phase E9.a) — все core примитивы ✅, остаются только

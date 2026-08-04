@@ -18,17 +18,17 @@ namespace OS.PAL.SharpOSHost
     // CoreClrProbe.cs or interactively via /probe shell (when that lands).
     internal static class TraceGate
     {
-        public static bool Jit       = true;  // [prestub] [DoPrestub] [PIBC] [JCCL*] [PSW]
+        public static bool Jit       = false;  // [prestub] [DoPrestub] [PIBC] [JCCL*] [PSW]
         public static bool Crst      = false;  // [Crst::Enter] [Crst::Leave]
-        public static bool Real      = true;  // [real] [CRT trap]
-        public static bool LoadLib   = true;  // [LoadLibrary] [GetProcAddress]
-        public static bool Vm        = true;  // [vm-reserve] [stub-reg]
-        public static bool Eh        = true;   // [seh*] [SFI] [DESP] [CCF*] [PCRE*]
-        public static bool Host      = true;   // [host] FileOpen
-        public static bool Thread    = true;  // [CT] [RT] [Tramp]
-        public static bool Probe     = true;   // [probe-*]
-        public static bool Info      = true;   // [info]
-        public static bool Unknown   = true;   // any line not matching above
+        public static bool Real      = false;  // [real] [CRT trap]
+        public static bool LoadLib   = false;  // [LoadLibrary] [GetProcAddress]
+        public static bool Vm        = false;  // [vm-reserve] [stub-reg]
+        public static bool Eh        = false;   // [seh*] [SFI] [DESP] [CCF*] [PCRE*]
+        public static bool Host      = false;   // [host] FileOpen
+        public static bool Thread    = false;  // [CT] [RT] [Tramp]
+        public static bool Probe     = false;   // [probe-*]
+        public static bool Info      = false;   // [info]
+        public static bool Unknown   = false;   // any line not matching above
     }
 
     internal static unsafe class SharpOSHostDiagnostics
@@ -42,7 +42,7 @@ namespace OS.PAL.SharpOSHost
         // and always print. Panic reason (Panic_C) prints directly, also
         // ungated. Flip to true + rebuild kernel (no fork rebuild) to get
         // the full trace back for a failing case.
-        public static bool Verbose = true;  // step103: temporary, for msc-throw / SEH dispatch diagnostics
+        public static bool Verbose = false;
 
         // Per-line state for TraceGate dispatch. The fork emits a single
         // logical line via several DebugPrint+DebugPrintHex calls; we remember
@@ -199,7 +199,13 @@ namespace OS.PAL.SharpOSHost
             // Hex chunks are mid-line continuations of an already-classified
             // [tag] header — respect s_currentLineOn so a Jit-off line stays
             // suppressed even when the hex part lands.
-            if (!Verbose) return;
+            //
+            // Deliberately NOT gated on Verbose: DebugPrintForced prints its label
+            // regardless, so gating the value here produced lines like
+            // "[CCF-resume] Rbx=0x" — a label with the number silently dropped,
+            // which reads as "the register is zero" rather than "tracing is off".
+            // s_currentLineOn already suppresses the whole line for categories
+            // that are switched off, values included.
             if (!s_currentLineOn) return;
             Console.WriteHex(value);
         }

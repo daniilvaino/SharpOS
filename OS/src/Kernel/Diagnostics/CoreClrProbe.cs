@@ -449,13 +449,24 @@ namespace OS.Kernel.Diagnostics
                     // via the normal-program entry point (runs its Main).
                     Console.WriteLine("--- coreclr_execute_assembly(\\\\sharpos\\pwsh\\pwsh.dll) ---");
                     uint exitCode = 0xFFFFFFFF;
-                    // Quiet-flag toggle DISABLED — debugging assembly-load /
-                    // ntdll resolver chain. Flip back to true once stable.
+
+                    // Kernel diagnostics off while the hosted app owns the screen. The
+                    // census run wants them — its output IS the diagnostics — but an
+                    // interactive PowerShell does not, and [seh-*]/[host]/[stub-reg]
+                    // chatter between prompt and echo makes the terminal unusable.
+                    // Serial keeps everything either way: Platform.WriteChar sits
+                    // upstream of this gate.
+                    bool wasQuiet = Console.Quiet;
+                    if (Probes.HostedAppQuietConsole)
+                        Console.Quiet = true;
+
                     int xr = coreclr_execute_assembly(
                         hostHandle, domainId,
                         argc: 0, argv: null,
                         managedAssemblyPath: appPath,
                         exitCode: &exitCode);
+
+                    Console.Quiet = wasQuiet;
                     Console.Write("execute_assembly hr=0x"); Console.WriteHex((ulong)(uint)xr);
                     Console.Write(" exitCode="); Console.WriteInt((int)exitCode);
                     Console.WriteLine("");

@@ -28,6 +28,15 @@ namespace OS.Hal
         private static bool s_shift;
         private static bool s_caps;
         private static bool s_extended;
+        private static bool s_ctrl;
+        private static bool s_alt;
+
+        // Live modifier latch, for consumers that report key *events* rather than
+        // characters (the Win32 console input path needs dwControlKeyState).
+        public static bool ShiftHeld => s_shift;
+        public static bool CtrlHeld => s_ctrl;
+        public static bool AltHeld => s_alt;
+        public static bool CapsLockOn => s_caps;
 
         public static byte ReadStatus() => PortIo.In8(Status);
 
@@ -62,7 +71,13 @@ namespace OS.Hal
         }
 
         public enum KeyKind { None, Char, Enter, Backspace, Escape, Control,
-            Up, Down, Left, Right }
+            Up, Down, Left, Right,
+            // The rest of the navigation cluster. All are 0xE0-prefixed and
+            // were previously classed Control, i.e. dropped: a line editor
+            // needs them, so they get their own kinds rather than a guessed
+            // character. Consumers that only know the older kinds ignore
+            // these through their default case, as before.
+            Delete, Insert, Home, End, PageUp, PageDown }
 
         // Pure: feed one set-1 scancode + current modifier latch, get a
         // classified key. Make codes only produce output; break codes
@@ -89,8 +104,11 @@ namespace OS.Hal
             extended = ext;
             s_extended = false;
 
-            // Modifier make/break (left+right shift = 0x2A/0x36).
+            // Modifier make/break (left+right shift = 0x2A/0x36; ctrl 0x1D, alt 0x38 —
+            // the extended variants are right-ctrl / right-alt and latch the same).
             if (make == 0x2A || make == 0x36) { s_shift = !isBreak; return KeyKind.Control; }
+            if (make == 0x1D) { s_ctrl = !isBreak; return KeyKind.Control; }
+            if (make == 0x38) { s_alt = !isBreak; return KeyKind.Control; }
             if (make == 0x3A && !isBreak) { s_caps = !s_caps; return KeyKind.Control; }
             if (isBreak) return KeyKind.None;          // ignore other releases
             if (ext)                                   // 0xE0-prefixed keys
@@ -101,6 +119,12 @@ namespace OS.Hal
                     case 0x50: return KeyKind.Down;
                     case 0x4B: return KeyKind.Left;
                     case 0x4D: return KeyKind.Right;
+                    case 0x53: return KeyKind.Delete;
+                    case 0x52: return KeyKind.Insert;
+                    case 0x47: return KeyKind.Home;
+                    case 0x4F: return KeyKind.End;
+                    case 0x49: return KeyKind.PageUp;
+                    case 0x51: return KeyKind.PageDown;
                     default:   return KeyKind.Control;  // other extended — n/a
                 }
             }
@@ -120,7 +144,11 @@ namespace OS.Hal
             return KeyKind.Char;
         }
 
-        public static void ResetState() { s_shift = false; s_caps = false; s_extended = false; }
+        public static void ResetState()
+        {
+            s_shift = false; s_caps = false; s_extended = false;
+            s_ctrl = false; s_alt = false;
+        }
 
         // Set-1 make-code -> ASCII, index = scancode (0x00..0x39). 0 =
         // not a printable key. static readonly byte[] is safe here
@@ -129,7 +157,7 @@ namespace OS.Hal
         private static readonly byte[] Set1Normal = new byte[0x40]
         {
             0,    0,    (byte)'1',(byte)'2',(byte)'3',(byte)'4',(byte)'5',(byte)'6', // 00-07
-            (byte)'7',(byte)'8',(byte)'9',(byte)'0',(byte)'-',(byte)'=',0,    0,     // 08-0F (0E=bksp,0F=tab)
+            (byte)'7',(byte)'8',(byte)'9',(byte)'0',(byte)'-',(byte)'=',0,(byte)'\t', // 08-0F (0E=bksp handled above, 0F=tab)
             (byte)'q',(byte)'w',(byte)'e',(byte)'r',(byte)'t',(byte)'y',(byte)'u',(byte)'i', // 10-17
             (byte)'o',(byte)'p',(byte)'[',(byte)']',0,    0,    (byte)'a',(byte)'s', // 18-1F (1C=enter,1D=ctrl)
             (byte)'d',(byte)'f',(byte)'g',(byte)'h',(byte)'j',(byte)'k',(byte)'l',(byte)';', // 20-27
@@ -141,7 +169,7 @@ namespace OS.Hal
         private static readonly byte[] Set1Shift = new byte[0x40]
         {
             0,    0,    (byte)'!',(byte)'@',(byte)'#',(byte)'$',(byte)'%',(byte)'^', // 00-07
-            (byte)'&',(byte)'*',(byte)'(',(byte)')',(byte)'_',(byte)'+',0,    0,     // 08-0F
+            (byte)'&',(byte)'*',(byte)'(',(byte)')',(byte)'_',(byte)'+',0,(byte)'\t', // 08-0F (Shift+Tab = back-tab)
             (byte)'Q',(byte)'W',(byte)'E',(byte)'R',(byte)'T',(byte)'Y',(byte)'U',(byte)'I', // 10-17
             (byte)'O',(byte)'P',(byte)'{',(byte)'}',0,    0,    (byte)'A',(byte)'S', // 18-1F
             (byte)'D',(byte)'F',(byte)'G',(byte)'H',(byte)'J',(byte)'K',(byte)'L',(byte)':', // 20-27

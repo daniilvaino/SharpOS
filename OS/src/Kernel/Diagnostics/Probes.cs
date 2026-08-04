@@ -28,6 +28,12 @@ namespace OS.Kernel.Diagnostics
         public const bool GcHeapSmoke = true;
         public const bool GcStress = true;
         public const bool NativeAotFeatures = true;
+
+        // Terminal engine (vendor/XtermSharp) self-test + rich console front-end.
+        // On by default: the engine is new in the image and its failures should be
+        // loud, not opt-in.
+        public const bool TerminalEngine = true;
+
         // Late-boot NativeAOT probes — run AFTER Phase E threading is up.
         // Tests thread-handoff with GC mid-transfer + OOM deterministic
         // behavior. Separate toggle so threading regressions don't mask
@@ -78,7 +84,13 @@ namespace OS.Kernel.Diagnostics
         // Both DLLs are always built and deployed by run_build.ps1 + added
         // to TPA; the toggle only chooses which one execute_assembly aims
         // at. Const bool so ILC folds the unused branch to nothing.
-        public const bool LaunchNormalHelloCensus = true;
+        public const bool LaunchNormalHelloCensus = false;
+
+        // Mute kernel diagnostics while the hosted app owns the screen. Off means
+        // the [seh-*]/[host]/[stub-reg]/[GetProcAddress ...] chatter stays visible —
+        // which is exactly what you want while chasing a hang: the missing-symbol
+        // lines name the next unimplemented API. Turn on for a clean prompt.
+        public const bool HostedAppQuietConsole = true;
 
         // Phase E2 — TEB facade swap. Allocates a fresh TebFacade, swaps
         // gs base to it (under CLI), reads gs:[Self] and gs:[StackLimit]
@@ -219,5 +231,10 @@ namespace OS.Kernel.Diagnostics
         // Run+0x276 (CR2=8). Probe needs targeted fix, not blocker on CoreCLR
         // managed NRE bring-up. Flip back true after addressing.
         public const bool KernelGcPreciseSmoke = false;
+
+        // Traces the key-event path that PSReadLine reads through
+        // (SharpOSHost_ReadConsoleInput). Bounded to the first few events so a
+        // stuck read is distinguishable from keys that never arrive at all.
+        public const bool ConsoleInputTrace = false;
     }
 }
