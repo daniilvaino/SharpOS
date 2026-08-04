@@ -176,7 +176,7 @@ namespace OS.Kernel.Memory
                             if (e->InterfaceMethodSlot != itfSlot) continue;
 
                             GcMethodTable* mapItf = ifaceMap[e->InterfaceIndex].GetInterfaceEEType();
-                            if (mapItf == itfType)
+                            if (mapItf == itfType || InterfaceMatchesWithVariance(mapItf, itfType))
                             {
                                 implSlot = e->ImplMethodSlot;
                                 return true;
@@ -187,6 +187,103 @@ namespace OS.Kernel.Memory
 
                 if (cur->IsArray) break;   // array element-type walk not supported yet
                 cur = cur->GetBaseType();
+            }
+
+            return false;
+        }
+
+        // Variance byte values, from MethodTable.Constants.cs (GenericVariance).
+        private const byte VarianceNonVariant = 0;
+        private const byte VarianceCovariant = 1;
+        private const byte VarianceContravariant = 2;
+        private const byte VarianceArrayCovariant = 0x20;
+
+        /// <summary>
+        /// True when <paramref name="mapItf"/> and <paramref name="wantItf"/> are
+        /// the same generic interface differing only in type arguments that
+        /// variance permits. Ported from TypeParametersAreCompatible
+        /// (nativeaot/Runtime.Base/src/System/Runtime/TypeCast.cs).
+        ///
+        /// Deliberately conservative: anything not positively proven compatible
+        /// returns false, which leaves the old behaviour (resolve failure) rather
+        /// than dispatching to a wrong slot. A wrong slot would not panic — it
+        /// would silently call the wrong method.
+        /// </summary>
+        private static bool InterfaceMatchesWithVariance(GcMethodTable* mapItf, GcMethodTable* wantItf)
+        {
+            if (mapItf == null || wantItf == null) return false;
+            if (!mapItf->IsGeneric || !wantItf->IsGeneric) return false;
+
+            GcMethodTable* def = mapItf->GetGenericDefinition();
+            if (def == null || def != wantItf->GetGenericDefinition()) return false;
+
+            // Variance lives on the definition; without it the instantiations
+            // would have had to match exactly, which they did not.
+            byte* variance = def->GetGenericVariance();
+            if (variance == null) return false;
+
+            int arity = def->GenericParameterCount;
+            if (arity <= 0 || arity > 8) return false;   // implausible: refuse
+
+            for (int i = 0; i < arity; i++)
+            {
+                GcMethodTable* src = mapItf->GetGenericArgument(i, arity);
+                GcMethodTable* dst = wantItf->GetGenericArgument(i, arity);
+                if (src == null || dst == null) return false;
+                if (src == dst) continue;
+
+                switch (variance[i])
+                {
+                    case VarianceCovariant:
+                    case VarianceArrayCovariant:
+                        if (!IsAssignableTo(src, dst)) return false;
+                        break;
+
+                    case VarianceContravariant:
+                        if (!IsAssignableTo(dst, src)) return false;
+                        break;
+
+                    case VarianceNonVariant:
+                    default:
+                        return false;    // must have been identical
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Conservative reference-type assignability: identity, a base class of
+        /// <paramref name="src"/>, or an interface <paramref name="src"/> lists.
+        /// Value types are refused outright — variance never applies to them, and
+        /// treating them as assignable would be a soundness hole.
+        /// </summary>
+        private static bool IsAssignableTo(GcMethodTable* src, GcMethodTable* dst)
+        {
+            if (src == null || dst == null) return false;
+            if (src == dst) return true;
+            if (src->IsValueType || dst->IsValueType) return false;
+
+            // Base class chain.
+            GcMethodTable* cur = src;
+            int walkCap = 16;
+            while (cur != null && walkCap-- > 0)
+            {
+                if (cur == dst) return true;
+                cur = cur->GetBaseType();
+            }
+
+            // Interfaces the source implements. Direct pointer match only: a
+            // recursive variance check here would need cycle detection, and
+            // nothing on the paths we support requires it.
+            EEInterfaceInfo* map = src->GetInterfaceMap();
+            if (map != null)
+            {
+                int n = src->NumInterfaces;
+                for (int i = 0; i < n; i++)
+                {
+                    if (map[i].GetInterfaceEEType() == dst) return true;
+                }
             }
 
             return false;

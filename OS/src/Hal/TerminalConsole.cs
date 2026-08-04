@@ -288,6 +288,12 @@ namespace OS.Hal
 
         private static void DrawCursor(XtermSharp.Buffer buffer)
         {
+            // DECTCEM: the engine tracks ESC[?25l / ESC[?25h, we just honour it.
+            // Full-screen apps (the launcher menu, anything drawing its own UI)
+            // turn the cursor off rather than leave a block parked after their
+            // last write.
+            if (s_terminal.CursorHidden) return;
+
             int x = buffer.X;
             int y = buffer.YBase + buffer.Y - buffer.YDisp;
             if (x < 0 || x >= s_cols || y < 0 || y >= s_rows) return;

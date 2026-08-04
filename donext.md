@@ -1,5 +1,8 @@
 # ★ СЕВЕРНАЯ ЗВЕЗДА: managed DOOM на SharpOS — ✅ ДОСТИГНУТА 2026-07-16
 
+Карта того, что уже работает на каждом tier'е и что пока нет —
+в [`limits.md`](limits.md); там же реестр известных проблем.
+
 **Зафиксировано 2026-07-13; ЗАКРЫТА 2026-07-16 (steps 141-143).**
 Managed-порт DOOM **играбелен** на bare metal SharpOS против нашей
 собственной std: WAD с ESP, full-screen 2× GOP-blit, PS/2 make/break

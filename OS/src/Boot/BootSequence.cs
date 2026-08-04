@@ -118,7 +118,11 @@ namespace OS.Boot
         // ─────────────────────────────────────────────────────────────────
         private static void Phase0_Critical(BootInfo bootInfo)
         {
-            Panic.Mode = PanicMode.Shutdown;
+            // Halt, not shutdown: a panic is the one moment when the machine's
+            // memory is worth reading, and powering off destroys it. Staying
+            // halted keeps QMP alive so tools/dump_virt.ps1 can pull the state
+            // that led to the panic. Costs a manual `run_build.ps1 -Stop`.
+            Panic.Mode = PanicMode.Halt;
 
             bool idtOk = Idt.Install(bootInfo);
 

@@ -237,6 +237,89 @@ namespace SharpOS.Std.NoRuntime
             }
         }
 
+        // Byte offset from ExtrasStart to a trailing field, mirroring
+        // MethodTable.GetFieldOffset (nativeaot/Common/src/Internal/Runtime/
+        // MethodTable.cs). Every entry present is one 4-byte relative pointer
+        // in our build (SupportsRelativePointers, non-dynamic types).
+        //
+        // Order: TypeManagerIndirection, WritableData, DispatchMap, Finalizer,
+        // OptionalFields, SealedVirtualSlots, GenericDefinition,
+        // GenericComposition. Skipping any of the conditional ones — the
+        // dispatch map in particular — silently shifts everything after it.
+        private const int RelPtrSize = 4;
+
+        private int GenericDefinitionOffset
+        {
+            get
+            {
+                int off = RelPtrSize;                       // TypeManagerIndirection
+                off += RelPtrSize;                          // WritableData (always, this build)
+                if (HasDispatchMap) off += RelPtrSize;
+                if (HasFinalizer) off += RelPtrSize;
+                if (HasOptionalFields) off += RelPtrSize;
+                if (HasSealedVTableEntries) off += RelPtrSize;
+                return off;
+            }
+        }
+
+        public bool HasSealedVTableEntries => (Flags & HasSealedVTableEntriesFlag) != 0;
+
+        public bool HasGenericVariance => (Flags & GenericVarianceFlag) != 0;
+
+        public bool IsGenericTypeDefinition => Kind == GcEETypeKind.GenericTypeDef;
+
+        /// <summary>
+        /// Generic type definition of a constructed generic type; null when this
+        /// is not a generic instantiation.
+        /// </summary>
+        public GcMethodTable* GetGenericDefinition()
+        {
+            if (!IsGeneric) return null;
+            return (GcMethodTable*)ReadRelativePointer(ExtrasStart + GenericDefinitionOffset);
+        }
+
+        /// <summary>
+        /// Number of generic parameters. Lives on the *definition*, where it
+        /// shares storage with ComponentSize.
+        /// </summary>
+        public ushort GenericParameterCount => ComponentSize;
+
+        /// <summary>
+        /// Type argument at <paramref name="index"/> of a generic instantiation.
+        /// Arity 1 stores the argument in the field itself; higher arities store
+        /// a relative pointer to a shared list of relative pointers.
+        /// </summary>
+        public GcMethodTable* GetGenericArgument(int index, int arity)
+        {
+            if (!IsGeneric || index < 0 || index >= arity) return null;
+
+            byte* pField = ExtrasStart + GenericDefinitionOffset + RelPtrSize;
+            if (arity == 1)
+                return (GcMethodTable*)ReadRelativePointer(pField);
+
+            byte* pList = ReadRelativePointer(pField);
+            return (GcMethodTable*)ReadRelativePointer(pList + index * RelPtrSize);
+        }
+
+        /// <summary>
+        /// Per-parameter variance bytes (see GcGenericVariance), or null when the
+        /// type has none. For an instantiation the vector lives on its definition.
+        /// </summary>
+        public byte* GetGenericVariance()
+        {
+            if (!HasGenericVariance) return null;
+
+            if (IsGeneric)
+            {
+                GcMethodTable* def = GetGenericDefinition();
+                return def == null ? null : def->GetGenericVariance();
+            }
+
+            if (!IsGenericTypeDefinition) return null;
+            // On a definition the variance vector sits in the composition slot.
+            return ReadRelativePointer(ExtrasStart + GenericDefinitionOffset);
+        }
+
         // Reads a RelativePointer<T> at the given byte pointer and returns the
         // pointed-at address. Matches `RelativePointer<T>.Value`.
         private static byte* ReadRelativePointer(byte* at)

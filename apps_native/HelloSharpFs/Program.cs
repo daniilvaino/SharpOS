@@ -27,6 +27,11 @@ namespace HelloSharpFs
         private const ushort CharRUpper = (ushort)'R';
         private const string NewLine = "\n";
 
+        // DECTCEM show/hide. The kernel's terminal front-end tracks these and
+        // stops painting its block cursor while hidden.
+        private const string HideCursor = "\x1b[?25l";
+        private const string ShowCursor = "\x1b[?25h";
+
         private static int Main()
         {
             Run();
@@ -83,6 +88,11 @@ namespace HelloSharpFs
             uint visibleCount = 0;
             bool needsRedraw = true;
 
+            // DECTCEM off: this is a menu, not a prompt, so a block cursor parked
+            // after the last line only distracts. Restored before handing the
+            // screen to a child app and on the way out.
+            AppHost.WriteString(HideCursor);
+
             for (; ; )
             {
                 if (needsRedraw)
@@ -106,6 +116,7 @@ namespace HelloSharpFs
 
                 if (IsEscape(keyInfo))
                 {
+                    AppHost.WriteString(ShowCursor);
                     AppHost.Exit(ExitCode);
                     return;
                 }
@@ -156,7 +167,10 @@ namespace HelloSharpFs
                     continue;
                 }
 
+                // The child owns the screen from here; give it a normal cursor
+                // and take it back when the menu is redrawn below.
                 byte* selectedNameBuffer = stackalloc byte[(int)MaxNameBytes];
+                AppHost.WriteString(ShowCursor);
                 if (!TryRunSelectedEntry(selectedIndex, selectedNameBuffer, MaxNameBytes, out uint selectedNameLength, out AppServiceStatus runStatus, out int childExitCode))
                 {
                     WriteResultBlock("none", AppServiceStatus.NotFound, 0);
@@ -166,6 +180,7 @@ namespace HelloSharpFs
 
                 string selectedName = string.FromAscii(selectedNameBuffer, selectedNameLength);
                 WriteResultBlock(selectedName, runStatus, childExitCode);
+                AppHost.WriteString(HideCursor);
                 needsRedraw = true;
             }
         }

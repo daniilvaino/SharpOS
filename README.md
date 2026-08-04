@@ -8,6 +8,42 @@ SharpOS - это экспериментальная операционная с�
  - **весь** код ядра, приложений, загрузки и пользовательского окружения пишется на C# (кроме форка CoreCLR: [dotnet-runtime-sharpos](https://github.com/daniilvaino/dotnet-runtime-sharpos/tree/sharpos/coreclr-port));
  - сборка выполняется через `dotnet publish -r win-x64`.
 
+## Как запустить 
+```powershell
+# pwsh: оболочка сборки + источник stock-модулей PowerShell
+winget install --id Microsoft.PowerShell --source winget --accept-package-agreements --accept-source-agreements
+# .NET SDK
+winget install --id Microsoft.DotNet.SDK.10 --source winget --accept-package-agreements --accept-source-agreements
+# MSYS2: контейнер юникс-утилит сборки образа
+winget install --id MSYS2.MSYS2 --source winget --accept-package-agreements --accept-source-agreements
+# MSVC link.exe + Windows SDK
+winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --source winget --accept-package-agreements --accept-source-agreements --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+ 
+# --- Утилиты образа внутрь MSYS2: mformat/mcopy (FAT ESP), xorriso (ISO), sfdisk (GPT), qemu-img + qemu-system ---
+# Обновление гоняется дважды: первый прогон обновляет ядро MSYS2 и обрывает сессию — это штатно.
+C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
+C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm mingw-w64-x86_64-mtools mingw-w64-x86_64-qemu mingw-w64-x86_64-qemu-image-util xorriso util-linux"
+ 
+# --- MSYS2-инструменты в PATH: первая команда — навсегда (реестр), вторая — для текущего окна ---
+[Environment]::SetEnvironmentVariable('Path',
+  [Environment]::GetEnvironmentVariable('Path','User')+ ';C:\msys64\mingw64\bin;C:\msys64\usr\bin',  'User')
+$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
+            [Environment]::GetEnvironmentVariable('Path','User')
+ 
+# --- Репозиторий и shareware-WAD для DOOM ---
+git clone https://github.com/daniilvaino/SharpOS.git
+cd .\SharpOS\
+curl.exe -L -o wads\DOOM1.WAD https://raw.githubusercontent.com/nifanfa/MOOS/refs/heads/master/Ramdisk/DOOM1.WAD
+ 
+# --- Приложения (лаунчер, FetchApp, AotTests, DOOM):
+& .\build_launcher.ps1; & .\build_fetch.ps1; & .\build_aottests.ps1; & .\build_doom.ps1
+ 
+# --- Ядро + образ + запуск в QEMU ---
+$env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
+& .\run_build.ps1 -SkipCoreClr 2>&1 | Tee-Object last_build.log
+```
+
 ## Архитектурные инварианты
 
 **Инвариант 1 - C# is the only source language.** Весь исполняемый код - на C#. В дереве исходников нет ни одного `.c`, `.cpp`, `.h`, `.asm` или `.s` файла. Ни одного. Сборку и запуск, как и в любом .NET-проекте, оркестрируют MSBuild (`.csproj`/`.props`/`.targets`) и PowerShell (`.ps1`) - это не логика системы, а её build-обвязка. Всё остальное - обработчики прерываний, spill callee-saved regs, runtime-bridges, write barriers, interface-dispatch trampolines - выражается одним из трёх способов:
@@ -79,10 +115,11 @@ SharpOS - это экспериментальная операционная с�
 | `ValueTuple<...>` / `DateTime` / `DateTimeOffset` | 🔴 | 🟡 | ✅ | отсутствуют в std/no-runtime; `Tuple<T1,T2>` + минимальный `TimeSpan` есть, `DateTime` в PE-аппах - стаб (`Now` = epoch, до RTC-сервиса) |
 | LINQ extensions | ✅ | ✅ | ✅ | наш `System.Linq.Enumerable` (mini-LINQ). Source - `List<T>` / итератор / string / массив (порт `Array<T>` даёт массивам честные интерфейсы; limits §4) |
 | **Managed delegates / lambdas** | ✅ | ✅ | ✅ | завендорены из dotnet/runtime v8.0.27; вырезано в `NotSupportedException`: reflection-поверхность, GVM, open-instance, variance-cast (limits §5) |
-| **Reflection runtime metadata** | 🚫 | 🚫 | ✅ | AOT strips metadata |
-| **`Reflection.Emit` / `Activator.CreateInstance(Type)`** | 🚫 | 🚫 | ✅ | требует JIT |
-| **`dynamic` / DLR / `Expression<T>.Compile()`** | 🚫 | 🚫 | ✅ | DLR через Reflection.Emit |
-| **`Type.GetType("Some.Class.Name")`** | 🚫 | 🚫 | ✅ | string→Type требует metadata |
+| **Reflection runtime metadata** | 🔴 | 🔴 | ✅ | нет `System.Reflection` в std |
+| **`Reflection.Emit`** | 🚫 | 🚫 | ✅ | требует JIT |
+| **`Activator.CreateInstance(Type)`** | 🔴 | 🔴 | ✅ | JIT не нужен, нужны метаданные |
+| **`dynamic` / DLR / `Expression<T>.Compile()`** | 🚫 | 🚫 | ✅ | DLR через `Reflection.Emit` |
+| **`Type.GetType("Some.Class.Name")`** | 🔴 | 🔴 | ✅ | нужны метаданные |
 | **Generic `as T` / `(T)x` с `where T : class`** | 🟡 | 🟡 | ✅ | AOT: `RhTypeCast_CheckCastAny`/`IsInstanceOfAny` есть в std на обоих тирах; вариантный интерфейс-каст не резолвится (limits §2), выделенной пробы нет |
 | **Runtime x64 assembled (Iced lib)** | ✅ | 🚫 | 🚫 | пока что `NO_EVEX`, без managed-delegate путей; Guest tiers - by design, доступно после инициализации std |
 | **Compile time x64 assembled (Iced lib)** | ✅ | 🚫 | 🚫 | пока что `NO_EVEX`, без managed-delegate путей; Guest tiers - by design |
@@ -109,27 +146,8 @@ SharpOS - это экспериментальная операционная с�
 | Preemptive scheduling | ⏳ | ⏳ | ⏳ | IRQ-driven HPET wake |
 | SMP / multi-core | ⏳ | ⏳ | ⏳ | AP startup + per-CPU TEB + memory barriers |
 
-### Известные проблемы и временные ограничения
-
-Не таблица фич, а сводный реестр того что **сломано / висит / ждёт hardening**. Не дублирует основную таблицу выше. Подробности - в [`docs/coreclr-hosted-limits.md`](docs/coreclr-hosted-limits.md), [`docs/open-symptoms.md`](docs/open-symptoms.md), активные риски R1-R5 в [`plan.md`](plan.md).
-
-| Проблема | Tier | Статус | Источник / комментарий |
-|---|---|---|---|
-| `GC.WaitForPendingFinalizers` зависает | CoreCLR-hosted | 🔴 hang | SYM-003: finalizer-thread completion event не wired; `GC.Collect` сам работает |
-| `DateTime.Now` (local timezone) | все | 🔴 | нет tz DB; `DateTime.UtcNow` через CMOS+HPET ✅ |
-| `Process.Start` | CoreCLR-hosted | 🔴 | `SystemNative_RegisterForSigChld` отсутствует |
-| `GZipStream` / `System.IO.Compression` | все | 🔴 | `libSystem.IO.Compression.Native` отсутствует |
-| Hosted GC suspend/resume cooperation | CoreCLR-hosted | ⏳ R4 | cooperative safepoints + RetainVM/decommit policy не production-complete |
-| Strong-fallback аудит `SharpOSHost_*` | Fork/PAL | ⏳ R1 / D10-D11 | fallback'и в той же TU обязаны быть `weak`, иначе Release clang-fold подменяет до линковки |
-| IST / emergency fault stacks (#PF/#DF/NMI) | Kernel | 🔴 R2 | stack overflow → silent triple-fault; panic path должен не аллоцировать |
-| FH4 catch-object construction (`dispCatchObj` / copy-ctor) | Fork EH | ⏳ | паритет с FH3 (тоже без него); вся EH-батарея зелёная без него, но `catch(Exception&)` by-value не построится |
-| `CultureInfo.GetCultureInfo("ru-RU")` non-invariant | CoreCLR-hosted | ⏳ | runtimeconfig прибит к `InvariantGlobalization=true`; ICU/icudt.dat не пакуется, `System.Globalization.Native` PAL не реализован. Не архитектурный запрет - отложено до конкретной потребности |
-| Self-modifying shellcode без cpuid-serializer | Kernel | ⏳ | патчеры пишут template из `.rdata` (через `BootAsm.Generator`) и сразу зовут без cpuid serializing; QEMU forgiving, реальное железо может выполнить stale prefetch |
-| AOT хойстит non-volatile MMIO-poll | Kernel | ⚠️ контракт | ILC LICM выносит MMIO-чтение из spin-петли (compile-time); все HW-poll **обязаны** идти через `NoInlining` Rd-барьер или `volatile` |
-
-**Легенда**: 🔴 - известно сломано, ⚠️ - действующий контракт/ограничение, ⏳ - отложено / в работе.
-
-**Текущий roadmap:** единый план ведётся в [`plan.md`](plan.md) и [`donext.md`](donext.md). Состояние на 2026-07-16: все три tier'а green на полной батарее (kernel-пробы, EH, threading, CoreCLR-hosted census, post-EBS substrate), а managed DOOM играбелен против собственной std - см. секцию ниже.
+Реестр того, что сломано, висит или ждёт hardening, вынесен отдельно:
+[`limits.md`](limits.md).
 
 ## Контуры Репозитория
 
@@ -164,8 +182,10 @@ SharpOS - это экспериментальная операционная с�
 - **[dotnet/runtime](https://github.com/dotnet/runtime) + [runtimelab](https://github.com/dotnet/runtimelab)** (Microsoft, MIT) - NativeAOT toolchain (форк в `dotnet-runtime-sharpos/`) + сотни BCL-портов в наш std (`List<T>`, `Dictionary<K,V>`, `String.Format`, `Array.Sort`, introsort, ожидания компилятора, байтовый алайнинг, и т.д.).
 - **[Iced](https://github.com/icedland/iced)** (icedland, MIT, vendored `vendor/Iced/`) - x86/x64 encoder. Используется в двух режимах: (1) `BootAsm.Generator`-ом для compile-time codegen kernel-шеллкодов на этапе сборки, (2) baked-in в kernel image для runtime fluent-API shellcode emission после того как boot закончился.
 - **[PeNet](https://github.com/secana/PeNet)** (Stefan Hausotte, Apache-2.0, vendored `vendor/PeNet/`) - PE-парсер в лоадере приложений (`PeImageLayout`/`PeImports`/`PeRelocations`, flatten, релокации, IAT).
+- **[XtermSharp](https://github.com/migueldeicaza/XtermSharp)** (Miguel de Icaza, MIT, vendored `vendor/XtermSharp/`) - движок эмулятора терминала: разбор ANSI/VT, сетка ячеек, скролл-регионы. Работает front-end'ом консоли ядра поверх framebuffer.
 - **[MOOS](https://github.com/nifanfa/MOOS)** (nifanfa, Unlicense / public domain) - драйверы `AHCI`, `Disk`, `PCI(Express)`.
 - **[Font 8x8](https://github.com/dhepper/font8x8)** (Daniel Hepper, на основе Marcel Sondaar / IBM VGA, Public Domain) - глифы консоли framebuffer.
+- **[shitty](https://github.com/pg83/shitty)** (Anton Samokhvalov, двойная лицензия MIT + GPL-3) - тесты для эмулятора терминала.
 - **[ManagedDotnetGC](https://github.com/kevingosse/ManagedDotnetGC)** (Kevin Gosse, MIT) - mark/sweep референс для GC.
 - **[UpsilonGC](https://github.com/kkokosa/UpsilonGC)** (Konrad Kokosa, GPL-3) - референс по custom GC под .NET.
 - **[ManagedDoom](https://github.com/sinshu/managed-doom)** (sinshu, GPL-2.0, изолирован как отдельное приложение) - C#-порт DOOM.

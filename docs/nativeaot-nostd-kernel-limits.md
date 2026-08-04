@@ -49,24 +49,38 @@ class C { public static T X; static C() { X = new T(); } }   // ok
 
 ## 2. Generics
 
-### ❌ Вариантный interface dispatch (co/contravariance)
+### ✅ Вариантный interface dispatch (co/contravariance) — step148
 
-`InterfaceDispatchResolver.FindImplSlot` матчит интерфейс **строгим
-сравнением MT-указателей** с записями interface map. Ковариантный запрос —
-`IReadOnlyList<IReadOnlyList<T>>.get_Item` на `T[][]` (map массива несёт
-`IReadOnlyList<T[]>`, это другой MT) — даёт
-`iface-resolve fail (no match in inheritance chain)` → panic. Упавший
-вживую пример: ManagedDoom `DoomInfo.MapTitles.Doom[e][m]` (done/step142).
-Инвариантные запросы (точная инстанциация, включая shared-`__Canon`
-внутри одного образа) работают.
+`InterfaceDispatchResolver.FindImplSlot` при несовпадении MT-указателей
+сравнивает `GenericDefinition` и, если совпало, проходит по аргументам с
+вектором вариантности определения (порт `TypeParametersAreCompatible` из
+`nativeaot/Runtime.Base/src/System/Runtime/TypeCast.cs`): ковариантный —
+присваиваемость `src→dst`, контравариантный — наоборот, инвариантный —
+тождество. Проверка присваиваемости — цепочка базовых типов плюс карта
+интерфейсов, прямым сравнением.
 
-**Workaround:** типизировать хранилище конкретно (jagged `T[][]` вместо
-`IReadOnlyList<IReadOnlyList<T>>`) — потребители переходят на прямое
-индексирование без диспатча. Так пропатчены 3 vendor-таблицы ManagedDoom.
+Живой случай, на котором закрыто: ManagedDoom на переходе между уровнями
+запрашивает `IReadOnlyList<Y>.get_Item` у `X[]`, где карта массива несёт
+`IReadOnlyList<X>`.
 
-**Когда чинить:** порт вариантного пути upstream-резолвера
-(`AreTypesAssignable` по generic-аргументам, флаг variance у interface-MT).
-По первому невендорируемому потребителю.
+**Границы.** Ветка намеренно консервативна и при любой неопределённости
+отказывает (то есть остаётся прежняя паника, а не догадка): нет вектора
+вариантности, арность вне `1..8`, значимые типы в аргументах, вложенная
+вариантность внутри проверки присваиваемости. Последнее потребовало бы
+защиты от циклов и пока не нужно.
+
+Раскладка generic-полей MethodTable разобрана в `GcMethodTable`
+(`GetGenericDefinition` / `GetGenericArgument` / `GetGenericVariance`) по
+канону из `gc-experiment/dotnet-runtime-8.0`: хвостовые поля идут в порядке
+`TypeManagerIndirection → WritableData → [DispatchMap] → [Finalizer] →
+[OptionalFields] → [SealedVirtualSlots] → [GenericDefinition] →
+[GenericComposition]`, каждое — 4-байтный относительный указатель. Арность
+берётся из `ComponentSize` **определения**; при арности 1 аргумент лежит в
+самом поле композиции, при большей — там относительный указатель на список.
+
+**Историческое:** до step148 обходились типизацией хранилища конкретно
+(jagged `T[][]`); так пропатчены 3 таблицы ManagedDoom, они оставлены как
+есть.
 
 ### 🔧 `new T()` с `where T : new()`
 
