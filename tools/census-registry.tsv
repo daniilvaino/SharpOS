@@ -1,0 +1,176 @@
+# tools/census-registry.tsv
+# Ожидаемый состав PAL/OS census: имя пробы <TAB> статус на момент фиксации.
+# probe_report.ps1 сверяет прогон с этим списком и сообщает про MISSING
+# (проба исчезла), NEW (появилась), REGRESSED и FIXED (сменила статус).
+#
+# Расхождение — сигнал, а не шум: обновлять файл осознанно, вместе с
+# объяснением в done/stepNN.md. Повторяющиеся имена помечены ' #N'.
+# Зафиксировано на step148: OK=147 DEG=2 FAIL=18 (167 проб).
+
+DateTime.UtcNow	OK
+DateTime.Now	OK
+Stopwatch.GetTimestamp	OK
+Environment.TickCount64	OK
+Directory.GetCurrentDirectory	OK
+Path.GetTempPath	OK
+Path.GetFullPath(.)	OK
+File.Exists(x)	OK
+Directory.Exists(.)	OK
+Env.GetEnvironmentVariable(PATH)	OK
+Env.GetEnvironmentVariables	OK
+RuntimeInformation.OSDescription	OK
+RuntimeInformation.RuntimeIdentifier	OK
+[os] RID=unknown	OK
+Registry.LocalMachine access (pwsh-style trigger) (got null)	OK
+Registry root keys exist (HKLM + HKCU)	OK
+Registry OpenSubKey(missing) returns null	OK
+Registry GetValue(missing) returns null	OK
+Registry SubKeyCount on empty root = 0	OK
+Registry GetSubKeyNames = empty array	OK
+Registry GetValueNames = empty array	OK
+Environment.OSVersion	OK
+Environment.MachineName	OK
+Environment.UserName	OK
+Environment.SystemDirectory	OK
+Dns.GetHostName	FAIL
+Debug.Fail catchability	OK
+Reflection Invoke benign 4 args	OK
+DebugProvider.FailCore metadata	OK
+Null object.ToString catchability	FAIL
+Null MethodInfo.ToString catchability	FAIL
+Null MethodInfo.Invoke catchability	FAIL
+DebugProvider.FailCore NP invoke	FAIL
+managed throw bare	DEG
+managed throw deep stack	DEG
+Process.GetCurrentProcess()	OK
+Process...ProcessName	OK
+Process...WorkingSet64	OK
+Thread.CurrentThread.ManagedThreadId	OK
+Interlocked.Increment	OK
+lock/Monitor	OK
+generic `as T` cast (RhTypeCast_IsInstanceOf)	OK
+yield iterator (state machine)	OK
+new Thread + Join	OK
+Thread.Sleep(1)	OK
+ThreadPool.QueueUserWorkItem	OK
+ThreadPool stress (1000 x20)	OK
+FP/XMM smoke (100k Sqrt+Sin)	OK
+Math.Sqrt(2) == ?2	OK
+Math.Sin(?/6) == 0.5	OK
+Math.Cos(?/3) == 0.5	OK
+Math.Tan(?/4) == 1	FAIL
+Math.Atan(1) == ?/4	FAIL
+Math.Atan2(1,1) == ?/4	FAIL
+Math.Exp(1) == e	FAIL
+Math.Log(e) == 1	OK
+Math.Log10(1000) == 3	OK
+Math.Log2(8) == 3	OK
+Math.Pow(2, 10) == 1024	OK
+Math.Pow(2, 0.5) == ?2	FAIL
+Math.Sin(large arg 13) == real value	OK
+Math.Cbrt(27) == 3	FAIL
+Math.Floor / Ceiling / Truncate	OK
+GC FRAMEREG_REL refs across Collect	OK
+System.Text.Json roundtrip (reflection)	OK
+Task.Run + .Result	OK
+Task.Delay(1).Wait(2s)	OK
+Task.Delay(3s).Wait(1s)	OK
+Timer (50ms)	OK
+Task.Delay(3s, ct) + cts.Cancel	OK
+Path.GetFullPath	OK
+Directory.GetCurrentDirectory #2	OK
+Directory.EnumerateFiles(.)	OK
+File.WriteAllText	FAIL
+File.ReadAllText	FAIL
+File.Delete	OK
+Guid.NewGuid	OK
+RandomNumberGenerator.Fill	OK
+SHA256.HashData	FAIL
+Convert.ToBase64String	OK
+Random.Shared.Next	OK
+Encoding.UTF8 roundtrip	OK
+String.Normalize(FormD)	OK
+CultureInfo.InvariantCulture	OK
+CultureInfo.GetCultureInfo(ru-RU)	FAIL
+ConcurrentDictionary.TryAdd+Count	OK
+DynamicMethod.GetILGenerator	OK
+Regex.IsMatch	OK
+GZipStream	FAIL
+Func<T,R> no-capture	OK
+Action<T> side-effect	OK
+Func<T,R> closure	OK
+Func<T,R> method group	OK
+Action multicast	OK
+Comparison<T> via Array.Sort	OK
+box int + unbox	OK
+box long + unbox	OK
+box custom struct + unbox	OK
+boxed.GetType()	OK
+invalid unbox throws InvalidCastException	OK
+Nullable<int> box semantics	OK
+covariant array ? Base[] = Derived[]	OK
+covariant read ? virtual via base ref	OK
+stelem.ref wrong type ? ArrayTypeMismatchException	OK
+value-array stelem (no covariance)	OK
+interface call ? concrete type	OK
+interface call ? different impl	OK
+generic interface ? IEquatable<int>	OK
+interface call from shared-generic	OK
+virtual override ? 2-level	OK
+virtual via interface vs class ref	OK
+object.ToString() virtual	OK
+generic method ? reference type	OK
+generic method ? value type	OK
+generic class ? different T's	OK
+constrained `where T : class`	OK
+explicit cctor ? runs once, sets value	OK
+lazy static reference (AOT trap zone)	OK
+RuntimeHelpers.RunClassConstructor (explicit)	OK
+[ModuleInitializer] ran before Main	OK
+ref-field write survives GC.Collect	OK
+array-of-refs survives GC + writebar	OK
+cross-gen ref via List<string>	OK
+GC roots survive EH unwind	OK
+finally ordering (nested)	OK
+exception filter reads locals	OK
+`throw;` rethrow caught (StackTrace gap on SharpOS hosted)	OK
+`throw ex;` rethrow caught (StackTrace gap on SharpOS hosted)	OK
+GC + Span<byte> interior stable	OK
+Array.Copy overlap right (memmove)	OK
+Array.Copy overlap left	OK
+thread handoff with GC mid-transfer	OK
+XMM6+ doubles preserved across throw/catch	OK
+nested PAL boundary + exception	OK
+simple {0}{1}	OK
+format spec D5	OK
+format spec X	OK
+format spec F2	OK
+alignment {0,10}	OK
+multiple + repeat	OK
+StringBuilder.AppendFormat	OK
+InvariantCulture float	OK
+L0 ? literal IsMatch	OK
+L1 ? anchors+char classes+quantifiers	OK
+L2 ? captures + Groups	OK
+L3a ? Replace without delegate	OK
+L3b ? Split	OK
+L4 ? backtracking (a+b on aaab)	OK
+L5 ? IgnoreCase + CultureInvariant	OK
+L6 ? source-generated regex (skip, needs partial+attribute on Program)	FAIL
+L7 ? NonBacktracking engine	OK
+L8 ? RegexOptions.Compiled	OK
+lock statement ? Monitor.Enter/Exit	OK
+lock re-entrancy same object	OK
+ValueTuple ctor + deconstruction	OK
+ValueTuple .Equals + .GetHashCode	OK
+ValueTuple named fields	OK
+DateTime + TimeSpan arithmetic	OK
+DateTime.Parse round-trip	OK
+TimeSpan.From*/TotalMilliseconds	OK
+TimeSpan.Parse	OK
+Enum.ToString returns member name	OK
+Enum.Parse<T>	OK
+Enum.TryParse<T>	OK
+Enum.GetNames / GetValues	OK
+Enum.HasFlag on flags-enum	OK
+Process.Start(dummy)	FAIL

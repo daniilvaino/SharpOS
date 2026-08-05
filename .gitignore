@@ -114,3 +114,10 @@ last_build.log
 # wads/.gitkeep) so a fresh clone has somewhere to drop the WAD.
 wads/*
 !wads/.gitkeep
+
+# Raw FAT32 image built from the staged ESP for each run (see
+# tools/New-EspImage.ps1) - build output, regenerated every time.
+*.img
+
+# Машинные срезы прогонов от tools/probe_report.ps1 — выход, не исходник.
+OS/.qemu/reports/

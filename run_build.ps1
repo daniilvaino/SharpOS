@@ -14,6 +14,8 @@
     [switch]$NoRun,
     [switch]$Stop,
     [int]$QmpPort = 4444,
+    # ESP staged as a real FAT32 image; 253 MB of payload today, so 512 leaves headroom.
+    [int]$EspImageSizeMb = 512,
     [string]$QemuExe,
     [string]$OvmfCode,
     [string]$OvmfVars
@@ -592,7 +594,19 @@ try {
         $qemuArgs += @("-drive", "if=pflash,format=raw,file=firmware/OVMF_VARS.fd")
     }
 
-    $qemuArgs += @("-drive", "format=raw,file=fat:rw:esp")
+    # A real FAT32 image rather than VVFAT: QEMU's fat:rw: does not store a
+    # filesystem, it synthesises one and maps guest writes back onto host files,
+    # which makes it worthless as a target for our own FAT writer. Falls back to
+    # VVFAT when mtools are missing so a clone without MSYS2 still boots.
+    . (Join-Path $repoRoot "tools\New-EspImage.ps1")
+    $espImage = Join-Path $qemuWorkDir "esp.img"
+    if (New-EspImage -SourceDir (Join-Path $qemuWorkDir "esp") -RawPath $espImage -SizeMb $EspImageSizeMb) {
+        Write-Host "ESP image: $espImage ($EspImageSizeMb MB)"
+        $qemuArgs += @("-drive", "format=raw,file=esp.img")
+    }
+    else {
+        $qemuArgs += @("-drive", "format=raw,file=fat:rw:esp")
+    }
 
     & $QemuExe @qemuArgs
 

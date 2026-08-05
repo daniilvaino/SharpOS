@@ -84,7 +84,7 @@ namespace OS.Kernel.Diagnostics
         // Both DLLs are always built and deployed by run_build.ps1 + added
         // to TPA; the toggle only chooses which one execute_assembly aims
         // at. Const bool so ILC folds the unused branch to nothing.
-        public const bool LaunchNormalHelloCensus = false;
+        public const bool LaunchNormalHelloCensus = true;
 
         // Mute kernel diagnostics while the hosted app owns the screen. Off means
         // the [seh-*]/[host]/[stub-reg]/[GetProcAddress ...] chatter stays visible —

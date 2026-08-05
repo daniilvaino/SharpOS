@@ -1,4 +1,4 @@
-# tools/probe_report.ps1
+﻿# tools/probe_report.ps1
 # ----------------------------------------------------------------------------
 # Extract probe / launcher statuses from a SharpOS boot log.
 #
@@ -22,7 +22,13 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$Log,
-    [switch]$Compact
+    [switch]$Compact,
+    # Ожидаемый состав census. Сверка с ним ловит то, чего автодетект не может:
+    # исчезнувшую пробу. Пустая строка отключает сверку.
+    [string]$CensusRegistry = (Join-Path $PSScriptRoot 'census-registry.tsv'),
+    # Куда складывать машинный срез прогона (JSON + CSV). Срез пишется всегда;
+    # параметр только переносит его в другое место.
+    [string]$ReportDir = (Join-Path (Join-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'OS') '.qemu') 'reports')
 )
 
 if (-not (Test-Path -LiteralPath $Log)) {
@@ -597,6 +603,108 @@ if ($runCrashed) {
     Write-Host "  RUN CRASHED -- battery incomplete (see [Faults])" -ForegroundColor Red
 }
 Write-Host ""
+
+# --- census: построчно, со сверкой по реестру --------------------------
+#
+# Агрегат "OK=147 DEG=2 FAIL=18" says nothing about *which* probe moved, and a
+# probe that silently stops emitting looks identical to one that never existed.
+# Parsing the block and diffing it against a checked-in registry turns both
+# into named signals.
+
+$censusRows = @()
+$mCensusBegin = [regex]::Match($text, 'PAL/OS census begin')
+$mCensusEnd   = [regex]::Match($text, 'PAL/OS census end')
+if ($mCensusBegin.Success -and $mCensusEnd.Success -and $mCensusEnd.Index -gt $mCensusBegin.Index) {
+    $censusText = $text.Substring($mCensusBegin.Index, $mCensusEnd.Index - $mCensusBegin.Index)
+    $pending = ''
+    $seen = @{}
+    foreach ($line in $censusText -split "`r?`n") {
+        $m = [regex]::Match($line, '\[(OK|FAIL|DEG)\]')
+        if (-not $m.Success) {
+            if ($line.Trim()) { $pending = $line }
+            continue
+        }
+        $head = $line.Substring(0, $m.Index)
+        if (-not $head.Trim()) { $head = $pending }   # деталь перенесена на след. строку
+        $name = ([regex]::Split($head.Trim(), '\s{2,}'))[0].Trim()
+        $pending = ''
+        if (-not $name) { continue }
+        if ($seen.ContainsKey($name)) { $seen[$name]++; $name = "$name #$($seen[$name])" } else { $seen[$name] = 1 }
+        $detail = $line.Substring($m.Index + $m.Length).Trim()
+        $censusRows += [PSCustomObject]@{ Name = $name; Status = $m.Groups[1].Value; Detail = $detail; Delta = '' }
+    }
+}
+
+$censusDiff = @()
+if ($censusRows.Count -gt 0 -and $CensusRegistry -and (Test-Path -LiteralPath $CensusRegistry)) {
+    $expected = @{}
+    foreach ($line in Get-Content -LiteralPath $CensusRegistry) {
+        if ($line -match '^\s*#' -or -not $line.Trim()) { continue }
+        $parts = $line -split "`t"
+        if ($parts.Count -ge 2) { $expected[$parts[0]] = $parts[1].Trim() }
+    }
+    $actual = @{}
+    foreach ($r in $censusRows) { $actual[$r.Name] = $r.Status }
+
+    foreach ($r in $censusRows) {
+        if (-not $expected.ContainsKey($r.Name)) { $r.Delta = 'NEW'; continue }
+        $was = $expected[$r.Name]
+        if ($was -eq $r.Status) { continue }
+        if ($r.Status -eq 'OK') { $r.Delta = "FIXED ($was)" } else { $r.Delta = "REGRESSED ($was)" }
+    }
+    foreach ($name in $expected.Keys) {
+        if ($actual.ContainsKey($name)) { continue }
+        $censusDiff += [PSCustomObject]@{ Name = $name; Status = 'MISSING'; Detail = "был $($expected[$name])"; Delta = 'MISSING' }
+    }
+}
+
+if ($censusRows.Count -gt 0) {
+    $censusBad = @($censusRows | Where-Object { $_.Status -ne 'OK' -or $_.Delta }) + $censusDiff
+    Write-Host "--- census: не-OK и расхождения с реестром ---" -ForegroundColor White
+    if ($censusBad.Count -eq 0) {
+        Write-Host "  (пусто)" -ForegroundColor Green
+    } else {
+        $censusBad |
+            Select-Object @{n='Проба';e={$_.Name}},
+                          @{n='Статус';e={$_.Status}},
+                          @{n='Дельта';e={$_.Delta}},
+                          @{n='Деталь';e={ if ($_.Detail.Length -gt 60) { $_.Detail.Substring(0,60) + '...' } else { $_.Detail } }} |
+            Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+    }
+    $moved = @($censusRows | Where-Object { $_.Delta }) + $censusDiff
+    if ($moved.Count -gt 0) {
+        Write-Host ("  сдвигов относительно реестра: {0}" -f $moved.Count) -ForegroundColor Yellow
+    }
+    Write-Host ""
+}
+
+# --- машинный срез прогона -------------------------------------------
+# Пишется безусловно: отчёт, который надо не забыть попросить, — это отчёт,
+# которого в нужный момент не окажется.
+if (-not $ReportDir -or -not $ReportDir.Trim()) {
+    $ReportDir = (Join-Path (Join-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'OS') '.qemu') 'reports')
+}
+if ($true) {
+    $stamp = (Get-Item -LiteralPath $Log).LastWriteTime.ToString('yyyyMMdd-HHmmss')
+    $outDir = Join-Path $ReportDir $stamp
+    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+    $results  | Export-Csv -LiteralPath (Join-Path $outDir 'kernel-probes.csv') -NoTypeInformation -Encoding UTF8
+    if ($censusRows.Count -gt 0) {
+        $censusRows | Export-Csv -LiteralPath (Join-Path $outDir 'census.csv') -NoTypeInformation -Encoding UTF8
+    }
+    [PSCustomObject]@{
+        Log        = (Resolve-Path -LiteralPath $Log).Path
+        Totals     = $counts
+        Crashed    = [bool]$runCrashed
+        Kernel     = $results
+        Census     = $censusRows
+        CensusDiff = $censusDiff
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $outDir 'report.json') -Encoding UTF8
+
+    Write-Host "срез сохранён: $outDir" -ForegroundColor DarkGray
+    Write-Host ""
+}
 
 # Exit code: 0 if clean, 1 on any FAIL/HALT or a crashed run. NOTRUN alone
 # (probes not reached because the run crashed) is already covered by the
