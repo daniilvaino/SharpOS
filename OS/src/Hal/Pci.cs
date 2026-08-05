@@ -19,8 +19,13 @@ namespace OS.Hal
 {
     internal static unsafe class Pci
     {
-        private const int MaxBus = 2;        // buses scanned/mapped (0..MaxBus-1)
-        private const int MaxDevs = 32;
+        // A desktop board fills bus 0 well past 32 functions once its root
+        // ports, xHCI, audio, SATA and management engine are counted, and the
+        // old limits (2 buses, 32 devices) truncated the scan silently — a
+        // device simply was not there, with nothing said. The window costs one
+        // MiB of identity mapping per bus, so 8 is cheap.
+        private const int MaxBus = 8;        // buses scanned/mapped (0..MaxBus-1)
+        private const int MaxDevs = 96;
 
         [System.Runtime.InteropServices.StructLayout(
             System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 1)]
@@ -73,8 +78,14 @@ namespace OS.Hal
         private static readonly PciDev[] s_devs = new PciDev[MaxDevs];
         private static int s_count;
         private static bool s_scanned;
+        private static bool s_truncated;
 
         public static int Count => s_count;
+
+        /// <summary>True when the scan stopped early: some devices were never
+        /// looked at, so "not found" means nothing until this is false.</summary>
+        public static bool Truncated => s_truncated;
+        public static int BusesScanned => MaxBus;
         public static PciDev Get(int i) => s_devs[i];
 
         // ECAM: cfg space of (bus,slot,func) at
@@ -93,7 +104,8 @@ namespace OS.Hal
             // Identity-map the bus window we scan (MMIO above RAM —
             // unmapped in the pager PML4 by default).
             ulong winSize = (ulong)MaxBus << 20;
-            if (!VirtualMemory.MapFixed((void*)baseAddr, baseAddr, winSize, exec: false))
+            if (!VirtualMemory.MapFixed((void*)baseAddr, baseAddr, winSize, exec: false,
+                                        VirtualMemory.MemoryKind.Device))
                 return;
 
             for (int busOff = 0; busOff < MaxBus; busOff++)
@@ -114,7 +126,7 @@ namespace OS.Hal
                         DeviceHeader* d = (DeviceHeader*)fnAddr;
                         if (d->Header.VendorID == 0 || d->Header.VendorID == 0xFFFF)
                             continue;
-                        if (s_count >= MaxDevs) return;
+                        if (s_count >= MaxDevs) { s_truncated = true; return; }
 
                         ref PciDev r = ref s_devs[s_count++];
                         r.Bus = bus; r.Slot = slot; r.Func = func;

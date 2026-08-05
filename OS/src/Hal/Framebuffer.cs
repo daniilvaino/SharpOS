@@ -52,7 +52,8 @@ namespace OS.Hal
                     (void*)bi.FramebufferBase,
                     bi.FramebufferBase,
                     bi.FramebufferSize,
-                    exec: false))
+                    exec: false,
+                    VirtualMemory.MemoryKind.Framebuffer))
                 return false;
 
             s_base      = bi.FramebufferBase;

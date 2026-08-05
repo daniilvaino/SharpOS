@@ -1,4 +1,5 @@
 using OS.Boot;
+using OS.Hal;
 
 namespace OS.Kernel.Memory
 {
@@ -13,8 +14,11 @@ namespace OS.Kernel.Memory
     // the pager root + CR3 switch — tracked in nativeaot-nostdlib-limits.md.
     internal static unsafe partial class InterfaceDispatchPatcher
     {
-        private const byte JmpRel32Opcode = 0xE9;
-        private const int JmpRel32Size = 5;
+        // jmp qword ptr [rip+0] + an 8-byte absolute target right behind it.
+        // 14 bytes, no register touched, and — unlike the jmp rel32 this
+        // replaced — no limit on how far the shellcode sits from the image.
+        private const byte JmpIndirectOpcode0 = 0xFF;
+        private const byte JmpIndirectOpcode1 = 0x25;
 
         private static bool s_installed;
 
@@ -27,45 +31,45 @@ namespace OS.Kernel.Memory
             delegate* unmanaged<void> failHandler)
         {
             if (s_installed) return true;
-            if (execBuffer == null) return false;
-            if (resolver == null || failHandler == null) return false;
+            if (execBuffer == null) return Refuse("execBuffer null", 0, 0, 0);
+            if (resolver == null || failHandler == null) return Refuse("resolver/failHandler null", 0, 0, 0);
 
             if (!InterfaceDispatchBridge.TryInitialize(execBuffer, execBufferSize, resolver, failHandler))
-                return false;
+                return Refuse("bridge init", (ulong)execBuffer, 0, 0);
 
             byte* shellcode = (byte*)InterfaceDispatchBridge.ShellcodeStart;
-            if (shellcode == null) return false;
+            if (shellcode == null) return Refuse("shellcode null", (ulong)execBuffer, 0, 0);
 
             byte* target = (byte*)InterfaceDispatchStub.GetMethodAddress();
-            if (target == null) return false;
+            if (target == null) return Refuse("stub address null", (ulong)execBuffer, (ulong)shellcode, 0);
 
-            // rel32 = shellcode - (target + 5); must fit in int32. Range
-            // check here so we fail clean rather than emit a wrap-around
-            // displacement inside Emit().
-            const long Int32Min = -2147483648L;
-            const long Int32Max = 2147483647L;
-            long displacement = (long)shellcode - ((long)target + JmpRel32Size);
-            if (displacement < Int32Min || displacement > Int32Max)
-                return false;
-
-            // step 118 Wave 1 — compile-time codegen (BootAsm.Generator).
-            // Emit() writes the 5-byte template `E9 00 00 00 00` then
-            // patches the 4-byte disp via the RelHole patch line:
-            //   *(int*)(dst+1) = (int)((long)shellcode - ((long)dst + 1 + 4));
-            // First real-world use of M6.1 RelHole mechanism (JMP rel32
-            // displacement-style hole, distinct from MovHole imm64 absolute
-            // address holes). No compare-gate — disp32 is computed at
-            // install time and varies per boot, so legacy parity would be
-            // meaningless without recomputing both sides.
             int compileLen = Emit(target, shellcode);
 
             // Readback check: if firmware mapped .text read-only, the writes
             // silently landed in nowhere (or faulted upstream).
-            if (target[0] != JmpRel32Opcode)
-                return false;
+            if (target[0] != JmpIndirectOpcode0 || target[1] != JmpIndirectOpcode1)
+            {
+                // The write did not stick: .text is read-only for us.
+                return Refuse("readback mismatch (.text not writable)",
+                              (ulong)target, (ulong)shellcode, 0);
+            }
 
             s_installed = true;
             return true;
+        }
+
+        // Every refusal names itself and prints the three numbers that decide
+        // it. Without them "stub not patched / patch failed" is the first
+        // symptom, and it surfaces far away — at the first interface dispatch.
+        private static bool Refuse(string why, ulong target, ulong shellcode, long displacement)
+        {
+            Console.Write("[ifacepatch] refused: ");
+            Console.Write(why);
+            Console.Write(" target=0x"); Console.WriteHexRaw(target, 16);
+            Console.Write(" shellcode=0x"); Console.WriteHexRaw(shellcode, 16);
+            Console.Write(" disp=0x"); Console.WriteHexRaw((ulong)displacement, 16);
+            Console.WriteLine("");
+            return false;
         }
     }
 }

@@ -30,14 +30,12 @@ namespace OS.Kernel.Elf
         {
             DebugLog.Write(LogLevel.Info, "elf validation start");
 
+            // Panic rather than shut down. On a real machine a quiet
+            // Shutdown() here is indistinguishable from a clean finish: the
+            // box powers off having run nothing, and the reason is gone with
+            // it. A panic keeps the screen up long enough to read.
             if (!FileSystem.Init())
-            {
-                DebugLog.Write(LogLevel.Warn, "fs init failed");
-                DebugLog.Write(LogLevel.Info, "elf validation done");
-                Platform.Shutdown();
-                Platform.Halt();
-                return;
-            }
+                OS.Kernel.Panic.Fail("fs init failed — no filesystem, nothing to run");
 
             DebugLog.Write(LogLevel.Info, "fs init ok");
             FileDiagnostics.DumpDirectory(BootDirectoryPath);
@@ -71,6 +69,11 @@ namespace OS.Kernel.Elf
             UiText.Write("failed: ");
             UiText.WriteUInt(failed);
             DebugLog.EndLine();
+
+            // "passed: 0 / failed: 0" reads as a green batch while meaning the
+            // opposite — every app was optional and none was on the disk.
+            if (passed == 0 && failed == 0)
+                OS.Kernel.Panic.Fail("app batch ran nothing — no app image on disk");
 
             DebugLog.Write(LogLevel.Info, "elf validation done");
             Platform.Shutdown();

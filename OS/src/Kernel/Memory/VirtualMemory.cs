@@ -198,7 +198,41 @@ namespace OS.Kernel.Memory
         public static bool Release(void* address, ulong size) => Decommit(address, size);
 
         // Map a specific VA→PA range (PE sections, MMIO). flags via exec.
+        /// <summary>How a physical range must be cached.</summary>
+        public enum MemoryKind
+        {
+            /// <summary>Ordinary RAM: fully cacheable.</summary>
+            Normal,
+            /// <summary>Device registers: uncacheable (PCD|PWT). Reads must
+            /// reach the device — a cached one returns the same value forever,
+            /// which is what a frozen HPET counter looks like.</summary>
+            Device,
+            /// <summary>Framebuffer: write-through. Writes reach memory, reads
+            /// stay cached. Uncacheable would be correct too but makes every
+            /// glyph a bus transaction, and we repaint whole rows.</summary>
+            Framebuffer,
+        }
+
+        private static bool s_largePageDevice;
+
+        /// <summary>True when a device range landed on an inherited large page,
+        /// so its cache bits are whatever the firmware chose. Diagnostic only.</summary>
+        public static bool LargePageDevice => s_largePageDevice;
+
         public static bool MapFixed(void* va, ulong pa, ulong size, bool exec)
+            => MapFixed(va, pa, size, exec, MemoryKind.Normal);
+
+        /// <summary>
+        /// Identity-map a physical range with an explicit caching policy.
+        ///
+        /// The distinction matters only on real hardware: QEMU and VirtualBox
+        /// trap MMIO addresses whatever the page table says, so a cacheable
+        /// mapping works there and fails on a physical machine — the HPET
+        /// counter reads back frozen ("hpet=STUCK") and a write such as
+        /// ENABLE_CNF may never reach the device at all. Anything with
+        /// registers behind it — HPET, PCI ECAM, AHCI, xHCI — is Device.
+        /// </summary>
+        public static bool MapFixed(void* va, ulong pa, ulong size, bool exec, MemoryKind kind)
         {
             if (va == null || size == 0) return false;
             ulong v   = (ulong)va & ~(PageSize - 1);
@@ -206,12 +240,54 @@ namespace OS.Kernel.Memory
             ulong phys = pa & ~(PageSize - 1);
             PageFlags flags = PageFlags.Present | PageFlags.Writable;
             if (!exec) flags |= PageFlags.NoExecute;
+            if (kind == MemoryKind.Device) flags |= PageFlags.CacheDisable | PageFlags.WriteThrough;
+            else if (kind == MemoryKind.Framebuffer) flags |= PageFlags.WriteThrough;
+            bool changed = false;
             for (ulong p = v; p < end; p += PageSize, phys += PageSize)
             {
-                if (X64PageTable.TryQueryKernel(p, out _, out _)) continue;
+                if (X64PageTable.TryQueryKernel(p, out _, out _))
+                {
+                    // Already mapped — by the firmware, whose attributes we
+                    // inherited and never asked about. For plain memory that
+                    // is fine, but a device range must actually be writable
+                    // and uncached, so restate the flags instead of trusting
+                    // what was there. On a large page only W/NX can be
+                    // loosened (siblings may hold kernel code), so the cache
+                    // bits stay as inherited — LargePageDevice records that.
+                    if (kind == MemoryKind.Normal) continue;
+                    if (X64PageTable.TrySetKernelFlagsEx(p, flags, PageFlags.Present,
+                                                         out bool wasLarge) && !wasLarge)
+                    {
+                        changed = true;
+                        continue;
+                    }
+
+                    // A 2 MiB/1 GiB entry: the call above refuses to touch its
+                    // cache bits, because they are shared with sibling pages
+                    // that may hold kernel code. Unmap splits the entry down to
+                    // 4 KiB and clears just this page, so the re-map below owns
+                    // its own PTE and can be uncached without affecting anyone.
+                    if (X64PageTable.Unmap(p) && X64PageTable.MapKernel(p, phys, flags))
+                    {
+                        changed = true;
+                        continue;
+                    }
+                    s_largePageDevice = true;
+                    continue;
+                }
                 if (!X64PageTable.MapKernel(p, phys, flags)) return false;
             }
-            // Fresh not-present → Present transitions don't need flushing.
+            // Fresh not-present → Present transitions don't need flushing, but
+            // a rewritten live entry does.
+            if (changed)
+            {
+                X64PageTable.FlushTlbAll();
+                // Marking a range uncached does not evict what is already
+                // cached for it — without this the CPU keeps answering from
+                // the stale line and the device looks frozen.
+                if (kind != MemoryKind.Normal)
+                    OS.Kernel.Paging.Cr3Accessor.TryInvalidateCaches();
+            }
             return true;
         }
 

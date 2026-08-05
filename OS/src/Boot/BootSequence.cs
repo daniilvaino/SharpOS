@@ -331,6 +331,11 @@ namespace OS.Boot
 
             if (Probes.PciScan)
                 PciProbe.Run();
+
+            // Read-only like the PCI scan above, so it is safe while firmware
+            // still owns the machine.
+            if (Probes.UsbScan)
+                UsbProbe.Run();
             // NOTE: AHCI/FAT bring-up is POST-EBS only — issuing AHCI
             // commands reprograms the HBA the live UEFI firmware still
             // owns (it loads CoreCLR assemblies + ELF apps via UEFI FS),
@@ -554,8 +559,15 @@ namespace OS.Boot
                 &InterfaceDispatchResolver.Resolve,
                 &InterfaceDispatchResolver.Fail);
 
-            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
-                ok ? "iface dispatch bridge installed" : "iface dispatch bridge install failed");
+            // Fail here, not two phases later. Without the bridge the very
+            // first interface dispatch panics with "stub not patched", by which
+            // point the reason has scrolled off a real machine's screen — and
+            // there is no scrollback there. TryInstall has already printed
+            // which check refused and with what addresses.
+            if (!ok)
+                Panic.Fail("iface dispatch bridge install failed (see [ifacepatch] above)");
+
+            Log.Write(LogLevel.Info, "iface dispatch bridge installed");
         }
 
         private static void InstallByRefAssignRefShellcode()

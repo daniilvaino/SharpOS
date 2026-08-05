@@ -188,7 +188,8 @@ namespace OS.Hal
 
             ulong abar = dev.Bar5 & ~0xFUL;
             if (abar == 0) return false;
-            if (!VirtualMemory.MapFixed((void*)abar, abar, 0x2000, exec: false))
+            if (!VirtualMemory.MapFixed((void*)abar, abar, 0x2000, exec: false,
+                                        VirtualMemory.MemoryKind.Device))
                 return false;
             Controller = (HBA*)abar;
             DisableInterrupts(Controller, null);

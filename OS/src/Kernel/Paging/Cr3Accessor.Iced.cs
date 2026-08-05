@@ -58,6 +58,20 @@ namespace OS.Kernel.Paging
             return w.Count;
         }
 
+        //   wbinvd            ; 0F 09
+        //   ret               ; C3
+        // 3 bytes.
+        private static int EmitWbinvdStubIced(byte* p, int cap)
+        {
+            var a = new Iced.Intel.Assembler(64);
+            a.wbinvd();
+            a.ret();
+
+            var w = new Cr3StubBufWriter(p, cap);
+            a.Assemble(w, 0);
+            return w.Count;
+        }
+
         // Same shape as the other Iced compare helpers. Length and
         // per-byte mismatches both panic — a wrong CR3 stub corrupts the
         // entire kernel memory map, so loud fail at Phase3 is the right

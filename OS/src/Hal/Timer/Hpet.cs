@@ -34,6 +34,68 @@ namespace OS.Hal.Timer
         private static bool s_is64Bit;
         private static int s_numComparators;
 
+        // Config register as it read back after we set ENABLE_CNF. If bit 0 is
+        // clear here, the write did not stick — which is a different failure
+        // from "the counter is enabled but frozen", and only this tells them
+        // apart on a machine with no debugger.
+        private static ulong s_configBefore, s_configAfter, s_caps;
+        public static ulong ConfigBefore => s_configBefore;
+        public static ulong ConfigAfter => s_configAfter;
+        public static ulong Capabilities => s_caps;
+
+        /// <summary>
+        /// Halt, zero and restart the main counter.
+        ///
+        /// ENABLE_CNF reading back as set does not guarantee the counter is
+        /// running — it can be left halted across the firmware handoff. The
+        /// spec allows writing the counter only while it is halted, so a
+        /// clean restart is the disable / write / enable sequence rather than
+        /// just setting the bit again.
+        /// </summary>
+        public static bool TryForceRestart()
+        {
+            if (!s_initialized) return false;
+
+            ulong* cfg = (ulong*)(s_base + OFFSET_CONFIG);
+            *cfg = *cfg & ~1UL;
+            *(ulong*)(s_base + OFFSET_COUNTER) = 0;
+            *cfg = *cfg | 1UL;
+            s_restarted = true;
+            return true;
+        }
+
+        private static bool s_restarted;
+
+        /// <summary>True when the counter had to be restarted by hand because
+        /// the firmware left it halted with ENABLE_CNF already set.</summary>
+        public static bool WasRestarted => s_restarted;
+
+        /// <summary>
+        /// Verify the counter actually moves, and restart it once if it does
+        /// not. Observed on real hardware: the firmware hands over a halted
+        /// counter whose ENABLE_CNF bit already reads as set, so setting the
+        /// bit is a no-op and only the halt/zero/start cycle revives it.
+        ///
+        /// The restart zeroes the counter, so it happens at most once — later
+        /// callers must not have timestamps pulled out from under them.
+        /// </summary>
+        public static bool EnsureRunning()
+        {
+            if (!s_initialized) return false;
+            if (Advances()) return true;
+            if (s_restarted) return false;
+            TryForceRestart();
+            return Advances();
+        }
+
+        private static bool Advances()
+        {
+            ulong t0 = ReadCounter();
+            for (int i = 0; i < 1_000_000; i++)
+                if (ReadCounter() != t0) return true;
+            return false;
+        }
+
         public static bool IsInitialized => s_initialized;
         public static ulong FrequencyHz => s_frequencyHz;
         // Raw MMIO address of the main counter — handed to apps via the
@@ -51,9 +113,18 @@ namespace OS.Hal.Timer
             ulong baseAddr = OS.Hal.Acpi.Hpet.Base;
             if (baseAddr == 0) return false;
 
+            // The firmware leaves this window mapped cacheable (or not mapped
+            // at all). A cached HPET reads the same counter value forever —
+            // "hpet=STUCK" — and ENABLE_CNF below may never reach the chip.
+            if (!OS.Kernel.Memory.VirtualMemory.MapFixed(
+                    (void*)baseAddr, baseAddr, 0x1000, exec: false,
+                    OS.Kernel.Memory.VirtualMemory.MemoryKind.Device))
+                return false;
+
             byte* baseP = (byte*)baseAddr;
 
             ulong caps = *(ulong*)(baseP + OFFSET_CAPS);
+            s_caps = caps;
             ulong period = (caps >> 32) & 0xFFFFFFFFu;
             if (period == 0 || period > 100_000_000UL) return false;  // sanity: <0.1s/tick
 
@@ -66,12 +137,21 @@ namespace OS.Hal.Timer
 
             // Enable the counter (set ENABLE_CNF in Configuration Register).
             ulong config = *(ulong*)(baseP + OFFSET_CONFIG);
+            s_configBefore = config;
             *(ulong*)(baseP + OFFSET_CONFIG) = config | 1UL;
+            s_configAfter = *(ulong*)(baseP + OFFSET_CONFIG);
 
             s_initialized = true;
+            // The bit above may already have been set by the firmware while
+            // the counter sat halted — check rather than assume.
+            EnsureRunning();
             return true;
         }
 
+        // NoInlining is load-bearing: ILC hoists a plain MMIO read out of a
+        // spin loop, which looks exactly like a frozen counter.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         public static ulong ReadCounter()
         {
             if (!s_initialized) return 0;

@@ -14,6 +14,15 @@
     [switch]$NoRun,
     [switch]$Stop,
     [int]$QmpPort = 4444,
+    # Reproduce the hardware the kernel actually meets: no PS/2 controller,
+    # a USB keyboard instead. Firmware still provides input pre-EBS; our own
+    # post-EBS driver is PS/2-only, so the launcher goes deaf exactly as it
+    # does on the test machines.
+    [switch]$NoPs2,
+    # Attach an xHCI controller with a keyboard and mouse, keeping PS/2 intact.
+    # Target to develop the USB stack against: recent machines are usually
+    # xHCI-only, while QEMU's q35 does not expose one unless asked.
+    [switch]$Usb,
     # ESP staged as a real FAT32 image; 253 MB of payload today, so 512 leaves headroom.
     [int]$EspImageSizeMb = 512,
     [string]$QemuExe,
@@ -335,6 +344,30 @@ New-Item -ItemType Directory -Force -Path $psrlHistoryDir | Out-Null
 if (-not (Test-Path -LiteralPath $psrlHistoryFile)) {
     New-Item -ItemType File -Path $psrlHistoryFile | Out-Null
 }
+# Boot log target: the kernel mirrors every console line into this file, one
+# sector per line. Pre-staged at a fixed size because writing in place needs
+# no cluster allocation - 16 MiB is ~32k lines, far more than a boot produces.
+$bootLog = Join-Path $espSharpOSDir "bootlog.txt"
+# Written as 256 copies of a 64 KiB blank chunk. A per-byte loop over 16M
+# elements takes minutes, and [Array]::Fill would be one call but does not
+# exist on .NET Framework, so it breaks under Windows PowerShell 5.1.
+$blankChunk = New-Object byte[] (64 * 1024)
+for ($i = 0; $i -lt $blankChunk.Length; $i++) { $blankChunk[$i] = 0x20 }
+$bootLogStream = [System.IO.File]::Create($bootLog)
+try {
+    for ($i = 0; $i -lt 256; $i++) { $bootLogStream.Write($blankChunk, 0, $blankChunk.Length) }
+} finally {
+    $bootLogStream.Dispose()
+}
+Write-Host "Prepared boot log: bootlog.txt (16 MiB)"
+
+# Target for the filesystem write probe: a file of known size and content
+# that the kernel overwrites in place. Staged fresh every run so a previous
+# run's pattern cannot be mistaken for a successful write.
+$fsWriteProbe = Join-Path $espSharpOSDir "fswrite.bin"
+[System.IO.File]::WriteAllBytes($fsWriteProbe, ([byte[]]@(65) * 512))
+Write-Host "Prepared FS write probe: fswrite.bin (512 x 'A')"
+
 Write-Host "Prepared PSReadLine history: \sharpos\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt"
 
 # ...and tell PSReadLine not to write it back. The media is read-only, so every
@@ -564,7 +597,11 @@ $savedInputEncoding = [Console]::InputEncoding
 
 Push-Location $qemuWorkDir
 try {
-    $machineArgs = @("-machine", "q35,accel=tcg")
+    $machineArgs = if ($NoPs2) {
+        @("-machine", "q35,accel=tcg,i8042=off")
+    } else {
+        @("-machine", "q35,accel=tcg")
+    }
     # +nx: expose the NX/XD bit to firmware and OS (required for NX memory protection policy)
     $cpuArgs = @("-cpu", "qemu64,+nx")
 
@@ -581,6 +618,12 @@ try {
         $displayArgs = @("-vga", "std", "-serial", "stdio")
     } else {
         $displayArgs = @("-vga", "std", "-nographic", "-serial", "mon:stdio", "-echr", "0x1d")
+    }
+
+    # With the i8042 gone the guest has no keyboard at all unless one is
+    # attached over USB — which is the point: firmware can drive it, we cannot.
+    if ($NoPs2 -or $Usb) {
+        $displayArgs += @("-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-mouse")
     }
 
     $qemuArgs = $machineArgs + $cpuArgs + @("-m", "2048") + $displayArgs + @(

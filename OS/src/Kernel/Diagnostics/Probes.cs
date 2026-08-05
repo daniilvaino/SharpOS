@@ -232,6 +232,22 @@ namespace OS.Kernel.Diagnostics
         // managed NRE bring-up. Flip back true after addressing.
         public const bool KernelGcPreciseSmoke = false;
 
+        // Lists the USB host controllers the machine exposes. The first step of
+        // the USB stack: which controller is present decides what to write, and
+        // it differs between QEMU and the test machines.
+        public const bool UsbScan = true;
+
+        // Stop the machine right after printing the USB list. On the test
+        // hardware there is no serial, no log (the boot medium is USB and we
+        // cannot read it post-EBS) and the screen scrolls past the answer
+        // before anyone can read it — so freeze it while it is still there.
+        public const bool UsbScanHalt = false;
+
+        // First filesystem write: overwrites the head of a staged file in
+        // place. On real hardware this writes to the machine's own ESP, so
+        // keep it off there until the QEMU image proves it correct.
+        public const bool FatWrite = true;
+
         // Traces the key-event path that PSReadLine reads through
         // (SharpOSHost_ReadConsoleInput). Bounded to the first few events so a
         // stuck read is distinguishable from keys that never arrive at all.

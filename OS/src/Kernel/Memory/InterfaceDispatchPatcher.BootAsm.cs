@@ -12,6 +12,7 @@
 // the [CompileTimeAsmBody(nameof(Emit))] attribute on the body method.
 
 using BootAsm;
+using static Iced.Intel.AssemblerRegisters;
 
 namespace OS.Kernel.Memory
 {
@@ -20,15 +21,31 @@ namespace OS.Kernel.Memory
         [CompileTimeAsm]
         public static partial int Emit(byte* dst, byte* shellcode);
 
-        // 5 bytes: JMP rel32 to the bridge shellcode start. The walker
-        // emits `[0xE9, ord_lo, ord_hi, 0xAD, 0xDE]` via a.db() — Iced
-        // copies them verbatim. After Assemble the sentinel scan finds
-        // them, zeroes the 4-byte disp slot, and the generator burns a
-        // patch line `*(int*)(dst + 1) = (int)((long)shellcode - ((long)dst + 1 + 4));`.
+        // 14 bytes: an absolute indirect jump through a data slot that
+        // follows it:
+        //
+        //     FF 25 00 00 00 00      jmp qword ptr [rip+0]
+        //     <8-byte target>        patched at install time
+        //
+        // This replaced a 5-byte `jmp rel32` (step148). rel32 only reaches
+        // +/-2 GiB, and on real hardware the firmware loaded the image at
+        // ~6.4 GB while handing out the EfiLoaderCode pool at ~2.3 GB — over
+        // 3 GB apart, so the patch refused to install and the first interface
+        // dispatch panicked. Distance is the firmware's choice, so the jump
+        // must not depend on it.
+        //
+        // The indirect form also clobbers no register, which matters here:
+        // the caller arrives with the dispatch cell and `this` already in
+        // place, and the bridge shellcode expects them untouched.
         [CompileTimeAsmBody(nameof(Emit))]
         private static void Emit_Body(Iced.Intel.Assembler a, BootAsm.HoleCollector h)
         {
-            h.JmpRelHole(a, "shellcode");
+            var slot = a.CreateLabel();
+            // RIP-relative through the slot below, with the encoder computing
+            // the displacement — writing the bytes by hand would hard-code an
+            // assumption that nothing ever lands between the jump and the slot.
+            a.jmp(__qword_ptr[slot]);
+            h.DataSlotHole(a, ref slot, "shellcode");
         }
     }
 }

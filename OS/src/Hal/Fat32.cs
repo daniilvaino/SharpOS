@@ -648,6 +648,104 @@ namespace OS.Hal
             return true;
         }
 
+        // Resolve a pre-staged file to a flat LBA range, for callers that need
+        // to write into it repeatedly without walking the cluster chain every
+        // time (the boot log: one sector per line, thousands of lines).
+        //
+        // Contiguity is *verified*, not assumed. A fragmented file would make
+        // the flat arithmetic silently write into whatever else owns those
+        // clusters, so a fragmented one is refused outright and the caller
+        // loses logging rather than the filesystem losing data.
+        public static bool TryOpenLinear(string path, out ulong startLba, out uint sectors)
+        {
+            startLba = 0;
+            sectors = 0;
+            if (!s_mounted || s_disk == null) return false;
+            if (!Resolve(path, out uint clus, out uint size, out bool isDir) || isDir) return false;
+            if (size == 0) return false;
+
+            startLba = ClusterLba(clus);
+            uint cluster = clus;
+            uint clusterCount = 1;
+            while (true)
+            {
+                uint next = FatNext(cluster);
+                if (next == 0) break;                 // end of chain
+                if (next != cluster + 1) return false; // fragmented — refuse
+                cluster = next;
+                clusterCount++;
+            }
+
+            ulong totalSectors = (ulong)clusterCount * s_spc;
+            ulong sizeSectors = (size + s_bps - 1) / s_bps;
+            if (sizeSectors < totalSectors) totalSectors = sizeSectors;
+            if (totalSectors == 0 || totalSectors > uint.MaxValue) return false;
+
+            sectors = (uint)totalSectors;
+            return true;
+        }
+
+        /// <summary>Write one sector. The source is copied into the DMA scratch
+        /// first, so callers may pass ordinary memory.</summary>
+        public static bool WriteSectorAt(ulong lba, byte* src)
+        {
+            if (!s_mounted || s_disk == null || src == null) return false;
+            for (uint i = 0; i < s_bps; i++) s_sec[i] = src[i];
+            return s_disk.Write(lba, 1, s_sec);
+        }
+
+        // Overwrite the first `len` bytes of an existing file, in place.
+        //
+        // First step of write support, and deliberately the smallest one that
+        // is still useful: the cluster chain, the file size and the directory
+        // entry are all left alone, so nothing outside the file's own data can
+        // be damaged if this is wrong. Growing a file, allocating clusters and
+        // updating directory entries come after this is proven.
+        //
+        // Sector-at-a-time rather than the bulk path ReadFile uses: writes are
+        // rare and small (a log line), and read-modify-write of a partial tail
+        // sector is the only correct way to avoid clobbering the bytes past
+        // `len` that still belong to the file.
+        //
+        // Returns bytes written, or -1 when the file is missing, is a
+        // directory, or `len` exceeds its current size.
+        public static int WriteFileInPlace(string path, byte* src, int len)
+        {
+            if (!s_mounted || s_disk == null || src == null || len < 0) return -1;
+            if (!Resolve(path, out uint clus, out uint size, out bool isDir) || isDir) return -1;
+            if ((uint)len > size) return -1;          // no growth yet
+
+            int written = 0;
+            uint cluster = clus;
+            uint sectorsPerCluster = s_spc;
+
+            while (cluster != 0 && written < len)
+            {
+                for (uint si = 0; si < sectorsPerCluster && written < len; si++)
+                {
+                    ulong lba = ClusterLba(cluster) + si;
+                    int remaining = len - written;
+                    bool wholeSector = remaining >= (int)s_bps;
+
+                    if (!wholeSector)
+                    {
+                        // Partial tail: preserve the bytes after `len`.
+                        if (!s_disk.Read(lba, 1, s_sec)) return written;
+                    }
+
+                    int take = wholeSector ? (int)s_bps : remaining;
+                    for (int i = 0; i < take; i++) s_sec[i] = src[written + i];
+
+                    if (!s_disk.Write(lba, 1, s_sec)) return written;
+                    written += take;
+                }
+
+                cluster = FatNext(cluster);
+            }
+
+            return written;
+        }
+
         public static int ReadFile(string path, byte* dst, int cap, out uint fileSize)
         {
             fileSize = 0;

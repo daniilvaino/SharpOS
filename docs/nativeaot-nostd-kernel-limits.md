@@ -567,6 +567,28 @@ frame chain → mark roots. Тогда snять `ReclamationDisabled` будет
 
 ---
 
+## 11. Железо vs эмулятор: MMIO и HPET (step 149)
+
+### ⚠️ Прошивка отдаёт HPET остановленным, но с выставленным ENABLE_CNF
+
+**Симптом:** на железе `hpet=STUCK` — счётчик не двигается за 5M чтений. В QEMU/VBox не воспроизводится.
+
+**Корень:** UEFI при teardown останавливает счётчик, **не** сбрасывая бит разрешения. `config |= 1` — no-op, запустить не может. Оживляет только цикл halt → counter=0 → enable (счётчик по спеке пишется только остановленным).
+
+**Fix:** `Hpet.EnsureRunning()` — проверяет движение, один раз перезапускает. Зовётся из `Init` и **сразу после `ExitBootServices`** (до потребителей: AHCI-таймауты, `Stopwatch`, `TimerQueue`).
+
+**Диагностика:** `[ebsx] hpet cfg0/cfg1/ctr/pte/caps` — `pte` бит 4 (PCD) отделяет stale-чтения от реально стоящего счётчика.
+
+### ⚠️ MapFixed молча пропускал уже отображённые страницы
+
+Firmware-унаследованные mapping'и (HPET, ECAM, framebuffer, ABAR) обходили `MapFixed` целиком (`if (TryQueryKernel(p)) continue;`) — атрибуты не применялись, включая бит записи. На 2 MiB-странице `TrySetKernelFlagsEx` кеш-биты не трогает (сиблинги могут держать код ядра) → нужен split.
+
+**Fix:** `MapFixed(..., MemoryKind)` — `Normal` / `Device` (PCD|PWT) / `Framebuffer` (PWT). Для не-`Normal` флаги переустанавливаются принудительно; large page расщепляется через `Unmap` + `MapKernel`; после — `FlushTlbAll` + `wbinvd`.
+
+**`wbinvd` обязателен:** пометить страницу uncached ≠ выбросить уже закешированное. Без него CPU продолжает отвечать из stale-строки. Стаб — `Cr3Accessor.TryInvalidateCaches()` (третий рядом с CR3 read/write, Iced+legacy compare). Это же даёт готовый serializing-инструмент для §9.
+
+---
+
 ## Быстрый протокол при встрече новой проблемы
 
 1. Добавить минимальный repro в `NativeAotProbe.cs`.

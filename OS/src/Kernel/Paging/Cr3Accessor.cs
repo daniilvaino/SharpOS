@@ -5,10 +5,12 @@ namespace OS.Kernel.Paging
         private const uint StubBufferSize = 64;
         private const uint ReadStubOffset = 0;
         private const uint WriteStubOffset = 32;
+        private const uint WbinvdStubOffset = 48;
 
         private static bool s_initialized;
         private static delegate* unmanaged<ulong> s_readCr3;
         private static delegate* unmanaged<ulong, void> s_writeCr3;
+        private static delegate* unmanaged<void> s_wbinvd;
         private static void* s_execBuffer;
         private static uint s_execBufferSize;
 
@@ -40,6 +42,24 @@ namespace OS.Kernel.Paging
             return true;
         }
 
+        /// <summary>
+        /// Write back and invalidate every cache line (WBINVD).
+        ///
+        /// Needed after a page's cache attributes change: turning a range
+        /// uncached does not evict what is already cached for it, so reads
+        /// keep being served from the stale line — an MMIO counter that never
+        /// moves. Coarse and slow (the whole cache, not one range), which is
+        /// why this is a boot-time-only call.
+        /// </summary>
+        public static bool TryInvalidateCaches()
+        {
+            if (!s_initialized && !TryInitialize())
+                return false;
+
+            s_wbinvd();
+            return true;
+        }
+
         public static bool TryInitialize()
         {
             if (s_initialized)
@@ -65,8 +85,12 @@ namespace OS.Kernel.Paging
             if (!TryWriteWriteStub(destination + WriteStubOffset))
                 return false;
 
+            if (!TryWriteWbinvdStub(destination + WbinvdStubOffset))
+                return false;
+
             s_readCr3 = (delegate* unmanaged<ulong>)(destination + ReadStubOffset);
             s_writeCr3 = (delegate* unmanaged<ulong, void>)(destination + WriteStubOffset);
+            s_wbinvd = (delegate* unmanaged<void>)(destination + WbinvdStubOffset);
             s_initialized = true;
             return true;
         }
@@ -126,6 +150,17 @@ namespace OS.Kernel.Paging
             return true;
         }
 
+        private static bool TryWriteWbinvdStub(byte* destination)
+        {
+            if (destination == null) return false;
+
+            byte* scratch = stackalloc byte[16];
+            int icedLen = EmitWbinvdStubIced(destination, 16);
+            int legacyLen = EmitWbinvdStubLegacy(scratch);
+            CompareOrPanic("WbinvdStub", destination, scratch, icedLen, legacyLen);
+            return true;
+        }
+
         // ---- Legacy byte-stream emitters (return length for compare). ----
 
         private static int EmitReadStubLegacy(byte* destination)
@@ -136,6 +171,15 @@ namespace OS.Kernel.Paging
             destination[2] = 0xD8;
             destination[3] = 0xC3;
             return 4;
+        }
+
+        private static int EmitWbinvdStubLegacy(byte* destination)
+        {
+            // wbinvd ; ret
+            destination[0] = 0x0F;
+            destination[1] = 0x09;
+            destination[2] = 0xC3;
+            return 3;
         }
 
         private static int EmitWriteStubLegacy(byte* destination)

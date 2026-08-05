@@ -95,6 +95,13 @@ namespace OS.Boot
             // all post-EBS drivers are polling-based.
             X64Asm.Cli();
 
+            // Real hardware halts the HPET counter across the firmware
+            // teardown while leaving ENABLE_CNF set, so it cannot be spotted
+            // by reading the config register. Revive it here, before anything
+            // post-EBS asks the time — Hpet.Init ran back in Phase 3 with UEFI
+            // alive and the counter still moving, so it had nothing to fix.
+            global::OS.Hal.Timer.Hpet.EnsureRunning();
+
             // Self-checking oracle that the OWN substrate is bit-for-bit
             // alive without firmware — headless-deterministic.
             Console.WriteLine("[ebs] ExitBootServices OK -- POST-EBS substrate LIVE");
@@ -118,22 +125,10 @@ namespace OS.Boot
             bool ps2Ok = Ps2Keyboard.IsPresent();
 
             // HPET: counter advances without UEFI (timekeeping survives).
-            bool hpetOk = true;
-            if (global::OS.Hal.Timer.Hpet.IsInitialized)
-            {
-                ulong t0 = global::OS.Hal.Timer.Hpet.ReadCounter();
-                ulong t1 = t0;
-                int guard = 5_000_000;
-                // ReadCounter is an MMIO read (side-effecting) so the
-                // loop is not optimised away; exits when the counter
-                // ticks or the guard expires.
-                while (guard-- > 0)
-                {
-                    t1 = global::OS.Hal.Timer.Hpet.ReadCounter();
-                    if (t1 != t0) break;
-                }
-                hpetOk = t1 != t0;
-            }
+            // EnsureRunning also revives a counter the firmware handed over
+            // halted, which is what real hardware does (see Hpet).
+            bool hpetOk = !global::OS.Hal.Timer.Hpet.IsInitialized
+                          || global::OS.Hal.Timer.Hpet.EnsureRunning();
 
             bool pass = uartOk && fbOk && ps2Ok && hpetOk;
             Console.Write("[ebsx] uart=");
@@ -143,8 +138,54 @@ namespace OS.Boot
             Console.Write(" ps2=0x");
             Console.WriteHex(ks);
             Console.Write(" hpet=");
-            Console.Write(hpetOk ? "adv" : "STUCK");
-            Console.WriteLine(pass ? " PASS" : " FAIL");
+            Console.Write(hpetOk
+                ? (global::OS.Hal.Timer.Hpet.WasRestarted ? "adv(restarted)" : "adv")
+                : "STUCK");
+            // Name the failing fields instead of a bare verdict glued to the
+            // last one: "hpet=adv FAIL" reads as if hpet failed when the
+            // verdict is really about the whole line.
+            if (pass)
+            {
+                Console.WriteLine(" => PASS");
+            }
+            else
+            {
+                Console.Write(" => FAIL(");
+                if (!uartOk) Console.Write("uart ");
+                if (!fbOk) Console.Write("fb ");
+                if (!ps2Ok) Console.Write("ps2 ");
+                if (!hpetOk) Console.Write("hpet ");
+                Console.WriteLine(")");
+            }
+
+            // Kept for the case where even the restart does not take: these
+            // are the values that told cache/mapping apart from a genuinely
+            // halted counter, and re-deriving them costs a hardware trip.
+            if (!hpetOk && global::OS.Hal.Timer.Hpet.IsInitialized)
+            {
+                Console.Write("[ebsx] hpet cfg0=0x");
+                Console.WriteHex(global::OS.Hal.Timer.Hpet.ConfigBefore);
+                Console.Write(" cfg1=0x");
+                Console.WriteHex(global::OS.Hal.Timer.Hpet.ConfigAfter);
+                Console.Write(" ctr=0x");
+                Console.WriteHex(global::OS.Hal.Timer.Hpet.ReadCounter());
+                Console.Write(" base=0x");
+                Console.WriteHex(global::OS.Hal.Acpi.Hpet.Base);
+                Console.WriteLine(OS.Kernel.Memory.VirtualMemory.LargePageDevice
+                    ? " map=large(inherited cache)" : " map=4k");
+
+                // pte bit 4 (PCD) says whether the page really ended up
+                // uncached — that is what separates stale reads from a
+                // counter that is genuinely not moving.
+                Console.Write("[ebsx] hpet pte=0x");
+                ulong ctrVa = global::OS.Hal.Timer.Hpet.CounterAddress;
+                Console.WriteHex(
+                    OS.Kernel.Paging.X64PageTable.TryGetKernelLeafPte(ctrVa, out ulong ctrPte)
+                        ? ctrPte : 0xDEADUL);
+                Console.Write(" caps=0x");
+                Console.WriteHex(global::OS.Hal.Timer.Hpet.Capabilities);
+                Console.WriteLine("");
+            }
 
             // Own disk stack — POST-EBS only: bringing up AHCI
             // reprograms the HBA, which would corrupt UEFI FS if
@@ -153,6 +194,16 @@ namespace OS.Boot
             // our AHCI + RO-FAT entirely without firmware.
             OS.Kernel.Diagnostics.AhciProbe.Run();
             OS.Kernel.Diagnostics.FatProbe.Run();
+
+            // From here on every console line also lands on disk. Bound after
+            // the mount because that is when the disk becomes ours; everything
+            // printed before this point exists only on screen.
+            if (OS.Hal.BootLog.TryInit())
+                Console.WriteLine("[bootlog] on disk: sharpos/bootlog.txt");
+            else
+                Console.WriteLine("[bootlog] unavailable (missing or fragmented)");
+            if (OS.Kernel.Diagnostics.Probes.FatWrite)
+                OS.Kernel.Diagnostics.FatWriteProbe.Run();
 
             // Firmware-free hosted tier: run CoreCLR HERE, post-EBS.
             // Fs.Current is the FAT mounted above, so the host's

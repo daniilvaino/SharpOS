@@ -71,6 +71,10 @@ namespace OS.Hal
 
         public static void WriteChar(char value)
         {
+            // Mirror to the on-disk log before anything else: whatever kills
+            // the machine next, this line is already on its way to the platter.
+            BootLog.Putc(value);
+
             if (s_ownConsole)
             {
                 // Serial stays raw and unconditional: if the terminal engine breaks, the
