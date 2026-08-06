@@ -13,7 +13,7 @@ namespace OS.PAL.SharpOSHost
     // SharpOS has a real PS/2 keyboard driver in OS.Hal.Ps2Keyboard +
     // LineEditor — boot shell already uses them for the launcher menu.
     // Wire those into ReadConsole:
-    //   1. Loop polling Ps2Keyboard.TryReadScancode
+    //   1. Loop polling ScancodeSource.TryReadScancode
     //   2. Decode each scancode to KeyKind + char
     //   3. Feed LineEditor (handles printable insert / Backspace / Enter)
     //   4. Echo each accepted char (and \n on Enter) to UART so user sees
@@ -42,7 +42,7 @@ namespace OS.PAL.SharpOSHost
             // cmdlet that scheduled async work) and overall sluggishness.
             while (true)
             {
-                if (!Ps2Keyboard.TryReadScancode(out byte sc))
+                if (!ScancodeSource.TryReadScancode(out byte sc))
                 {
                     // Nothing typed yet: paint whatever is pending before blocking.
                     // The terminal front-end batches drawing until a newline, and a

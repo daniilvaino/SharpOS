@@ -237,6 +237,26 @@ namespace OS.Kernel.Diagnostics
         // it differs between QEMU and the test machines.
         public const bool UsbScan = true;
 
+        // Takes the xHCI controller from the firmware and resets it. DMA-free:
+        // register reads, one ownership handshake, one reset — so it can be
+        // trusted on hardware before any ring exists.
+        public const bool XhciInit = true;
+
+        // After configuring a HID device, wait a few seconds for reports so a
+        // keypress can be seen end to end. Costs boot time and needs someone
+        // at the keyboard, so it is off for headless regression runs.
+        public const bool UsbHidPoll = true;
+
+        // Creates a file: allocates clusters and edits a directory, so a bug
+        // damages the volume rather than one file's contents. Separate switch
+        // from FatWrite for exactly that reason.
+        public const bool FatCreate = true;
+
+        // Writes a pattern to the last sector of the USB stick and reads it
+        // back. Safe against the QEMU stick (a copy rebuilt every run) and
+        // destructive against a real one — keep off outside QEMU.
+        public const bool UsbStorageWrite = true;
+
         // Stop the machine right after printing the USB list. On the test
         // hardware there is no serial, no log (the boot medium is USB and we
         // cannot read it post-EBS) and the screen scrolls past the answer

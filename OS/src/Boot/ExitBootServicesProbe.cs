@@ -195,6 +195,10 @@ namespace OS.Boot
             OS.Kernel.Diagnostics.AhciProbe.Run();
             OS.Kernel.Diagnostics.FatProbe.Run();
 
+            // Same rule as AHCI above — taking the controller from the
+            // firmware is only legitimate once the firmware is gone.
+            OS.Kernel.Diagnostics.UsbProbe.RunXhci();
+
             // From here on every console line also lands on disk. Bound after
             // the mount because that is when the disk becomes ours; everything
             // printed before this point exists only on screen.

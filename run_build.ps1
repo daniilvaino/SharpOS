@@ -624,6 +624,13 @@ try {
     # attached over USB — which is the point: firmware can drive it, we cannot.
     if ($NoPs2 -or $Usb) {
         $displayArgs += @("-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-mouse")
+        # A second copy of the ESP image, attached over USB. Deliberately a
+        # copy: it exercises the mass-storage path against a filesystem we
+        # already know how to read, without putting the disk we boot from
+        # behind two drivers at once.
+        $displayArgs += @(
+            "-drive", "if=none,id=usbstick,format=raw,file=usbstick.img",
+            "-device", "usb-storage,drive=usbstick")
     }
 
     $qemuArgs = $machineArgs + $cpuArgs + @("-m", "2048") + $displayArgs + @(
@@ -646,6 +653,11 @@ try {
     if (New-EspImage -SourceDir (Join-Path $qemuWorkDir "esp") -RawPath $espImage -SizeMb $EspImageSizeMb) {
         Write-Host "ESP image: $espImage ($EspImageSizeMb MB)"
         $qemuArgs += @("-drive", "format=raw,file=esp.img")
+
+        if ($NoPs2 -or $Usb) {
+            Copy-Item -LiteralPath $espImage `
+                      -Destination (Join-Path $qemuWorkDir "usbstick.img") -Force
+        }
     }
     else {
         $qemuArgs += @("-drive", "format=raw,file=fat:rw:esp")

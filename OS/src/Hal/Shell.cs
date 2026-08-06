@@ -147,7 +147,7 @@ namespace OS.Hal
                 bool submitted = false;
                 while (!submitted)
                 {
-                    if (!Ps2Keyboard.TryReadScancode(out byte sc)) continue;
+                    if (!ScancodeSource.TryReadScancode(out byte sc)) continue;
                     Ps2Keyboard.KeyKind k = Ps2Keyboard.Decode(sc, out char ch, out _);
                     LineEditor.Status st = LineEditor.Feed(k, ch);
 

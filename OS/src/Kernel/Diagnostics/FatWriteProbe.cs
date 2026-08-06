@@ -78,6 +78,78 @@ namespace OS.Kernel.Diagnostics
             Console.Write(" size=");
             Console.WriteUInt(sizeAfter);
             Console.WriteLine(sizeAfter == size ? " PASS" : " size-changed FAIL");
+
+            if (Probes.FatCreate)
+                RunCreate();
+        }
+
+        // Creating a file is a different class of write from the one above:
+        // it allocates clusters and edits a directory. A bug here damages the
+        // volume, not one file's contents — which is why it is separate, and
+        // why the name is fixed and short (8.3 only, see Fat32Create).
+        //
+        // Host-side confirmation, the only thing that proves the entry is
+        // legal rather than merely readable by us:
+        //
+        //     mdir -i OS\.qemu\esp.img ::/sharpos
+        //     mtype -i OS\.qemu\esp.img ::/sharpos/created.txt
+        private const string CreatePath = "sharpos/created.txt";
+
+        private static void RunCreate()
+        {
+            // A previous run leaves the file behind (there is no delete yet),
+            // so an existing file is a skip, not a failure.
+            if (Fat32.Stat(CreatePath, out uint existing, out _))
+            {
+                Console.Write("[fatcreate] already exists size=");
+                Console.WriteUInt(existing);
+                Console.WriteLine(" SKIP");
+                return;
+            }
+
+            const int Size = 512;
+            if (!Fat32.TryCreateFile(CreatePath, Size))
+            {
+                Console.WriteLine("[fatcreate] create FAIL");
+                return;
+            }
+
+            if (!Fat32.Stat(CreatePath, out uint size, out bool isDir) || isDir || size != Size)
+            {
+                Console.WriteLine("[fatcreate] entry not found after create FAIL");
+                return;
+            }
+
+            byte* pattern = stackalloc byte[64];
+            for (int i = 0; i < 64; i++) pattern[i] = (byte)('A' + (i % 26));
+
+            if (Fat32.WriteFileInPlace(CreatePath, pattern, 64) != 64)
+            {
+                Console.WriteLine("[fatcreate] write into new file FAIL");
+                return;
+            }
+
+            byte* back = stackalloc byte[64];
+            if (Fat32.ReadFile(CreatePath, back, 64, out uint _) != 64)
+            {
+                Console.WriteLine("[fatcreate] readback FAIL");
+                return;
+            }
+
+            for (int i = 0; i < 64; i++)
+            {
+                if (back[i] == pattern[i]) continue;
+                Console.Write("[fatcreate] mismatch at ");
+                Console.WriteInt(i);
+                Console.WriteLine(" FAIL");
+                return;
+            }
+
+            Console.Write("[fatcreate] created ");
+            Console.Write(CreatePath);
+            Console.Write(" size=");
+            Console.WriteUInt(size);
+            Console.WriteLine(" verify=PASS");
         }
     }
 }

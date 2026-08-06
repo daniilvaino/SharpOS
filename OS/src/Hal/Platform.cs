@@ -158,7 +158,7 @@ namespace OS.Hal
 
             if (BootServicesGone)
             {
-                if (!Ps2Keyboard.TryReadScancode(out byte psc))
+                if (!ScancodeSource.TryReadScancode(out byte psc))
                     return KeyboardReadStatus.NoKey;
 
                 Ps2Keyboard.KeyKind kind = Ps2Keyboard.DecodeEx(
@@ -204,7 +204,7 @@ namespace OS.Hal
             // bridge idea as the file seam.
             if (BootServicesGone)
             {
-                if (!Ps2Keyboard.TryReadScancode(out byte psc))
+                if (!ScancodeSource.TryReadScancode(out byte psc))
                     return KeyboardReadStatus.NoKey;
                 switch (Ps2Keyboard.Decode(psc, out char pch, out _))
                 {

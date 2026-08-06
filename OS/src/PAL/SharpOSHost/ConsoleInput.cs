@@ -132,7 +132,7 @@ namespace OS.PAL.SharpOSHost
         // Pulls scancodes until one produces a key event, or the buffer runs dry.
         private static bool TryDecodeOne()
         {
-            while (Ps2Keyboard.TryReadScancode(out byte scancode))
+            while (ScancodeSource.TryReadScancode(out byte scancode))
             {
                 // `make` is the scancode with the break bit stripped, not a
                 // pressed/released flag, so testing it for zero filters nothing.

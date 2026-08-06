@@ -22,7 +22,7 @@ using System.Runtime.CompilerServices;
 
 namespace OS.Hal
 {
-    internal static unsafe class Fat32
+    internal static unsafe partial class Fat32
     {
         private static Disk s_disk;
         private static byte* s_sec;          // DMA scratch, 1 sector
@@ -40,6 +40,9 @@ namespace OS.Hal
         private static uint s_rootEntCnt;    // FAT16 root entries
         private static ulong s_dataLba;      // first data sector (abs)
         private static uint s_rootClus;      // FAT32 root cluster
+        private static uint s_clusterCount;  // highest cluster number + 1
+        private static uint s_numFats;       // FAT copies on the volume
+        private static uint s_fatSectors;    // sectors per FAT copy
         private static bool s_isFat32;
         private static bool s_mounted;
 
@@ -118,6 +121,12 @@ namespace OS.Hal
             uint clusters = dataSec / s_spc;
 
             s_isFat32 = clusters >= 65525;
+            // Kept for the writer: it needs the cluster ceiling to bound its
+            // free-cluster scan, and the FAT geometry to mirror updates into
+            // every copy (a stale second FAT is what fsck complains about).
+            s_clusterCount = clusters + 2;
+            s_numFats = numFats;
+            s_fatSectors = fatSz;
             s_fatLba = partLba + rsvd;
             s_rootLba = partLba + rsvd + numFats * fatSz;
             s_dataLba = partLba + firstData;

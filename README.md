@@ -117,7 +117,7 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | **Managed delegates / lambdas** | ✅ | ✅ | ✅ | завендорены из dotnet/runtime v8.0.27; вырезано в `NotSupportedException`: reflection-поверхность, GVM, open-instance, variance-cast (limits §5) |
 | **Reflection runtime metadata** | 🔴 | 🔴 | ✅ | нет `System.Reflection` в std |
 | **`Reflection.Emit`** | 🚫 | 🚫 | ✅ | требует JIT |
-| **`Activator.CreateInstance(Type)`** | 🔴 | 🔴 | ✅ | JIT не нужен, нужны метаданные |
+| **`Activator.CreateInstance(Type)`** | 🔴 | 🔴 | ✅ | нужны метаданные |
 | **`dynamic` / DLR / `Expression<T>.Compile()`** | 🚫 | 🚫 | ✅ | DLR через `Reflection.Emit` |
 | **`Type.GetType("Some.Class.Name")`** | 🔴 | 🔴 | ✅ | нужны метаданные |
 | **Generic `as T` / `(T)x` с `where T : class`** | 🟡 | 🟡 | ✅ | AOT: `RhTypeCast_CheckCastAny`/`IsInstanceOfAny` есть в std на обоих тирах; вариантный интерфейс-каст не резолвится (limits §2), выделенной пробы нет |
@@ -130,7 +130,8 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | Multi-thread Process | ✅  | ⏳ | ✅  | |
 | **`AssemblyLoadContext` (multiple ALCs)** | 🚫 | 🚫 | ⏳ | требует JIT |
 | File I/O (read) | ✅ | ✅ | ✅ | hosted-tier читает DLL/файлы с собственного FAT (в т.ч. post-EBS) |
-| File I/O (write) | 🔴 | 🔴 | 🔴 | RO-FAT32 |
+| File I/O (write) | 🟡 | 🔴 | 🔴 | FAT32: перезапись на месте + создание файла (8.3, зеркалит все FAT). Нет: удаление, рост файла/каталога, LFN |
+| USB (xHCI) | 🟡 | 🚫 | 🚫 | свой стек: владение у прошивки, кольца, HID boot-протокол (клавиатура = системный ввод), BOT+SCSI (флешка как `Disk`). Опрос без прерываний, без хабов, мышь не подключена. Только QEMU — на железе не гонялось |
 | Network I/O | 🔴 | 🔴 | 🔴 | нет NIC driver |
 | Console keyboard input | ✅ | ✅ | ⏳ | |
 | **Direct hardware (CR3 / PCI / MMIO / IDT)** | ✅ | 🚫 | 🚫 | guest tiers - design boundary |

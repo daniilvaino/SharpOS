@@ -155,6 +155,18 @@ namespace OS.Hal
             return false;
         }
 
+        // Enable MMIO decoding and bus mastering for a function. The firmware
+        // usually leaves both on, but a controller we are about to reset and
+        // drive with DMA must not depend on that: without bus mastering the
+        // device cannot touch our rings at all, and the failure is silent —
+        // commands are posted and simply never complete.
+        public static void EnableMemoryAndBusMaster(ref PciDev dev)
+        {
+            if (dev.EcamAddress == 0) return;
+            ushort* command = (ushort*)(dev.EcamAddress + 4);
+            *command = (ushort)(*command | 0x0006);   // bit1 memory space, bit2 bus master
+        }
+
         public static bool TryFindVendor(ushort vendor, out PciDev dev)
         {
             for (int i = 0; i < s_count; i++)
