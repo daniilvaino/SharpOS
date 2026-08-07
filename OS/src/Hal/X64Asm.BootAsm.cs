@@ -111,6 +111,35 @@ namespace OS.Hal
             a.ret();
         }
 
+        // Read an arbitrary MSR. Win64: RCX = index (rdmsr reads ECX), result
+        // in EDX:EAX which we join into RAX.
+        [CompileTimeAsm]
+        private static partial int EmitReadMsrBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitReadMsrBootAsm))]
+        private static void EmitReadMsrBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.rdmsr();
+            a.shl(rdx, 32);
+            a.or(rax, rdx);
+            a.ret();
+        }
+
+        // Write an arbitrary MSR. Win64: RCX = index, RDX = value. wrmsr wants
+        // the value split across EDX:EAX, so the low half moves to EAX first —
+        // doing it the other way round would clobber the source.
+        [CompileTimeAsm]
+        private static partial int EmitWriteMsrBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitWriteMsrBootAsm))]
+        private static void EmitWriteMsrBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.mov(rax, rdx);
+            a.shr(rdx, 32);
+            a.wrmsr();
+            a.ret();
+        }
+
         // mov rax, r8 ; lock cmpxchg [rcx], rdx ; ret
         [CompileTimeAsm]
         private static partial int EmitCmpXchg64BootAsm(byte* dst);

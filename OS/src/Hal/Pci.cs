@@ -24,8 +24,21 @@ namespace OS.Hal
         // old limits (2 buses, 32 devices) truncated the scan silently — a
         // device simply was not there, with nothing said. The window costs one
         // MiB of identity mapping per bus, so 8 is cheap.
-        private const int MaxBus = 8;        // buses scanned/mapped (0..MaxBus-1)
-        private const int MaxDevs = 96;
+        // Buses are followed through bridges rather than swept as a range.
+        // A flat 0..7 sweep missed an AMD desktop's xHCI entirely — those sit
+        // at device 0 function 3 of a bus that a bridge assigns well above the
+        // sweep — so the machine's boot controller simply did not exist as far
+        // as we were concerned, and with it the stick we booted from.
+        //
+        // The window is still mapped a bus at a time (1 MiB each): mapping all
+        // 256 up front would be 256 MiB of identity mapping for a handful of
+        // live buses.
+        private const int MaxBusIndex = 256;
+        // A desktop fills this faster than it looks: every root port, bridge,
+        // audio, storage and management function counts. Overflowing used to
+        // abandon the scan outright, which hid whatever had not been reached
+        // yet — including, on one machine, the controller we boot from.
+        private const int MaxDevs = 256;
 
         [System.Runtime.InteropServices.StructLayout(
             System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 1)]
@@ -85,7 +98,8 @@ namespace OS.Hal
         /// <summary>True when the scan stopped early: some devices were never
         /// looked at, so "not found" means nothing until this is false.</summary>
         public static bool Truncated => s_truncated;
-        public static int BusesScanned => MaxBus;
+        public static int BusesScanned => s_busesScanned;
+        private static int s_busesScanned;
         public static PciDev Get(int i) => s_devs[i];
 
         // ECAM: cfg space of (bus,slot,func) at
@@ -97,21 +111,38 @@ namespace OS.Hal
             s_count = 0;
 
             if (!OS.Hal.Acpi.Mcfg.IsAvailable) return;
-            if (!OS.Hal.Acpi.Mcfg.TryGetEntry(0, out ulong baseAddr,
-                    out ushort segment, out byte startBus, out byte _))
+
+            // Every segment, not just the first: a machine that splits its
+            // buses across segments keeps whole controllers in the ones we
+            // would otherwise never look at.
+            int entries = OS.Hal.Acpi.Mcfg.EntryCount;
+            for (int e = 0; e < entries; e++)
+                ScanSegment(e);
+        }
+
+        private static void ScanSegment(int entryIndex)
+        {
+            if (!OS.Hal.Acpi.Mcfg.TryGetEntry(entryIndex, out ulong baseAddr,
+                    out ushort segment, out byte startBus, out byte endBus))
                 return;
 
-            // Identity-map the bus window we scan (MMIO above RAM —
-            // unmapped in the pager PML4 by default).
-            ulong winSize = (ulong)MaxBus << 20;
-            if (!VirtualMemory.MapFixed((void*)baseAddr, baseAddr, winSize, exec: false,
-                                        VirtualMemory.MemoryKind.Device))
-                return;
+            _ = segment;
 
-            for (int busOff = 0; busOff < MaxBus; busOff++)
+            // Work list of buses still to visit, seeded with the segment's
+            // first. Bridges append the buses behind them as they are found.
+            byte* pending = stackalloc byte[MaxBusIndex];
+            bool* seen = stackalloc bool[MaxBusIndex];
+            for (int i = 0; i < MaxBusIndex; i++) seen[i] = false;
+
+            int pendingCount = 0;
+            pending[pendingCount++] = startBus;
+            seen[startBus] = true;
+
+            while (pendingCount > 0)
             {
-                byte bus = (byte)(startBus + busOff);
-                ulong busAddr = baseAddr + ((ulong)busOff << 20);
+                byte bus = pending[--pendingCount];
+                if (!TryMapBus(baseAddr, startBus, endBus, bus, out ulong busAddr)) continue;
+                s_busesScanned++;
 
                 for (byte slot = 0; slot < 32; slot++)
                 {
@@ -126,7 +157,25 @@ namespace OS.Hal
                         DeviceHeader* d = (DeviceHeader*)fnAddr;
                         if (d->Header.VendorID == 0 || d->Header.VendorID == 0xFFFF)
                             continue;
-                        if (s_count >= MaxDevs) { s_truncated = true; return; }
+
+                        // A bridge (header type 1) names the bus behind it in
+                        // its secondary-bus byte. Following those is the only
+                        // way to reach devices that no fixed range covers.
+                        if ((d->Header.HeaderType & 0x7F) == 1)
+                        {
+                            byte secondary = ((byte*)fnAddr)[0x19];
+                            if (secondary != 0 && !seen[secondary]
+                                && pendingCount < MaxBusIndex)
+                            {
+                                seen[secondary] = true;
+                                pending[pendingCount++] = secondary;
+                            }
+                        }
+
+                        // Out of room: keep walking so bridges are still
+                        // followed, but say so — "not found" is meaningless
+                        // once anything was skipped.
+                        if (s_count >= MaxDevs) { s_truncated = true; continue; }
 
                         ref PciDev r = ref s_devs[s_count++];
                         r.Bus = bus; r.Slot = slot; r.Func = func;
@@ -139,10 +188,25 @@ namespace OS.Hal
                         r.Bar0 = d->Bar0; r.Bar1 = d->Bar1; r.Bar2 = d->Bar2;
                         r.Bar3 = d->Bar3; r.Bar4 = d->Bar4; r.Bar5 = d->Bar5;
                         r.EcamAddress = fnAddr;
-                        _ = segment;
                     }
                 }
             }
+        }
+
+        // Map one bus's 1 MiB slice of the ECAM window, on demand.
+        private static bool TryMapBus(ulong baseAddr, byte startBus, byte endBus,
+                                      byte bus, out ulong busAddr)
+        {
+            busAddr = 0;
+            // Outside the segment's declared range there is no window: the
+            // computed address would land on someone else's memory and read
+            // as plausible nonsense rather than failing.
+            if (bus < startBus || bus > endBus) return false;
+
+            ulong offset = (ulong)(bus - startBus) << 20;
+            busAddr = baseAddr + offset;
+            return VirtualMemory.MapFixed((void*)busAddr, busAddr, 1UL << 20, exec: false,
+                                          VirtualMemory.MemoryKind.Device);
         }
 
         // First function matching class/subclass (e.g. 0x01/0x06 = AHCI).

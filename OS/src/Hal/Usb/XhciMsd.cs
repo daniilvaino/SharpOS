@@ -5,23 +5,23 @@ namespace OS.Hal.Usb
     // Bulk-Only Transport is three phases — a 31-byte command block out, an
     // optional data phase, a 13-byte status block in. The SCSI commands that
     // ride inside it live in UsbMassStorage; this file only moves bytes.
-    internal static unsafe partial class Xhci
+    internal sealed unsafe partial class XhciController
     {
         private const byte CLASS_MSD = 8;
         private const byte SUBCLASS_SCSI = 6;
         private const byte PROTOCOL_BOT = 0x50;
 
-        public static bool IsMassStorage(uint slotId)
+        public bool IsMassStorage(uint slotId)
         {
             int i = IndexOfSlot(slotId);
-            return i >= 0 && s_devices[i].InterfaceClass == CLASS_MSD;
+            return i >= 0 && _devices[i].InterfaceClass == CLASS_MSD;
         }
 
         /// <summary>
         /// Claim a bulk-only mass storage interface and bring both of its
         /// endpoints up in a single Configure Endpoint command.
         /// </summary>
-        public static bool TryConfigureMsd(uint slotId, out uint failStage)
+        public bool TryConfigureMsd(uint slotId, out uint failStage)
         {
             failStage = 0;
             int di = IndexOfSlot(slotId);
@@ -46,7 +46,7 @@ namespace OS.Hal.Usb
                                       out byte outAddr, out ushort outMax))
             { failStage = 5; return false; }
 
-            ref Device d = ref s_devices[di];
+            ref Device d = ref _devices[di];
             d.InterfaceClass = CLASS_MSD;
             d.MsdInterface = interfaceNum;
             d.BulkIn.Address = inAddr;
@@ -65,7 +65,7 @@ namespace OS.Hal.Usb
             return true;
         }
 
-        private static bool TryParseMsdInterface(byte* p, ushort total,
+        private bool TryParseMsdInterface(byte* p, ushort total,
                                                  out byte interfaceNum,
                                                  out byte inAddr, out ushort inMax,
                                                  out byte outAddr, out ushort outMax)
@@ -107,7 +107,7 @@ namespace OS.Hal.Usb
             return inAddr != 0 && outAddr != 0;
         }
 
-        private static bool TryConfigureBulkPair(ref Device d, uint slotId)
+        private bool TryConfigureBulkPair(ref Device d, uint slotId)
         {
             d.BulkIn.Ring = DmaMemory.AllocPages(1);
             d.BulkOut.Ring = DmaMemory.AllocPages(1);
@@ -133,19 +133,19 @@ namespace OS.Hal.Usb
             WriteEpContext(input + cs * (d.BulkIn.Dci + 1), 6, d.BulkIn.MaxPacket, d.BulkIn.Ring);
             WriteEpContext(input + cs * (d.BulkOut.Dci + 1), 2, d.BulkOut.MaxPacket, d.BulkOut.Ring);
 
-            uint* trb = (uint*)(s_cmdRing + s_cmdEnqueue * TrbSize);
+            uint* trb = (uint*)(_cmdRing + _cmdEnqueue * TrbSize);
             trb[0] = (uint)input;
             trb[1] = (uint)(input >> 32);
             trb[2] = 0;
-            trb[3] = (TRB_CONFIGURE_ENDPOINT << 10) | (slotId << 24) | s_cmdCycle;
+            trb[3] = (TRB_CONFIGURE_ENDPOINT << 10) | (slotId << 24) | _cmdCycle;
 
             AdvanceCommandRing();
-            Write32(s_doorbellBase, 0);
+            Write32(_doorbellBase, 0);
 
             return TryWaitEvent(TRB_CMD_COMPLETE, 1000, out uint code, out _) && code == 1;
         }
 
-        private static void WriteEpContext(ulong ctx, uint epType, ushort maxPacket, ulong ring)
+        private void WriteEpContext(ulong ctx, uint epType, ushort maxPacket, ulong ring)
         {
             uint* ep = (uint*)ctx;
             ep[0] = 0;
@@ -156,14 +156,14 @@ namespace OS.Hal.Usb
         }
 
         /// <summary>One bulk transfer in either direction, start to finish.</summary>
-        public static bool TryBulkTransfer(uint slotId, bool directionIn,
+        public bool TryBulkTransfer(uint slotId, bool directionIn,
                                            void* buffer, uint length, out uint residue)
         {
             residue = 0;
             int di = IndexOfSlot(slotId);
             if (di < 0) return false;
 
-            ref Device d = ref s_devices[di];
+            ref Device d = ref _devices[di];
             ref BulkEp ep = ref (directionIn ? ref d.BulkIn : ref d.BulkOut);
             if (ep.Ring == 0) return false;
 
@@ -187,9 +187,11 @@ namespace OS.Hal.Usb
                 ep.Cycle ^= 1;
             }
 
-            Write32(s_doorbellBase + slotId * 4, ep.Dci);
+            Write32(_doorbellBase + slotId * 4, ep.Dci);
 
-            if (!TryWaitEvent(TRB_TRANSFER_EVENT, 5000, out uint code, out _))
+            // Filtered by slot: an unfiltered wait here would be completed by
+            // a keypress and return with a half-filled buffer.
+            if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, 5000, out uint code, out _))
                 return false;
 
             // 13 is a short packet: the device sent less than asked, which for

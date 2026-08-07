@@ -12,7 +12,7 @@ namespace OS.Hal.Usb
     // the firmware keeps servicing the ports from SMM. It answers port changes
     // behind our back and overwrites the registers we just wrote, which reads
     // as a controller that ignores commands rather than as a missing handoff.
-    internal static unsafe partial class Xhci
+    internal sealed unsafe partial class XhciController
     {
         // Capability registers (offsets from MmioBase).
         private const uint CAP_CAPLENGTH = 0x00;   // byte
@@ -35,44 +35,70 @@ namespace OS.Hal.Usb
 
         // Extended capability IDs.
         private const uint XECP_LEGACY = 1;
+        private const uint XECP_SUPPORTED_PROTOCOL = 2;
+
+        // Which ports belong to the USB 3 half of the controller.
+        //
+        // PORTSC reports a port's speed only once something is attached and
+        // trained, and on some controllers it reads 0 ("undefined") even then.
+        // Writing that 0 into a slot context asks the controller to schedule
+        // at no speed at all, which comes back as a transaction error on the
+        // first control transfer — seen on a desktop where the USB 3 stick
+        // failed while the USB 2 keyboard and mouse worked.
+        //
+        // The Supported Protocol capability is the authoritative answer: it
+        // names port ranges by USB major revision.
+        private const int PortMapSize = 64;
+        private readonly byte[] _portMajor = new byte[PortMapSize];
+
+        /// <summary>USB major revision of a port (3, 2 …), or 0 if unknown.</summary>
+        public byte PortMajor(uint port)
+            => port < PortMapSize ? _portMajor[port] : (byte)0;
         private const uint LEGACY_BIOS_OWNED = 1u << 16;
         private const uint LEGACY_OS_OWNED = 1u << 24;
 
-        private static bool s_initialized;
-        private static ulong s_mmio;
-        private static ulong s_opBase;
-        private static ulong s_runtimeBase;
-        private static ulong s_doorbellBase;
-        private static uint s_maxSlots;
-        private static uint s_maxPorts;
-        private static uint s_pageSize;
-        private static ushort s_version;
-        private static bool s_contextSize64;
-        private static bool s_tookOwnership;
-        private static string s_failure;
+        private bool _initialized;
+        private ulong _mmio;
+        private ulong _opBase;
+        private ulong _runtimeBase;
+        private ulong _doorbellBase;
+        private uint _maxSlots;
+        private uint _maxPorts;
+        private uint _pageSize;
+        private ushort _version;
+        private bool _contextSize64;
+        private bool _tookOwnership;
+        private string _failure;
 
-        public static bool IsInitialized => s_initialized;
-        public static uint MaxSlots => s_maxSlots;
-        public static uint MaxPorts => s_maxPorts;
-        public static uint PageSize => s_pageSize;
-        public static ushort Version => s_version;
-        public static bool ContextSize64 => s_contextSize64;
-        public static bool TookOwnership => s_tookOwnership;
-        public static ulong MmioBase => s_mmio;
-        public static ulong OperationalBase => s_opBase;
-        public static ulong RuntimeBase => s_runtimeBase;
-        public static ulong DoorbellBase => s_doorbellBase;
+        public bool IsInitialized => _initialized;
+        public uint MaxSlots => _maxSlots;
+        public uint MaxPorts => _maxPorts;
+        public uint PageSize => _pageSize;
+        public ushort Version => _version;
+        public bool ContextSize64 => _contextSize64;
+        public bool TookOwnership => _tookOwnership;
+        public ulong MmioBase => _mmio;
+        public ulong OperationalBase => _opBase;
+        public ulong RuntimeBase => _runtimeBase;
+        public ulong DoorbellBase => _doorbellBase;
 
         /// <summary>Why Init returned false, or null when it did not fail.</summary>
-        public static string Failure => s_failure;
+        public string Failure => _failure;
 
-        public static bool Init()
+        private UsbHost.Controller _pci;
+
+        public byte Bus => _pci.Bus;
+        public byte Slot => _pci.Slot;
+        public byte Func => _pci.Func;
+
+        /// <summary>Bring up one specific controller. Which one to drive is
+        /// the registry's decision, not this object's.</summary>
+        public bool Init(UsbHost.Controller c)
         {
-            if (s_initialized) return true;
-            s_failure = null;
+            if (_initialized) return true;
+            _failure = null;
+            _pci = c;
 
-            if (!UsbHost.TryFind(UsbHost.Kind.Xhci, out UsbHost.Controller c))
-                return Fail("no xHCI controller on the PCI bus");
             if (c.MmioBase == 0)
                 return Fail("xHCI BAR is not memory-mapped");
 
@@ -83,28 +109,28 @@ namespace OS.Hal.Usb
                     OS.Kernel.Memory.VirtualMemory.MemoryKind.Device))
                 return Fail("xHCI MMIO map failed");
 
-            s_mmio = c.MmioBase;
+            _mmio = c.MmioBase;
 
             // CAPLENGTH and HCIVERSION share one 32-bit register. Reading the
             // version as a ushort at +2 returns 0 on QEMU: MMIO registers are
             // only guaranteed at their natural width, and sub-dword accesses
             // are not decoded. Read the dword and split it.
-            uint capReg = *(uint*)(s_mmio + CAP_CAPLENGTH);
+            uint capReg = *(uint*)(_mmio + CAP_CAPLENGTH);
             byte capLength = (byte)(capReg & 0xFF);
-            s_version = (ushort)(capReg >> 16);
+            _version = (ushort)(capReg >> 16);
 
             if (capLength < 0x20 || capLength > 0x80)
                 return Fail("xHCI CAPLENGTH out of range (wrong BAR?)");
-            uint hcs1 = *(uint*)(s_mmio + CAP_HCSPARAMS1);
-            uint hcc1 = *(uint*)(s_mmio + CAP_HCCPARAMS1);
+            uint hcs1 = *(uint*)(_mmio + CAP_HCSPARAMS1);
+            uint hcc1 = *(uint*)(_mmio + CAP_HCCPARAMS1);
 
-            s_maxSlots = hcs1 & 0xFF;
-            s_maxPorts = (hcs1 >> 24) & 0xFF;
-            s_contextSize64 = (hcc1 & (1u << 2)) != 0;
+            _maxSlots = hcs1 & 0xFF;
+            _maxPorts = (hcs1 >> 24) & 0xFF;
+            _contextSize64 = (hcc1 & (1u << 2)) != 0;
 
-            s_opBase = s_mmio + capLength;
-            s_runtimeBase = s_mmio + (*(uint*)(s_mmio + CAP_RTSOFF) & ~0x1Fu);
-            s_doorbellBase = s_mmio + (*(uint*)(s_mmio + CAP_DBOFF) & ~0x3u);
+            _opBase = _mmio + capLength;
+            _runtimeBase = _mmio + (*(uint*)(_mmio + CAP_RTSOFF) & ~0x1Fu);
+            _doorbellBase = _mmio + (*(uint*)(_mmio + CAP_DBOFF) & ~0x3u);
 
             if (!TryTakeOwnership(hcc1))
                 return Fail("firmware would not release the controller");
@@ -124,49 +150,77 @@ namespace OS.Hal.Usb
             if (!TryReset())
                 return Fail("xHCI reset timed out");
 
-            s_pageSize = *(uint*)(s_opBase + OP_PAGESIZE);
-            s_initialized = true;
+            _pageSize = *(uint*)(_opBase + OP_PAGESIZE);
+            _initialized = true;
             return true;
         }
 
-        private static bool Fail(string why)
+        private bool Fail(string why)
         {
-            s_failure = why;
+            _failure = why;
             return false;
         }
 
-        // Walk the extended capability list and perform the BIOS/OS handshake
-        // if a legacy-support capability is present. Its absence is normal
-        // (QEMU has none) and is not an error.
-        private static bool TryTakeOwnership(uint hcc1)
+        /// <summary>True when this is the controller the firmware booted from.</summary>
+        public bool PickedByFirmware
+            => OS.Boot.BootMedium.Valid && OS.Boot.BootMedium.IsUsb
+               && _pci.Slot == OS.Boot.BootMedium.PciDevice
+               && _pci.Func == OS.Boot.BootMedium.PciFunction;
+
+        // Walk the extended capability list: take ownership from the firmware
+        // if it claims any, and record which ports are USB 3 along the way.
+        // The list must be walked to the end for the port map even when
+        // ownership was settled early.
+        private bool TryTakeOwnership(uint hcc1)
         {
             uint xecpDwords = (hcc1 >> 16) & 0xFFFF;
             if (xecpDwords == 0) return true;
 
-            ulong p = s_mmio + xecpDwords * 4UL;
+            bool ownershipTaken = true;   // no legacy capability = nothing to take
+
+            ulong p = _mmio + xecpDwords * 4UL;
             for (int guard = 0; guard < 64; guard++)
             {
                 uint cap = *(uint*)p;
                 if (cap == 0xFFFFFFFF || cap == 0) return true;
 
                 uint id = cap & 0xFF;
-                if (id == XECP_LEGACY)
-                    return TryLegacyHandoff(p);
+                if (id == XECP_SUPPORTED_PROTOCOL)
+                    RecordProtocolPorts(p, cap);
+                else if (id == XECP_LEGACY)
+                    ownershipTaken = TryLegacyHandoff(p);
 
                 uint next = (cap >> 8) & 0xFF;
-                if (next == 0) return true;          // end of list
+                if (next == 0) break;                // end of list
                 p += next * 4UL;
             }
-            return true;   // malformed list — nothing claimed it, treat as free
+            return ownershipTaken;
         }
 
-        private static bool TryLegacyHandoff(ulong legacyReg)
+        // A Supported Protocol capability describes one contiguous run of
+        // ports: dword 2 holds the first port number (1-based) and how many
+        // follow, dword 0 the USB major revision they speak.
+        private void RecordProtocolPorts(ulong cap, uint dword0)
+        {
+            uint major = (dword0 >> 24) & 0xFF;
+            uint ports = *(uint*)(cap + 8);
+            uint first = ports & 0xFF;
+            uint count = (ports >> 8) & 0xFF;
+
+            for (uint i = 0; i < count; i++)
+            {
+                uint index = first + i - 1;          // to our 0-based numbering
+                if (index < PortMapSize) _portMajor[index] = (byte)major;
+            }
+        }
+
+        private bool TryLegacyHandoff(ulong legacyReg)
         {
             uint* usblegsup = (uint*)legacyReg;
             if ((*usblegsup & LEGACY_BIOS_OWNED) == 0)
             {
                 *usblegsup = *usblegsup | LEGACY_OS_OWNED;
-                s_tookOwnership = true;
+                _tookOwnership = true;
                 return true;
             }
 
@@ -178,17 +232,17 @@ namespace OS.Hal.Usb
             if (!WaitUntil(1000, legacyReg, LEGACY_BIOS_OWNED, expectSet: false))
                 return false;
 
-            s_tookOwnership = true;
+            _tookOwnership = true;
             return true;
         }
 
-        private static bool TryReset()
+        private bool TryReset()
         {
-            uint* usbcmd = (uint*)(s_opBase + OP_USBCMD);
+            uint* usbcmd = (uint*)(_opBase + OP_USBCMD);
 
             // Stop first: resetting a running controller is undefined.
             *usbcmd = *usbcmd & ~USBCMD_RS;
-            if (!WaitUntil(200, s_opBase + OP_USBSTS, USBSTS_HCH, expectSet: true))
+            if (!WaitUntil(200, _opBase + OP_USBSTS, USBSTS_HCH, expectSet: true))
                 return false;
 
             *usbcmd = *usbcmd | USBCMD_HCRST;
@@ -196,9 +250,9 @@ namespace OS.Hal.Usb
             // Reset is done when HCRST self-clears AND the controller stops
             // reporting "not ready" — reading other registers before CNR
             // clears returns garbage.
-            if (!WaitUntil(1000, s_opBase + OP_USBCMD, USBCMD_HCRST, expectSet: false))
+            if (!WaitUntil(1000, _opBase + OP_USBCMD, USBCMD_HCRST, expectSet: false))
                 return false;
-            if (!WaitUntil(1000, s_opBase + OP_USBSTS, USBSTS_CNR, expectSet: false))
+            if (!WaitUntil(1000, _opBase + OP_USBSTS, USBSTS_CNR, expectSet: false))
                 return false;
 
             return true;
@@ -207,7 +261,7 @@ namespace OS.Hal.Usb
         // Poll a register bit with a real deadline. NoInlining on the read
         // keeps the compiler from hoisting it out of the loop, which is the
         // documented way this kind of wait turns into a hang.
-        private static bool WaitUntil(uint timeoutMs, ulong address, uint mask, bool expectSet)
+        private bool WaitUntil(uint timeoutMs, ulong address, uint mask, bool expectSet)
         {
             ulong deadline = Deadline(timeoutMs);
             // The spin cap is not belt-and-braces: HPET may legitimately be
@@ -224,16 +278,16 @@ namespace OS.Hal.Usb
 
         [System.Runtime.CompilerServices.MethodImpl(
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static uint Read32(ulong address) => *(uint*)address;
+        private uint Read32(ulong address) => *(uint*)address;
 
-        private static ulong Deadline(uint ms)
+        private ulong Deadline(uint ms)
         {
             if (!OS.Hal.Timer.Hpet.IsInitialized) return 0;
             ulong hz = OS.Hal.Timer.Hpet.FrequencyHz;
             return OS.Hal.Timer.Hpet.ReadCounter() + hz / 1000UL * ms;
         }
 
-        private static bool Expired(ulong deadline)
+        private bool Expired(ulong deadline)
         {
             // No timer means no deadline; the bounded caller loops are the
             // only guard left, so never claim an expiry we cannot measure.

@@ -28,6 +28,10 @@ namespace DoomApp
         private readonly uint offsetX;   // centering offset for the scaled image
         private readonly uint offsetY;
 
+        // One destination row staged in ordinary memory, so the framebuffer is
+        // only ever written and never read back (see Render).
+        private readonly uint[] scratchLine;
+
         public GopVideo(
             Config config,
             GameContent content,
@@ -58,6 +62,8 @@ namespace DoomApp
             uint scaledH = h * s;
             offsetX = fbWidth > scaledW ? (fbWidth - scaledW) / 2 : 0;
             offsetY = fbHeight > scaledH ? (fbHeight - scaledH) / 2 : 0;
+
+            scratchLine = new uint[scaledW];
         }
 
         public void Render(Doom doom, Fixed frameFrac)
@@ -82,26 +88,37 @@ namespace DoomApp
                     uint* dstRow = dstBase + (uint)(y * s) * fbStride;
                     uint* srcCol = srcPixels + y;
 
-                    uint* d = dstRow;
-                    for (int x = 0; x < width; x++)
-                    {
-                        uint c = srcCol[x * height];
-                        if (swap)
-                        {
-                            // RGBA (R low byte) -> BGRX: swap R and B, keep G/A lanes.
-                            c = (c & 0xFF00FF00u) | ((c & 0xFFu) << 16) | ((c >> 16) & 0xFFu);
-                        }
-                        for (int r = 0; r < s; r++)
-                            *d++ = c;
-                    }
-
-                    // Replicate the finished row for the remaining s-1 rows.
+                    // Expand into a scratch line in ordinary memory first.
+                    //
+                    // The obvious version writes one destination row and then
+                    // copies it to the other s-1 — but that copy READS the
+                    // framebuffer, and video memory is uncacheable on some
+                    // machines: measured at 4 MiB/s, which works out to more
+                    // than a second per frame spent re-reading rows we had
+                    // just written. Staging in RAM keeps every framebuffer
+                    // access a sequential write.
                     int rowPixels = width * s;
-                    for (int r = 1; r < s; r++)
+                    fixed (uint* line = scratchLine)
                     {
-                        uint* rep = dstRow + (uint)r * fbStride;
-                        for (int x = 0; x < rowPixels; x++)
-                            rep[x] = dstRow[x];
+                        uint* d = line;
+                        for (int x = 0; x < width; x++)
+                        {
+                            uint c = srcCol[x * height];
+                            if (swap)
+                            {
+                                // RGBA (R low byte) -> BGRX: swap R and B, keep G/A.
+                                c = (c & 0xFF00FF00u) | ((c & 0xFFu) << 16) | ((c >> 16) & 0xFFu);
+                            }
+                            for (int r = 0; r < s; r++)
+                                *d++ = c;
+                        }
+
+                        for (int r = 0; r < s; r++)
+                        {
+                            uint* rep = dstRow + (uint)r * fbStride;
+                            for (int x = 0; x < rowPixels; x++)
+                                rep[x] = line[x];
+                        }
                     }
                 }
             }

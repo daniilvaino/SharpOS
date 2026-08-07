@@ -19,6 +19,10 @@ namespace OS.Hal.Usb
         private static int s_head, s_tail;
 
         private static readonly byte[] s_previous = new byte[8];
+        // The controller is held alongside the slot: a slot number is only
+        // meaningful to the controller that issued it, and on a machine with
+        // several, the keyboard and the disk are not on the same one.
+        private static XhciController s_hc;
         private static uint s_slot;
         private static bool s_present;
 
@@ -29,18 +33,13 @@ namespace OS.Hal.Usb
         {
             if (s_present) return true;
 
-            for (int i = 0; i < Xhci.DeviceCount; i++)
-            {
-                uint slot = Xhci.SlotIdAt(i);
-                if (Xhci.HidProtocolOf(slot) != 1) continue;
-                if (!Xhci.IsConfigured(slot)) continue;
+            if (!Xhci.TryFindHid(1, out XhciController hc, out uint slot)) return false;
 
-                s_slot = slot;
-                s_present = true;
-                Xhci.TryQueueReport(slot);
-                return true;
-            }
-            return false;
+            s_hc = hc;
+            s_slot = slot;
+            s_present = true;
+            hc.TryQueueReport(slot);
+            return true;
         }
 
         /// <summary>
@@ -52,12 +51,12 @@ namespace OS.Hal.Usb
             if (!s_present) return;
 
             byte* report = stackalloc byte[8];
-            if (Xhci.TryCollectReport(s_slot, report, 8, 0))
+            if (s_hc.TryCollectReport(s_slot, report, 8, 0))
                 Translate(report);
 
             // Always re-arm: a read that completed leaves the endpoint idle,
             // and one that never started would mean no further keys at all.
-            Xhci.TryQueueReport(s_slot);
+            s_hc.TryQueueReport(s_slot);
         }
 
         public static bool TryReadScancode(out byte scancode)

@@ -127,8 +127,15 @@ namespace OS.Hal
             ulong lba = s_fatLba + byteOffset / s_bps;
             uint offset = (uint)(byteOffset % s_bps);
 
-            if (!s_disk.Read(lba, 1, s_fatCache)) return false;
-            s_fatCachedLba = lba;
+            // Honour the cache on reads. It was only ever set here, never
+            // checked, so a scan over the table re-read the same sector once
+            // per cluster — on a USB stick that is millions of round trips,
+            // and it looks like a hang rather than a slow loop.
+            if (lba != s_fatCachedLba)
+            {
+                if (!s_disk.Read(lba, 1, s_fatCache)) return false;
+                s_fatCachedLba = lba;
+            }
 
             if (!write)
             {
@@ -160,7 +167,63 @@ namespace OS.Hal
             return true;
         }
 
+        // Prefer a contiguous run, fall back to whatever is free.
+        //
+        // Contiguity is not a nicety for the boot log: it is read back as a
+        // flat range of sectors, and a fragmented file is refused outright
+        // rather than risk writing into somebody else's clusters. On a stick
+        // that has been used, first-fit picks scattered clusters and the log
+        // silently never starts — which is exactly what happened.
+        // How many clusters a search will look at. With the FAT sector cache
+        // in play this is ~1 disk read per 128 clusters, so a quarter million
+        // clusters is a few thousand reads — bounded, and far more space than
+        // any file created here needs.
+        private const uint ScanLimit = 256 * 1024;
+
         private static bool TryAllocateChain(uint count, out uint firstCluster)
+        {
+            if (TryAllocateContiguous(count, out firstCluster)) return true;
+            return TryAllocateScattered(count, out firstCluster);
+        }
+
+        private static bool TryAllocateContiguous(uint count, out uint firstCluster)
+        {
+            firstCluster = 0;
+            uint total = TotalClusters();
+            uint runStart = 0;
+            uint run = 0;
+
+            // Bounded: a big volume has millions of clusters, and a log file
+            // is not worth walking all of them on a slow medium. Give up and
+            // let the scattered path try instead.
+            uint limit = total < ScanLimit ? total : ScanLimit;
+
+            for (uint cluster = 2; cluster < limit; cluster++)
+            {
+                uint value = 0;
+                if (!TryReadWriteFat(cluster, false, ref value)) return false;
+
+                if (value != 0) { run = 0; continue; }
+                if (run == 0) runStart = cluster;
+                run++;
+                if (run < count) continue;
+
+                // Link the run and terminate it.
+                for (uint i = 0; i < count; i++)
+                {
+                    uint c = runStart + i;
+                    uint link = i + 1 < count ? c + 1 : (FatEndOfChain | 0x7);
+                    if (!TryReadWriteFat(c, true, ref link)) return false;
+                    if (!TryZeroCluster(c)) return false;
+                }
+
+                firstCluster = runStart;
+                return true;
+            }
+            return false;
+        }
+
+        private static bool TryAllocateScattered(uint count, out uint firstCluster)
         {
             firstCluster = 0;
             uint previous = 0;
@@ -168,6 +231,7 @@ namespace OS.Hal
 
             // Cluster 2 is the first usable one; the two below it are reserved.
             uint totalClusters = TotalClusters();
+            if (totalClusters > ScanLimit) totalClusters = ScanLimit;
             for (uint cluster = 2; cluster < totalClusters && allocated < count; cluster++)
             {
                 uint value = 0;

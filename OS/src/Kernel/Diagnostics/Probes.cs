@@ -247,6 +247,22 @@ namespace OS.Kernel.Diagnostics
         // at the keyboard, so it is off for headless regression runs.
         public const bool UsbHidPoll = true;
 
+        // Times a full-screen fill and a full-screen scroll, and prints the
+        // page attributes behind the framebuffer. Overwrites the screen, so it
+        // runs before anything worth reading is on it.
+        public const bool FbPerf = true;
+
+        // Largest GOP mode the kernel will switch to. The firmware's own
+        // choice is unpredictable and cannot be influenced from outside, so
+        // the mode is picked here instead.
+        //
+        // Raising this to 3840x2160 is supported and worth trying: the cost
+        // is that a full-screen repaint moves four times the pixels of 1080p
+        // through a software renderer with no blitter, and the 8x8 font gets
+        // very small. Set both to 0 to accept whatever the firmware left.
+        public const uint DisplayMaxWidth = 3840;
+        public const uint DisplayMaxHeight = 2160;
+
         // Creates a file: allocates clusters and edits a directory, so a bug
         // damages the volume rather than one file's contents. Separate switch
         // from FatWrite for exactly that reason.
@@ -255,7 +271,12 @@ namespace OS.Kernel.Diagnostics
         // Writes a pattern to the last sector of the USB stick and reads it
         // back. Safe against the QEMU stick (a copy rebuilt every run) and
         // destructive against a real one — keep off outside QEMU.
-        public const bool UsbStorageWrite = true;
+        // OFF: this writes to the last sector of whatever USB medium is
+        // attached. Against the QEMU stick (a copy rebuilt every run) that is
+        // free; against a real one it is somebody's drive, and it went out to
+        // a test machine switched on and scribbled there. Turn it on only for
+        // a QEMU run, never in anything that ships to hardware.
+        public const bool UsbStorageWrite = false;
 
         // Stop the machine right after printing the USB list. On the test
         // hardware there is no serial, no log (the boot medium is USB and we

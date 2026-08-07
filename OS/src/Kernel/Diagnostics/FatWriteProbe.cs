@@ -24,8 +24,8 @@ namespace OS.Kernel.Diagnostics
 
         public static void Run()
         {
-            if (Ahci.Device == null) Ahci.Initialize();
-            if (Ahci.Device == null || Vfs.Mount(Ahci.Device) == null)
+            Disk disk = BootDisk.Get();
+            if (disk == null || Vfs.Mount(disk) == null)
             {
                 Console.WriteLine("[fatwrite] mount=N FAIL");
                 return;

@@ -13,12 +13,13 @@ namespace OS.Kernel.Diagnostics
     {
         public static void Run()
         {
-            if (Ahci.Device == null) Ahci.Initialize();
-
-            Fs fs = Ahci.Device != null ? Vfs.Mount(Ahci.Device) : null;
+            Disk disk = BootDisk.Get();
+            Fs fs = disk != null ? Vfs.Mount(disk) : null;
             if (fs == null)
             {
-                Console.Write("[fat] mount=N jmp=0x");
+                Console.Write("[fat] mount=N via=");
+                Console.Write(BootDisk.SourceName);
+                Console.Write(" jmp=0x");
                 Console.WriteHex(Fat32.DiagJmp0);
                 Console.Write(",0x");
                 Console.WriteHex(Fat32.DiagJmp1);

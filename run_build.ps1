@@ -23,6 +23,11 @@
     # Target to develop the USB stack against: recent machines are usually
     # xHCI-only, while QEMU's q35 does not expose one unless asked.
     [switch]$Usb,
+    # Boot with the ESP on a USB stick and no SATA disk at all — the shape of
+    # the test machines, where there is no AHCI controller to fall back on.
+    [switch]$UsbOnly,
+    # Framebuffer mode to ask the firmware for, e.g. "3840x2160".
+    [string]$Resolution,
     # ESP staged as a real FAT32 image; 253 MB of payload today, so 512 leaves headroom.
     [int]$EspImageSizeMb = 512,
     [string]$QemuExe,
@@ -614,22 +619,55 @@ try {
     # -vga std в ОБЕИХ ветках: framebuffer-адаптер должен существовать
     # всегда (OVMF поднимает GOP на нём). Видимость = отдельный выбор:
     # headless (-nographic) — GOP реален, но не отображается; GUI — окно.
+    # -Resolution reproduces a big panel locally instead of debugging one
+    # through photographs of somebody else's screen. The mode is offered to
+    # the firmware as EDID; OVMF then picks it and hands us that framebuffer.
+    # Video memory has to grow with it — 3840x2160x4 is 33 MB, and the 16 MB
+    # default silently leaves the mode unavailable.
+    $vgaArgs = @("-vga", "std")
+    if ($Resolution) {
+        $parts = $Resolution -split 'x'
+        if ($parts.Count -ne 2) { throw "Resolution must look like 3840x2160" }
+        $xres = [int]$parts[0]
+        $yres = [int]$parts[1]
+        # bochs-display, NOT virtio-vga. virtio does honour the requested
+        # resolution, but it has no linear framebuffer: the screen only
+        # updates when the guest sends a transfer command. The firmware does
+        # that for us, we do not — post-EBS the result was visible tearing and
+        # a fraction of the frame rate. bochs-display scans out of memory
+        # directly, which is what every drawing path here assumes.
+        #
+        # The mode itself is chosen by the kernel through GOP (UefiGop), so
+        # xres/yres here only decide what the firmware offers.
+        $vgamemMb = [math]::Max(16, [math]::Ceiling($xres * $yres * 4 / 1MB) * 2)
+        $vgaArgs = @(
+            "-vga", "none",
+            "-device", "bochs-display,edid=on,xres=$xres,yres=$yres,vgamem=$($vgamemMb * 1MB)")
+        # Write-Output, not Write-Host: the host stream does not reach the
+        # transcript, so this was invisible in the log exactly when it was
+        # needed.
+        Write-Output "Display: offering ${xres}x${yres} (bochs-display, vgamem ${vgamemMb} MB)"
+    }
+
     if ($env:SHARPOS_GUI -eq '1') {
-        $displayArgs = @("-vga", "std", "-serial", "stdio")
+        $displayArgs = $vgaArgs + @("-serial", "stdio")
     } else {
-        $displayArgs = @("-vga", "std", "-nographic", "-serial", "mon:stdio", "-echr", "0x1d")
+        $displayArgs = $vgaArgs + @("-nographic", "-serial", "mon:stdio", "-echr", "0x1d")
     }
 
     # With the i8042 gone the guest has no keyboard at all unless one is
     # attached over USB — which is the point: firmware can drive it, we cannot.
-    if ($NoPs2 -or $Usb) {
+    if ($NoPs2 -or $Usb -or $UsbOnly) {
         $displayArgs += @("-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-mouse")
-        # A second copy of the ESP image, attached over USB. Deliberately a
-        # copy: it exercises the mass-storage path against a filesystem we
-        # already know how to read, without putting the disk we boot from
-        # behind two drivers at once.
+
+        # -UsbOnly puts the real ESP on the stick and leaves no SATA disk, so
+        # the firmware boots from USB and the kernel must mount it through its
+        # own stack — the shape of the test machines. Plain -Usb attaches a
+        # throwaway copy instead, exercising the storage path without putting
+        # the disk we boot from behind two drivers at once.
+        $stickImage = if ($UsbOnly) { "esp.img" } else { "usbstick.img" }
         $displayArgs += @(
-            "-drive", "if=none,id=usbstick,format=raw,file=usbstick.img",
+            "-drive", "if=none,id=usbstick,format=raw,file=$stickImage",
             "-device", "usb-storage,drive=usbstick")
     }
 
@@ -652,7 +690,13 @@ try {
     $espImage = Join-Path $qemuWorkDir "esp.img"
     if (New-EspImage -SourceDir (Join-Path $qemuWorkDir "esp") -RawPath $espImage -SizeMb $EspImageSizeMb) {
         Write-Host "ESP image: $espImage ($EspImageSizeMb MB)"
-        $qemuArgs += @("-drive", "format=raw,file=esp.img")
+
+        # Under -UsbOnly the image is already attached over USB above; adding
+        # it here too would present the same medium twice and let a fallback
+        # to SATA hide the very thing being tested.
+        if (-not $UsbOnly) {
+            $qemuArgs += @("-drive", "format=raw,file=esp.img")
+        }
 
         if ($NoPs2 -or $Usb) {
             Copy-Item -LiteralPath $espImage `
@@ -662,6 +706,11 @@ try {
     else {
         $qemuArgs += @("-drive", "format=raw,file=fat:rw:esp")
     }
+
+    # The exact command line, in the log. Reconstructing it from the switches
+    # is guesswork, and guessing about what QEMU actually received is what
+    # made a display option look applied when it was not.
+    Write-Output "QEMU: $QemuExe $($qemuArgs -join ' ')"
 
     & $QemuExe @qemuArgs
 

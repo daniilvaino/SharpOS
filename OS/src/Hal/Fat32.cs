@@ -703,6 +703,27 @@ namespace OS.Hal
             return s_disk.Write(lba, 1, s_sec);
         }
 
+        // Blank a run of sectors. Multi-sector writes rather than a loop of
+        // single ones: over USB every command is a three-phase round trip, so
+        // clearing anything meaningful one sector at a time is unusably slow.
+        public static bool BlankSectors(ulong lba, uint count)
+        {
+            if (!s_mounted || s_disk == null || count == 0) return false;
+
+            const uint ChunkSectors = 64;
+            for (uint i = 0; i < BulkBytes; i++) s_bulk[i] = (byte)' ';
+
+            uint written = 0;
+            while (written < count)
+            {
+                uint chunk = count - written;
+                if (chunk > ChunkSectors) chunk = ChunkSectors;
+                if (!s_disk.Write(lba + written, chunk, s_bulk)) return false;
+                written += chunk;
+            }
+            return true;
+        }
+
         // Overwrite the first `len` bytes of an existing file, in place.
         //
         // First step of write support, and deliberately the smallest one that

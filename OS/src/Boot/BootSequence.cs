@@ -265,6 +265,9 @@ namespace OS.Boot
             // Phase B#2 — identity-map the GOP framebuffer MMIO into the
             // pager PML4. Non-fatal: headless / BltOnly / no-GOP boots
             // continue with IsAvailable=false (renderer no-ops).
+            // Write-combining is NOT enabled: it speeds writes but makes reads
+            // uncached, and the console scrolls by reading the framebuffer.
+            // MemoryTypes stays for when drawing no longer reads the screen.
             if (OS.Hal.Framebuffer.TryInit())
             {
                 Log.Begin(LogLevel.Info);
@@ -274,6 +277,12 @@ namespace OS.Boot
                 Console.WriteUInt(OS.Hal.Framebuffer.Height);
                 Console.Write(" va=0x");
                 Console.WriteHex(OS.Hal.Framebuffer.BaseAddress, 8);
+                // Which of the firmware's modes we took, and whether we had
+                // to change it — a panel far larger than we can drive is a
+                // real failure mode, not a cosmetic one.
+                Console.Write(" modes=");
+                Console.WriteUInt(UefiGop.ModeCount);
+                Console.Write(UefiGop.ModeChanged ? " (mode switched)" : " (firmware default)");
                 Log.EndLine();
             }
             else
@@ -283,6 +292,12 @@ namespace OS.Boot
 
             InitializeAcpi(bootInfo);
             InitializeHpet();
+
+            // After the timer, not next to the framebuffer mapping: measuring
+            // needs a clock, and the framebuffer comes up first. The screen is
+            // overwritten by this, which costs nothing now that the same lines
+            // also go to the log.
+            OS.Kernel.Diagnostics.FbPerfProbe.Run();
 
             if (Probes.RtcSnapshot)
                 DumpRtcSnapshot();
@@ -331,6 +346,12 @@ namespace OS.Boot
 
             if (Probes.PciScan)
                 PciProbe.Run();
+
+            // Ask the firmware what it booted us from — only possible while it
+            // is still alive, and it is the authoritative answer to "which
+            // controller and port is the boot medium on".
+            BootMedium.TryCapture(bootInfo);
+            BootMedium.Report();
 
             // Read-only like the PCI scan above, so it is safe while firmware
             // still owns the machine.

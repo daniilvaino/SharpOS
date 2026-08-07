@@ -10,7 +10,7 @@ namespace OS.Hal.Usb
     // 8 bytes for a keyboard, 3+ for a mouse. That is the whole reason the
     // BIOS can drive a USB keyboard without a HID parser, and it is enough
     // for arrow keys and DOOM.
-    internal static unsafe partial class Xhci
+    internal sealed unsafe partial class XhciController
     {
         private const uint TRB_CONFIGURE_ENDPOINT = 12;
         private const uint TRB_NORMAL = 1;
@@ -22,16 +22,16 @@ namespace OS.Hal.Usb
 
         private const byte CLASS_HID = 3;
 
-        public static byte HidProtocolOf(uint slotId)
+        public byte HidProtocolOf(uint slotId)
         {
             int i = IndexOfSlot(slotId);
-            return i < 0 ? (byte)0 : s_devices[i].HidProtocol;
+            return i < 0 ? (byte)0 : _devices[i].HidProtocol;
         }
 
-        public static bool IsConfigured(uint slotId)
+        public bool IsConfigured(uint slotId)
         {
             int i = IndexOfSlot(slotId);
-            return i >= 0 && s_devices[i].Configured;
+            return i >= 0 && _devices[i].Configured;
         }
 
         /// <summary>
@@ -39,7 +39,7 @@ namespace OS.Hal.Usb
         /// interrupt endpoint up. False when the device is not a boot-protocol
         /// HID — which is not an error, just not something we drive.
         /// </summary>
-        public static bool TryConfigureHid(uint slotId, out uint failStage)
+        public bool TryConfigureHid(uint slotId, out uint failStage)
         {
             failStage = 0;
             int di = IndexOfSlot(slotId);
@@ -65,7 +65,7 @@ namespace OS.Hal.Usb
                                       out byte epAddress, out ushort epMaxPacket, out byte epInterval))
             { failStage = 5; return false; }
 
-            ref Device d = ref s_devices[di];
+            ref Device d = ref _devices[di];
             d.HidProtocol = protocol;
             d.EpAddress = epAddress;
             d.EpMaxPacket = epMaxPacket;
@@ -92,7 +92,7 @@ namespace OS.Hal.Usb
         // Walk the configuration descriptor as a flat list of
         // length/type-prefixed records, keeping the first HID interface that
         // has an interrupt IN endpoint.
-        private static bool TryParseHidInterface(byte* p, ushort total,
+        private bool TryParseHidInterface(byte* p, ushort total,
                                                  out byte interfaceNum, out byte protocol,
                                                  out byte epAddress, out ushort epMaxPacket,
                                                  out byte epInterval)
@@ -135,7 +135,7 @@ namespace OS.Hal.Usb
             return false;
         }
 
-        private static bool TryConfigureEndpoint(ref Device d, uint slotId)
+        private bool TryConfigureEndpoint(ref Device d, uint slotId)
         {
             d.EpRing = DmaMemory.AllocPages(1);
             if (d.EpRing == 0) return false;
@@ -164,14 +164,14 @@ namespace OS.Hal.Usb
             ep[3] = (uint)(d.EpRing >> 32);
             ep[4] = d.EpMaxPacket;
 
-            uint* trb = (uint*)(s_cmdRing + s_cmdEnqueue * TrbSize);
+            uint* trb = (uint*)(_cmdRing + _cmdEnqueue * TrbSize);
             trb[0] = (uint)input;
             trb[1] = (uint)(input >> 32);
             trb[2] = 0;
-            trb[3] = (TRB_CONFIGURE_ENDPOINT << 10) | (slotId << 24) | s_cmdCycle;
+            trb[3] = (TRB_CONFIGURE_ENDPOINT << 10) | (slotId << 24) | _cmdCycle;
 
             AdvanceCommandRing();
-            Write32(s_doorbellBase, 0);
+            Write32(_doorbellBase, 0);
 
             return TryWaitEvent(TRB_CMD_COMPLETE, 1000, out uint code, out _) && code == 1;
         }
@@ -181,7 +181,7 @@ namespace OS.Hal.Usb
         /// sent into <paramref name="report"/>; false on timeout, which for an
         /// idle keyboard is the normal case.
         /// </summary>
-        public static bool TryReadReport(uint slotId, byte* report, int max, uint timeoutMs)
+        public bool TryReadReport(uint slotId, byte* report, int max, uint timeoutMs)
         {
             if (!TryQueueReport(slotId)) return false;
             return TryCollectReport(slotId, report, max, timeoutMs);
@@ -192,12 +192,12 @@ namespace OS.Hal.Usb
         /// outstanding per device: queueing again before the first completes
         /// stacks up requests that all fire at once on the next keypress.
         /// </summary>
-        public static bool TryQueueReport(uint slotId)
+        public bool TryQueueReport(uint slotId)
         {
             int di = IndexOfSlot(slotId);
             if (di < 0) return false;
 
-            ref Device d = ref s_devices[di];
+            ref Device d = ref _devices[di];
             if (!d.Configured || d.ReadOutstanding) return false;
 
             uint* trb = (uint*)(d.EpRing + d.EpEnqueue * TrbSize);
@@ -218,33 +218,35 @@ namespace OS.Hal.Usb
                 d.EpCycle ^= 1;
             }
 
-            Write32(s_doorbellBase + slotId * 4, d.EpDci);
+            Write32(_doorbellBase + slotId * 4, d.EpDci);
             d.ReadOutstanding = true;
             return true;
         }
 
         /// <summary>
         /// Collect a queued read. timeoutMs = 0 polls without blocking.
-        ///
-        /// Events from other slots are dropped here rather than routed: with
-        /// one event ring shared by every device, a keyboard poll can pick up
-        /// the mouse's completion. Fine while only the keyboard is driven,
-        /// but a real multi-device path needs per-slot queues.
         /// </summary>
-        public static bool TryCollectReport(uint slotId, byte* report, int max, uint timeoutMs)
+        public bool TryCollectReport(uint slotId, byte* report, int max, uint timeoutMs)
         {
             int di = IndexOfSlot(slotId);
             if (di < 0) return false;
 
-            ref Device d = ref s_devices[di];
-            if (!d.ReadOutstanding) return false;
+            ref Device d = ref _devices[di];
 
-            if (!TryWaitEvent(TRB_TRANSFER_EVENT, timeoutMs, out uint code, out uint control))
-                return false;
-
-            d.ReadOutstanding = false;
-            if (((control >> 24) & 0xFF) != slotId) return false;
-            if (code != 1 && code != 13) return false;
+            // A report someone else's wait absorbed is already sitting in our
+            // buffer — take it rather than waiting for another one.
+            if (d.ReportPending)
+            {
+                d.ReportPending = false;
+            }
+            else
+            {
+                if (!d.ReadOutstanding) return false;
+                if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, timeoutMs, out uint code, out _))
+                    return false;
+                d.ReadOutstanding = false;
+                if (code != 1 && code != 13) return false;
+            }
 
             byte* src = (byte*)d.ReportBuffer;
             int n = d.EpMaxPacket < max ? d.EpMaxPacket : max;

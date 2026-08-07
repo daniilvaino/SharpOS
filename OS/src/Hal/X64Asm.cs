@@ -45,6 +45,13 @@ namespace OS.Hal
         //   0x1A0: CmpXchg64(loc, value, comparand) → old value
         //   0x1C0: Xchg64(loc, value)              → old value
         //   0x1E0: MemoryBarrier()                 → void (mfence)
+        // Generic MSR access, in the gap between the atomics and Fxsave.
+        //   0x200: ReadMsr(index)         → value
+        //   0x220: WriteMsr(index, value) → void
+        private const uint ReadMsrOffset      = 0x200;
+        private const uint WriteMsrOffset     = 0x220;
+        private const uint MsrStubsMinBuffer  = 0x240;
+
         private const uint CmpXchg64Offset       = 0x1A0;
         private const uint Xchg64Offset          = 0x1C0;
         private const uint MemoryBarrierOffset   = 0x1E0;
@@ -226,6 +233,43 @@ namespace OS.Hal
                 s_readGsBaseMsrReady = true;
             }
             value = s_readGsBaseMsr();
+            return true;
+        }
+
+        private static bool s_readMsrReady, s_writeMsrReady;
+        private static delegate* unmanaged<uint, ulong> s_readMsr;
+        private static delegate* unmanaged<uint, ulong, void> s_writeMsr;
+
+        /// <summary>Read a model-specific register.</summary>
+        public static bool ReadMsr(uint index, out ulong value)
+        {
+            value = 0;
+            if (s_execBuffer == null || s_execBufferSize < MsrStubsMinBuffer)
+                return false;
+            if (!s_readMsrReady)
+            {
+                byte* p = (byte*)s_execBuffer + ReadMsrOffset;
+                EmitReadMsrBootAsm(p);
+                s_readMsr = (delegate* unmanaged<uint, ulong>)p;
+                s_readMsrReady = true;
+            }
+            value = s_readMsr(index);
+            return true;
+        }
+
+        /// <summary>Write a model-specific register.</summary>
+        public static bool WriteMsr(uint index, ulong value)
+        {
+            if (s_execBuffer == null || s_execBufferSize < MsrStubsMinBuffer)
+                return false;
+            if (!s_writeMsrReady)
+            {
+                byte* p = (byte*)s_execBuffer + WriteMsrOffset;
+                EmitWriteMsrBootAsm(p);
+                s_writeMsr = (delegate* unmanaged<uint, ulong, void>)p;
+                s_writeMsrReady = true;
+            }
+            s_writeMsr(index, value);
             return true;
         }
 

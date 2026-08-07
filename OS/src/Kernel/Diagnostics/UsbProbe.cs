@@ -42,6 +42,8 @@ namespace OS.Kernel.Diagnostics
                 Console.WriteLine("");
             }
 
+            SurveyPorts();
+
             if (Probes.UsbScanHalt)
             {
                 Console.WriteLine("[usb] halted on purpose — read the list above");
@@ -49,10 +51,57 @@ namespace OS.Kernel.Diagnostics
             }
         }
 
+        // Which ports of which controller have something plugged in.
+        //
+        // Read-only on purpose: no ownership handshake, no reset, nothing the
+        // firmware would notice. A machine can carry several xHCI controllers
+        // (this laptop has three) and we drive only one, so before assuming a
+        // device is absent it is worth asking where it actually is. Safe to
+        // run pre-EBS for the same reason the PCI scan is.
+        private static void SurveyPorts()
+        {
+            for (int i = 0; i < UsbHost.Count; i++)
+            {
+                UsbHost.Controller c = UsbHost.Get(i);
+                if (c.Kind != UsbHost.Kind.Xhci || c.MmioBase == 0) continue;
+
+                if (!OS.Kernel.Memory.VirtualMemory.MapFixed(
+                        (void*)c.MmioBase, c.MmioBase, 0x1000, exec: false,
+                        OS.Kernel.Memory.VirtualMemory.MemoryKind.Device))
+                    continue;
+
+                uint capReg = *(uint*)c.MmioBase;
+                byte capLength = (byte)(capReg & 0xFF);
+                if (capLength < 0x20 || capLength > 0x80) continue;
+
+                uint ports = (*(uint*)(c.MmioBase + 0x04) >> 24) & 0xFF;
+                ulong op = c.MmioBase + capLength;
+
+                Console.Write("[usbsurvey] ");
+                Console.WriteUInt(c.Bus); Console.Write(":");
+                Console.WriteUInt(c.Slot); Console.Write(".");
+                Console.WriteUInt(c.Func);
+                Console.Write(" ports=");
+                Console.WriteUInt(ports);
+
+                for (uint p = 0; p < ports; p++)
+                {
+                    uint sc = *(uint*)(op + 0x400 + p * 0x10);
+                    if ((sc & 1) == 0) continue;
+                    Console.Write(" [p");
+                    Console.WriteUInt(p);
+                    Console.Write(" spd=");
+                    Console.WriteUInt((sc >> 10) & 0xF);
+                    Console.Write("]");
+                }
+                Console.WriteLine("");
+            }
+        }
+
         // Waits a bounded time for input on one device and prints whatever
         // arrives. An idle keyboard simply times out — that is the normal
         // outcome headless, and must not be read as a failure.
-        private static void PollReports(uint slot, byte protocol)
+        private static void PollReports(XhciController hc, uint slot, byte protocol)
         {
             Console.Write("[xhci] press keys / move mouse on slot ");
             Console.WriteUInt(slot);
@@ -62,7 +111,7 @@ namespace OS.Kernel.Diagnostics
             int seen = 0;
             for (int attempt = 0; attempt < 8 && seen < 4; attempt++)
             {
-                if (!Xhci.TryReadReport(slot, report, 16, 500)) continue;
+                if (!hc.TryReadReport(slot, report, 16, 500)) continue;
 
                 seen++;
                 Console.Write("[xhci] report ");
@@ -88,48 +137,64 @@ namespace OS.Kernel.Diagnostics
         {
             if (!Probes.XhciInit) return;
 
-            if (!Xhci.Init())
+            // Every controller, not just one: on a desktop the boot stick and
+            // the keyboards sit on different ones, and driving a single
+            // controller means losing whichever is not on it.
+            int brought = Xhci.StartAll();
+            if (brought == 0)
             {
-                Console.Write("[xhci] init FAIL: ");
-                Console.WriteLine(Xhci.Failure ?? "unknown");
+                Console.WriteLine("[xhci] no controller came up");
                 return;
             }
 
-            Console.Write("[xhci] ver=0x");
-            Console.WriteHex(Xhci.Version);
+            for (int i = 0; i < brought; i++)
+                Enumerate(Xhci.Get(i));
+
+            // Hand the keyboard to the rest of the system, so a machine with
+            // no PS/2 still has a console and DOOM still has arrow keys.
+            if (OS.Hal.ScancodeSource.TryAttachUsb())
+                Console.WriteLine("[xhci] usb keyboard attached as system input");
+
+            ReportStorage();
+            Summarise();
+        }
+
+        private static void Enumerate(XhciController hc)
+        {
+            Console.Write("[xhci] ");
+            Console.WriteUInt(hc.Bus); Console.Write(":");
+            Console.WriteUInt(hc.Slot); Console.Write(".");
+            Console.WriteUInt(hc.Func);
+            Console.Write(" ver=0x");
+            Console.WriteHex(hc.Version);
             Console.Write(" slots=");
-            Console.WriteUInt(Xhci.MaxSlots);
+            Console.WriteUInt(hc.MaxSlots);
             Console.Write(" ports=");
-            Console.WriteUInt(Xhci.MaxPorts);
+            Console.WriteUInt(hc.MaxPorts);
             Console.Write(" ctx=");
-            Console.Write(Xhci.ContextSize64 ? "64" : "32");
+            Console.Write(hc.ContextSize64 ? "64" : "32");
             Console.Write(" pagesize=0x");
-            Console.WriteHex(Xhci.PageSize);
-            Console.Write(Xhci.TookOwnership ? " owned(from-bios)" : " owned(was-free)");
+            Console.WriteHex(hc.PageSize);
+            Console.Write(hc.TookOwnership ? " owned(from-bios)" : " owned(was-free)");
+            Console.Write(hc.PickedByFirmware ? " pick=bootpath" : " pick=first");
             Console.WriteLine("");
 
             Console.Write("[xhci] op=0x");
-            Console.WriteHex(Xhci.OperationalBase);
+            Console.WriteHex(hc.OperationalBase);
             Console.Write(" rt=0x");
-            Console.WriteHex(Xhci.RuntimeBase);
+            Console.WriteHex(hc.RuntimeBase);
             Console.Write(" db=0x");
-            Console.WriteHex(Xhci.DoorbellBase);
+            Console.WriteHex(hc.DoorbellBase);
             Console.WriteLine(" reset OK");
 
-            if (!Xhci.Start())
-            {
-                Console.Write("[xhci] start FAIL: ");
-                Console.WriteLine(Xhci.Failure ?? "unknown");
-                return;
-            }
-
+            // Init and Start already ran in the registry; this only reports.
             Console.Write("[xhci] running scratchpad=");
-            Console.WriteUInt(Xhci.ScratchpadCount);
+            Console.WriteUInt(hc.ScratchpadCount);
 
             // A No-Op that completes is the real proof: our TRB reached the
             // controller and its event came back into our memory.
             Console.Write(" noop=");
-            if (Xhci.TryNoOpCommand(out uint code))
+            if (hc.TryNoOpCommand(out uint code))
             {
                 Console.Write(code == 1 ? "OK" : "code=0x");
                 if (code != 1) Console.WriteHex(code);
@@ -140,19 +205,28 @@ namespace OS.Kernel.Diagnostics
             }
             Console.WriteLine("");
 
-            for (uint p = 0; p < Xhci.MaxPorts; p++)
+            for (uint p = 0; p < hc.MaxPorts; p++)
             {
-                uint sc = Xhci.PortStatus(p);
+                uint sc = hc.PortStatus(p);
                 if ((sc & 1) == 0) continue;      // nothing connected
                 Console.Write("[xhci] port ");
                 Console.WriteUInt(p);
                 Console.Write(" connected portsc=0x");
                 Console.WriteHex(sc);
-                Console.Write(" speed=");
-                Console.WriteUInt((sc >> 10) & 0xF);
-
-                bool enabled = Xhci.TryResetPort(p);
+                bool enabled = hc.TryResetPort(p);
                 Console.Write(enabled ? " reset=enabled" : " reset=FAIL");
+
+                // After the reset, not before: the speed field is only
+                // meaningful once the port has come up, and the pre-reset
+                // value printed here previously was whatever the firmware
+                // happened to leave behind — 0 on most machines.
+                Console.Write(" speed=");
+                Console.WriteUInt(hc.SpeedOfPort(p));
+                Console.Write("(raw=");
+                Console.WriteUInt((hc.PortStatus(p) >> 10) & 0xF);
+                Console.Write(" usb");
+                Console.WriteUInt(hc.PortMajor(p));
+                Console.Write(")");
                 if (!enabled)
                 {
                     Console.WriteLine("");
@@ -160,7 +234,7 @@ namespace OS.Kernel.Diagnostics
                 }
 
                 Console.Write(" slot=");
-                if (!Xhci.TryEnableSlot(out uint slot, out uint slotCode) || slotCode != 1)
+                if (!hc.TryEnableSlot(out uint slot, out uint slotCode) || slotCode != 1)
                 {
                     Console.Write("FAIL code=0x");
                     Console.WriteHex(slotCode);
@@ -170,7 +244,7 @@ namespace OS.Kernel.Diagnostics
                 Console.WriteUInt(slot);
 
                 Console.Write(" addr=");
-                if (!Xhci.TryAddressDevice(slot, p, out uint addrCode))
+                if (!hc.TryAddressDevice(slot, p, out uint addrCode))
                 {
                     Console.Write("FAIL code=0x");
                     Console.WriteHex(addrCode);
@@ -180,7 +254,7 @@ namespace OS.Kernel.Diagnostics
                 Console.Write("OK");
 
                 Console.Write(" desc=");
-                if (Xhci.TryGetDeviceDescriptor(slot, out ushort vid, out ushort pid,
+                if (hc.TryGetDeviceDescriptor(slot, out ushort vid, out ushort pid,
                                                 out byte cls, out byte mps))
                 {
                     Console.Write("vid=0x"); Console.WriteHex(vid);
@@ -190,20 +264,23 @@ namespace OS.Kernel.Diagnostics
                 }
                 else
                 {
-                    Console.Write("FAIL");
+                    Console.Write("FAIL stage=");
+                    Console.WriteUInt(hc.LastFailedStage);
+                    Console.Write(" code=0x");
+                    Console.WriteHex(hc.LastCompletionCode);
                 }
                 Console.WriteLine("");
 
                 Console.Write("[xhci] slot ");
                 Console.WriteUInt(slot);
                 Console.Write(" hid=");
-                if (!Xhci.TryConfigureHid(slot, out uint stage))
+                if (!hc.TryConfigureHid(slot, out uint stage))
                 {
                     // Not a HID device — the other thing we drive is storage.
                     Console.Write("no (stage=");
                     Console.WriteUInt(stage);
                     Console.Write(") msd=");
-                    if (Xhci.TryConfigureMsd(slot, out uint msdStage))
+                    if (hc.TryConfigureMsd(slot, out uint msdStage))
                         Console.WriteLine("configured");
                     else
                     {
@@ -214,29 +291,56 @@ namespace OS.Kernel.Diagnostics
                     continue;
                 }
 
-                byte proto = Xhci.HidProtocolOf(slot);
+                byte proto = hc.HidProtocolOf(slot);
                 Console.Write(proto == 1 ? "keyboard" : proto == 2 ? "mouse" : "other");
                 Console.WriteLine(" configured");
 
                 if (Probes.UsbHidPoll)
-                    PollReports(slot, proto);
+                    PollReports(hc, slot, proto);
             }
+        }
 
-            // Hand the keyboard to the rest of the system, so a machine with
-            // no PS/2 still has a console and DOOM still has arrow keys.
-            if (OS.Hal.ScancodeSource.TryAttachUsb())
+        // One line that says everything needed to diagnose a machine we
+        // cannot log from: how many controllers exist, how many we drove,
+        // what they yielded, and whether the firmware's hint was usable.
+        private static void Summarise()
+        {
+            Console.Write("[usbsum] xhci-controllers=");
+            uint controllers = 0;
+            for (int i = 0; i < UsbHost.Count; i++)
+                if (UsbHost.Get(i).Kind == UsbHost.Kind.Xhci) controllers++;
+            Console.WriteUInt(controllers);
+            Console.Write(" driven=");
+            Console.WriteUInt((uint)Xhci.Count);
+            Console.Write(" devices=");
+            Console.WriteUInt((uint)Xhci.TotalDevices());
+            Console.Write(" keyboard=");
+            Console.Write(OS.Hal.ScancodeSource.UsbAttached ? "yes" : "NO");
+            Console.Write(" storage=");
+            Console.Write(UsbMassStorage.IsPresent ? "yes" : "NO");
+            Console.Write(" hint=");
+            if (!OS.Boot.BootMedium.Valid) Console.Write("none");
+            else if (!OS.Boot.BootMedium.IsUsb) Console.Write("not-usb");
+            else
             {
-                Console.WriteLine("[xhci] usb keyboard attached as system input");
+                Console.WriteUInt(OS.Boot.BootMedium.PciDevice);
+                Console.Write(".");
+                Console.WriteUInt(OS.Boot.BootMedium.PciFunction);
+                Console.Write("/p");
+                Console.WriteUInt(OS.Boot.BootMedium.UsbPort);
             }
-
-            ReportStorage();
+            Console.WriteLine("");
         }
 
         private static void ReportStorage()
         {
             if (!UsbMassStorage.TryAttach())
             {
-                Console.WriteLine("[umsd] no mass storage device");
+                // "None found" and "found but never became ready" are
+                // different problems and were reported identically before.
+                Console.WriteLine(UsbMassStorage.FailStage == 1
+                    ? "[umsd] no mass storage device"
+                    : "[umsd] device present but not ready (capacity FAIL)");
                 return;
             }
 

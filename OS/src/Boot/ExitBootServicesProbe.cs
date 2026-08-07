@@ -193,11 +193,14 @@ namespace OS.Boot
             // legitimately own the controller. Reads the boot disk via
             // our AHCI + RO-FAT entirely without firmware.
             OS.Kernel.Diagnostics.AhciProbe.Run();
-            OS.Kernel.Diagnostics.FatProbe.Run();
 
-            // Same rule as AHCI above — taking the controller from the
-            // firmware is only legitimate once the firmware is gone.
+            // Before the mount, not after: on a machine with no AHCI the boot
+            // medium IS the USB stick, so it has to exist by the time anything
+            // asks for a disk. Same POST-EBS rule as AHCI — taking the
+            // controller from the firmware is only legitimate once it is gone.
             OS.Kernel.Diagnostics.UsbProbe.RunXhci();
+
+            OS.Kernel.Diagnostics.FatProbe.Run();
 
             // From here on every console line also lands on disk. Bound after
             // the mount because that is when the disk becomes ours; everything
@@ -205,7 +208,11 @@ namespace OS.Boot
             if (OS.Hal.BootLog.TryInit())
                 Console.WriteLine("[bootlog] on disk: sharpos/bootlog.txt");
             else
-                Console.WriteLine("[bootlog] unavailable (missing or fragmented)");
+            {
+                Console.Write("[bootlog] unavailable reason=");
+                Console.WriteUInt(OS.Hal.BootLog.FailReason);
+                Console.WriteLine(" (1=create failed, 2=fragmented)");
+            }
             if (OS.Kernel.Diagnostics.Probes.FatWrite)
                 OS.Kernel.Diagnostics.FatWriteProbe.Run();
 

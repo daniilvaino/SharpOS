@@ -14,6 +14,7 @@ namespace OS.Hal.Usb
         private const int CbwLength = 31;
         private const int CswLength = 13;
 
+        private static XhciController s_hc;
         private static uint s_slot;
         private static bool s_present;
         private static uint s_tag = 1;
@@ -31,11 +32,10 @@ namespace OS.Hal.Usb
         {
             if (s_present) return true;
 
-            for (int i = 0; i < Xhci.DeviceCount; i++)
+            s_failStage = 1;                 // nothing that calls itself storage
+            if (Xhci.TryFindMassStorage(out XhciController hc, out uint slot))
             {
-                uint slot = Xhci.SlotIdAt(i);
-                if (!Xhci.IsMassStorage(slot)) continue;
-
+                s_hc = hc;
                 s_slot = slot;
                 s_cmdBuffer = DmaMemory.AllocPages(1);
                 s_dataBuffer = DmaMemory.AllocPages(16);   // 64 KiB of transfer
@@ -43,16 +43,59 @@ namespace OS.Hal.Usb
 
                 s_present = true;
 
-                // A freshly attached device reports "unit attention" on the
-                // first command and only settles afterwards, so the first
-                // TEST UNIT READY failing is expected rather than fatal.
-                TestUnitReady();
-                TestUnitReady();
+                // A freshly attached device answers the first commands with a
+                // check condition ("unit attention" — the medium just
+                // appeared) and refuses to move on until asked WHY. Issuing
+                // REQUEST SENSE is what clears it; without that, every later
+                // command keeps failing and the device looks broken.
+                Inquiry();
+                for (int attempt = 0; attempt < 8; attempt++)
+                {
+                    if (TestUnitReady()) break;
+                    RequestSense();
+                }
 
-                if (!TryReadCapacity()) { s_present = false; return false; }
-                return true;
+                for (int attempt = 0; attempt < 4; attempt++)
+                {
+                    if (TryReadCapacity()) return true;
+                    RequestSense();
+                }
+
+                s_failStage = 2;
+                s_present = false;
+                return false;
             }
             return false;
+        }
+
+        // Which step gave up, so "no storage" can be told apart from "storage
+        // that never became ready".
+        private static uint s_failStage;
+        public static uint FailStage => s_failStage;
+
+        /// <summary>True when a mass storage device exists, ready or not.</summary>
+        public static bool DeviceSeen => s_failStage != 1 && s_slot != 0;
+
+        // Ask the device to explain its last refusal. The answer is discarded:
+        // the point is the asking, which is what clears the condition.
+        private static void RequestSense()
+        {
+            byte* cb = stackalloc byte[16];
+            for (int i = 0; i < 16; i++) cb[i] = 0;
+            cb[0] = 0x03;                    // REQUEST SENSE
+            cb[4] = 18;
+            TryCommand(cb, 6, (void*)s_dataBuffer, 18, dataIn: true);
+        }
+
+        // Some devices expect to be identified before anything else is asked
+        // of them; the data itself is not needed here.
+        private static void Inquiry()
+        {
+            byte* cb = stackalloc byte[16];
+            for (int i = 0; i < 16; i++) cb[i] = 0;
+            cb[0] = 0x12;                    // INQUIRY
+            cb[4] = 36;
+            TryCommand(cb, 6, (void*)s_dataBuffer, 36, dataIn: true);
         }
 
         private static bool TestUnitReady()
@@ -142,18 +185,18 @@ namespace OS.Hal.Usb
             cbw[14] = commandLength;
             for (int i = 0; i < commandLength && i < 16; i++) cbw[15 + i] = commandBlock[i];
 
-            if (!Xhci.TryBulkTransfer(s_slot, false, (void*)s_cmdBuffer, CbwLength, out _))
+            if (!s_hc.TryBulkTransfer(s_slot, false, (void*)s_cmdBuffer, CbwLength, out _))
                 return false;
 
             if (dataLength > 0 && data != null)
             {
-                if (!Xhci.TryBulkTransfer(s_slot, dataIn, data, dataLength, out _))
+                if (!s_hc.TryBulkTransfer(s_slot, dataIn, data, dataLength, out _))
                     return false;
             }
 
             byte* csw = (byte*)(s_cmdBuffer + 64);
             for (int i = 0; i < CswLength; i++) csw[i] = 0;
-            if (!Xhci.TryBulkTransfer(s_slot, true, (void*)(s_cmdBuffer + 64), CswLength, out _))
+            if (!s_hc.TryBulkTransfer(s_slot, true, (void*)(s_cmdBuffer + 64), CswLength, out _))
                 return false;
 
             if (Get32(csw, 0) != CswSignature) return false;

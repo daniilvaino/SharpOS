@@ -239,6 +239,16 @@ namespace OS.Hal
         // the top of the screen. Moving those pixels beats re-rendering every glyph:
         // a scrolled screen has every row marked dirty even though only the last one
         // holds new text.
+        // Decided from the boot-time measurement rather than assumed: the same
+        // code ran at 622 MiB/s on one machine and 4 MiB/s on another, purely
+        // because of how their firmware marks video memory.
+        private static bool ReadingScreenIsTooSlow()
+        {
+            ulong scroll = OS.Kernel.Diagnostics.FbPerfProbe.ScrollMibPerSecond;
+            if (scroll == 0) return false;      // never measured — keep the old path
+            return scroll < 100;
+        }
+
         private static void ApplyScroll(XtermSharp.Buffer buffer)
         {
             int delta = buffer.YBase - s_lastYBase;
@@ -249,8 +259,16 @@ namespace OS.Hal
             // forget it rather than erasing at a stale position.
             s_cursorSlot = -1;
 
-            if (delta >= s_rows)
+            if (delta >= s_rows || ReadingScreenIsTooSlow())
             {
+                // Repaint every cell instead of moving pixels.
+                //
+                // Moving pixels reads the screen back, and on a machine whose
+                // firmware marks the framebuffer uncacheable those reads run at
+                // a few MiB/s — a single scrolled line took seconds. Redrawing
+                // touches far fewer bytes (glyphs, not the whole screen) and
+                // never reads, so it wins outright there and is no worse
+                // anywhere else.
                 for (int i = 0; i < s_shadowValid.Length; i++)
                     s_shadowValid[i] = false;
                 return;

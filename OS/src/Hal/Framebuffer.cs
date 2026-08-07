@@ -25,6 +25,7 @@ namespace OS.Hal
         private static uint s_height;
         private static uint s_stride;    // pixels per scan line
         private static uint s_format;    // 0=RGBX8 1=BGRX8 2=BitMask 3=BltOnly
+        private static ulong s_size;     // bytes, as the firmware reported them
         private static bool s_available;
 
         public static bool IsAvailable => s_available;
@@ -32,6 +33,35 @@ namespace OS.Hal
         public static uint Width => s_width;
         public static uint Height => s_height;
         public static uint Stride => s_stride;
+
+        private static bool s_writeCombining;
+        public static bool IsWriteCombining => s_writeCombining;
+
+        /// <summary>
+        /// Re-map the framebuffer as write-combining.
+        ///
+        /// Only worth doing where reads are already lost. Some firmware marks
+        /// video memory uncacheable through the CPU's range registers, which
+        /// our page attributes cannot loosen — except towards write-combining,
+        /// the one direction the architecture allows. Writes then leave in
+        /// full bursts instead of one store at a time.
+        ///
+        /// The price is that reads get worse still, so this must follow the
+        /// decision to stop reading the screen, never precede it.
+        /// </summary>
+        public static bool TrySwitchToWriteCombining()
+        {
+            if (s_writeCombining) return true;
+            if (!IsAvailable) return false;
+            if (!MemoryTypes.TryEnableWriteCombining()) return false;
+
+            if (!VirtualMemory.MapFixed((void*)s_base, s_base, s_size, exec: false,
+                                        VirtualMemory.MemoryKind.Framebuffer))
+                return false;
+
+            s_writeCombining = true;
+            return true;
+        }
         public static uint PixelFormat => s_format;
 
         // Map [FramebufferBase, +FramebufferSize) identity into the active
@@ -53,10 +83,21 @@ namespace OS.Hal
                     bi.FramebufferBase,
                     bi.FramebufferSize,
                     exec: false,
-                    VirtualMemory.MemoryKind.Framebuffer))
+                    // Cacheable, deliberately. Both alternatives are worse for
+                    // how this code draws: write-through halves write speed,
+                    // and write-combining makes READS uncached — and the
+                    // console scrolls by copying the screen onto itself, so
+                    // reads are half the work. Measured on hardware: a full
+                    // repaint went to about three seconds under those.
+                    //
+                    // The honest fix for using write-combining is to stop
+                    // reading the framebuffer at all (shadow buffer in RAM,
+                    // blit forward only). Until that exists, cacheable wins.
+                    VirtualMemory.MemoryKind.Normal))
                 return false;
 
             s_base      = bi.FramebufferBase;
+            s_size      = bi.FramebufferSize;
             s_width     = bi.FramebufferWidth;
             s_height    = bi.FramebufferHeight;
             s_stride    = bi.FramebufferStride;

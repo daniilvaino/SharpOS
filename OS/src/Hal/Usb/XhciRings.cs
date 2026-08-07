@@ -7,7 +7,7 @@ namespace OS.Hal.Usb
     // every part of the path — our TRB reaches the controller, the controller
     // executes it and writes an event back into our memory — so a success here
     // means the DMA plumbing is real, not that a register accepted a write.
-    internal static unsafe partial class Xhci
+    internal sealed unsafe partial class XhciController
     {
         // Operational registers beyond the ones the reset path needs.
         private const uint OP_DNCTRL = 0x14;
@@ -51,42 +51,42 @@ namespace OS.Hal.Usb
         private const uint TRB_CYCLE = 1u << 0;
         private const uint TRB_TOGGLE_CYCLE = 1u << 1;
 
-        private static ulong s_dcbaa;
-        private static ulong s_cmdRing;
-        private static ulong s_eventRing;
-        private static ulong s_erst;
-        private static ulong s_scratchpadArray;
+        private ulong _dcbaa;
+        private ulong _cmdRing;
+        private ulong _eventRing;
+        private ulong _erst;
+        private ulong _scratchpadArray;
 
-        private static uint s_cmdEnqueue;       // index into the command ring
-        private static uint s_cmdCycle = 1;
-        private static uint s_eventDequeue;
-        private static uint s_eventCycle = 1;
-        private static uint s_scratchpadCount;
-        private static bool s_running;
+        private uint _cmdEnqueue;       // index into the command ring
+        private uint _cmdCycle = 1;
+        private uint _eventDequeue;
+        private uint _eventCycle = 1;
+        private uint _scratchpadCount;
+        private bool _running;
 
-        public static bool IsRunning => s_running;
-        public static uint ScratchpadCount => s_scratchpadCount;
+        public bool IsRunning => _running;
+        public uint ScratchpadCount => _scratchpadCount;
 
         /// <summary>
         /// Allocate the rings, point the controller at them and set it running.
         /// Requires Init() (ownership + reset) to have succeeded.
         /// </summary>
-        public static bool Start()
+        public bool Start()
         {
-            if (!s_initialized) return Fail("Start before Init");
-            if (s_running) return true;
+            if (!_initialized) return Fail("Start before Init");
+            if (_running) return true;
 
             // Bit 0 of PAGESIZE means 4 KiB pages are supported. Every pointer
             // below assumes that; a controller wanting something larger would
             // silently misread all of them.
-            if ((s_pageSize & 1) == 0)
+            if ((_pageSize & 1) == 0)
                 return Fail("controller does not support 4 KiB pages");
 
-            s_dcbaa = DmaMemory.AllocPages(1);
-            s_cmdRing = DmaMemory.AllocPages(1);
-            s_eventRing = DmaMemory.AllocPages(1);
-            s_erst = DmaMemory.AllocPages(1);
-            if (s_dcbaa == 0 || s_cmdRing == 0 || s_eventRing == 0 || s_erst == 0)
+            _dcbaa = DmaMemory.AllocPages(1);
+            _cmdRing = DmaMemory.AllocPages(1);
+            _eventRing = DmaMemory.AllocPages(1);
+            _erst = DmaMemory.AllocPages(1);
+            if (_dcbaa == 0 || _cmdRing == 0 || _eventRing == 0 || _erst == 0)
                 return Fail("DMA allocation failed");
 
             if (!TryAllocScratchpad())
@@ -95,42 +95,42 @@ namespace OS.Hal.Usb
             // Command ring: a Link TRB in the last slot points back to the
             // start with Toggle Cycle set, which is what makes it a ring
             // rather than a buffer that runs off its end.
-            uint* link = (uint*)(s_cmdRing + (RingTrbs - 1) * TrbSize);
-            link[0] = (uint)s_cmdRing;
-            link[1] = (uint)(s_cmdRing >> 32);
+            uint* link = (uint*)(_cmdRing + (RingTrbs - 1) * TrbSize);
+            link[0] = (uint)_cmdRing;
+            link[1] = (uint)(_cmdRing >> 32);
             link[2] = 0;
-            link[3] = (TRB_LINK << 10) | TRB_TOGGLE_CYCLE | s_cmdCycle;
+            link[3] = (TRB_LINK << 10) | TRB_TOGGLE_CYCLE | _cmdCycle;
 
             // Event ring segment table: one segment, our single page.
-            uint* erst = (uint*)s_erst;
-            erst[0] = (uint)s_eventRing;
-            erst[1] = (uint)(s_eventRing >> 32);
+            uint* erst = (uint*)_erst;
+            erst[0] = (uint)_eventRing;
+            erst[1] = (uint)(_eventRing >> 32);
             erst[2] = RingTrbs;
             erst[3] = 0;
 
             // Slots must be enabled before the device context array is used.
-            Write32(s_opBase + OP_CONFIG, s_maxSlots);
-            Write64(s_opBase + OP_DCBAAP, s_dcbaa);
+            Write32(_opBase + OP_CONFIG, _maxSlots);
+            Write64(_opBase + OP_DCBAAP, _dcbaa);
 
             // RCS = 1: the controller's consumer cycle state must match the
             // cycle bit we write into TRBs, or it sees the ring as empty.
-            Write64(s_opBase + OP_CRCR, s_cmdRing | 1UL);
+            Write64(_opBase + OP_CRCR, _cmdRing | 1UL);
 
-            ulong ir = s_runtimeBase + IR0;
+            ulong ir = _runtimeBase + IR0;
             Write32(ir + IR_ERSTSZ, 1);
-            Write64(ir + IR_ERDP, s_eventRing);
-            Write64(ir + IR_ERSTBA, s_erst);   // last: writing this arms the interrupter
+            Write64(ir + IR_ERDP, _eventRing);
+            Write64(ir + IR_ERSTBA, _erst);   // last: writing this arms the interrupter
             Write32(ir + IR_IMOD, 0);
             Write32(ir + IR_IMAN, 0);          // polled, no interrupts yet
 
-            Write32(s_opBase + OP_DNCTRL, 0);
+            Write32(_opBase + OP_DNCTRL, 0);
 
-            uint cmd = Read32(s_opBase + OP_USBCMD);
-            Write32(s_opBase + OP_USBCMD, cmd | USBCMD_RS);
-            if (!WaitUntil(1000, s_opBase + OP_USBSTS, USBSTS_HCH, expectSet: false))
+            uint cmd = Read32(_opBase + OP_USBCMD);
+            Write32(_opBase + OP_USBCMD, cmd | USBCMD_RS);
+            if (!WaitUntil(1000, _opBase + OP_USBSTS, USBSTS_HCH, expectSet: false))
                 return Fail("controller would not leave the halted state");
 
-            s_running = true;
+            _running = true;
             return true;
         }
 
@@ -138,15 +138,15 @@ namespace OS.Hal.Usb
         // the count comes from HCSPARAMS2 and is often zero on emulators and
         // non-zero on real hardware. Skipping it there corrupts the controller's
         // private state rather than failing cleanly.
-        private static bool TryAllocScratchpad()
+        private bool TryAllocScratchpad()
         {
-            uint hcs2 = Read32(s_mmio + HCSPARAMS2);
+            uint hcs2 = Read32(_mmio + HCSPARAMS2);
             uint hi = (hcs2 >> 21) & 0x1F;
             uint lo = (hcs2 >> 27) & 0x1F;
-            s_scratchpadCount = (hi << 5) | lo;
+            _scratchpadCount = (hi << 5) | lo;
 
-            ulong* dcbaa = (ulong*)s_dcbaa;
-            if (s_scratchpadCount == 0)
+            ulong* dcbaa = (ulong*)_dcbaa;
+            if (_scratchpadCount == 0)
             {
                 dcbaa[0] = 0;
                 return true;
@@ -154,19 +154,19 @@ namespace OS.Hal.Usb
 
             // The array of pointers is itself DMA memory, and entry 0 of the
             // device context array points at it.
-            uint arrayPages = (s_scratchpadCount * 8u + 4095u) / 4096u;
-            s_scratchpadArray = DmaMemory.AllocPages(arrayPages);
-            if (s_scratchpadArray == 0) return false;
+            uint arrayPages = (_scratchpadCount * 8u + 4095u) / 4096u;
+            _scratchpadArray = DmaMemory.AllocPages(arrayPages);
+            if (_scratchpadArray == 0) return false;
 
-            ulong* slots = (ulong*)s_scratchpadArray;
-            for (uint i = 0; i < s_scratchpadCount; i++)
+            ulong* slots = (ulong*)_scratchpadArray;
+            for (uint i = 0; i < _scratchpadCount; i++)
             {
                 ulong page = DmaMemory.AllocPages(1);
                 if (page == 0) return false;
                 slots[i] = page;
             }
 
-            dcbaa[0] = s_scratchpadArray;
+            dcbaa[0] = _scratchpadArray;
             return true;
         }
 
@@ -174,23 +174,23 @@ namespace OS.Hal.Usb
         /// Post a No-Op command and wait for its completion event. Proves the
         /// full round trip: our TRB out, the controller's event back.
         /// </summary>
-        public static bool TryNoOpCommand(out uint completionCode)
+        public bool TryNoOpCommand(out uint completionCode)
         {
             completionCode = 0;
-            if (!s_running) return false;
+            if (!_running) return false;
 
-            uint* trb = (uint*)(s_cmdRing + s_cmdEnqueue * TrbSize);
+            uint* trb = (uint*)(_cmdRing + _cmdEnqueue * TrbSize);
             trb[0] = 0;
             trb[1] = 0;
             trb[2] = 0;
             // The cycle bit goes last: it is what hands the TRB over, and the
             // controller may read the rest the instant it flips.
-            trb[3] = (TRB_NOOP_CMD << 10) | s_cmdCycle;
+            trb[3] = (TRB_NOOP_CMD << 10) | _cmdCycle;
 
             AdvanceCommandRing();
 
             // Doorbell 0 is the command ring's.
-            Write32(s_doorbellBase, 0);
+            Write32(_doorbellBase, 0);
 
             return TryWaitEvent(TRB_CMD_COMPLETE, 1000, out completionCode, out _);
         }
@@ -199,20 +199,20 @@ namespace OS.Hal.Usb
         /// Ask the controller for a device slot. The slot id it returns is the
         /// handle every later command for that device is addressed by.
         /// </summary>
-        public static bool TryEnableSlot(out uint slotId, out uint completionCode)
+        public bool TryEnableSlot(out uint slotId, out uint completionCode)
         {
             slotId = 0;
             completionCode = 0;
-            if (!s_running) return false;
+            if (!_running) return false;
 
-            uint* trb = (uint*)(s_cmdRing + s_cmdEnqueue * TrbSize);
+            uint* trb = (uint*)(_cmdRing + _cmdEnqueue * TrbSize);
             trb[0] = 0;
             trb[1] = 0;
             trb[2] = 0;
-            trb[3] = (TRB_ENABLE_SLOT << 10) | s_cmdCycle;
+            trb[3] = (TRB_ENABLE_SLOT << 10) | _cmdCycle;
 
             AdvanceCommandRing();
-            Write32(s_doorbellBase, 0);
+            Write32(_doorbellBase, 0);
 
             if (!TryWaitEvent(TRB_CMD_COMPLETE, 1000, out completionCode, out uint control))
                 return false;
@@ -229,11 +229,11 @@ namespace OS.Hal.Usb
         /// back to clear them (they are write-1-to-clear, so a read-modify-write
         /// that ignores them would clear ones we never looked at).
         /// </summary>
-        public static bool TryResetPort(uint port)
+        public bool TryResetPort(uint port)
         {
-            if (!s_running || port >= s_maxPorts) return false;
+            if (!_running || port >= _maxPorts) return false;
 
-            ulong sc = s_opBase + OP_PORTSC + port * 0x10;
+            ulong sc = _opBase + OP_PORTSC + port * 0x10;
             uint value = Read32(sc);
             if ((value & PORTSC_CCS) == 0) return false;
 
@@ -250,21 +250,35 @@ namespace OS.Hal.Usb
             return (Read32(sc) & PORTSC_PED) != 0;
         }
 
-        private static void AdvanceCommandRing()
+        private void AdvanceCommandRing()
         {
-            s_cmdEnqueue++;
+            _cmdEnqueue++;
             // The last slot holds the Link TRB, so wrapping happens one early
             // and flips the cycle bit we produce.
-            if (s_cmdEnqueue >= RingTrbs - 1)
+            if (_cmdEnqueue >= RingTrbs - 1)
             {
-                uint* link = (uint*)(s_cmdRing + (RingTrbs - 1) * TrbSize);
-                link[3] = (TRB_LINK << 10) | TRB_TOGGLE_CYCLE | s_cmdCycle;
-                s_cmdEnqueue = 0;
-                s_cmdCycle ^= 1;
+                uint* link = (uint*)(_cmdRing + (RingTrbs - 1) * TrbSize);
+                link[3] = (TRB_LINK << 10) | TRB_TOGGLE_CYCLE | _cmdCycle;
+                _cmdEnqueue = 0;
+                _cmdCycle ^= 1;
             }
         }
 
-        private static bool TryWaitEvent(uint wantType, uint timeoutMs,
+        private bool TryWaitEvent(uint wantType, uint timeoutMs,
+                                         out uint completionCode, out uint eventControl)
+            => TryWaitEvent(wantType, 0, timeoutMs, out completionCode, out eventControl);
+
+        /// <summary>
+        /// Wait for an event, optionally only for one slot (0 = any).
+        ///
+        /// The slot filter is load-bearing, not a refinement. Every device
+        /// posts into the same event ring and a keyboard report carries the
+        /// same TRB type as a disk transfer, so an unfiltered wait lets a
+        /// keypress complete a storage read — the read then returns with the
+        /// wrong data, and the two sides silently lose sync. Events for other
+        /// slots are handed back to their owner rather than dropped.
+        /// </summary>
+        private bool TryWaitEvent(uint wantType, uint wantSlot, uint timeoutMs,
                                          out uint completionCode, out uint eventControl)
         {
             completionCode = 0;
@@ -273,33 +287,40 @@ namespace OS.Hal.Usb
 
             for (int spins = 0; spins < 50_000_000; spins++)
             {
-                ulong slot = s_eventRing + s_eventDequeue * (ulong)TrbSize;
+                ulong slot = _eventRing + _eventDequeue * (ulong)TrbSize;
                 uint control = Read32(slot + 12);
 
                 // An event belongs to us only once its cycle bit matches ours;
                 // until then we are looking at a stale entry from the previous
                 // lap around the ring.
-                if ((control & TRB_CYCLE) == s_eventCycle)
+                if ((control & TRB_CYCLE) == _eventCycle)
                 {
                     uint type = (control >> 10) & 0x3F;
                     uint status = Read32(slot + 8);
 
-                    s_eventDequeue++;
-                    if (s_eventDequeue >= RingTrbs)
+                    _eventDequeue++;
+                    if (_eventDequeue >= RingTrbs)
                     {
-                        s_eventDequeue = 0;
-                        s_eventCycle ^= 1;
+                        _eventDequeue = 0;
+                        _eventCycle ^= 1;
                     }
-                    Write64(s_runtimeBase + IR0 + IR_ERDP,
-                            s_eventRing + s_eventDequeue * (ulong)TrbSize);
+                    Write64(_runtimeBase + IR0 + IR_ERDP,
+                            _eventRing + _eventDequeue * (ulong)TrbSize);
 
-                    if (type == wantType)
+                    uint eventSlotId = (control >> 24) & 0xFF;
+                    if (type == wantType && (wantSlot == 0 || eventSlotId == wantSlot))
                     {
                         completionCode = status >> 24;
                         eventControl = control;
                         return true;
                     }
-                    continue;   // some other event (port change) — keep looking
+
+                    // Not ours: give it back to whoever queued it, so the
+                    // report is not lost and its endpoint can be re-armed.
+                    if (type == TRB_TRANSFER_EVENT)
+                        StashTransferEvent(eventSlotId);
+
+                    continue;   // port change and friends fall through here
                 }
 
                 if (Expired(deadline)) return false;
@@ -308,22 +329,22 @@ namespace OS.Hal.Usb
         }
 
         /// <summary>Port status word, or 0 when the port index is out of range.</summary>
-        public static uint PortStatus(uint port)
+        public uint PortStatus(uint port)
         {
-            if (!s_initialized || port >= s_maxPorts) return 0;
-            return Read32(s_opBase + OP_PORTSC + port * 0x10);
+            if (!_initialized || port >= _maxPorts) return 0;
+            return Read32(_opBase + OP_PORTSC + port * 0x10);
         }
 
         [System.Runtime.CompilerServices.MethodImpl(
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static void Write32(ulong address, uint value) => *(uint*)address = value;
+        private void Write32(ulong address, uint value) => *(uint*)address = value;
 
         // 64-bit registers are written as two dwords, low half first: some
         // controllers latch on the high write, and a single qword store is not
         // guaranteed to be decoded as one access.
         [System.Runtime.CompilerServices.MethodImpl(
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static void Write64(ulong address, ulong value)
+        private void Write64(ulong address, ulong value)
         {
             *(uint*)address = (uint)value;
             *(uint*)(address + 4) = (uint)(value >> 32);

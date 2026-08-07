@@ -8,9 +8,10 @@ namespace OS.Hal.Usb
     // actually is. A wrong context layout shows up immediately as a non-success
     // completion code rather than as silence, which is why this is the slice
     // that validates the structure work.
-    internal static unsafe partial class Xhci
+    internal sealed unsafe partial class XhciController
     {
         private const uint TRB_ADDRESS_DEVICE = 11;
+        private const uint TRB_EVALUATE_CONTEXT = 13;
         private const uint TRB_SETUP = 2;
         private const uint TRB_DATA = 3;
         private const uint TRB_STATUS = 4;
@@ -45,6 +46,8 @@ namespace OS.Hal.Usb
             public ulong ReportBuffer;
             public bool Configured;
             public bool ReadOutstanding;
+            // Set when someone else's wait absorbed this device's completion.
+            public bool ReportPending;
 
             // Mass storage: two bulk endpoints instead of one interrupt one.
             public byte InterfaceClass;
@@ -63,26 +66,34 @@ namespace OS.Hal.Usb
             public byte Address;
         }
 
-        private static readonly Device[] s_devices = new Device[MaxDevices];
-        private static int s_deviceCount;
+        private readonly Device[] _devices = new Device[MaxDevices];
+        private int _deviceCount;
 
-        public static int DeviceCount => s_deviceCount;
+        public int DeviceCount => _deviceCount;
 
-        public static uint SlotIdAt(int index)
-            => index >= 0 && index < s_deviceCount ? s_devices[index].SlotId : 0;
+        // Completion code of the last transfer that failed. Without it a
+        // failure on hardware is indistinguishable between "device stalled",
+        // "babble" and "we never got an event at all".
+        private uint _lastCode;
+        private uint _lastStage;
+        public uint LastCompletionCode => _lastCode;
+        public uint LastFailedStage => _lastStage;
 
-        private static uint ContextSize => s_contextSize64 ? 64u : 32u;
+        public uint SlotIdAt(int index)
+            => index >= 0 && index < _deviceCount ? _devices[index].SlotId : 0;
+
+        private uint ContextSize => _contextSize64 ? 64u : 32u;
 
         /// <summary>
         /// Give a slot its contexts and let the controller assign it a USB
         /// address. Must follow a successful port reset and Enable Slot.
         /// </summary>
-        public static bool TryAddressDevice(uint slotId, uint port, out uint completionCode)
+        public bool TryAddressDevice(uint slotId, uint port, out uint completionCode)
         {
             completionCode = 0;
-            if (!s_running || s_deviceCount >= MaxDevices) return false;
+            if (!_running || _deviceCount >= MaxDevices) return false;
 
-            uint speed = (PortStatus(port) >> 10) & 0xF;
+            uint speed = SpeedOfPort(port);
 
             ulong input = DmaMemory.AllocPages(1);
             ulong output = DmaMemory.AllocPages(1);
@@ -113,23 +124,23 @@ namespace OS.Hal.Usb
             ep0[4] = 8;                      // average TRB length
 
             // The controller finds a slot's output context through this array.
-            ((ulong*)s_dcbaa)[slotId] = output;
+            ((ulong*)_dcbaa)[slotId] = output;
 
-            uint* trb = (uint*)(s_cmdRing + s_cmdEnqueue * TrbSize);
+            uint* trb = (uint*)(_cmdRing + _cmdEnqueue * TrbSize);
             trb[0] = (uint)input;
             trb[1] = (uint)(input >> 32);
             trb[2] = 0;
-            trb[3] = (TRB_ADDRESS_DEVICE << 10) | (slotId << 24) | s_cmdCycle;
+            trb[3] = (TRB_ADDRESS_DEVICE << 10) | (slotId << 24) | _cmdCycle;
 
             AdvanceCommandRing();
-            Write32(s_doorbellBase, 0);
+            Write32(_doorbellBase, 0);
 
             if (!TryWaitEvent(TRB_CMD_COMPLETE, 1000, out completionCode, out _))
                 return false;
             if (completionCode != 1)
                 return false;
 
-            ref Device d = ref s_devices[s_deviceCount++];
+            ref Device d = ref _devices[_deviceCount++];
             d.SlotId = slotId;
             d.Port = port;
             d.Speed = speed;
@@ -142,10 +153,69 @@ namespace OS.Hal.Usb
             return true;
         }
 
+        /// <summary>
+        /// Tell the controller the real max packet size of endpoint 0.
+        /// Evaluate Context changes a live slot in place, unlike Configure
+        /// Endpoint which adds and removes them.
+        /// </summary>
+        private bool TryEvaluateContext(uint slotId, ushort maxPacket)
+        {
+            int di = IndexOfSlot(slotId);
+            if (di < 0) return false;
+
+            ref Device d = ref _devices[di];
+            uint cs = ContextSize;
+            ulong input = d.InputContext;
+
+            for (uint i = 0; i < cs * 3; i++) ((byte*)input)[i] = 0;
+
+            uint* icc = (uint*)input;
+            icc[0] = 0;
+            icc[1] = 0x2;                     // endpoint 0 only
+
+            uint* ep0 = (uint*)(input + cs * 2);
+            ep0[1] = ((uint)maxPacket << 16) | (4u << 3) | (3u << 1);
+            ep0[2] = (uint)(d.TransferRing | 1UL);
+            ep0[3] = (uint)(d.TransferRing >> 32);
+            ep0[4] = 8;
+
+            uint* trb = (uint*)(_cmdRing + _cmdEnqueue * TrbSize);
+            trb[0] = (uint)input;
+            trb[1] = (uint)(input >> 32);
+            trb[2] = 0;
+            trb[3] = (TRB_EVALUATE_CONTEXT << 10) | (slotId << 24) | _cmdCycle;
+
+            AdvanceCommandRing();
+            Write32(_doorbellBase, 0);
+
+            return TryWaitEvent(TRB_CMD_COMPLETE, 1000, out uint code, out _) && code == 1;
+        }
+
+        /// <summary>
+        /// Speed of a port, from PORTSC when it says anything and from the
+        /// controller's protocol table when it does not.
+        ///
+        /// Zero is not a speed — it means the field is undefined — and putting
+        /// it in a slot context asks the controller to schedule at no speed at
+        /// all. That comes back as a transaction error on the first control
+        /// transfer, which is exactly how a USB 3 stick failed on a desktop
+        /// while its USB 2 keyboard and mouse worked.
+        /// </summary>
+        public uint SpeedOfPort(uint port)
+        {
+            uint speed = (PortStatus(port) >> 10) & 0xF;
+            if (speed != 0) return speed;
+
+            byte major = PortMajor(port);
+            if (major >= 3) return 4;      // super
+            if (major == 2) return 3;      // high — the fastest USB 2 offers
+            return 3;                      // unknown: high is the safer guess
+        }
+
         // Speed codes: 1 full, 2 low, 3 high, 4 super. Full speed actually
         // varies (8/16/32/64) and is meant to be re-read from the descriptor;
         // 8 is the safe opening bid every device must accept.
-        private static uint MaxPacketForSpeed(uint speed)
+        private uint MaxPacketForSpeed(uint speed)
         {
             switch (speed)
             {
@@ -160,7 +230,7 @@ namespace OS.Hal.Usb
         /// Standard control IN request on endpoint 0 (setup / data / status).
         /// Returns bytes the device actually sent.
         /// </summary>
-        public static bool TryControlIn(uint slotId, byte requestType, byte request,
+        public bool TryControlIn(uint slotId, byte requestType, byte request,
                                         ushort value, ushort index,
                                         void* buffer, ushort length, out uint transferred)
         {
@@ -168,7 +238,7 @@ namespace OS.Hal.Usb
             int di = IndexOfSlot(slotId);
             if (di < 0) return false;
 
-            ref Device d = ref s_devices[di];
+            ref Device d = ref _devices[di];
             ulong dataPhys = (ulong)buffer;
 
             // Setup stage. IDT means the eight setup bytes live in the TRB
@@ -198,12 +268,18 @@ namespace OS.Hal.Usb
             AdvanceTransferRing(ref d);
 
             // Doorbell for this slot, target 1 = the default endpoint.
-            Write32(s_doorbellBase + slotId * 4, 1);
+            Write32(_doorbellBase + slotId * 4, 1);
 
-            if (!TryWaitEvent(TRB_TRANSFER_EVENT, 1000, out uint code, out _))
+            if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, 1000, out uint code, out _))
+            {
+                _lastCode = 0;              // no event at all
                 return false;
+            }
             if (code != 1 && code != 13)     // 13 = short packet, still data
+            {
+                _lastCode = code;
                 return false;
+            }
 
             transferred = length;
             return true;
@@ -213,13 +289,13 @@ namespace OS.Hal.Usb
         /// Control request with no data stage (SET_CONFIGURATION, SET_PROTOCOL
         /// and friends). The status stage runs IN when there is no data.
         /// </summary>
-        public static bool TryControlOut(uint slotId, byte requestType, byte request,
+        public bool TryControlOut(uint slotId, byte requestType, byte request,
                                          ushort value, ushort index)
         {
             int di = IndexOfSlot(slotId);
             if (di < 0) return false;
 
-            ref Device d = ref s_devices[di];
+            ref Device d = ref _devices[di];
 
             uint* setup = (uint*)(d.TransferRing + d.TrEnqueue * TrbSize);
             setup[0] = (uint)(requestType | (request << 8) | (value << 16));
@@ -235,14 +311,14 @@ namespace OS.Hal.Usb
             status[3] = (TRB_STATUS << 10) | (1u << 16) | TRB_IOC | d.TrCycle;
             AdvanceTransferRing(ref d);
 
-            Write32(s_doorbellBase + slotId * 4, 1);
+            Write32(_doorbellBase + slotId * 4, 1);
 
-            if (!TryWaitEvent(TRB_TRANSFER_EVENT, 1000, out uint code, out _))
+            if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, 1000, out uint code, out _))
                 return false;
             return code == 1 || code == 13;
         }
 
-        private static void AdvanceTransferRing(ref Device d)
+        private void AdvanceTransferRing(ref Device d)
         {
             d.TrEnqueue++;
             if (d.TrEnqueue >= RingTrbs - 1)
@@ -257,15 +333,26 @@ namespace OS.Hal.Usb
             }
         }
 
-        private static int IndexOfSlot(uint slotId)
+        // A transfer completed for a device other than the one being waited
+        // on. Its buffer is already filled, so record that and let its owner
+        // pick the data up on its next poll.
+        private void StashTransferEvent(uint slotId)
         {
-            for (int i = 0; i < s_deviceCount; i++)
-                if (s_devices[i].SlotId == slotId && s_devices[i].Addressed) return i;
+            int i = IndexOfSlot(slotId);
+            if (i < 0) return;
+            _devices[i].ReadOutstanding = false;
+            _devices[i].ReportPending = true;
+        }
+
+        private int IndexOfSlot(uint slotId)
+        {
+            for (int i = 0; i < _deviceCount; i++)
+                if (_devices[i].SlotId == slotId && _devices[i].Addressed) return i;
             return -1;
         }
 
         /// <summary>Fetches the 18-byte device descriptor into DMA memory.</summary>
-        public static bool TryGetDeviceDescriptor(uint slotId, out ushort vendor, out ushort product,
+        public bool TryGetDeviceDescriptor(uint slotId, out ushort vendor, out ushort product,
                                                   out byte deviceClass, out byte maxPacket)
         {
             vendor = 0; product = 0; deviceClass = 0; maxPacket = 0;
@@ -273,10 +360,34 @@ namespace OS.Hal.Usb
             ulong buf = DmaMemory.AllocPages(1);
             if (buf == 0) return false;
 
+            byte* b = (byte*)buf;
+
+            // Ask for the first 8 bytes only. Byte 7 is the real max packet
+            // size of endpoint 0, and until it is known the value programmed
+            // into the endpoint is a guess — 8 is merely the size every device
+            // must accept. Requesting all 18 against a wrong size works on an
+            // emulator and fails on hardware, which is exactly what it did.
+            _lastStage = 1;
+            if (!TryControlIn(slotId, 0x80, 6, 0x0100, 0, (void*)buf, 8, out _))
+                return false;
+
+            byte reported = b[7];
+            // Super-speed reports it as a power of two, everyone else literally.
+            uint actual = _devices[IndexOfSlot(slotId)].Speed == 4
+                ? (uint)(1 << reported)
+                : reported;
+
+            if (actual >= 8 && actual != MaxPacketForSpeed(_devices[IndexOfSlot(slotId)].Speed))
+            {
+                _lastStage = 2;
+                if (!TryEvaluateContext(slotId, (ushort)actual)) return false;
+            }
+
+            _lastStage = 3;
             if (!TryControlIn(slotId, 0x80, 6, 0x0100, 0, (void*)buf, 18, out _))
                 return false;
 
-            byte* b = (byte*)buf;
+            _lastStage = 0;
             if (b[1] != 1) return false;      // descriptor type must be DEVICE
 
             maxPacket = b[7];

@@ -131,7 +131,7 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | **`AssemblyLoadContext` (multiple ALCs)** | 🚫 | 🚫 | ⏳ | требует JIT |
 | File I/O (read) | ✅ | ✅ | ✅ | hosted-tier читает DLL/файлы с собственного FAT (в т.ч. post-EBS) |
 | File I/O (write) | 🟡 | 🔴 | 🔴 | FAT32: перезапись на месте + создание файла (8.3, зеркалит все FAT). Нет: удаление, рост файла/каталога, LFN |
-| USB (xHCI) | 🟡 | 🚫 | 🚫 | свой стек: владение у прошивки, кольца, HID boot-протокол (клавиатура = системный ввод), BOT+SCSI (флешка как `Disk`). Опрос без прерываний, без хабов, мышь не подключена. Только QEMU — на железе не гонялось |
+| USB (xHCI) | 🟡 | 🚫 | 🚫 | свой стек: несколько контроллеров, HID boot-протокол (клавиатура = системный ввод), BOT+SCSI (флешка как `Disk`). Проверено на железе: клавиатура + флешка + запись + DOOM. Опрос без прерываний, без хабов, мышь не подключена |
 | Network I/O | 🔴 | 🔴 | 🔴 | нет NIC driver |
 | Console keyboard input | ✅ | ✅ | ⏳ | |
 | **Direct hardware (CR3 / PCI / MMIO / IDT)** | ✅ | 🚫 | 🚫 | guest tiers - design boundary |

@@ -161,6 +161,11 @@ namespace OS.Hal
         // FNV-1a over the packed pixels of a clipped region — a stable,
         // headless-verifiable fingerprint of what was rendered. Same
         // region + same draw calls => same value across runs.
+        // NOTE: this is the last place in the kernel that READS the
+        // framebuffer, and it is diagnostic only. Video memory is
+        // write-only for practical purposes — uncacheable on some machines,
+        // where a read runs ~50x slower than a write. Anything on a drawing
+        // path must produce pixels from its own state, never from the screen.
         public static uint Checksum(int x, int y, int w, int h)
         {
             if (!Framebuffer.IsAvailable || w <= 0 || h <= 0) return 0;
