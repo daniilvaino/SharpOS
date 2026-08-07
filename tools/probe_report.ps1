@@ -619,14 +619,37 @@ if ($mCensusBegin.Success -and $mCensusEnd.Success -and $mCensusEnd.Index -gt $m
     $pending = ''
     $seen = @{}
     foreach ($line in $censusText -split "`r?`n") {
+        # Строки ядра/форка ([stub-reg], [CCF], [host], дампы стека) идут
+        # вперемешку с census и не гасятся тихим режимом. Раньше любая
+        # непустая строка становилась кандидатом в «имя пробы, перенесённое
+        # на предыдущую строку» — в логе с USB, где такого шума много, это
+        # давало мусорные имена и сотню мнимых расхождений с реестром.
+        # Шум — это тег ядра/форка в начале строки, но НЕ перенесённый на новую
+        # строку статус: у длинных проб `[OK]` уезжает на следующую строку и
+        # тоже начинается со скобки.
+        $isNoise = ($line -match '^\s*\[(?!OK\]|FAIL\]|DEG\]|SKIP\])') -or ($line -match '^\s*0x')
+
+        # Строка census начинается с небольшого отступа и слова. Всё прочее —
+        # либо тег, либо обрывок перенесённой по ширине строки ("nvoke
+        # catchability", "00258 = 0x..."), либо дамп. В логе с USB переносы
+        # есть, и без этого условия обрывки становятся именами проб.
+        $looksLikeProbe = ($line -match '^\s{2,6}[A-Za-z`\[]') -and ($line -notmatch '0x')
+
         $m = [regex]::Match($line, '\[(OK|FAIL|DEG)\]')
         if (-not $m.Success) {
-            if ($line.Trim()) { $pending = $line }
+            if ($line.Trim() -and -not $isNoise -and $looksLikeProbe) { $pending = $line }
             continue
         }
+        if ($isNoise) { continue }   # [OK] внутри строки форка — не проба
         $head = $line.Substring(0, $m.Index)
         if (-not $head.Trim()) { $head = $pending }   # деталь перенесена на след. строку
         $name = ([regex]::Split($head.Trim(), '\s{2,}'))[0].Trim()
+        # Вывод форка приклеивается к строке пробы ("SHA256.HashData [seh]
+        # throw ..."), и без отсечения по тегу имя уезжает в полстроки лога —
+        # таблица разъезжается, а сверка с реестром промахивается.
+        # Тег может приклеиться и без пробела ("Null MethodInfo.I[info] heap
+        # grow pages: 65"), поэтому режем по первой скобке, которая не статус.
+        $name = ([regex]::Split($name, '\[(?!OK\]|FAIL\]|DEG\]|SKIP\])'))[0].Trim()
         $pending = ''
         if (-not $name) { continue }
         if ($seen.ContainsKey($name)) { $seen[$name]++; $name = "$name #$($seen[$name])" } else { $seen[$name] = 1 }
@@ -635,26 +658,42 @@ if ($mCensusBegin.Success -and $mCensusEnd.Success -and $mCensusEnd.Index -gt $m
     }
 }
 
+# Ключ сверки: не-ASCII в имени пробы сводится к '?'.
+#
+# Консоль SharpOS печатает всё за пределами ASCII как '?', поэтому в логе
+# стоит "Math.Atan(1) == ?/4", а в реестре — настоящая "π". Без нормализации
+# ни одно такое имя не совпадает, и каждое даёт пару «пропало» + «новое»:
+# полсотни мнимых расхождений, за которыми не видно настоящих.
+function Get-CensusKey([string]$name) {
+    return -join ($name.ToCharArray() | ForEach-Object { if ([int]$_ -lt 128) { $_ } else { '?' } })
+}
+
 $censusDiff = @()
 if ($censusRows.Count -gt 0 -and $CensusRegistry -and (Test-Path -LiteralPath $CensusRegistry)) {
     $expected = @{}
+    $expectedName = @{}
     foreach ($line in Get-Content -LiteralPath $CensusRegistry) {
         if ($line -match '^\s*#' -or -not $line.Trim()) { continue }
         $parts = $line -split "`t"
-        if ($parts.Count -ge 2) { $expected[$parts[0]] = $parts[1].Trim() }
+        if ($parts.Count -ge 2) {
+            $key = Get-CensusKey $parts[0]
+            $expected[$key] = $parts[1].Trim()
+            $expectedName[$key] = $parts[0]
+        }
     }
     $actual = @{}
-    foreach ($r in $censusRows) { $actual[$r.Name] = $r.Status }
+    foreach ($r in $censusRows) { $actual[(Get-CensusKey $r.Name)] = $r.Status }
 
     foreach ($r in $censusRows) {
-        if (-not $expected.ContainsKey($r.Name)) { $r.Delta = 'NEW'; continue }
-        $was = $expected[$r.Name]
+        $key = Get-CensusKey $r.Name
+        if (-not $expected.ContainsKey($key)) { $r.Delta = 'NEW'; continue }
+        $was = $expected[$key]
         if ($was -eq $r.Status) { continue }
         if ($r.Status -eq 'OK') { $r.Delta = "FIXED ($was)" } else { $r.Delta = "REGRESSED ($was)" }
     }
-    foreach ($name in $expected.Keys) {
-        if ($actual.ContainsKey($name)) { continue }
-        $censusDiff += [PSCustomObject]@{ Name = $name; Status = 'MISSING'; Detail = "был $($expected[$name])"; Delta = 'MISSING' }
+    foreach ($key in $expected.Keys) {
+        if ($actual.ContainsKey($key)) { continue }
+        $censusDiff += [PSCustomObject]@{ Name = $expectedName[$key]; Status = 'MISSING'; Detail = "был $($expected[$key])"; Delta = 'MISSING' }
     }
 }
 

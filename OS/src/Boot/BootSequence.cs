@@ -750,6 +750,38 @@ namespace OS.Boot
             Log.Write(LogLevel.Info, "[exec-pool] registered with SehUnwind stub range");
         }
 
+        // Mask every SSE exception, the state the architecture defines at reset
+        // and the state every managed runtime assumes.
+        //
+        // Belt and braces rather than the fix: measurement showed the firmware
+        // hands over a correct 0x1F80, and the masks were being cleared later,
+        // by our own HW-fault CONTEXT claiming to carry floating-point state it
+        // had left zeroed (see HwFaultBridge). Setting them here is still worth
+        // doing — nothing else in the system guarantees this word — and the
+        // logged "firmware=" value is what ruled the firmware out.
+        private static void InitializeSseControlWord()
+        {
+            const uint AllExceptionsMasked = 0x1F80;
+
+            if (!X64Asm.ReadMxcsr(out uint before))
+            {
+                Log.Write(LogLevel.Warn, "MXCSR unavailable — SSE exception masks unknown");
+                return;
+            }
+
+            X64Asm.WriteMxcsr(AllExceptionsMasked);
+            X64Asm.ReadMxcsr(out uint after);
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("mxcsr: firmware=0x");
+            Console.WriteHex(before);
+            Console.Write(" now=0x");
+            Console.WriteHex(after);
+            if ((before & AllExceptionsMasked) != AllExceptionsMasked)
+                Console.Write(" (firmware left SSE exceptions unmasked)");
+            Log.EndLine();
+        }
+
         private static void ActivatePagerRootAndLockCpuFeatures()
         {
             if (!Pager.TryActivatePagerRoot())
@@ -774,6 +806,8 @@ namespace OS.Boot
                 Log.Write(LogLevel.Info, "VA 0 unmapped (null-deref trap)");
             else
                 Log.Write(LogLevel.Warn, "VA 0 unmap failed — null deref may not trap");
+
+            InitializeSseControlWord();
 
             if (!X64Asm.TryReadCr4(out ulong cr4))
             {

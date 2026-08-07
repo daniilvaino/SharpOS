@@ -175,6 +175,39 @@ namespace OS.Hal
             a.ret();
         }
 
+        // Read the SSE control word into EAX.
+        //
+        // The scratch slot is carved out with sub/add rather than written at
+        // [rsp-8]: Win64 has NO red zone, so memory below RSP belongs to
+        // nobody and an interrupt landing between the store and the load both
+        // destroys the value and corrupts whatever the interrupt frame uses.
+        [CompileTimeAsm]
+        private static partial int EmitReadMxcsrBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitReadMxcsrBootAsm))]
+        private static void EmitReadMxcsrBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.sub(rsp, 16);
+            a.stmxcsr(__dword_ptr[rsp]);
+            a.mov(eax, __dword_ptr[rsp]);
+            a.add(rsp, 16);
+            a.ret();
+        }
+
+        // Write it (RCX = value), same owned-scratch rule as above.
+        [CompileTimeAsm]
+        private static partial int EmitWriteMxcsrBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitWriteMxcsrBootAsm))]
+        private static void EmitWriteMxcsrBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.sub(rsp, 16);
+            a.mov(__dword_ptr[rsp], ecx);
+            a.ldmxcsr(__dword_ptr[rsp]);
+            a.add(rsp, 16);
+            a.ret();
+        }
+
         // fxsave [rcx] ; ret  (RCX = 512-byte 16-aligned buf).
         [CompileTimeAsm]
         private static partial int EmitFxsaveBootAsm(byte* dst);

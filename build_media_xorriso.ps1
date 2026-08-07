@@ -27,6 +27,14 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Say it up front instead of failing somewhere in the middle. Windows
+# PowerShell 5.1 differs in ways that surface far from their cause — a piped
+# string reaching sfdisk in the wrong encoding, or a .NET method that only
+# exists on .NET Core — and each one costs a debugging round.
+if ($PSVersionTable.PSEdition -ne 'Core') {
+    throw "This script needs PowerShell 7 (pwsh), not Windows PowerShell $($PSVersionTable.PSVersion). Run: pwsh -File $($MyInvocation.MyCommand.Path)"
+}
+
 function Resolve-ToolPath {
     param(
         [string]$Name,
@@ -177,8 +185,22 @@ function Build-RawDiskWithGptEsp {
     }
 
     $sfdiskInput = "$startLba,$espSectors,U,*`n"
-    $sfdiskInput | & $SfdiskExe --wipe always --no-reread --label gpt $DiskRawPath
+
+    # $OutputEncoding decides how a piped string reaches a native program, and
+    # it is process-wide: another script that changed the console encoding
+    # leaves sfdisk reading UTF-16 as if it were text, which it reports as
+    # ">>> line 1: unsupported command". Pin it for the call.
+    $previousOutputEncoding = $OutputEncoding
+    $OutputEncoding = New-Object System.Text.UTF8Encoding $false
+    try {
+        $sfdiskInput | & $SfdiskExe --wipe always --no-reread --label gpt $DiskRawPath
+    }
+    finally {
+        $OutputEncoding = $previousOutputEncoding
+    }
+
     if ($LASTEXITCODE -ne 0) {
+        Write-Output "sfdisk input was: $($sfdiskInput.Trim())"
         throw "sfdisk failed with exit code $LASTEXITCODE"
     }
 

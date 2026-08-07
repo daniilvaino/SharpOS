@@ -50,7 +50,9 @@ namespace OS.Hal
         //   0x220: WriteMsr(index, value) → void
         private const uint ReadMsrOffset      = 0x200;
         private const uint WriteMsrOffset     = 0x220;
-        private const uint MsrStubsMinBuffer  = 0x240;
+        private const uint ReadMxcsrOffset    = 0x240;
+        private const uint WriteMxcsrOffset   = 0x260;
+        private const uint MsrStubsMinBuffer  = 0x280;
 
         private const uint CmpXchg64Offset       = 0x1A0;
         private const uint Xchg64Offset          = 0x1C0;
@@ -270,6 +272,42 @@ namespace OS.Hal
                 s_writeMsrReady = true;
             }
             s_writeMsr(index, value);
+            return true;
+        }
+
+        private static bool s_readMxcsrReady, s_writeMxcsrReady;
+        private static delegate* unmanaged<uint> s_readMxcsr;
+        private static delegate* unmanaged<uint, void> s_writeMxcsr;
+
+        /// <summary>SSE control word: rounding mode and exception masks.</summary>
+        public static bool ReadMxcsr(out uint value)
+        {
+            value = 0;
+            if (s_execBuffer == null || s_execBufferSize < MsrStubsMinBuffer)
+                return false;
+            if (!s_readMxcsrReady)
+            {
+                byte* p = (byte*)s_execBuffer + ReadMxcsrOffset;
+                EmitReadMxcsrBootAsm(p);
+                s_readMxcsr = (delegate* unmanaged<uint>)p;
+                s_readMxcsrReady = true;
+            }
+            value = s_readMxcsr();
+            return true;
+        }
+
+        public static bool WriteMxcsr(uint value)
+        {
+            if (s_execBuffer == null || s_execBufferSize < MsrStubsMinBuffer)
+                return false;
+            if (!s_writeMxcsrReady)
+            {
+                byte* p = (byte*)s_execBuffer + WriteMxcsrOffset;
+                EmitWriteMxcsrBootAsm(p);
+                s_writeMxcsr = (delegate* unmanaged<uint, void>)p;
+                s_writeMxcsrReady = true;
+            }
+            s_writeMxcsr(value);
             return true;
         }
 

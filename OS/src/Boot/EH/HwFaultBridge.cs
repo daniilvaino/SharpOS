@@ -531,7 +531,10 @@ namespace OS.Boot.EH
             byte* p = (byte*)ctx;
             for (int i = 0; i < sizeof(Context); i++) p[i] = 0;
 
-            ctx->ContextFlags = Context.CONTEXT_FULL;
+            // We do not populate the CONTEXT FltSave area here. Advertising
+            // CONTEXT_FLOATING_POINT makes CoreCLR restore zeroed FP state
+            // from this struct, which clears MXCSR exception masks on VBox.
+            ctx->ContextFlags = Context.CONTEXT_CONTROL | Context.CONTEXT_INTEGER;
             ctx->SegCs = (ushort)frame->Cs;
             ctx->SegSs = (ushort)frame->Ss;
             ctx->EFlags = (uint)frame->Rflags;

@@ -35,6 +35,14 @@ namespace OS.Hal.Idt
             }
             Console.Write("\r\n");
 
+            // NOTE: no MXCSR read here. Calling into X64Asm from this handler
+            // jumped to address 0 and faulted again on top of the first fault
+            // — the hosted thread cannot run that managed path. Read the
+            // control word from outside instead:
+            //   VBoxManage debugvm <vm> getregisters --cpu=0 mxcsr
+            // Nothing in a fault handler may depend on the managed runtime
+            // being usable, which is exactly what is in doubt when it fires.
+
             Console.Write("RIP=0x"); Console.WriteHexRaw(frame->Rip, 16);
             Console.Write(" CS=0x"); Console.WriteHexRaw(frame->Cs, 4);
             Console.Write(" RFLAGS=0x"); Console.WriteHexRaw(frame->Rflags, 8);

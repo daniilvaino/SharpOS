@@ -450,12 +450,16 @@ namespace OS.Kernel.Diagnostics
                     Console.WriteLine("--- coreclr_execute_assembly(\\\\sharpos\\pwsh\\pwsh.dll) ---");
                     uint exitCode = 0xFFFFFFFF;
 
-                    // Kernel diagnostics off while the hosted app owns the screen. The
-                    // census run wants them — its output IS the diagnostics — but an
-                    // interactive PowerShell does not, and [seh-*]/[host]/[stub-reg]
-                    // chatter between prompt and echo makes the terminal unusable.
-                    // Serial keeps everything either way: Platform.WriteChar sits
-                    // upstream of this gate.
+                    // Kernel diagnostics off while the hosted app owns the screen:
+                    // [seh-*]/[host]/[stub-reg] chatter between prompt and echo
+                    // makes an interactive PowerShell unusable.
+                    //
+                    // This silences the SERIAL LOG TOO — Console.Quiet is checked
+                    // before anything reaches Platform.Write, so nothing survives
+                    // anywhere. A hang inside the hosted app therefore ends the log
+                    // mid-line and looks like the machine died at that point.
+                    // Turn HostedAppQuietConsole off before chasing one: the
+                    // missing-symbol lines name the next unimplemented API.
                     bool wasQuiet = Console.Quiet;
                     if (Probes.HostedAppQuietConsole)
                         Console.Quiet = true;

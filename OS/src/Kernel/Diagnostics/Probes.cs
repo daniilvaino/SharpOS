@@ -84,12 +84,21 @@ namespace OS.Kernel.Diagnostics
         // Both DLLs are always built and deployed by run_build.ps1 + added
         // to TPA; the toggle only chooses which one execute_assembly aims
         // at. Const bool so ILC folds the unused branch to nothing.
-        public const bool LaunchNormalHelloCensus = true;
+        public const bool LaunchNormalHelloCensus = false;
 
-        // Mute kernel diagnostics while the hosted app owns the screen. Off means
-        // the [seh-*]/[host]/[stub-reg]/[GetProcAddress ...] chatter stays visible —
-        // which is exactly what you want while chasing a hang: the missing-symbol
-        // lines name the next unimplemented API. Turn on for a clean prompt.
+        // Mute kernel diagnostics while the hosted app owns the screen.
+        //
+        // ON: census lines stay intact, which is what the report parser needs —
+        // the [seh-*]/[host]/[stub-reg] chatter otherwise lands INSIDE probe
+        // lines and turns half of them into unparseable fragments.
+        //
+        // OFF: that chatter stays visible, which is what you want while chasing
+        // a hang — the missing-symbol lines name the next unimplemented API.
+        // Safe again since step 152; it used to triple-fault, but that was the
+        // MXCSR bug faulting inside exception dispatch, not the output itself.
+        //
+        // Either way this also gates the SERIAL LOG: Console.Quiet is checked
+        // before anything reaches Platform.Write.
         public const bool HostedAppQuietConsole = true;
 
         // Phase E2 — TEB facade swap. Allocates a fresh TebFacade, swaps
@@ -260,8 +269,8 @@ namespace OS.Kernel.Diagnostics
         // is that a full-screen repaint moves four times the pixels of 1080p
         // through a software renderer with no blitter, and the 8x8 font gets
         // very small. Set both to 0 to accept whatever the firmware left.
-        public const uint DisplayMaxWidth = 3840;
-        public const uint DisplayMaxHeight = 2160;
+        public const uint DisplayMaxWidth = 1920;
+        public const uint DisplayMaxHeight = 1080;
 
         // Creates a file: allocates clusters and edits a directory, so a bug
         // damages the volume rather than one file's contents. Separate switch
