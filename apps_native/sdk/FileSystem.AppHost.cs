@@ -129,6 +129,24 @@ namespace System.IO
             return AppHost.FileExists(path);
         }
 
+        public static FileStream OpenRead(string path)
+            => new FileStream(path, FileMode.Open, FileAccess.Read);
+
+        // Writes go nowhere, exactly as FileStream(write) does: there is no
+        // kernel write service behind the app service table yet. Silent rather
+        // than throwing, to match the write path that already exists — an app
+        // that logs to a file should not die because the log went nowhere.
+        //
+        // The moment a write service lands, both this and FileStream's discard
+        // buffer become real, and this comment is the marker for it.
+        public static void WriteAllText(string path, string contents)
+        {
+        }
+
+        public static void WriteAllBytes(string path, byte[] bytes)
+        {
+        }
+
         // Whole-file load through the AppHost read service. The service has
         // no size query, so grow + retry: BufferTooSmall and exact-fit
         // (bytesRead == capacity, possibly truncated) both double and retry.

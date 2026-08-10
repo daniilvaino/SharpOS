@@ -230,15 +230,31 @@ step 103** (`reference_msc_throw_becomes_sehexception` РЕШЕНО):
 
 ## 4. Массивы
 
-### ❌ Multi-dimensional arrays
+### ✅ Multi-dimensional arrays (step153)
 
 ```csharp
-int[,] m = new int[3, 4];   // ILC: Code generation failed
+int[,] m = new int[3, 4];   // работает, включая m.Rank / m.GetLength(d)
 ```
 
-ILC требует `RhpNewMultiDimArray` helper которого у нас нет.
+ILC переводит `newobj` на массиве в `Internal.Runtime.CompilerHelpers.ArrayHelpers`
+и ищет этот тип **по имени** в системном модуле; без него падает кодогенерация
+всего метода, а в сообщении назван метод-владелец, а не отсутствующий помощник
+(инициализатор поля `byte[2,1024]` читался как «Code generation failed for
+`Ppu..ctor`»). Порт upstream-помощника —
+`std/no-runtime/shared/Runtime/ArrayHelpers.cs`, плюс `Rank`/`GetLength`/
+`GetLowerBound` в `Runtime/Array.cs`.
 
-**⚠️ Workaround:** jagged arrays (`int[][]`) работают — это массив массивов одномерных.
+Раскладка: `[MethodTable*][длина][границы 2×rank][элементы]`. Блок границ лежит
+там, где у одномерного массива первый элемент, и `BaseSize` его уже учитывает —
+поэтому обычный путь размещения считает размер верно без спецслучаев.
+
+**❌ Не поддержано:** ненулевые нижние границы и MdArray ранга 1 (`int[*]`,
+выразим только в IL) — бросают. Настоящий рантайм разруливает их через
+рефлексию, которой здесь нет; выделять объект не той формы молча — хуже отказа.
+
+**⚠️ Не проверено:** многомерные массивы **ссылок** (`object[,]`) — вопрос к
+обходу кучи сборщиком, не к размещению. Живые потребители (Fami) обходятся
+байтовыми.
 
 ### ⚠️ Reference-array assignment (stelem.ref) — требует helpers
 

@@ -41,6 +41,10 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$ForkConfig = "Debug",
 
+    # Kernel-only image (no CoreCLR host). Forwarded through
+    # build_media_xorriso.ps1 to run_build.ps1.
+    [switch]$SkipCoreClr,
+
     [string]$VmName = "SharpOS",
 
     # Skip calling build_images.ps1 entirely and reuse the existing VHD/ISO.
@@ -463,6 +467,9 @@ else {
     }
     if ($NoCompile) {
         $buildArgs.NoBuild = $true
+    }
+    if ($SkipCoreClr) {
+        $buildArgs.SkipCoreClr = $true
     }
     if (-not ($BuildIso -or $AttachIso)) {
         $buildArgs.NoIso = $true

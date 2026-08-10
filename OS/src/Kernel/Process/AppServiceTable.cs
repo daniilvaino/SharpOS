@@ -68,6 +68,17 @@ namespace OS.Kernel.Process
         // frame pacing). CounterAddress==0 = no HPET.
         public ulong HpetCounterAddress;
         public ulong HpetFrequencyHz;
+
+        // Precise stack-root walk (raw address). The app calls this to have the
+        // kernel spill registers, walk the call chain across BOTH images and
+        // report every live managed root to a callback the app supplies.
+        //
+        // The app keeps its own heap and its own sweep — it borrows the walker,
+        // not the memory. That is deliberate: sharing a heap between kernel and
+        // apps would make one app's garbage everyone's pause, and would undo
+        // the isolation that SMP and preemption will need. Sharing the walker
+        // costs nothing, because the machinery is image-aware already.
+        public ulong GcWalkRootsAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

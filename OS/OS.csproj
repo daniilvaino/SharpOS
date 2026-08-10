@@ -386,6 +386,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Runtime\Math.cs" Link="src\Std\Runtime\Math.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Math.Double.cs" Link="src\Std\Runtime\Math.Double.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Buffer.cs" Link="src\Std\Runtime\Buffer.cs" />
+    <Compile Include="..\std\no-runtime\shared\Runtime\ArrayHelpers.cs" Link="src\Std\Runtime\ArrayHelpers.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\GC.cs" Link="src\Std\Runtime\GC.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\Array.cs" Link="src\Std\Runtime\Array.cs" />
     <Compile Include="..\std\no-runtime\shared\Runtime\ArrayT.cs" Link="src\Std\Runtime\ArrayT.cs" />

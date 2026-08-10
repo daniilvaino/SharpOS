@@ -292,6 +292,7 @@ namespace OS.Boot
 
             InitializeAcpi(bootInfo);
             InitializeHpet();
+            ReportCpuClock();
 
             // After the timer, not next to the framebuffer mapping: measuring
             // needs a clock, and the framebuffer comes up first. The screen is
@@ -882,6 +883,84 @@ namespace OS.Boot
                 }
                 Log.EndLine();
             }
+        }
+
+        // The clock we are ACTUALLY running at, measured rather than assumed.
+        //
+        // Nothing here manages performance states: whatever the firmware left
+        // the CPU parked at is what we get, and on a laptop that is usually
+        // well below what the chip is capable of. That shows up as "our code is
+        // mysteriously slower than the same binary on Windows" — an emulator
+        // measured 20 ms per frame on a machine where Windows needed 9. This
+        // number turns that suspicion into a fact, one way or the other.
+        //
+        // Counted against the HPET, whose rate is known and fixed. The TSC is
+        // invariant on everything we target, so it keeps counting at a constant
+        // rate even when the core clock changes — meaning this reports the
+        // nominal frequency, not the current one. Still worth having: a nominal
+        // far below the chip's rating says the firmware parked it low.
+        private static void ReportCpuClock()
+        {
+            if (!HpetTimer.IsInitialized) return;
+            if (!X64Asm.ReadTsc(out ulong tsc0)) return;
+
+            // APERF/MPERF: the pair that says what the core is ACTUALLY doing.
+            // MPERF counts at the TSC rate, APERF at the current core clock,
+            // so their ratio is the real multiplier against nominal. Without
+            // it the TSC alone reports the frequency on the box, not the one
+            // the machine is running at — and nothing here manages performance
+            // states, so those two can differ by a factor of three.
+            const uint IA32_MPERF = 0xE7;
+            const uint IA32_APERF = 0xE8;
+            // Sequential, not a && chain: short-circuiting leaves the later
+            // out-parameters unassigned, and the compiler is right to object.
+            bool haveMperf0 = X64Asm.ReadMsr(IA32_MPERF, out ulong mperf0);
+            bool haveAperf0 = X64Asm.ReadMsr(IA32_APERF, out ulong aperf0);
+            bool haveRatio = haveMperf0 && haveAperf0;
+
+            ulong hz = HpetTimer.FrequencyHz;
+            ulong ticks = hz / 20UL;                    // 50 ms
+            ulong deadline = HpetTimer.ReadCounter() + ticks;
+            while (HpetTimer.ReadCounter() < deadline) { }
+
+            if (!X64Asm.ReadTsc(out ulong tsc1)) return;
+
+            ulong aperf = 0, mperf = 0;
+            if (haveRatio)
+            {
+                bool haveMperf1 = X64Asm.ReadMsr(IA32_MPERF, out ulong mperf1);
+                bool haveAperf1 = X64Asm.ReadMsr(IA32_APERF, out ulong aperf1);
+                haveRatio = haveMperf1 && haveAperf1 && mperf1 > mperf0;
+                if (haveRatio) { aperf = aperf1 - aperf0; mperf = mperf1 - mperf0; }
+            }
+
+            ulong elapsed = tsc1 - tsc0;
+            ulong khz = elapsed * hz / ticks / 1000UL;   // cycles/s -> kHz
+
+            // Inputs printed alongside the result: this number is a ratio of
+            // two counters, and when it comes out absurd the question is always
+            // which of the two lied. Without them the line is unfalsifiable.
+            Log.Begin(LogLevel.Info);
+            Console.Write("cpu: tsc ");
+            Console.WriteULong(khz / 1000UL);
+            Console.Write(" MHz (cycles=");
+            Console.WriteULong(elapsed);
+            Console.Write(" over ");
+            Console.WriteULong(ticks);
+            Console.Write(" hpet ticks @ ");
+            Console.WriteULong(hz);
+            Console.Write(" Hz)");
+            if (haveRatio)
+            {
+                Console.Write(" actual ");
+                Console.WriteULong(khz / 1000UL * aperf / mperf);
+                Console.Write(" MHz");
+            }
+            else
+            {
+                Console.Write(" actual unknown (no APERF/MPERF)");
+            }
+            Log.EndLine();
         }
 
         private static void InitializeHpet()

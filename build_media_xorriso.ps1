@@ -5,6 +5,11 @@ param(
     # run_build.ps1; default Debug. See run_build.ps1 -ForkConfig.
     [ValidateSet("Debug", "Release")]
     [string]$ForkConfig = "Debug",
+    # Kernel-only image: forwarded to run_build.ps1, which turns it into
+    # -p:SkipCoreClr=true. Without forwarding, the flag was accepted here and
+    # silently dropped, and the build died at link with an unresolved CoreCLR
+    # symbol instead of saying what was actually skipped.
+    [switch]$SkipCoreClr,
     [switch]$NoBuild,
     [string]$EspSource = (Join-Path $PSScriptRoot "OS\.qemu\esp"),
     [string]$OutputDir = (Join-Path $PSScriptRoot "OS\.qemu\media"),
@@ -366,7 +371,7 @@ Write-Host "sfdisk: $sfdiskExe"
 
 if (-not $NoBuild) {
     Write-Host "Building SharpOS (NoRun)..."
-    & (Join-Path $PSScriptRoot "run_build.ps1") -Configuration $Configuration -ForkConfig $ForkConfig -NoRun
+    & (Join-Path $PSScriptRoot "run_build.ps1") -Configuration $Configuration -ForkConfig $ForkConfig -NoRun -SkipCoreClr:$SkipCoreClr
     if ($LASTEXITCODE -ne 0) {
         throw "run_build.ps1 failed with exit code $LASTEXITCODE"
     }

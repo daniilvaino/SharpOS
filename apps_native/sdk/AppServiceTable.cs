@@ -61,6 +61,12 @@ namespace SharpOS.AppSdk
         // Layout must match OS/.../AppServiceTable.cs.
         public ulong HpetCounterAddress;
         public ulong HpetFrequencyHz;
+
+        // Precise stack-root walk (raw address) — see AppGC. The kernel spills
+        // registers, walks the call chain across both images and reports every
+        // live managed root to our callback; we mark into OUR heap and sweep it
+        // ourselves. Layout must match OS/.../AppServiceTable.cs.
+        public ulong GcWalkRootsAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

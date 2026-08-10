@@ -52,7 +52,11 @@ namespace OS.Hal
         private const uint WriteMsrOffset     = 0x220;
         private const uint ReadMxcsrOffset    = 0x240;
         private const uint WriteMxcsrOffset   = 0x260;
-        private const uint MsrStubsMinBuffer  = 0x280;
+        // 0x280..0x28C is the last gap before Fxsave; the rdtsc stub is 10
+        // bytes and fits exactly. Anything larger needs a bigger buffer
+        // (UefiBootInfoBuilder.AsmBufferSize), not a smaller gap.
+        private const uint ReadTscOffset      = 0x280;
+        private const uint MsrStubsMinBuffer  = 0x28C;
 
         private const uint CmpXchg64Offset       = 0x1A0;
         private const uint Xchg64Offset          = 0x1C0;
@@ -272,6 +276,26 @@ namespace OS.Hal
                 s_writeMsrReady = true;
             }
             s_writeMsr(index, value);
+            return true;
+        }
+
+        private static bool s_readTscReady;
+        private static delegate* unmanaged<ulong> s_readTsc;
+
+        /// <summary>CPU timestamp counter.</summary>
+        public static bool ReadTsc(out ulong value)
+        {
+            value = 0;
+            if (s_execBuffer == null || s_execBufferSize < MsrStubsMinBuffer)
+                return false;
+            if (!s_readTscReady)
+            {
+                byte* p = (byte*)s_execBuffer + ReadTscOffset;
+                EmitReadTscBootAsm(p);
+                s_readTsc = (delegate* unmanaged<ulong>)p;
+                s_readTscReady = true;
+            }
+            value = s_readTsc();
             return true;
         }
 

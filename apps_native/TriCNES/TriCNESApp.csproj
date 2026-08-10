@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>TriCNESApp</IlcSystemModule>
+    <!-- The shared props disable default COMPILE items; this project also has
+         to disable the rest, because the submodule carries the WinForms .resx
+         files and default globbing pulls them in as embedded resources even
+         though none of their sources are compiled. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+  </PropertyGroup>
+
+  <!-- SharpOS freestanding win-x64 PE build of TriCNES (MIT, Chris Siebert).
+       https://github.com/100thCoin/TriCNES
+
+       Layout: this folder is ours, TriCNES\ inside it is the pristine upstream
+       checkout (its own git repo). NOTHING of ours is written in there, so it
+       can be pulled again without merge pain. This project reaches into it for
+       the emulator core and supplies everything else here:
+
+         Compat\    tiny stand-ins for the few framework types the core touches
+                    (System.Drawing.Bitmap/Color, GCHandle, BinaryReader). They
+                    exist so the upstream sources compile UNCHANGED — see the
+                    header in each file for why the type is safe to fake.
+         Program.cs the SharpOS front end: ROM in, frames out to the GOP
+                    framebuffer, keyboard into the controller port.
+
+       CUT from upstream: TriCNES\Forms\ (WinForms GUI, hex editor, NT viewer),
+       TriCNES\Program.cs (WinForms entry), Properties\, SDL2. None of it is
+       reachable from the emulator core. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="GopVideo.cs" />
+    <Compile Include="Compat\**\*.cs" />
+
+    <!-- Upstream, verbatim: the cycle-accurate core and its mappers. -->
+    <Compile Include="TriCNES\Emulator.cs" />
+    <Compile Include="TriCNES\6502Documentation.cs" />
+    <Compile Include="TriCNES\mappers\*.cs" />
+  </ItemGroup>
+</Project>

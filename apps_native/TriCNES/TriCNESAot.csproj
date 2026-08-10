@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Grown-up .NET NativeAOT build of the TriCNES core. Not shipped: this is a
+       proving ground that answers one question before any SharpOS work is
+       trusted — does the emulator core survive AOT at all?
+
+       It runs against the REAL BCL, so it also tells us whether our
+       Compat\Drawing.cs shim is shaped like the thing it replaces: if the core
+       compiles and emulates identically against both, the shim is honest.
+
+       GCHandle and BinaryReader are NOT taken from Compat here — the real BCL
+       has them, and including ours would be a duplicate-type error. That is the
+       point: only Drawing is genuinely absent from a headless .NET. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- EnableDefaultItems, not just Compile: the submodule carries the
+         WinForms .resx files, and default globbing would drag them in as
+         embedded resources even though none of their sources are compiled. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>TriCNESAot</AssemblyName>
+    <RootNamespace>TriCNES</RootNamespace>
+    <!-- Upstream is C# 7-era and trips newer analyzers; we are not here to
+         relitigate its style. -->
+    <NoWarn>$(NoWarn);CS0219;CS0414;CS0162;CS0168;CS0164</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="AotProbe.cs" />
+    <Compile Include="Compat\Drawing.cs" />
+
+    <!-- Upstream, verbatim. -->
+    <Compile Include="TriCNES\Emulator.cs" />
+    <Compile Include="TriCNES\6502Documentation.cs" />
+    <Compile Include="TriCNES\mappers\*.cs" />
+  </ItemGroup>
+
+</Project>

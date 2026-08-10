@@ -99,7 +99,7 @@ namespace OS.Kernel.Diagnostics
         //
         // Either way this also gates the SERIAL LOG: Console.Quiet is checked
         // before anything reaches Platform.Write.
-        public const bool HostedAppQuietConsole = true;
+        public const bool HostedAppQuietConsole = false;
 
         // Phase E2 — TEB facade swap. Allocates a fresh TebFacade, swaps
         // gs base to it (under CLI), reads gs:[Self] and gs:[StackLimit]

@@ -71,6 +71,11 @@ namespace SharpOS.AppSdk
                 AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcStaticsInit.FailedCount);
                 AppHost.WriteChar('\n');
             }
+
+            // Route GC.Collect() to our own collector. Last, because it marks
+            // from the static roots the step above just materialised — before
+            // that there is nothing to keep alive and nothing to sweep.
+            AppGC.Install();
         }
 
         public static AppStartupBlock* Startup => s_startup;

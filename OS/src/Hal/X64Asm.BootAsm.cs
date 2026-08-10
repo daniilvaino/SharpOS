@@ -175,6 +175,24 @@ namespace OS.Hal
             a.ret();
         }
 
+        // rdtsc ; shl rdx,32 ; or rax,rdx ; ret — the CPU's cycle counter.
+        //
+        // Paired with a known-rate timer this is the only way we have to learn
+        // the ACTUAL clock the machine is running at, which is not the one on
+        // the box: nothing in this system manages performance states, so the
+        // firmware's parking choice stands.
+        [CompileTimeAsm]
+        private static partial int EmitReadTscBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitReadTscBootAsm))]
+        private static void EmitReadTscBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.rdtsc();
+            a.shl(rdx, 32);
+            a.or(rax, rdx);
+            a.ret();
+        }
+
         // Read the SSE control word into EAX.
         //
         // The scratch slot is carved out with sub/add rather than written at

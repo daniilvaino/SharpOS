@@ -20,6 +20,43 @@ namespace System
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static void Memmove<T>(ref T dest, ref T src, nuint len)
             => SharpOS.Std.MemoryOps.Memmove<T>(ref dest, ref src, len);
+
+        /// <summary>
+        /// Byte-wise block copy between arrays. Offsets and count are in
+        /// BYTES, not elements — the BCL signature's oldest trap, preserved
+        /// because the point of this method is that BCL code compiles onto it.
+        /// </summary>
+        /// <remarks>
+        /// Cut from BCL: only single-dimension arrays of primitives are
+        /// supported. The real method also accepts multidimensional arrays,
+        /// whose element storage sits behind a different object layout that
+        /// this implementation does not decode; those throw rather than copy
+        /// the wrong bytes silently. (Fami's savestate helpers pass byte[,] and
+        /// are the reason this is stated rather than assumed — they compile,
+        /// and would throw if a savestate were ever taken.)
+        /// </remarks>
+        public static void BlockCopy(Array src, int srcOffset, Array dst, int dstOffset, int count)
+        {
+            if (src == null) throw new ArgumentNullException(nameof(src));
+            if (dst == null) throw new ArgumentNullException(nameof(dst));
+            if (srcOffset < 0) throw new ArgumentOutOfRangeException(nameof(srcOffset));
+            if (dstOffset < 0) throw new ArgumentOutOfRangeException(nameof(dstOffset));
+            if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+
+            if (src is byte[] source && dst is byte[] destination)
+            {
+                if (srcOffset + count > source.Length || dstOffset + count > destination.Length)
+                    throw new ArgumentException("Source or destination is too short.");
+
+                if (count == 0) return;
+
+                Memmove(ref destination[dstOffset], ref source[srcOffset], (nuint)count);
+                return;
+            }
+
+            throw new NotSupportedException(
+                "Buffer.BlockCopy supports single-dimension byte arrays only.");
+        }
     }
 }
 

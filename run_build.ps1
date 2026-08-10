@@ -13,6 +13,12 @@
     [switch]$SkipCoreClr,
     [switch]$NoRun,
     [switch]$Stop,
+    # Trace faults instead of letting the machine die quietly. When output
+    # stops mid-line and nothing follows, a triple fault and a hang look
+    # exactly alike from the serial port; this tells them apart in one run.
+    # Writes .qemu\qemu-debug.log (interrupts, CPU resets, guest errors) and
+    # keeps QEMU alive after a reset so the log survives to be read.
+    [switch]$TraceFaults,
     [int]$QmpPort = 4444,
     # Reproduce the hardware the kernel actually meets: no PS/2 controller,
     # a USB keyboard instead. Firmware still provides input pre-EBS; our own
@@ -283,8 +289,13 @@ if (Test-Path -LiteralPath $tagFile) {
 $coffStubProj = Join-Path $repoRoot "bootasm\CoffStub.Generator\CoffStub.Generator.csproj"
 if (Test-Path -LiteralPath $coffStubProj) {
     Write-Host "Building CoffStub.Generator (MSBuild task host)..."
-    & dotnet build $coffStubProj -c Release --nologo -v quiet | Out-Null
+    # Output captured, not discarded: a bare exit code says nothing, and the
+    # usual cause here is a file lock (a VM still holding the DLL, a parallel
+    # build) whose message names the file. Shown only on failure so a good
+    # build stays quiet.
+    $coffStubLog = & dotnet build $coffStubProj -c Release --nologo -v quiet 2>&1
     if ($LASTEXITCODE -ne 0) {
+        $coffStubLog | ForEach-Object { Write-Output $_ }
         throw "CoffStub.Generator build failed with exit code $LASTEXITCODE"
     }
 }
@@ -542,7 +553,9 @@ $peApps = @(
     @{ Src = "apps_native\HelloSharpFs\bin\Release\out-win-x64\HelloSharpFs.exe"; Dest = "HELLO.EXE" },
     @{ Src = "apps_native\FetchApp\bin\Release\out-win-x64\FetchApp.exe";         Dest = "FETCH.EXE" },
     @{ Src = "apps_native\AotTests\bin\Release\out-win-x64\AotTests.exe";         Dest = "AOTTESTS.EXE" },
-    @{ Src = "apps_native\GPL_AHEAD_WARNING_DOOM_managed\bin\Release\out-win-x64\DoomApp.exe"; Dest = "DOOM.EXE" }
+    @{ Src = "apps_native\GPL_AHEAD_WARNING_DOOM_managed\bin\Release\out-win-x64\DoomApp.exe"; Dest = "DOOM.EXE" },
+    @{ Src = "apps_native\TriCNES\bin\Release\out-win-x64\TriCNESApp.exe";        Dest = "TRICNES.EXE" },
+    @{ Src = "apps_native\Fami\bin\Release\out-win-x64\FamiApp.exe";              Dest = "FAMI.EXE" }
 )
 foreach ($peApp in $peApps) {
     $peSrc = Join-Path $repoRoot $peApp.Src
@@ -557,16 +570,37 @@ foreach ($peApp in $peApps) {
     }
 }
 
-# step142: IWAD staging for DOOM.EXE. Drop doom1.wad (shareware) / doom.wad /
-# doom2.wad into wads\ at the repo root (dir is gitignored — WADs are not
-# repo material) and it lands next to the apps; ManagedDoom's
-# ConfigUtilities probes \EFI\BOOT for the known IWAD names.
-$wadSrcDir = Join-Path $repoRoot "wads"
-if (Test-Path -LiteralPath $wadSrcDir) {
-    foreach ($wad in Get-ChildItem -LiteralPath $wadSrcDir -Filter "*.wad") {
+# Payload staging. Game data — IWADs, cartridges — lives in payloads\ at the
+# repo root, one folder for everything a build needs to hand to the apps. The
+# tree is gitignored: none of it is repo material, and some of it is not ours
+# to distribute. See payloads\README.md.
+#
+# Routed to the ESP by extension, because the extension already says what the
+# file is and asking anyone to remember a second rule is how folders get put in
+# the wrong place:
+#   *.wad -> \EFI\BOOT\<NAME>.WAD  (ManagedDoom probes there for known IWADs)
+#   *.nes -> \EFI\BOOT\GAME.NES    (the fixed name both emulators open)
+#
+# One cartridge is staged, the first by name, because the apps have no way to
+# be told which to load yet. That is the argument-passing work; when it lands,
+# all of them get staged under their own names and this collapses to a copy.
+$payloadDir = Join-Path $repoRoot "payloads"
+if (Test-Path -LiteralPath $payloadDir) {
+    foreach ($wad in Get-ChildItem -LiteralPath $payloadDir -Filter "*.wad") {
         $wadDst = Join-Path $espBootDir $wad.Name.ToUpperInvariant()
         Copy-Item -LiteralPath $wad.FullName -Destination $wadDst -Force
         Write-Host "Prepared IWAD: $wadDst"
+    }
+
+    $roms = @(Get-ChildItem -LiteralPath $payloadDir -Filter "*.nes" | Sort-Object Name)
+    if ($roms.Count -gt 0) {
+        Copy-Item -LiteralPath $roms[0].FullName -Destination (Join-Path $espBootDir "GAME.NES") -Force
+        Write-Host "Prepared cartridge: GAME.NES ($($roms[0].Name))"
+        # Say what was left behind rather than staging it silently: "I dropped
+        # the ROM in and got the other game" is otherwise a mystery.
+        if ($roms.Count -gt 1) {
+            Write-Host "  ($($roms.Count - 1) more .nes in payloads\ not staged - one cartridge slot)"
+        }
     }
 }
 
@@ -705,6 +739,17 @@ try {
     }
     else {
         $qemuArgs += @("-drive", "format=raw,file=fat:rw:esp")
+    }
+
+    if ($TraceFaults) {
+        # -no-shutdown together with -no-reboot: a triple fault then parks the
+        # machine instead of vanishing, so the log is complete rather than cut
+        # off wherever the reset happened.
+        $qemuArgs += @(
+            "-no-shutdown",
+            "-d", "int,cpu_reset,guest_errors",
+            "-D", "qemu-debug.log")
+        Write-Host "Fault tracing on: $qemuWorkDir\qemu-debug.log"
     }
 
     # The exact command line, in the log. Reconstructing it from the switches

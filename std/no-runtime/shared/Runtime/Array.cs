@@ -25,6 +25,54 @@ namespace System
     {
         public static T[] Empty<T>() => new T[0];
 
+        // Rank and per-dimension lengths. A single-dimension array carries
+        // neither — its MethodTable says rank 1 and Length is the answer — so
+        // both read the multidimensional bounds block only when there is one.
+        //
+        // The block sits at offset 16, where an SzArray keeps its first
+        // element: lengths at [0..rank), lower bounds at [rank..2*rank).
+        // Written by Internal.Runtime.CompilerHelpers.ArrayHelpers at
+        // allocation; see that file for the layout and where it came from.
+        public unsafe int Rank
+        {
+            get
+            {
+                Array self = this;
+                nint mt = *(nint*)(*(nint*)Unsafe.AsPointer(ref self));
+
+                // A parameterized type stores its shape in the MethodTable's
+                // base size: everything above the SzArray base size is the
+                // bounds block, two Int32s per dimension.
+                int boundsSize = (int)*(uint*)((byte*)mt + 4) - SzArrayBaseSize;
+                return boundsSize > 0 ? boundsSize / (2 * sizeof(int)) : 1;
+            }
+        }
+
+        public unsafe int GetLength(int dimension)
+        {
+            int rank = Rank;
+            if ((uint)dimension >= (uint)rank)
+                throw new IndexOutOfRangeException();
+
+            if (rank == 1) return Length;
+
+            Array self = this;
+            int* bounds = (int*)(*(byte**)Unsafe.AsPointer(ref self) + 16);
+            return bounds[dimension];
+        }
+
+        // Always zero: arrays with non-zero lower bounds cannot be created
+        // here (ArrayHelpers refuses them), so this reports the truth rather
+        // than reading a slot nothing ever writes.
+        public int GetLowerBound(int dimension)
+        {
+            if ((uint)dimension >= (uint)Rank)
+                throw new IndexOutOfRangeException();
+            return 0;
+        }
+
+        private const int SzArrayBaseSize = 24;
+
         // Ported from dotnet/runtime v8.0.27 Array.cs. The compiler binds `array.CopyTo(...)`
         // against System.Array, so the generic System.Array<T>.CopyTo is not enough.
         // Cut: the Rank != 1 check (std has no multidimensional arrays).

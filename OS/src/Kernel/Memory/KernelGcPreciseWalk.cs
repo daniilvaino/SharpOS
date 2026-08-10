@@ -35,7 +35,19 @@ namespace OS.Kernel.Memory
             GcContextSpill.IsInitialized
             && CoffRuntimeFunctionTable.ImageBase != null;
 
-        public static void RunFromCurrentFrame()
+        // Where a discovered root goes. Null means "our own heap".
+        //
+        // The walk itself — register spill, unwinding, GcInfo decoding — is
+        // expensive machinery that only makes sense in one copy, and it is
+        // already image-aware. What differs between the kernel and a loaded
+        // app is only WHICH heap a root should be marked in, so that is the
+        // one thing made pluggable. Apps keep their own heap and their own
+        // sweep; they borrow the walker, not the memory.
+        private static delegate* unmanaged<nuint, void> s_markRoot;
+
+        public static void RunFromCurrentFrame() => RunFromCurrentFrame(null);
+
+        public static void RunFromCurrentFrame(delegate* unmanaged<nuint, void> markRoot)
         {
             LastFramesWalked = 0;
             LastRootsMarked = 0;
@@ -43,8 +55,10 @@ namespace OS.Kernel.Memory
 
             if (!IsAvailable) return;
 
+            s_markRoot = markRoot;
             Context ctx = default;
             GcContextSpill.Invoke(&ctx, &WalkCallback);
+            s_markRoot = null;
         }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
@@ -53,8 +67,6 @@ namespace OS.Kernel.Memory
             int rtrMajor = NativeAotModuleInit.ReadyToRunMajor;
             int rtrMinor = NativeAotModuleInit.ReadyToRunMinor;
             int gcInfoVersion = CoffGcInfoDecoder.ReadyToRunVersionToGcInfoVersion(rtrMajor, rtrMinor);
-
-            byte* imageBase = CoffRuntimeFunctionTable.ImageBase;
 
             // Bounded walk — typical kernel boot stack is < 30 frames.
             // Cap protects against runaway loops if unwind glitches.
@@ -71,6 +83,15 @@ namespace OS.Kernel.Memory
 
                 LastFramesWalked++;
                 MarkOneFrame(ctx, in r, gcInfoVersion);
+
+                // Image base PER FRAME, not one fixed base for the whole walk.
+                // A stack that crosses from an app into the kernel (or back)
+                // has frames from different PE images, and unwinding one with
+                // another's base decodes garbage. The lookup table already
+                // knows which image a record came from — it just was not being
+                // asked.
+                byte* imageBase = CoffRuntimeFunctionTable.ImageBaseForRecord(r.RuntimeFunction);
+                if (imageBase == null) return;
 
                 ulong establisher = 0;
                 void* handlerData = null;
@@ -121,7 +142,8 @@ namespace OS.Kernel.Memory
                 ulong value = CoffGcInfoResolver.ResolveSlotValue(in slots[i], ctx, in hdr);
                 if (value == 0) continue;
 
-                GcMark.MarkFromRoot((nint)value);
+                if (s_markRoot != null) s_markRoot((nuint)value);
+                else GcMark.MarkFromRoot((nint)value);
                 LastRootsMarked++;
             }
         }

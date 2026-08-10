@@ -32,12 +32,17 @@ $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
             [Environment]::GetEnvironmentVariable('Path','User')
  
 # --- Репозиторий и shareware-WAD для DOOM ---
-git clone https://github.com/daniilvaino/SharpOS.git
+# --recurse-submodules обязателен: эмуляторы NES (TriCNES, Fami) подключены
+# подмодулями, без него их папки будут пустыми и сборка приложений упадёт.
+git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git
 cd .\SharpOS\
-curl.exe -L -o wads\DOOM1.WAD https://raw.githubusercontent.com/nifanfa/MOOS/refs/heads/master/Ramdisk/DOOM1.WAD
+
+# Данные для приложений (IWAD'ы, картриджи) кладутся в payloads\ —
+# см. payloads\README.md.
+curl.exe -L -o payloads\DOOM1.WAD https://raw.githubusercontent.com/nifanfa/MOOS/refs/heads/master/Ramdisk/DOOM1.WAD
  
-# --- Приложения (лаунчер, FetchApp, AotTests, DOOM):
-& .\build_launcher.ps1; & .\build_fetch.ps1; & .\build_aottests.ps1; & .\build_doom.ps1
+# --- Приложения (лаунчер, FetchApp, AotTests, DOOM, TriCNES, Fami):
+& .\build_launcher.ps1; & .\build_fetch.ps1; & .\build_aottests.ps1; & .\build_doom.ps1; & .\build_tricnes.ps1; & .\build_fami.ps1
  
 # --- Ядро + образ + запуск в QEMU ---
 $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
@@ -140,7 +145,8 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | `Math.Sqrt` / `Math.Abs` (double, SSE intrinsics) | ✅ | ✅ | ✅ | |
 | `Math.Sin` `Cos` `Exp` `Log` `Pow` (транцы) | 🟡 | 🟡 | 🟡 | AOT: managed-реализации в std (`Math.Double.cs`) - ряды с редукцией аргумента, ~1e-9, **не ulp-точные**; `Tan`/`Atan`/`Asin`/`Acos`/гиперболики - нет. Hosted: `lm_*` Taylor-приближения в форке (грубее). Порт точных алгоритмов (Cody-Waite + Remez) - в планах |
 | `Math.Floor` / `Math.Ceiling` / `Math.Truncate` / `Math.Round` | ✅ | ✅ | ✅ | AOT: managed в std через целочисленную трункацию (контракт: \|x\| < 2^63); Round - half-to-even. Hosted: битовые операции над IEEE 754 |
-| GC (mark-sweep, precise stack scan) | ✅ | ✅ | ✅ | hosted - свой GC через PAL |
+| GC (mark-sweep, precise stack scan) | ✅ | ✅ | ✅ | hosted - свой GC через PAL; PE-app несёт **свой** сборщик (своя куча, своя разметка), у ядра одалживает только обход корней стека |
+| Многомерные массивы (`int[,]`) | ✅ | ✅ | ✅ | ненулевые нижние границы и ранг 1 (`int[*]`) не поддержаны |
 | Process exit code propagation | ✅ | ✅ | ⏳ | |
 | **Per-process MMU isolation** | 🚫 | 🚫 | 🚫 | unikernel design |
 | **Parallel execution at same VA** | 🚫 | 🚫 | 🟡 | single ALC (threads) ✅; multi-ALC ⏳ |
@@ -175,6 +181,12 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 
 Стоковый **PowerShell 7.5.5** грузится с FAT32 на bare metal до интерактивного prompt'а и выполняет реальные cmdlet'ы (`Get-ChildItem`, `Get-Content`, pipelines, переменные, `[DateTime]::Now`). Это самый требовательный стресс-тест всего стека сразу: TPL, EH, рефлексия, GC, FAT32, ANSI-консоль. Строчный редактор **PSReadLine работает полноценно** (step147): эхо, SGR-цвета, Tab-дополнение, история со стрелками, Backspace/Delete/Home/End — всё поверх нашей framebuffer-консоли на движке XtermSharp. Известные ограничения: ConstrainedLanguage Mode, история не сохраняется между запусками (readonly FAT32)
 
+## Сторонние приложения, запускаемые на SharpOS
+
+- **[ManagedDoom](https://github.com/sinshu/managed-doom)** (sinshu, GPL-2.0) — играбелен: полный экран, клавиатура, 35 Гц. GPL изолирован отдельным приложением, в ядро не линкуется.
+- **[TriCNES](https://github.com/100thCoin/TriCNES)** (Chris Siebert, MIT, подмодуль) — эмулятор NES, точный: 141/141 на [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin), но для игр бывает медленноват.
+- **[Fami](https://github.com/RupertAvery/Fami)** (David Khristepher Santos, MIT, подмодуль) — эмулятор NES, играбелен, не идеален.
+
 ## Отдельное спасибо
 
 Проекты на плечах которых воздвинут SharpOS. Перечислены по убыванию вклада:
@@ -189,7 +201,6 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 - **[shitty](https://github.com/pg83/shitty)** (Anton Samokhvalov, двойная лицензия MIT + GPL-3) - тесты для эмулятора терминала.
 - **[ManagedDotnetGC](https://github.com/kevingosse/ManagedDotnetGC)** (Kevin Gosse, MIT) - mark/sweep референс для GC.
 - **[UpsilonGC](https://github.com/kkokosa/UpsilonGC)** (Konrad Kokosa, GPL-3) - референс по custom GC под .NET.
-- **[ManagedDoom](https://github.com/sinshu/managed-doom)** (sinshu, GPL-2.0, изолирован как отдельное приложение) - C#-порт DOOM.
 - **[DiscUtils](https://github.com/DiscUtils/DiscUtils)** (Kenneth Bell, MIT) - структура FAT/GPT - FAT-референс.
 - **[ChaN FatFs](https://elm-chan.org/fsw/ff/)** (BSD-1-clause) - второй FAT-референс.
 - **[Cosmos](https://github.com/CosmosOS/Cosmos)** (BSD-3) - концептуальный референс managed-OS подхода (stack-only conservative scan inspiration).

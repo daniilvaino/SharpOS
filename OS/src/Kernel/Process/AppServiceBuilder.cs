@@ -220,6 +220,16 @@ namespace OS.Kernel.Process
                 table.HpetFrequencyHz = OS.Hal.Timer.Hpet.FrequencyHz;
             }
 
+            // Precise stack-root walk, lent to the app for its own collector.
+            // Only offered when the machinery is actually up: without the
+            // register spill or the function tables, a walk would silently
+            // report no roots — and an app that believes that will free live
+            // objects. Zero here means "no walker", and AppGC refuses to
+            // collect rather than collect wrongly.
+            if (OS.Kernel.Memory.KernelGcPreciseWalk.IsAvailable)
+                table.GcWalkRootsAddress = (ulong)(nint)(delegate* unmanaged<nuint, void>)
+                    &OS.Kernel.Memory.AppGcService.WalkRoots;
+
             AppServiceTable* serviceTablePointer = Pager.IsPagerRootActive()
                 ? (AppServiceTable*)serviceVirtual
                 : (AppServiceTable*)servicePhysical;

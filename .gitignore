@@ -109,11 +109,22 @@ hello/
 last_build.log
 *.lscache
 
-# IWAD staging source for DOOM.EXE (run_build.ps1 copies wads/*.wad to the
-# ESP) — game data, never repo material. The directory itself is kept (see
-# wads/.gitkeep) so a fresh clone has somewhere to drop the WAD.
-wads/*
-!wads/.gitkeep
+# Payload staging source: IWADs for DOOM.EXE, cartridges for the emulators
+# (run_build.ps1 routes payloads/* onto the ESP by extension) — game data,
+# never repo material, and some of it not ours to distribute. The directory
+# survives a fresh clone because its README is tracked, which also tells
+# whoever clones what belongs here.
+payloads/*
+!payloads/README.md
+
+# Probe and profiling output that lands next to the sources it came from:
+# frame dumps from the emulator probes, dotnet-trace captures, boot logs
+# pulled off the ESP. All of it is a record of one run, none of it is source.
+*.ppm
+*.nettrace
+*.speedscope.json
+BOOTLOG*.TXT
+boot.txt
 
 # Raw FAT32 image built from the staged ESP for each run (see
 # tools/New-EspImage.ps1) - build output, regenerated every time.

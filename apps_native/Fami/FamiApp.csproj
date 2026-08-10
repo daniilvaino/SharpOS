@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>FamiApp</IlcSystemModule>
+    <!-- The submodule carries SDL2 native DLLs and font assets; default item
+         globbing would drag them in as content and embedded resources. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+  </PropertyGroup>
+
+  <!-- SharpOS freestanding win-x64 PE build of Fami (MIT, David Khristepher
+       Santos). https://github.com/RupertAvery/Fami
+
+       The fast counterpart to TriCNES: that one models the cartridge connector
+       pin by pin and costs ~220 host cycles per emulated cycle, which is the
+       right trade for an accuracy reference and the wrong one for playing.
+       This core is instruction-stepped and an order of magnitude cheaper.
+
+       Layout as with TriCNES: this folder is ours, Fami\ inside it is the
+       pristine upstream checkout (a submodule). Nothing of ours is written in
+       there.
+
+       TAKEN: the CPU, PPU, mappers, cartridge and their helpers — none of
+       which reference SDL (checked, not assumed).
+       CUT: Fami\Fami.Core\Interface (SDL window/audio/video providers),
+       Fami\Fami.Core\Audio, Fami\Fami.Core\Bizhawk (savestate/rewind),
+       Fami\Fami.UI, Fami\Fami. Their SDL2, freetype and zlib DLLs come with
+       them and are equally unwanted. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="GopVideo.cs" />
+    <Compile Include="Compat\**\*.cs" />
+
+    <!-- Upstream, verbatim. -->
+    <Compile Include="Fami\Fami.Core\Cartridge.cs" />
+    <Compile Include="Fami\Fami.Core\UnsupportedMapperException.cs" />
+    <Compile Include="Fami\Fami.Core\CPU\**\*.cs" />
+    <Compile Include="Fami\Fami.Core\Video\**\*.cs" />
+    <!-- Audio\BlipBuffer.cs is a P/Invoke wrapper over native blip_buf;
+         Compat\BlipBuffer.cs replaces it. See that file. -->
+    <Compile Include="Fami\Fami.Core\Audio\**\*.cs"
+             Exclude="Fami\Fami.Core\Audio\BlipBuffer.cs" />
+    <Compile Include="Fami\Fami.Core\Bizhawk\**\*.cs" />
+    <Compile Include="Fami\Fami.Core\Mappers\**\*.cs" />
+    <Compile Include="Fami\Fami.Core\Utility\**\*.cs" />
+  </ItemGroup>
+</Project>

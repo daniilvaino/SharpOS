@@ -135,6 +135,18 @@ namespace SharpOS.Std.NoRuntime
                 return LongToString(value);
             }
 
+            // "X"/"x" with optional width, uppercase or lowercase digits.
+            // BCL semantics: hex prints the raw two's-complement bits, so -1
+            // is FFFFFFFFFFFFFFFF and not "-1" — printing a sign here would be
+            // worse than useless in the places hex is used (registers, opcodes,
+            // addresses).
+            if (c0 == 'X' || c0 == 'x')
+            {
+                int width = format.Length == 1 ? 1 : ParseFormatWidth(format, 1);
+                if (width < 0) width = 1;
+                return HexPad((ulong)value, width, c0 == 'X');
+            }
+
             bool allZeros = true;
             int dot = -1;
             for (int i = 0; i < format.Length; i++)
@@ -173,6 +185,32 @@ namespace SharpOS.Std.NoRuntime
             if (neg) buf[pos++] = '-';
             for (int i = 0; i < width - digits; i++) buf[pos++] = '0';
             for (int i = neg ? 1 : 0; i < s.Length; i++) buf[pos++] = s[i];
+            return new string(buf);
+        }
+
+        // Hex digits of `value`, zero-padded to at least `width`.
+        //
+        // Width is a MINIMUM, as in the BCL: "X2" of 0x1234 is "1234", not
+        // "34". Truncating instead would quietly corrupt exactly the values
+        // worth printing in hex.
+        private static string HexPad(ulong value, int width, bool upper)
+        {
+            char[] digits = new char[16];
+            int count = 0;
+            do
+            {
+                uint nibble = (uint)(value & 0xF);
+                digits[count++] = nibble < 10
+                    ? (char)('0' + nibble)
+                    : (char)((upper ? 'A' : 'a') + (nibble - 10));
+                value >>= 4;
+            }
+            while (value != 0);
+
+            int length = count > width ? count : width;
+            char[] buf = new char[length];
+            for (int i = 0; i < length - count; i++) buf[i] = '0';
+            for (int i = 0; i < count; i++) buf[length - 1 - i] = digits[i];
             return new string(buf);
         }
 

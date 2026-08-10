@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Grown-up .NET build of the Fami core, same purpose as TriCNESAot: prove
+       the core compiles, links and emulates correctly against the real BCL
+       before any SharpOS work is trusted — and give a speed baseline to
+       compare the SharpOS build against.
+
+       This is also where the two emulators get compared on equal terms: same
+       machine, same ROM, same frame count. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <AssemblyName>FamiAot</AssemblyName>
+    <RootNamespace>Fami</RootNamespace>
+    <NoWarn>$(NoWarn);CS0219;CS0414;CS0162;CS0168;CS0164</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="AotProbe.cs" />
+    <Compile Include="Compat\BlipBuffer.cs" />
+
+    <!-- Upstream, verbatim. -->
+    <Compile Include="Fami\Fami.Core\Cartridge.cs" />
+    <Compile Include="Fami\Fami.Core\UnsupportedMapperException.cs" />
+    <Compile Include="Fami\Fami.Core\CPU\**\*.cs" />
+    <Compile Include="Fami\Fami.Core\Video\**\*.cs" />
+    <!-- The CPU owns the APU (which owns a BlipBuffer), so sound cannot be
+         dropped at the source level even though nothing here plays it. Both
+         are pure computation with no SDL dependency; the samples are generated
+         and discarded. -->
+    <Compile Include="Fami\Fami.Core\Audio\**\*.cs"
+             Exclude="Fami\Fami.Core\Audio\BlipBuffer.cs" />
+    <Compile Include="Fami\Fami.Core\Bizhawk\**\*.cs" />
+    <Compile Include="Fami\Fami.Core\Mappers\**\*.cs" />
+    <Compile Include="Fami\Fami.Core\Utility\**\*.cs" />
+  </ItemGroup>
+
+</Project>

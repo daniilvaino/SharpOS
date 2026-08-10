@@ -115,6 +115,7 @@ namespace System
         public int CompareTo(byte other) => _value - other;
         public int CompareTo(object obj) => obj is byte v ? CompareTo(v) : 1;
         public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
+        public string ToString(string format) => SharpOS.Std.NoRuntime.NumberFormatting.FormatInt64(_value, format);
     }
 
     public struct Int16 : IEquatable<short>, IComparable<short>, IComparable
@@ -143,6 +144,7 @@ namespace System
         public int CompareTo(ushort other) => _value - other;
         public int CompareTo(object obj) => obj is ushort v ? CompareTo(v) : 1;
         public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
+        public string ToString(string format) => SharpOS.Std.NoRuntime.NumberFormatting.FormatInt64(_value, format);
     }
 
     public struct Int32 : IEquatable<int>, IComparable<int>, IComparable

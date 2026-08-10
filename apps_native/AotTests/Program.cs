@@ -49,6 +49,99 @@ namespace AotTests
             string s = new string(chars);
             Check("new string(char[])", s.Length == 5 && s[0] == 'S');
 
+            // GC.
+            //
+            // The app has its OWN precise collector (AppGC): its own heap, its
+            // own mark and sweep, borrowing only the kernel's stack-root walk.
+            // These check both halves — that a collection actually runs, and
+            // that it does not eat anything still reachable. A collector that
+            // frees live objects passes every "did it run" test ever written,
+            // so the survivor checks below are the ones that matter.
+            Check("GC walker offered", AppGC.IsAvailable);
+            GC.Collect();
+            Check("GC.Collect ran", AppGC.Collections > 0 && AppGC.LastWalkOk);
+
+            int[] survivor = new int[64];
+            for (int i = 0; i < survivor.Length; i++) survivor[i] = i * 7;
+            string survivorText = "keep-me";
+            object identity = survivor;
+
+            uint churnOk = 0;
+            for (int i = 0; i < 4096; i++)
+            {
+                byte[] garbage = new byte[64];
+                garbage[0] = (byte)i;
+                if (garbage[0] == (byte)i) churnOk++;
+            }
+            Check("alloc churn 4096x64B", churnOk == 4096);
+
+            bool survived = survivor.Length == 64;
+            for (int i = 0; i < survivor.Length && survived; i++)
+                survived = survivor[i] == i * 7;
+            Check("live array survives churn", survived);
+            Check("live string survives churn", survivorText == "keep-me");
+            Check("reference identity kept", ReferenceEquals(identity, survivor));
+
+            byte[] big = new byte[256 * 1024];
+            big[big.Length - 1] = 0xAB;
+            Check("256 KiB allocation", big.Length == 256 * 1024 && big[big.Length - 1] == 0xAB);
+
+            // Collect with those locals live, then use them: this is where a
+            // walk that misses the stack shows itself. Silence here would mean
+            // the roots were found; corruption would mean they were not.
+            GC.Collect();
+            bool afterCollect = survivor[9] == 63 && survivorText == "keep-me"
+                                && big[big.Length - 1] == 0xAB;
+            Check("live data survives collect", afterCollect);
+            // Fully qualified: a using for the std namespace would make plain
+            // `GC` ambiguous against System.GC everywhere else in this file.
+            Check("collect reclaimed something",
+                SharpOS.Std.NoRuntime.GcSweep.LastSweptCount > 0);
+
+            // Multidimensional arrays.
+            //
+            // A different allocation path from every array above: ILC turns
+            // `new byte[2, 1024]` into a call to
+            // Internal.Runtime.CompilerHelpers.ArrayHelpers, and the object it
+            // builds carries a bounds block between the length and the
+            // elements. Get the layout wrong and indexing writes outside the
+            // object — which is why the corner element and the lengths are
+            // both checked, not just that the allocation returned.
+            //
+            // Landed for the Fami emulator port, whose PPU keeps its nametable
+            // and pattern tables as byte[2, N] fields.
+            byte[,] grid = new byte[2, 1024];
+            Check("byte[,] rank/lengths",
+                grid.Rank == 2 && grid.GetLength(0) == 2 && grid.GetLength(1) == 1024);
+
+            grid[0, 0] = 0x11;
+            grid[1, 1023] = 0x22;
+            grid[1, 0] = 0x33;
+            Check("byte[,] corner elements",
+                grid[0, 0] == 0x11 && grid[1, 1023] == 0x22 && grid[1, 0] == 0x33);
+
+            bool gridZeroed = true;
+            for (int i = 1; i < 1024 && gridZeroed; i++) gridZeroed = grid[0, i] == 0;
+            Check("byte[,] zero-initialised", gridZeroed);
+
+            int[,] numbers = new int[3, 4];
+            for (int y = 0; y < 3; y++)
+                for (int x = 0; x < 4; x++)
+                    numbers[y, x] = (y * 10) + x;
+
+            bool readBack = numbers.Length == 12;
+            for (int y = 0; y < 3 && readBack; y++)
+                for (int x = 0; x < 4 && readBack; x++)
+                    readBack = numbers[y, x] == (y * 10) + x;
+            Check("int[,] round-trip", readBack);
+
+            // Jagged arrays go through the same helper by a different branch.
+            int[][] jagged = new int[3][];
+            for (int i = 0; i < jagged.Length; i++) jagged[i] = new int[i + 1];
+            jagged[2][2] = 99;
+            Check("jagged array", jagged[0].Length == 1 && jagged[2].Length == 3
+                                  && jagged[2][2] == 99);
+
             // Strings.
             Check("string concat", ("a" + "b" + "c") == "abc");
             Check("string equality", "Sharp" == s);

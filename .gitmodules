@@ -1,0 +1,6 @@
+[submodule "apps_native/TriCNES/TriCNES"]
+	path = apps_native/TriCNES/TriCNES
+	url = https://github.com/100thCoin/TriCNES
+[submodule "apps_native/Fami/Fami"]
+	path = apps_native/Fami/Fami
+	url = https://github.com/RupertAvery/Fami
