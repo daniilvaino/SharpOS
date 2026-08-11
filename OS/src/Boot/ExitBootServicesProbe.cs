@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 
 namespace OS.Boot
 {
@@ -27,6 +27,8 @@ namespace OS.Boot
     // regression battery.
     internal static unsafe class ExitBootServicesProbe
     {
+        private const uint TimerHz = 100;
+
         public static void Run()
         {
             BootInfo bi = Platform.GetBootInfo();
@@ -235,7 +237,97 @@ namespace OS.Boot
             // \EFI\BOOT\*.ELF from our own FAT (TryReadFile +
             // DirectoryReadEntry are bridged to Fs.Current). No halt,
             // no UEFI — the boot just continues firmware-free.
+
+            // Take ownership of interrupt delivery, now that the firmware that
+            // owned it is gone. Order matters and is not interchangeable:
+            //   1. mask the legacy chips, so nothing can reach the firmware
+            //      handlers our IDT still carries for vectors 32..255;
+            //   2. enable the local APIC and point its spurious vector at our
+            //      own stub;
+            //   3. wire the two vectors we will actually raise;
+            //   4. calibrate against the HPET (revived just above) and arm the
+            //      periodic timer.
+            // Interrupts stay disabled throughout — nothing is armed until the
+            // handler behind it exists.
+            if (OS.Kernel.Diagnostics.Probes.OwnInterrupts)
+                TakeOverInterrupts();
+
             Console.WriteLine("[ebs] post-EBS — continuing into launcher via own FAT");
+        }
+
+        // Phase F1: SharpOS starts delivering its own interrupts.
+        //
+        // Reports what it did either way. A tick that silently fails to start
+        // is indistinguishable from one that works until something waits on
+        // it, and the whole point of this step is to have a clock we can trust
+        // before anything is built on top of it.
+        private static void TakeOverInterrupts()
+        {
+            Pic.MaskAll();
+
+            if (!OS.Hal.Apic.LocalApic.Initialize(OS.Hal.Idt.Idt.SpuriousVector))
+            {
+                Console.WriteLine("[apic] FAIL no local APIC - staying on polling only");
+                return;
+            }
+
+            if (!OS.Hal.Idt.Idt.TryWireIrqVector(OS.Hal.Idt.Idt.TimerVector) ||
+                !OS.Hal.Idt.Idt.TryWireIrqVector(OS.Hal.Idt.Idt.SpuriousVector))
+            {
+                Console.WriteLine("[apic] FAIL could not wire vectors");
+                return;
+            }
+
+            if (!OS.Hal.Apic.LocalApic.StartPeriodic(OS.Hal.Idt.Idt.TimerVector, TimerHz))
+            {
+                Console.WriteLine("[apic] FAIL timer calibration");
+                return;
+            }
+
+            Console.Write("[apic] id=");
+            Console.WriteInt((int)OS.Hal.Apic.LocalApic.Id);
+            Console.Write(" ver=0x");
+            Console.WriteHex(OS.Hal.Apic.LocalApic.Version);
+            Console.Write(" timer=");
+            Console.WriteInt((int)(OS.Hal.Apic.LocalApic.TicksPerSecond / 1000));
+            Console.WriteLine(" kHz");
+
+            // Interrupts on. Safe now, and only now: the legacy lines are
+            // masked, and both vectors the APIC can raise land in our own
+            // dispatcher.
+            X64Asm.Sti();
+
+            VerifyTickIsMoving();
+        }
+
+        // A clock is not a clock until it has been watched moving. Measured
+        // against the HPET, which is independent of the APIC — checking a
+        // timer against itself would confirm nothing.
+        private static void VerifyTickIsMoving()
+        {
+            if (!global::OS.Hal.Timer.Hpet.IsInitialized) return;
+
+            ulong before = OS.Hal.Apic.LocalApic.TimerTicks;
+            ulong hpetStart = global::OS.Hal.Timer.Hpet.ReadCounter();
+            ulong window = global::OS.Hal.Timer.Hpet.FrequencyHz / 10;   // 100 ms
+
+            while (global::OS.Hal.Timer.Hpet.ReadCounter() - hpetStart < window) { }
+
+            ulong observed = OS.Hal.Apic.LocalApic.TimerTicks - before;
+            uint expected = TimerHz / 10;
+
+            Console.Write("[apic] ticks in 100ms: ");
+            Console.WriteInt((int)observed);
+            Console.Write(" expected ~");
+            Console.WriteInt((int)expected);
+
+            // Generous bounds: this asks "is the clock roughly right", not
+            // "is it precise". Being out by half is a wiring or calibration
+            // fault; being out by a few percent is a busy loop.
+            if (observed >= expected / 2 && observed <= expected * 2)
+                Console.WriteLine(" PASS");
+            else
+                Console.WriteLine(" FAIL");
         }
     }
 }

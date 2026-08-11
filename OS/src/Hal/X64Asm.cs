@@ -1,4 +1,4 @@
-namespace OS.Hal
+﻿namespace OS.Hal
 {
     // Inline-asm-style CPU instruction helpers via shellcode buffer pattern.
     // Same approach как Cr3Accessor — write tiny instruction + ret bytes,
@@ -71,6 +71,7 @@ namespace OS.Hal
         // 0x380..0x400 (~128 B). If future phases overflow, bump
         // UefiBootInfoBuilder.AsmBufferSize.
         private const uint FxsaveOffset          = 0x28C;
+        private const uint FxrstorOffset         = 0x294;
         private const uint CoopSwitchOffset      = 0x380;
         private const uint CoopSwitchMinBuffer   = 0x400;
 
@@ -104,6 +105,8 @@ namespace OS.Hal
         private static delegate* unmanaged<void> s_memoryBarrier;
         private static bool s_fxsaveReady;
         private static delegate* unmanaged<byte*, void> s_fxsave;
+        private static bool s_fxrstorReady;
+        private static delegate* unmanaged<byte*, void> s_fxrstor;
         private static bool s_coopSwitchReady;
         private static delegate* unmanaged<byte*, byte*, void> s_coopSwitch;
         private static bool s_resumeReady;
@@ -422,6 +425,26 @@ namespace OS.Hal
                 s_fxsaveReady = true;
             }
             s_fxsave(buf);
+        }
+
+        // Load FP/SIMD state from a 512-byte 16-byte aligned image. Lives at
+        // FxsaveOffset + 8, inside the same free zone (fxsave is 4 bytes).
+        //
+        //   0F AE 09    fxrstor [rcx]
+        //   C3          ret
+        public static void Fxrstor(byte* buf)
+        {
+            if (buf == null) return;
+            if (s_execBuffer == null || s_execBufferSize < CoopSwitchMinBuffer)
+                return;
+            if (!s_fxrstorReady)
+            {
+                byte* p = (byte*)s_execBuffer + FxrstorOffset;
+                EmitFxrstorBootAsm(p);            // fxrstor [rcx] ; ret
+                s_fxrstor = (delegate* unmanaged<byte*, void>)p;
+                s_fxrstorReady = true;
+            }
+            s_fxrstor(buf);
         }
 
         // Phase E4 cooperative context switch + Phase E9.b gs-base swap.

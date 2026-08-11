@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 using OS.Hal.Timer;
 using OS.Kernel;
 
@@ -23,6 +23,11 @@ namespace OS.Kernel.Threading
 
         private static Thread? s_current;
         private static Thread? s_runnableHead;
+
+        // Every live thread, newest last. Walked by the garbage collector to
+        // find roots on stacks other than the running one.
+        private static Thread? s_allHead;
+        private static Thread? s_allTail;
         private static int s_nextId = 1;
         private static uint s_yieldCount;
         private static uint s_switchCount;
@@ -73,6 +78,7 @@ namespace OS.Kernel.Threading
                 Entry = null,
             };
             s_current = t;
+            RegisterThread(t);
             return true;
         }
 
@@ -143,6 +149,8 @@ namespace OS.Kernel.Threading
                 owner.FirstThread = t;
                 owner.ThreadCount++;
             }
+
+            RegisterThread(t);
 
             if (startRunnable)
                 EnqueueRunnable(t);
@@ -377,11 +385,39 @@ namespace OS.Kernel.Threading
         // Terminate the current thread. Marks it Exited; does NOT re-
         // enqueue it. Dispatches the next runnable thread (panics if
         // none — we have no idle thread yet). Never returns.
+        /// <summary>Head of the all-threads registry. Walk via Thread.AllNext.</summary>
+        public static Thread? AllThreads => s_allHead;
+
+        private static void RegisterThread(Thread t)
+        {
+            t.AllNext = null;
+            if (s_allTail == null) { s_allHead = t; s_allTail = t; return; }
+            s_allTail.AllNext = t;
+            s_allTail = t;
+        }
+
+        // Unlink on exit. Leaving exited threads in the registry would point
+        // the collector at stacks that have been freed and possibly reused —
+        // it would read whatever now lives there and treat it as roots.
+        private static void UnregisterThread(Thread t)
+        {
+            Thread? prev = null;
+            Thread? c = s_allHead;
+            while (c != null && c != t) { prev = c; c = c.AllNext; }
+            if (c == null) return;
+
+            if (prev == null) s_allHead = c.AllNext;
+            else prev.AllNext = c.AllNext;
+            if (s_allTail == c) s_allTail = prev;
+            c.AllNext = null;
+        }
+
         public static void Exit()
         {
             Thread? curr = s_current;
             if (curr == null) { Panic.Fail("Scheduler.Exit: no current"); return; }
             curr.State = ThreadState.Exited;
+            UnregisterThread(curr);
 
             Thread? next = DequeueRunnable();
             if (next == null)

@@ -55,6 +55,13 @@ namespace OS.Kernel.Memory
         public static bool InWindow(ulong va)
             => va >= WindowBase && va < WindowBase + WindowSize;
 
+        // A page inside the window that nothing is expected to have committed:
+        // reservations hand out addresses from the bottom upward, so the last
+        // page is the furthest from anything in use. Used by FpFaultProbe to
+        // provoke a demand fault on purpose. Committing it costs one frame.
+        public static ulong ProbeAddressForFaultTest
+            => WindowBase + WindowSize - PageSize;
+
         // #PF (not-present) demand path: back the single 4 KiB page covering
         // `faultVa` with a frame and map it RW (executable — NX is globally
         // off, so JIT-code pages in the window resolve here too). Returns

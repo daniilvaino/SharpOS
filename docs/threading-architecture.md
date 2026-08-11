@@ -1,4 +1,4 @@
-# Threading architecture (Phase E)
+﻿# Threading architecture (Phase E)
 
 **Status note (2026-05-29):** this is the detailed Phase E design trail,
 not the current roadmap. The current consolidated roadmap is `plan.md`.
@@ -545,8 +545,15 @@ Two passes:
 
 ## 14. Out of scope (deferred to Phase F+)
 
+**step154 update.** Phase F started. Landed: our own interrupt delivery (legacy
+PIC masked, local APIC + 100 Hz timer on vector 0x20) and GC roots on the stacks
+of parked threads. NOT landed: preemption itself and GC suspend — the tick only
+counts today, and the collector still relies on parked contexts being stable,
+which is true only while scheduling stays cooperative. See
+`docs/preemption-readiness.md`.
+
 - Real concurrent GC + suspend (Phase F, **SP1 main risk**)
-- Preemption via APIC-timer-tick
+- Preemption via APIC-timer-tick (tick exists as of step154; the switch does not)
 - SMP (multi-core)
 - MMU process isolation (separate page tables per process)
 - AssemblyLoadContext implementation (stock CoreCLR feature; works once

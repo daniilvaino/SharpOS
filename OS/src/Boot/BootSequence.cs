@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 using OS.Hal.Acpi;
 using OS.Hal.Idt;
 using OS.Kernel;
@@ -262,6 +262,13 @@ namespace OS.Boot
             else
                 Panic.Fail("VM manager self-test failed");
 
+            // Right after the window exists: does taking a demand fault leave
+            // the interrupted code's XMM registers intact? Runs here because
+            // it needs the window and the exec buffer, and because everything
+            // after this point is entitled to assume the answer is yes.
+            if (Probes.FpFaultPreservesXmm)
+                OS.Kernel.Diagnostics.FpFaultProbe.Run();
+
             // Phase B#2 — identity-map the GOP framebuffer MMIO into the
             // pager PML4. Non-fatal: headless / BltOnly / no-GOP boots
             // continue with IsAvailable=false (renderer no-ops).
@@ -342,9 +349,6 @@ namespace OS.Boot
             if (Probes.LineEdit)
                 LineEditorProbe.Run();
 
-            if (Probes.ShellEngine)
-                ShellProbe.Run();
-
             if (Probes.PciScan)
                 PciProbe.Run();
 
@@ -421,6 +425,12 @@ namespace OS.Boot
             if (Probes.ThreadPingPong)
                 OS.Kernel.Threading.ThreadPingPongProbe.Run();
 
+            // Runs right after: it needs threads working, and it answers a
+            // question the ping-pong probe cannot — whether a collection can
+            // see the roots of a thread that is not running.
+            if (Probes.ThreadGcRoots)
+                OS.Kernel.Threading.ThreadRootsProbe.Run();
+
             // Phase E5 — Scheduler.Sleep + Event.Wait/Set round trip
             // (TimerQueue + scheduler-aware blocking primitives).
             if (Probes.ThreadSleep)
@@ -471,13 +481,6 @@ namespace OS.Boot
             if (Probes.ExitBootServicesExperiment)
                 ExitBootServicesProbe.Run();
 
-            // Interactive native-tier shell — real keystrokes via the
-            // own PS/2 driver, echoed to serial + FbTty. Blocks on
-            // input, so default-off (would hang the headless regression
-            // run); flip on + boot under SHARPOS_GUI=1 to use it. Runs
-            // after all probes/census so the screen is the user's.
-            if (Probes.ShellInteractive)
-                Shell.RunInteractive();
 
             // Never-returning probes — last so a regular boot still finishes.
             if (Probes.IdtPanic)

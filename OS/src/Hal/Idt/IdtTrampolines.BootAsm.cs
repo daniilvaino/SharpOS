@@ -43,8 +43,34 @@ namespace OS.Hal.Idt
             // mov rcx, rsp  (arg1 = frame*)
             a.mov(rcx, rsp);
 
-            // sub rsp, 0x28  (shadow + 8-byte align)
-            a.sub(rsp, 0x28);
+            // Save x87/SSE state below the frame.
+            //
+            // The dispatcher is C#, and C# codegen uses XMM registers freely —
+            // it will happily pick xmm4 just to zero a stack slot. XMM0-5 are
+            // volatile in Win64, i.e. they belong to whatever we interrupted.
+            // Any handler that RETURNS (demand paging today, the timer tick
+            // next) therefore corrupts the interrupted code's registers unless
+            // they are saved here. Verified, not assumed: X64PageTable.MapKernel
+            // and TryQueryForRoot both emit `xorps xmm4,xmm4` in the shipped
+            // object file, and both sit on the demand-paging resume path.
+            //
+            // FXSAVE (not XSAVE) is exactly right: XCR0 is locked to x87|SSE,
+            // so there is no AVX state to miss.
+            //
+            // Alignment, which FXSAVE requires to be 16: the CPU aligns RSP to
+            // 16 on interrupt entry, then 23 qwords go on the stack (5 CPU +
+            // 2 vector/errcode + 16 here), leaving RCX at base+8 mod 16.
+            // 520 is 8 mod 16, so RCX-520 lands back on 0 mod 16.
+            // Literal, not FpAreaBytes: the compile-time walker resolves only
+            // literals and register names, and says so loudly if given a
+            // constant. The named constant next door is the managed-side
+            // documentation of this number; both emitters spell it out.
+            a.sub(rsp, 520);
+            a.fxsave(__zmmword_ptr[rsp]);
+
+            // sub rsp, 0x20  (shadow space; 23 qwords + 520 + 32 = 0 mod 16,
+            // which is what Win64 wants immediately before the call)
+            a.sub(rsp, 0x20);
 
             // mov rax, [rip + dispData]  ; RIP-relative load of dispatcher
             a.mov(rax, __qword_ptr[dispData]);

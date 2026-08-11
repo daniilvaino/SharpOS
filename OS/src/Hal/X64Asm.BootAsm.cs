@@ -237,6 +237,20 @@ namespace OS.Hal
             a.ret();
         }
 
+        // Counterpart of Fxsave: load FP/SIMD state from a 512-byte image.
+        // RCX = buf (Win64 arg1). The image must come from a real FXSAVE —
+        // FXRSTOR faults #GP on reserved MXCSR bits, so a hand-built one is
+        // a trap.
+        [CompileTimeAsm]
+        private static partial int EmitFxrstorBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitFxrstorBootAsm))]
+        private static void EmitFxrstorBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.fxrstor(__qword_ptr[rcx]);
+            a.ret();
+        }
+
         // Phase E4 cooperative context switch + Phase E9.b gs-base swap.
         // RCX = curr ctx, RDX = next ctx. Saves 8 GPRs + FP of curr, swaps
         // RSP, restores 8 GPRs + FP of next, optionally loads new gs base
@@ -287,6 +301,14 @@ namespace OS.Hal
         [CompileTimeAsmBody(nameof(EmitResumeBootAsm))]
         private static void EmitResumeBootAsm_Body(Iced.Intel.Assembler a)
         {
+            // Restore x87/SSE first, while RCX still points at the frame.
+            // The common stub saved it at frame - FpAreaBytes; without this
+            // the handler's own use of XMM leaks into the code we are about
+            // to resume. See IdtTrampolines.EmitCommonStub_Body.
+            // 520 spelled out, not IdtTrampolines.FpAreaBytes — the walker
+            // takes literals only. Change one, change both.
+            a.fxrstor(__zmmword_ptr[rcx - 520]);
+
             a.mov(rax, __qword_ptr[rcx +   8]);
             a.mov(rdx, __qword_ptr[rcx +  24]);
             a.mov(rbx, __qword_ptr[rcx +  32]);

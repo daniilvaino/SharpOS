@@ -1,4 +1,4 @@
-using SharpOS.Std.NoRuntime;
+﻿using SharpOS.Std.NoRuntime;
 
 namespace OS.Kernel.Memory
 {
@@ -63,7 +63,42 @@ namespace OS.Kernel.Memory
             GcMark.Begin();
             GcRoots.MarkStaticRootsOnly();
             KernelGcPreciseWalk.RunFromCurrentFrame();
+            MarkOtherThreadStacks();
             GcSweep.Run();
+        }
+
+        // Roots on the stacks of threads that are not running.
+        //
+        // The running thread is already covered by RunFromCurrentFrame above.
+        // Every other live thread — runnable but not scheduled, sleeping on
+        // the timer queue, blocked on an event — has a stack full of locals
+        // that reference live objects, and none of it was visible to the
+        // collector before this. Cooperative scheduling made the hole
+        // survivable rather than harmless: threads and collections simply
+        // rarely met.
+        //
+        // Safe to walk while they are parked precisely because they are
+        // parked: their saved context is stable until they are switched back
+        // in, which cannot happen from inside a collection on this CPU.
+        // Preemption changes that, and this is the piece it will need.
+        private static void MarkOtherThreadStacks()
+        {
+            if (!KernelGcPreciseWalk.IsAvailable) return;
+
+            OS.Kernel.Threading.Thread? current = OS.Kernel.Threading.Scheduler.Current;
+            OS.Kernel.Threading.Thread? t = OS.Kernel.Threading.Scheduler.AllThreads;
+
+            while (t != null)
+            {
+                if (t != current &&
+                    t.State != OS.Kernel.Threading.ThreadState.Exited &&
+                    t.ContextBlock != null)
+                {
+                    KernelGcPreciseWalk.RunFromParkedThread(t.ContextBlock, null);
+                }
+
+                t = t.AllNext;
+            }
         }
 
         // Conservative-only collect: ALWAYS spill every register to the stack

@@ -1,4 +1,4 @@
-namespace OS.Kernel.Diagnostics
+﻿namespace OS.Kernel.Diagnostics
 {
     // Single source of truth for which boot-time probes/smoke-tests run.
     // BootSequence consults these flags before invoking each probe; flip
@@ -23,6 +23,23 @@ namespace OS.Kernel.Diagnostics
 
         // Phase 3
         public const bool RtcSnapshot = true;        // dump CMOS wall-clock
+
+        // Phase F1: SharpOS delivers its own interrupts — legacy PIC masked,
+        // local APIC enabled, periodic timer on vector 0x20. Runs only
+        // post-ExitBootServices, where the firmware handlers we inherited are
+        // code without an owner. Off leaves the system exactly as before:
+        // interrupts disabled, every driver polling.
+        public const bool OwnInterrupts = true;
+
+        // Phase F2 gate: a collection must find roots on the stacks of threads
+        // that are not running. Spawns a worker holding an array in a local,
+        // parks it, collects, and has the worker check its own data.
+        public const bool ThreadGcRoots = true;
+
+        // Phase F prerequisite: the interrupt path must preserve FP/SIMD state
+        // across a handler that returns. On by default — this is a correctness
+        // invariant the preemptive timer will lean on, not a curiosity.
+        public const bool FpFaultPreservesXmm = true;
 
         // Phase 4
         public const bool GcHeapSmoke = true;
@@ -179,17 +196,7 @@ namespace OS.Kernel.Diagnostics
         // interactive shell under SHARPOS_GUI=1.
         public const bool LineEdit = true;
 
-        // Phase B#3 — native-tier shell engine. Drives Shell.Execute
-        // with literal command lines, asserts dispatch + the mem data
-        // path (headless-deterministic). The interactive REPL over this
-        // engine is a separate default-off gate (would block headless).
-        public const bool ShellEngine = true;
 
-        // Phase B#3 — interactive shell REPL (real PS/2 keystrokes,
-        // echoed to serial + FbTty). BLOCKS on input — keep false for
-        // headless/regression runs; flip true and boot under
-        // SHARPOS_GUI=1 to type at it. ILC dead-codes it when false.
-        public const bool ShellInteractive = false;
 
         // Phase C — physically call ExitBootServices and run the rest
         // of the boot (FAT mount, CoreCLR session, native launcher) on

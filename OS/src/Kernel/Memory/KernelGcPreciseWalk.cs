@@ -1,4 +1,4 @@
-using OS.Boot.EH;
+﻿using OS.Boot.EH;
 using OS.Hal;
 using OS.PAL.SharpOSHost;
 using SharpOS.Std.NoRuntime;
@@ -61,8 +61,60 @@ namespace OS.Kernel.Memory
             s_markRoot = null;
         }
 
+        /// <summary>
+        /// Walk the stack of a thread that is NOT running, from the context
+        /// its last switch-out left behind.
+        /// </summary>
+        /// <remarks>
+        /// Roots live on every thread's stack, not just the running one, and
+        /// until this existed the collector saw only the stack it was called
+        /// on. Objects held solely by a sleeping thread were unreachable to
+        /// the marker and freed underneath it — a corruption that surfaces
+        /// whenever that thread wakes, arbitrarily far from the collection
+        /// that caused it.
+        ///
+        /// The layout is the one CoopSwitch produces and Scheduler fabricates
+        /// for a thread that has never run (see both, they must agree):
+        ///   SavedRsp + 0..56  eight callee-saved GPRs, r15 first
+        ///   SavedRsp + 64     return address — where the thread resumes
+        ///   SavedRsp + 72     the stack pointer it resumes with
+        ///
+        /// A thread that has never been dispatched resolves to its entry thunk
+        /// and unwinds no further, which is correct: it holds nothing yet.
+        /// </remarks>
+        public static void RunFromParkedThread(byte* contextBlock,
+                                               delegate* unmanaged<nuint, void> markRoot)
+        {
+            if (!IsAvailable || contextBlock == null) return;
+
+            ulong savedRsp = *(ulong*)contextBlock;
+            if (savedRsp == 0) return;
+
+            ulong* slot = (ulong*)savedRsp;
+
+            Context ctx = default;
+            ctx.R15 = slot[0];
+            ctx.R14 = slot[1];
+            ctx.R13 = slot[2];
+            ctx.R12 = slot[3];
+            ctx.Rdi = slot[4];
+            ctx.Rsi = slot[5];
+            ctx.Rbp = slot[6];
+            ctx.Rbx = slot[7];
+            ctx.Rip = slot[8];
+            ctx.Rsp = savedRsp + 72;
+
+            if (ctx.Rip == 0) return;
+
+            s_markRoot = markRoot;
+            WalkFrames(&ctx);
+            s_markRoot = null;
+        }
+
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
-        private static void WalkCallback(Context* ctx)
+        private static void WalkCallback(Context* ctx) => WalkFrames(ctx);
+
+        private static void WalkFrames(Context* ctx)
         {
             int rtrMajor = NativeAotModuleInit.ReadyToRunMajor;
             int rtrMinor = NativeAotModuleInit.ReadyToRunMinor;

@@ -7,9 +7,12 @@ namespace OS.Hal.Idt
     //   4096..4191     CommonStub (~96 bytes)
     //   4192..4192+N   PerVectorStub × 32 (16 bytes each = 512 bytes)
     //
-    // We wire only vectors 0..31 — the CPU-reserved exception range. Higher
-    // vectors (32..255) are left zero in the IDT; if hardware delivers one
-    // it triple-faults (until SUPER-Phase 5 wires hardware IRQs through MSI).
+    // Install() wires vectors 0..31 — the CPU-reserved exception range. The
+    // rest of the table is inherited from the firmware and, after
+    // ExitBootServices, selectively replaced by Idt.TryWireIrqVector for the
+    // vectors we raise ourselves (the APIC timer and its spurious vector).
+    // The stubs are identical: a vector above 31 never carries an error code,
+    // which is exactly the no-error form below.
     //
     // ─────────────────────────────────────────────────────────────────────
     // Per-vector entry stub (16 bytes, padded with NOPs):
@@ -69,6 +72,16 @@ namespace OS.Hal.Idt
 
     internal static unsafe partial class IdtTrampolines
     {
+        // x87/SSE save area the common stub reserves BELOW the frame, so
+        // handlers that return do not corrupt the interrupted code's XMM
+        // registers. 512 bytes of FXSAVE image + 8 to land the area on a
+        // 16-byte boundary (see EmitCommonStub_Body for the arithmetic).
+        //
+        // The area lives at frame - FpAreaBytes; X64Asm's resume stub restores
+        // from that same offset. Both sides must agree — this constant is the
+        // agreement.
+        public const int FpAreaBytes = 520;
+
         public const uint IdtSize = 4096;                // 256 × 16
         public const uint CommonStubOffset = 4096;
         public const uint CommonStubMaxSize = 96;

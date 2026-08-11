@@ -1,4 +1,4 @@
-namespace OS.Kernel.Threading
+﻿namespace OS.Kernel.Threading
 {
     internal enum ThreadState : byte
     {
@@ -115,6 +115,16 @@ namespace OS.Kernel.Threading
 
         // Singly-linked runnable queue. null when not enqueued.
         public Thread? Next;
+
+        // Singly-linked registry of every live thread, in creation order.
+        //
+        // Separate from Next because Next only holds RUNNABLE threads: one
+        // blocked on an event or sleeping on the timer queue is linked from
+        // that queue instead, and a thread that is currently running is in no
+        // list at all. The garbage collector needs all of them — a stack it
+        // cannot reach is a set of roots it cannot see, and the objects only
+        // that thread holds get freed under it.
+        public Thread? AllNext;
 
         // ContextBlock layout (528 bytes, 16-byte aligned):
         //   +0x00  ulong  SavedRsp  — written by CoopSwitch on switch-out

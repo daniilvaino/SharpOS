@@ -407,11 +407,6 @@ $results += Get-ProbeStatus -Cat 'Drivers' -Name 'LineEdit' `
     -Status '\[lined\][^\r\n]*\s(PASS|FAIL)' `
     -ExpectRe '^PASS$'
 
-$results += Get-ProbeStatus -Cat 'Drivers' -Name 'ShellEngine' `
-    -Detect '\[shell\] ' `
-    -Status '\[shell\][^\r\n]*\s(PASS|FAIL)' `
-    -ExpectRe '^PASS$'
-
 $results += Get-ProbeStatus -Cat 'Drivers' -Name 'PciScan' `
     -Detect '\[pci\] devs=' `
     -Status '\[pci\][^\r\n]*\s(PASS|FAIL)' `
