@@ -70,7 +70,7 @@ namespace OS.Kernel.Threading
         /// </param>
         public static void OnTick(void* frame)
         {
-            if (!s_enabled || s_disableDepth != 0)
+            if (!s_enabled || s_disableDepth != 0 || Scheduler.SwitchInProgress)
             {
                 s_declined++;
                 return;

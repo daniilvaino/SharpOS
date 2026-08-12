@@ -1,4 +1,4 @@
-using System.Runtime;
+﻿using System.Runtime;
 using System.Runtime.InteropServices;
 using OS.Kernel.Diagnostics;
 
@@ -109,6 +109,10 @@ namespace OS.PAL.SharpOSHost
             if (buffer == null || nChars == 0) return 1; // empty write succeeds
             if (!IsStdHandle(hConsole)) { ApiTrace("write REJECT", hConsole, nChars); return 0; }
             ApiTrace("write", hConsole, nChars);
+
+            // The whole buffer as one unit: this is where PowerShell's escape
+            // sequences arrive, and half of one is worse than none.
+            OS.Kernel.Threading.Preemption.Suppress();
             // Convert UTF-16 → bytes (BMP only — surrogate pairs would
             // produce replacement chars; acceptable for kernel console).
             for (uint i = 0; i < nChars; i++)
@@ -130,6 +134,8 @@ namespace OS.PAL.SharpOSHost
                     OS.Hal.Platform.WriteChar((char)(0x80 | (c & 0x3F)));
                 }
             }
+            OS.Kernel.Threading.Preemption.Allow();
+
             if (numCharsWritten != null) *numCharsWritten = nChars;
             return 1;
         }

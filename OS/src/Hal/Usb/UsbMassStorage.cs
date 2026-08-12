@@ -1,4 +1,4 @@
-namespace OS.Hal.Usb
+﻿namespace OS.Hal.Usb
 {
     // A USB stick as a Disk, so FAT32 mounts it with no idea it is USB.
     //
@@ -220,10 +220,31 @@ namespace OS.Hal.Usb
     // The Disk face of the same device, which is all FAT32 ever sees.
     internal sealed unsafe class UsbDisk : Disk
     {
+        // One transfer at a time, waits included — the same bargain the AHCI
+        // driver makes, for the same reason.
+        //
+        // A USB transfer is a conversation: write a TRB into the ring at the
+        // enqueue index, advance it, ring the doorbell, then wait for the
+        // event that belongs to it. Interleaving two of those corrupts the
+        // ring (both write the same slot) and, even with that fixed, there is
+        // nothing here that tells one completion event from another.
+        //
+        // Guarding at this boundary rather than around each of the eight TRB
+        // submissions inside the stack: they all have the same shape in five
+        // files, and a guard that is missing from one of them is worse than no
+        // guard at all, because it is trusted.
         public override bool Read(ulong sector, uint count, byte* data)
-            => UsbMassStorage.Read(sector, count, data);
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try { return UsbMassStorage.Read(sector, count, data); }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
 
         public override bool Write(ulong sector, uint count, byte* data)
-            => UsbMassStorage.Write(sector, count, data);
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try { return UsbMassStorage.Write(sector, count, data); }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
     }
 }

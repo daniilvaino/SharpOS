@@ -239,6 +239,11 @@ namespace OS.Hal.Idt
             {
                 OS.Hal.Apic.LocalApic.OnTimerTick();
 
+                // Where was the CPU? Recorded before anything else touches
+                // the frame, and cheap enough to leave on: a hash insert.
+                OS.Kernel.Diagnostics.Sampler.OnTick(frame->Rip);
+                OS.Kernel.Diagnostics.Sampler.MaybeReport();
+
                 // Acknowledge BEFORE any scheduling: the APIC treats the
                 // vector as in service until it is acknowledged, so parking
                 // here without an EOI would silence every later tick and

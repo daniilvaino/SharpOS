@@ -26,6 +26,26 @@ namespace OS.Kernel.Threading
 
         // Every live thread, newest last. Walked by the garbage collector to
         // find roots on stacks other than the running one.
+        // True while the context-switch stub is mid-flight.
+        //
+        // The stub saves registers, swaps RSP and restores the next thread's
+        // registers. Between the RSP swap and the end of the restore the CPU
+        // is in neither thread: the stack already belongs to one and s_current
+        // still names the other. A timer interrupt landing there reads the
+        // wrong Current, and if it decides to switch it does so from inside a
+        // half-finished switch.
+        //
+        // The per-thread InPreemptiveSwitch flag does NOT cover this: after
+        // s_current moves, the tick sees a different thread whose flag is
+        // clear. Observed as an access violation with RSP outside the stack
+        // bounds of the thread the scheduler believed was running.
+        //
+        // Set before the stub and cleared by whichever thread comes out of it,
+        // which is exactly the window that must not be interrupted.
+        private static bool s_switching;
+
+        public static bool SwitchInProgress => s_switching;
+
         private static Thread? s_allHead;
         private static Thread? s_allTail;
         private static int s_nextId = 1;
@@ -119,7 +139,14 @@ namespace OS.Kernel.Threading
 
             ulong* slot = (ulong*)initRsp;
             for (int i = 0; i < 8; i++) slot[i] = 0;
-            slot[8] = (ulong)entry;
+            // The switch INTO a brand-new thread ends in a jump to its entry,
+            // not a return — so the line that lowers s_switching after the
+            // stub never runs for it, and preemption would stay disabled for
+            // the whole system until some older thread happened to resume.
+            // Every new thread therefore starts in a thunk that lowers it
+            // first. Thread.Entry already carries where to go next.
+            delegate* unmanaged<void> thunk = &ThreadStartThunk;
+            slot[8] = (ulong)thunk;
 
             // ContextBlock: SavedRsp at offset 0; FXSAVE template snapshot.
             *(ulong*)ctx = (ulong)initRsp;
@@ -326,7 +353,9 @@ namespace OS.Kernel.Threading
             next.State = ThreadState.Running;
             s_current = next;
             s_switchCount++;
+            s_switching = true;
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
+            s_switching = false;
             // CoopSwitch returns here when SOMEBODY switches back to curr.
         }
 
@@ -412,6 +441,20 @@ namespace OS.Kernel.Threading
             c.AllNext = null;
         }
 
+        // First code a new thread executes. Runs on its own stack, with the
+        // switch that delivered it already complete.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void ThreadStartThunk()
+        {
+            s_switching = false;
+
+            Thread? self = s_current;
+            if (self == null || self.Entry == null) { Exit(); return; }
+
+            self.Entry();
+            Exit();
+        }
+
         public static void Exit()
         {
             Thread? curr = s_current;
@@ -429,7 +472,9 @@ namespace OS.Kernel.Threading
             next.State = ThreadState.Running;
             s_current = next;
             s_switchCount++;
+            s_switching = true;
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
+            s_switching = false;
             // Unreachable — curr is Exited, no one re-enters its frame.
         }
 

@@ -1,4 +1,4 @@
-namespace OS.Hal
+﻿namespace OS.Hal
 {
     // CMOS Real-Time Clock reader — wall-clock source for Phase 1.
     //
@@ -62,8 +62,16 @@ namespace OS.Hal
             // unchanged by preserving whatever bit the firmware set —
             // QEMU/real boards typically default to NMI enabled (bit 7=0).
             // Since we only read, this is harmless either way.
+            // Index and data are two ports and one conversation: the chip
+            // answers whatever register was selected last. A thread switch in
+            // between makes two readers hand each other the wrong register —
+            // a wrong clock value, never a crash, which is the kind of bug
+            // that gets blamed on the hardware.
+            OS.Kernel.Threading.Preemption.Suppress();
             PortIo.Out8(IndexPort, reg);
-            return PortIo.In8(DataPort);
+            byte value = PortIo.In8(DataPort);
+            OS.Kernel.Threading.Preemption.Allow();
+            return value;
         }
 
         private static bool IsUpdateInProgress() =>

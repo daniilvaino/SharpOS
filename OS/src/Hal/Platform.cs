@@ -1,4 +1,4 @@
-using OS.Boot;
+﻿using OS.Boot;
 using OS.Kernel.Memory;
 
 namespace OS.Hal
@@ -69,7 +69,24 @@ namespace OS.Hal
         // already orders all Boot Services use before the reroute.
         public static bool BootServicesGone => s_ownConsole;
 
+        // Console output is not reentrant, and preemption made that visible:
+        // the terminal engine carries a cursor, a grid and an escape-sequence
+        // parser, the boot log carries a write index, and a thread switch in
+        // the middle of any of them leaves state no reader expects. PowerShell
+        // died inside WriteConsole the first time preemption was allowed near
+        // it.
+        //
+        // Guarded per call rather than per character: an escape sequence is
+        // several characters long and means nothing if another thread's output
+        // lands inside it. Nesting is fine — suppression is a counter.
         public static void WriteChar(char value)
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try { WriteCharCore(value); }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
+
+        private static void WriteCharCore(char value)
         {
             // Mirror to the on-disk log before anything else: whatever kills
             // the machine next, this line is already on its way to the platter.
@@ -101,6 +118,13 @@ namespace OS.Hal
         }
 
         public static void Write(string text)
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try { WriteCore(text); }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
+
+        private static void WriteCore(string text)
         {
             if (!s_initialized)
                 return;

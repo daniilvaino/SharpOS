@@ -1,4 +1,4 @@
-namespace OS.Hal.Usb
+﻿namespace OS.Hal.Usb
 {
     // A USB keyboard presented as a stream of set-1 scancodes.
     //
@@ -46,7 +46,16 @@ namespace OS.Hal.Usb
         /// Non-blocking: collect any completed report, turn the difference
         /// from the previous one into scancodes, and re-arm the endpoint.
         /// </summary>
+        // Same boundary guard as the mass-storage path: a poll drives a TRB
+        // through the interrupt ring and waits for its event.
         public static void Poll()
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try { PollCore(); }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
+
+        private static void PollCore()
         {
             if (!s_present) return;
 

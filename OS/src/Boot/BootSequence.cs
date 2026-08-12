@@ -487,18 +487,6 @@ namespace OS.Boot
             if (Probes.ExitBootServicesExperiment)
                 ExitBootServicesProbe.Run();
 
-            // Preemption — only meaningful once the tick is ours, which
-            // happens inside the teardown above. Enables itself around the
-            // probe and switches back off: cooperative scheduling is what the
-            // rest of the kernel is built on.
-            if (Probes.Preemption)
-                OS.Kernel.Threading.PreemptionProbe.Run();
-
-            // The harder case: allocation and collection interleaved by the
-            // timer. Runs after the plain preemption probe — if switching
-            // itself is broken there is no point asking about the heap.
-            if (Probes.PreemptedAlloc)
-                OS.Kernel.Threading.PreemptedAllocProbe.Run();
 
 
             // Never-returning probes — last so a regular boot still finishes.

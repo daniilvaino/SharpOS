@@ -1,4 +1,4 @@
-namespace OS.Hal
+﻿namespace OS.Hal
 {
     // Phase B#3 sub-step 1 — own i8042/PS-2 keyboard, independent of the
     // UEFI SimpleTextInput path (the Phase-B post-EBS off-ramp analogue
@@ -49,9 +49,19 @@ namespace OS.Hal
         public static bool TryReadScancode(out byte scancode)
         {
             scancode = 0;
+
+            // "Is a byte waiting" and "take it" are one operation. Split by a
+            // thread switch, two readers both see the byte and one of them
+            // takes it twice — the other gets whatever arrived next, or
+            // nothing. Losing a keystroke is the mild outcome; reading the
+            // status of one byte and the data of another is the real one.
+            OS.Kernel.Threading.Preemption.Suppress();
             byte sts = PortIo.In8(Status);
-            if ((sts & StsOutputFull) == 0) return false;
-            byte b = PortIo.In8(Data);
+            bool pending = (sts & StsOutputFull) != 0;
+            byte b = pending ? PortIo.In8(Data) : (byte)0;
+            OS.Kernel.Threading.Preemption.Allow();
+
+            if (!pending) return false;
             if ((sts & StsAuxData) != 0) return false;   // mouse byte — drop
             scancode = b;
             return true;

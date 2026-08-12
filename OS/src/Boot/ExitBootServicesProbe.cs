@@ -189,6 +189,41 @@ namespace OS.Boot
                 Console.WriteLine("");
             }
 
+
+            // Take ownership of interrupt delivery, now that the firmware that
+            // owned it is gone. Order matters and is not interchangeable:
+            //   1. mask the legacy chips, so nothing can reach the firmware
+            //      handlers our IDT still carries for vectors 32..255;
+            //   2. enable the local APIC and point its spurious vector at our
+            //      own stub;
+            //   3. wire the two vectors we will actually raise;
+            //   4. calibrate against the HPET (revived just above) and arm the
+            //      periodic timer.
+            // Interrupts stay disabled throughout — nothing is armed until the
+            // handler behind it exists.
+            if (OS.Kernel.Diagnostics.Probes.OwnInterrupts)
+                TakeOverInterrupts();
+
+            // Placement matters more than it looks: everything below this
+            // point — the disk stack, the filesystem, the whole CoreCLR
+            // session — runs inside this same function, and the session may
+            // not return. Taking the interrupts at the END of it meant they
+            // were taken only in builds that skip CoreCLR; in a full boot the
+            // code was never reached. Here the tick is ours before anything
+            // long-running starts, which is also where the STI-after-EBS
+            // defect actually mattered.
+            if (OS.Kernel.Diagnostics.Probes.Preemption)
+                OS.Kernel.Threading.PreemptionProbe.Run();
+
+            if (OS.Kernel.Diagnostics.Probes.PreemptedAlloc)
+                OS.Kernel.Threading.PreemptedAllocProbe.Run();
+
+            // Profile everything from here on: the disk stack, the
+            // filesystem and — the reason it exists — the CoreCLR session.
+            // Reports itself every ten seconds on the serial port.
+            if (OS.Kernel.Diagnostics.Probes.SampleProfiler)
+                OS.Kernel.Diagnostics.Sampler.Start();
+
             // Own disk stack — POST-EBS only: bringing up AHCI
             // reprograms the HBA, which would corrupt UEFI FS if
             // firmware were still alive. Here UEFI is gone, so we
@@ -224,7 +259,28 @@ namespace OS.Boot
             // \sharpos\* assembly from our own FAT/AHCI, no UEFI. The
             // §1 milestone if census comes up green without firmware.
             if (OS.Kernel.Diagnostics.Probes.CoreClrInit)
+            {
+                // Preemption for the hosted session.
+                //
+                // .NET starts several threads of its own — finalizer,
+                // background compilation, thread pool — and under cooperative
+                // scheduling any of them holds the CPU until it happens to
+                // block. The thread waiting for keyboard input then simply
+                // does not run, which looks exactly like a slow startup that
+                // stalls and then works.
+                //
+                // Gated separately from the probes: this is the first time
+                // preemption is applied to code that was not written knowing
+                // about it. The per-thread numbers in the [prof] line say
+                // whether it changed anything — one thread holding nearly
+                // every sample is the signature of the problem.
+                if (OS.Kernel.Diagnostics.Probes.PreemptHostedSession)
+                    OS.Kernel.Threading.Preemption.Enable();
+
                 BootSequence.RunCoreClrSession(Platform.GetBootInfo());
+
+                OS.Kernel.Threading.Preemption.Disable();
+            }
 
             // Production end-state: a usable OS with UEFI gone. The
             // native shell on the own substrate (PS/2 + FbTty + own
@@ -237,20 +293,6 @@ namespace OS.Boot
             // \EFI\BOOT\*.ELF from our own FAT (TryReadFile +
             // DirectoryReadEntry are bridged to Fs.Current). No halt,
             // no UEFI — the boot just continues firmware-free.
-
-            // Take ownership of interrupt delivery, now that the firmware that
-            // owned it is gone. Order matters and is not interchangeable:
-            //   1. mask the legacy chips, so nothing can reach the firmware
-            //      handlers our IDT still carries for vectors 32..255;
-            //   2. enable the local APIC and point its spurious vector at our
-            //      own stub;
-            //   3. wire the two vectors we will actually raise;
-            //   4. calibrate against the HPET (revived just above) and arm the
-            //      periodic timer.
-            // Interrupts stay disabled throughout — nothing is armed until the
-            // handler behind it exists.
-            if (OS.Kernel.Diagnostics.Probes.OwnInterrupts)
-                TakeOverInterrupts();
 
             Console.WriteLine("[ebs] post-EBS — continuing into launcher via own FAT");
         }

@@ -31,6 +31,31 @@
         // interrupts disabled, every driver polling.
         public const bool OwnInterrupts = true;
 
+        // Preemption during the hosted CoreCLR/PowerShell session. The first
+        // application of it to code not written with preemption in mind, so it
+        // is its own switch: flip off to get the previous behaviour exactly.
+        // OFF, and not as caution — as a finding.
+        //
+        // With it on the hosted session dies with an access violation inside
+        // managed allocation (Enumerable.ToArray during Import-Module). The
+        // reason is one level down: CoreCLR stops the world by suspending
+        // threads and reading their contexts, and those primitives are stubs
+        // here (GetThreadContext, ResumeThread in the PAL). Cooperative
+        // scheduling made their absence harmless — threads only ever switched
+        // at our yield points, so the world effectively stood still by itself.
+        // Preemption makes that assumption false and the runtime corrupts its
+        // own heap.
+        //
+        // So preemption of managed code waits on real thread suspension in the
+        // PAL. Kernel threads are unaffected: they are preempted in the probes
+        // and that stays green.
+        public const bool PreemptHostedSession = false;
+
+        // Sampling profiler on the timer tick. On while the question is
+        // "where does startup spend its time"; the answer is a [prof] line on
+        // the serial port every ten seconds.
+        public const bool SampleProfiler = true;
+
         // Phase F3 gate: the timer takes the CPU from a thread that never
         // yields. Enabled only around the probe — the rest of the kernel still
         // assumes cooperative scheduling (unlocked heap, polling drivers).

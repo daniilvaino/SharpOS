@@ -407,6 +407,40 @@ $results += Get-ProbeStatus -Cat 'Drivers' -Name 'LineEdit' `
     -Status '\[lined\][^\r\n]*\s(PASS|FAIL)' `
     -ExpectRe '^PASS$'
 
+$results += Get-ProbeStatus -Cat 'Drivers' -Name 'Usb' `
+    -Detect '\[usbsum\] ' `
+    -Status '\[usbsum\][^\r\n]*\s(PASS|FAIL|SKIP)' `
+    -ExpectRe '^PASS$'
+
+# Phase F — interrupts, preemption, and the two defects step154 closed.
+# Absent from the report until step156: the probes printed to the log and the
+# regression analyser never looked, so a regression in any of them would have
+# passed unnoticed.
+$results += Get-ProbeStatus -Cat 'PhaseF' -Name 'FpAcrossFault' `
+    -Detect '\[fpfault\] ' `
+    -Status '\[fpfault\]\s(PASS|FAIL|SKIP)' `
+    -ExpectRe '^PASS$'
+
+$results += Get-ProbeStatus -Cat 'PhaseF' -Name 'ParkedThreadRoots' `
+    -Detect '\[gcroots\] ' `
+    -Status '\[gcroots\]\s(PASS|FAIL|SKIP)' `
+    -ExpectRe '^PASS$'
+
+$results += Get-ProbeStatus -Cat 'PhaseF' -Name 'ApicTick' `
+    -Detect '\[apic\] ticks' `
+    -Status '\[apic\] ticks[^\r\n]*\s(PASS|FAIL)' `
+    -ExpectRe '^PASS$'
+
+$results += Get-ProbeStatus -Cat 'PhaseF' -Name 'Preemption' `
+    -Detect '\[preempt\] ' `
+    -Status '\[preempt\][^\r\n]*\s(PASS|FAIL|SKIP)' `
+    -ExpectRe '^PASS$'
+
+$results += Get-ProbeStatus -Cat 'PhaseF' -Name 'PreemptedAlloc' `
+    -Detect '\[preempt-alloc\] ' `
+    -Status '\[preempt-alloc\][^\r\n]*\s(PASS|FAIL|SKIP)' `
+    -ExpectRe '^PASS$'
+
 $results += Get-ProbeStatus -Cat 'Drivers' -Name 'PciScan' `
     -Detect '\[pci\] devs=' `
     -Status '\[pci\][^\r\n]*\s(PASS|FAIL)' `
@@ -562,7 +596,16 @@ $colors = @{
     VALUE   = 'Cyan'
 }
 
-$catsOrder = @('Boot','Phase1','Phase2','Phase3','Phase4','Linq','PeNet','PeLoad','EH','PhaseE','Drivers','CoreCLR','EBS','Launcher','Faults')
+$catsOrder = @('Boot','Phase1','Phase2','Phase3','Phase4','Linq','PeNet','PeLoad','EH','PhaseE','PhaseF','Drivers','CoreCLR','EBS','Launcher','Faults')
+
+# Anything with a category not listed above still gets printed, at the end.
+# The list used to be the only way in, so a category added to a probe row but
+# not here vanished from the report without a word — five Phase F checks were
+# collected and silently dropped exactly that way. A report that quietly omits
+# rows is worse than one that shows them out of order.
+$catsExtra = $results | ForEach-Object { $_.Cat } | Sort-Object -Unique |
+    Where-Object { $catsOrder -notcontains $_ }
+$catsOrder = $catsOrder + $catsExtra
 
 Write-Host ""
 Write-Host "=== SharpOS probe report -- $Log ===" -ForegroundColor White

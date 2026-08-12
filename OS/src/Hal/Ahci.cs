@@ -1,4 +1,4 @@
-// Driver implementations adapted from MOOS by nifanfa
+﻿// Driver implementations adapted from MOOS by nifanfa
 // (https://github.com/nifanfa/MOOS), released under the Unlicense
 // (public domain). Standing on shoulders of fellow public domain contributors.
 //
@@ -373,10 +373,39 @@ namespace OS.Hal
             public override bool Write(ulong sector, uint count, byte* p)
                 => ReadOrWrite(sector, (ushort)count, p, true);
 
+            // Serialised against thread switches for its whole duration,
+            // including the waits.
+            //
+            // The narrow hazard is slot allocation: FindSlot reads which
+            // command slots are busy and the caller then claims one, so a
+            // switch in between hands the same slot to two commands. Guarding
+            // only that would be cheaper — the waits are milliseconds of dead
+            // time and exactly where a scheduler would like to switch.
+            //
+            // But it would also be wrong today: with two commands in flight
+            // there is nothing to tell one completion from another. Each
+            // caller polls a bit in CommandIssue and would happily observe
+            // somebody else's command finishing. Demultiplexing completions is
+            // a driver feature we do not have, so the honest guarantee is the
+            // blunt one — one command at a time — until we do.
             private bool ReadOrWrite(ulong Sector, ushort Count, byte* Buffer, bool Write)
             {
                 if (Count == 0 || Count >= 512) return false;
                 if (PortType == SATAPortType.ATAPI && Write) return false;
+
+                OS.Kernel.Threading.Preemption.Suppress();
+                try
+                {
+                    return ReadOrWriteCore(Sector, Count, Buffer, Write);
+                }
+                finally
+                {
+                    OS.Kernel.Threading.Preemption.Allow();
+                }
+            }
+
+            private bool ReadOrWriteCore(ulong Sector, ushort Count, byte* Buffer, bool Write)
+            {
                 DisableInterrupts(Controller, Port);
                 int Slot = FindSlot();
                 if (Slot == -1) return false;

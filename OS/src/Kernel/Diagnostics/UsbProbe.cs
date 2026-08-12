@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 using OS.Hal.Usb;
 
 namespace OS.Kernel.Diagnostics
@@ -144,6 +144,7 @@ namespace OS.Kernel.Diagnostics
             if (brought == 0)
             {
                 Console.WriteLine("[xhci] no controller came up");
+                Summarise();
                 return;
             }
 
@@ -329,7 +330,23 @@ namespace OS.Kernel.Diagnostics
                 Console.Write("/p");
                 Console.WriteUInt(OS.Boot.BootMedium.UsbPort);
             }
-            Console.WriteLine("");
+
+            // Verdict, so the regression report has something to check rather
+            // than a wall of facts. Until step156 this line ended here and the
+            // analyser called the whole subsystem HALT: output started and
+            // never concluded.
+            //
+            // What is asserted is deliberately narrow — every xHCI controller
+            // the PCI scan found was brought up. NOT that devices are attached:
+            // an empty port is a legitimate machine, and asserting a keyboard
+            // would fail every headless run. No controllers at all is SKIP, not
+            // failure: QEMU without -Usb has none by construction.
+            if (controllers == 0)
+                Console.WriteLine(" SKIP");
+            else if (Xhci.Count < (int)controllers)
+                Console.WriteLine(" FAIL");
+            else
+                Console.WriteLine(" PASS");
         }
 
         private static void ReportStorage()
