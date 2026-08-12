@@ -126,6 +126,26 @@
         // that thread holds get freed under it.
         public Thread? AllNext;
 
+        // Set while this thread is parked INSIDE the timer interrupt handler,
+        // i.e. it was preempted rather than yielding. Points at the
+        // InterruptFrame the entry stub built on this thread's own stack.
+        //
+        // The garbage collector needs it: unwinding a preempted thread walks
+        // the handler's managed frames and then stops at the entry shellcode,
+        // which has no unwind data. Everything below — the code that was
+        // actually interrupted — would be invisible. The frame carries the
+        // registers and stack pointer needed to continue past that gap.
+        public void* PreemptedFrame;
+
+        // True while this thread is inside a preemptive switch of its own.
+        //
+        // Per-thread, not global: the flag means "do not preempt ME again from
+        // inside my own switch", and a thread parked in that state must not
+        // stop the timer from preempting whoever is running now. A global
+        // counter here let preemption fire exactly once and then decline every
+        // later tick, because the parked thread never got to lower it.
+        public bool InPreemptiveSwitch;
+
         // ContextBlock layout (528 bytes, 16-byte aligned):
         //   +0x00  ulong  SavedRsp  — written by CoopSwitch on switch-out
         //   +0x08  ulong  Teb       — IA32_GS_BASE to load on switch-in

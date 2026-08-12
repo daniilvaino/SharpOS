@@ -238,7 +238,17 @@ namespace OS.Hal.Idt
             if (vector == TimerVector)
             {
                 OS.Hal.Apic.LocalApic.OnTimerTick();
+
+                // Acknowledge BEFORE any scheduling: the APIC treats the
+                // vector as in service until it is acknowledged, so parking
+                // here without an EOI would silence every later tick and
+                // strand whichever thread we switch to.
                 OS.Hal.Apic.LocalApic.EndOfInterrupt();
+
+                // May run other threads and return much later. The frame is on
+                // this thread's own stack, so it survives untouched.
+                OS.Kernel.Threading.Preemption.OnTick(frame);
+
                 if (OS.Hal.X64Asm.TryResumeFrame(frame))
                     return;                 // iretq — does not return
             }

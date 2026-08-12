@@ -215,6 +215,12 @@ namespace OS.Boot
             // Without this, BCL code calling GC.Collect() can have a live local
             // swept if the JIT kept it in a register (write-barrier probe FAIL).
             SharpOS.Std.NoRuntime.GC.s_collectHook = &global::OS.Kernel.Memory.KernelGC.CollectConservative;
+
+            // The managed heap must not be left half-updated by a thread
+            // switch. std cannot reference the scheduler, so the kernel hands
+            // it the two calls; apps leave them null and stay as they were.
+            SharpOS.Std.NoRuntime.GcHeap.s_enterCritical = &global::OS.Kernel.Threading.Preemption.Suppress;
+            SharpOS.Std.NoRuntime.GcHeap.s_leaveCritical = &global::OS.Kernel.Threading.Preemption.Allow;
             Log.Write(LogLevel.Info, "gc collect hook installed (conservative)");
 
             // Force-init NativeAotModuleInit (RTR walking + TypeManager).
@@ -480,6 +486,19 @@ namespace OS.Boot
             // returns; runs after all probes/census. Default-off.
             if (Probes.ExitBootServicesExperiment)
                 ExitBootServicesProbe.Run();
+
+            // Preemption — only meaningful once the tick is ours, which
+            // happens inside the teardown above. Enables itself around the
+            // probe and switches back off: cooperative scheduling is what the
+            // rest of the kernel is built on.
+            if (Probes.Preemption)
+                OS.Kernel.Threading.PreemptionProbe.Run();
+
+            // The harder case: allocation and collection interleaved by the
+            // timer. Runs after the plain preemption probe — if switching
+            // itself is broken there is no point asking about the heap.
+            if (Probes.PreemptedAlloc)
+                OS.Kernel.Threading.PreemptedAllocProbe.Run();
 
 
             // Never-returning probes — last so a regular boot still finishes.

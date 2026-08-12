@@ -545,15 +545,19 @@ Two passes:
 
 ## 14. Out of scope (deferred to Phase F+)
 
-**step154 update.** Phase F started. Landed: our own interrupt delivery (legacy
-PIC masked, local APIC + 100 Hz timer on vector 0x20) and GC roots on the stacks
-of parked threads. NOT landed: preemption itself and GC suspend — the tick only
-counts today, and the collector still relies on parked contexts being stable,
-which is true only while scheduling stays cooperative. See
-`docs/preemption-readiness.md`.
+**step154/155 update.** Phase F: own interrupt delivery (legacy PIC masked,
+local APIC + 100 Hz tick), GC roots on parked AND preempted thread stacks, and
+preemption itself. Stop-the-world turned out to be one line of reasoning on a
+single core — only one thread runs, so suppressing preemption around a
+collection IS the suspension. Critical sections (kernel heap, managed heap) use
+the same counter rather than a lock, which cannot re-enter through the
+allocating logging path.
+
+Preemption is enabled only around its probes: globally on, it would invalidate
+the assumptions this document is built on. See `docs/preemption-readiness.md`.
 
 - Real concurrent GC + suspend (Phase F, **SP1 main risk**)
-- Preemption via APIC-timer-tick (tick exists as of step154; the switch does not)
+- Preemption via APIC-timer-tick — landed step155, gated off by default
 - SMP (multi-core)
 - MMU process isolation (separate page tables per process)
 - AssemblyLoadContext implementation (stock CoreCLR feature; works once

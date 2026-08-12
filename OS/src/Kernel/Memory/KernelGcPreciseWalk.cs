@@ -111,6 +111,55 @@ namespace OS.Kernel.Memory
             s_markRoot = null;
         }
 
+        /// <summary>
+        /// Continue a walk across an interrupt boundary, from the register
+        /// snapshot the entry stub saved.
+        /// </summary>
+        /// <remarks>
+        /// A preempted thread is parked inside the interrupt handler. Walking
+        /// its context covers the handler's own managed frames and then stops:
+        /// the next thing down is the entry shellcode, which has no unwind
+        /// data, and the unwinder cannot step over what it cannot describe.
+        /// Everything below that — the code actually interrupted, holding the
+        /// roots that matter — would be lost.
+        ///
+        /// The frame has exactly what is needed to resume the walk on the far
+        /// side. Field offsets match InterruptFrame and the common stub's push
+        /// order; see X64Asm.TryResumeFrame, which reads the same layout.
+        /// </remarks>
+        public static void RunFromInterruptFrame(void* frame,
+                                                 delegate* unmanaged<nuint, void> markRoot)
+        {
+            if (!IsAvailable || frame == null) return;
+
+            ulong* f = (ulong*)frame;
+
+            Context ctx = default;
+            ctx.Rax = f[1];
+            ctx.Rcx = f[2];
+            ctx.Rdx = f[3];
+            ctx.Rbx = f[4];
+            ctx.Rsi = f[5];
+            ctx.Rdi = f[6];
+            ctx.Rbp = f[7];
+            ctx.R8  = f[8];
+            ctx.R9  = f[9];
+            ctx.R10 = f[10];
+            ctx.R11 = f[11];
+            ctx.R12 = f[12];
+            ctx.R13 = f[13];
+            ctx.R14 = f[14];
+            ctx.R15 = f[15];
+            ctx.Rip = f[18];
+            ctx.Rsp = f[21];
+
+            if (ctx.Rip == 0 || ctx.Rsp == 0) return;
+
+            s_markRoot = markRoot;
+            WalkFrames(&ctx);
+            s_markRoot = null;
+        }
+
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void WalkCallback(Context* ctx) => WalkFrames(ctx);
 

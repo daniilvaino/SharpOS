@@ -31,6 +31,16 @@
         // interrupts disabled, every driver polling.
         public const bool OwnInterrupts = true;
 
+        // Phase F3 gate: the timer takes the CPU from a thread that never
+        // yields. Enabled only around the probe — the rest of the kernel still
+        // assumes cooperative scheduling (unlocked heap, polling drivers).
+        public const bool Preemption = true;
+
+        // Phase F3 gate: allocation under preemption, with collections running
+        // on another thread. Exercises the suppression around the allocator and
+        // around the collection itself.
+        public const bool PreemptedAlloc = true;
+
         // Phase F2 gate: a collection must find roots on the stacks of threads
         // that are not running. Spawns a worker holding an array in a local,
         // parks it, collects, and has the worker check its own data.

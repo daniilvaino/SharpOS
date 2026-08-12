@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 using OS.Kernel.Util;
 
 namespace OS.Kernel.Memory
@@ -49,10 +49,23 @@ namespace OS.Kernel.Memory
         // they'll be wired in once preemption / SMP arrives (Phase F+),
         // along with a reentrancy depth counter that survives the
         // logging detour.
+        // Preemption is suppressed across the whole operation. See the note
+        // above: a lock cannot be used here because the logging path allocates
+        // and re-enters, while suppression is a counter that nothing waits on.
+        // On one CPU that is enough — nobody else can be running.
         public static void* Alloc(uint size)
         {
             if (!s_initialized || size == 0)
                 return null;
+
+            OS.Kernel.Threading.Preemption.Suppress();
+            void* result = AllocCore(size);
+            OS.Kernel.Threading.Preemption.Allow();
+            return result;
+        }
+
+        private static void* AllocCore(uint size)
+        {
 
             uint requestedSize = AlignRequest(size);
 

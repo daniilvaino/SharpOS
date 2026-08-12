@@ -58,7 +58,31 @@ namespace OS.Kernel.Memory
         // Safe to call from any context (no CaptureStackTop dance needed)
         // because precise enumeration never deref's stack words it doesn't
         // already know are managed slots.
+        // Stop-the-world, single-CPU edition.
+        //
+        // On one core "stopping the world" is not a suspension protocol: only
+        // one thread can be running, so every OTHER thread is already parked
+        // with a stable context — which is exactly what the parked-stack walk
+        // needs. The only thread that can move mid-collection is the collector
+        // itself, and that is what suppression prevents.
+        //
+        // Nothing here waits for anything, so this cannot deadlock. SMP is a
+        // different problem entirely: there the other cores really are running
+        // and have to be stopped, which needs safepoints or an IPI.
         public static void CollectPrecise()
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
+            {
+                CollectPreciseCore();
+            }
+            finally
+            {
+                OS.Kernel.Threading.Preemption.Allow();
+            }
+        }
+
+        private static void CollectPreciseCore()
         {
             GcMark.Begin();
             GcRoots.MarkStaticRootsOnly();
@@ -95,6 +119,12 @@ namespace OS.Kernel.Memory
                     t.ContextBlock != null)
                 {
                     KernelGcPreciseWalk.RunFromParkedThread(t.ContextBlock, null);
+
+                    // A preempted thread is parked inside the interrupt
+                    // handler, and the walk above stops at the entry stub.
+                    // Continue on the far side of it.
+                    if (t.PreemptedFrame != null)
+                        KernelGcPreciseWalk.RunFromInterruptFrame(t.PreemptedFrame, null);
                 }
 
                 t = t.AllNext;

@@ -1,4 +1,4 @@
-// GcHeap — linked list of GcSegment blocks, bump allocator + freelist reuse.
+﻿// GcHeap — linked list of GcSegment blocks, bump allocator + freelist reuse.
 //
 // Allocation priority:
 //   1. Freelist first-fit — scan singly-linked list of free-object markers
@@ -72,12 +72,37 @@ namespace SharpOS.Std.NoRuntime
         // so that `new int[n]` / `new T[n]` behave per-spec (default(T)
         // elements) and so freelist-reused blocks don't leak stale references
         // that would fool the conservative scanner.
+        // Non-reentrancy hooks, installed by the host (the kernel installs
+        // preemption suppression; apps leave them null).
+        //
+        // The allocator updates a free list and a bump pointer in several
+        // steps. On one CPU that is safe only while nobody else can run in the
+        // middle of it — true under cooperative scheduling, false the moment a
+        // timer can take the CPU away. A lock is the wrong tool here and was
+        // already tried: the logging path allocates, so a naive lock
+        // re-enters itself (step95). Suppressing the switch is reentrancy-safe
+        // by construction, because it is a counter and nothing waits on it.
+        //
+        // Left as hooks rather than a direct call so std stays free of kernel
+        // types — same shape as GC.s_collectHook.
+        public static delegate*<void> s_enterCritical;
+        public static delegate*<void> s_leaveCritical;
+
         public static void* AllocateRaw(uint size)
         {
             if (!s_initialized)
                 return null;
             if (size == 0)
                 return null;
+
+            if (s_enterCritical != null) s_enterCritical();
+            void* allocated = AllocateRawCore(size);
+            if (s_leaveCritical != null) s_leaveCritical();
+            return allocated;
+        }
+
+        private static void* AllocateRawCore(uint size)
+        {
 
             uint aligned = (size + (ObjectAlignment - 1)) & ~(ObjectAlignment - 1);
 
