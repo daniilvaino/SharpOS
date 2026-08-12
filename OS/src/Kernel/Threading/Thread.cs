@@ -51,6 +51,11 @@
         public void* Address;
         public ulong Deadline;
         public WaitKind Kind;
+
+        // Set by the releaser when it hands this waiter the thing it waited
+        // for. A timed wait wakes for two different reasons — signalled, or
+        // the deadline — and they are indistinguishable on return without it.
+        public bool Signalled;
     }
 
     // Phase E9.b step 102 -- thread "kind" tag per docs/threading-
@@ -145,6 +150,19 @@
         // counter here let preemption fire exactly once and then decline every
         // later tick, because the parked thread never got to lower it.
         public bool InPreemptiveSwitch;
+
+        // CoreCLR asked for this thread to be interrupted (PAL_InjectActivation).
+        // Delivered by the next timer tick that catches it at a point the
+        // runtime calls safe. Stays set until then — the runtime re-injects,
+        // and dropping the request would leave a collection waiting forever.
+        public bool ActivationPending;
+
+        // Set while this thread is inside Scheduler.Idle — polling for
+        // something rather than doing work. Two such threads used to keep each
+        // other awake: each saw the other in the runnable queue, concluded
+        // somebody had work, and yielded instead of sleeping. Between them
+        // they burned the whole CPU waiting.
+        public bool IsIdlePolling;
 
         // ContextBlock layout (528 bytes, 16-byte aligned):
         //   +0x00  ulong  SavedRsp  — written by CoopSwitch on switch-out

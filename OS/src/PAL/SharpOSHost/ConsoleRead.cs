@@ -1,4 +1,4 @@
-using System.Runtime;
+﻿using System.Runtime;
 using System.Runtime.InteropServices;
 using OS.Hal;
 
@@ -50,7 +50,7 @@ namespace OS.PAL.SharpOSHost
                     // character) would only appear after Enter.
                     if (OS.Hal.TerminalConsole.HasPendingOutput)
                         OS.Hal.TerminalConsole.Flush();
-                    OS.Kernel.Threading.Scheduler.Yield();
+                    OS.Kernel.Threading.Scheduler.Idle();
                     continue;
                 }
 

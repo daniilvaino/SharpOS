@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 using OS.Kernel.Paging;
 
 namespace OS.Kernel.Memory
@@ -134,9 +134,16 @@ namespace OS.Kernel.Memory
             // m_pStubHeap), and any other VirtualAlloc(MEM_RESERVE) path.
             // Diagnostic line stays gated by counters via the export — drop
             // after acceptance.
-            Console.Write("[vm-reserve] va=0x"); Console.WriteHex(va);
-            Console.Write(" len=0x");            Console.WriteHex(end - va);
-            Console.WriteLine("");
+            // Was unconditional and marked "drop after acceptance". The JIT
+            // reserves a range per stub batch, so this is hundreds of serial
+            // lines per PowerShell command — printed synchronously, while the
+            // thread that would read the keyboard waits its turn.
+            if (OS.Kernel.Diagnostics.Probes.VerboseVmReservations)
+            {
+                Console.Write("[vm-reserve] va=0x"); Console.WriteHex(va);
+                Console.Write(" len=0x");            Console.WriteHex(end - va);
+                Console.WriteLine("");
+            }
             OS.PAL.SharpOSHost.SehUnwind.RegisterStubRange(va, end - va);
             return (void*)va;
         }

@@ -1,4 +1,4 @@
-// step 118 Wave 4 — compile-time codegen migration of X64Asm small
+﻿// step 118 Wave 4 — compile-time codegen migration of X64Asm small
 // inline-asm-style stubs. 10 stubs, all 0-hole. Deferred: CoopSwitch
 // (forward jz to .skip_gs needs walker label support), Sti/Cli/Hlt
 // (2 bytes each, raw stays trivial).
@@ -234,6 +234,25 @@ namespace OS.Hal
         private static void EmitFxsaveBootAsm_Body(Iced.Intel.Assembler a)
         {
             a.fxsave(__qword_ptr[rcx]);
+            a.ret();
+        }
+
+        // Sleep until the next interrupt.
+        //
+        // STI and HLT must be one stub, not two calls: on x86 the effect of
+        // STI is delayed by exactly one instruction, so an interrupt that is
+        // already pending is taken AFTER the HLT begins — the CPU wakes
+        // immediately instead of sleeping through it. Split into two managed
+        // calls, the window between them is real and the wake-up is lost until
+        // the next tick.
+        [CompileTimeAsm]
+        private static partial int EmitStiHltBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitStiHltBootAsm))]
+        private static void EmitStiHltBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.sti();
+            a.hlt();
             a.ret();
         }
 

@@ -72,6 +72,7 @@
         // UefiBootInfoBuilder.AsmBufferSize.
         private const uint FxsaveOffset          = 0x28C;
         private const uint FxrstorOffset         = 0x294;
+        private const uint StiHltOffset          = 0x29C;
         private const uint CoopSwitchOffset      = 0x380;
         private const uint CoopSwitchMinBuffer   = 0x400;
 
@@ -105,6 +106,8 @@
         private static delegate* unmanaged<void> s_memoryBarrier;
         private static bool s_fxsaveReady;
         private static delegate* unmanaged<byte*, void> s_fxsave;
+        private static bool s_stiHltReady;
+        private static delegate* unmanaged<void> s_stiHlt;
         private static bool s_fxrstorReady;
         private static delegate* unmanaged<byte*, void> s_fxrstor;
         private static bool s_coopSwitchReady;
@@ -425,6 +428,29 @@
                 s_fxsaveReady = true;
             }
             s_fxsave(buf);
+        }
+
+        /// <summary>
+        /// Enable interrupts and halt until one arrives, as a single
+        /// instruction pair. Returns once the CPU has been woken.
+        /// </summary>
+        /// <remarks>
+        /// Only safe once something can actually wake us — with the legacy PIC
+        /// masked and no timer armed this would sleep forever. Callers check
+        /// LocalApic.IsEnabled.
+        /// </remarks>
+        public static void StiHlt()
+        {
+            if (s_execBuffer == null || s_execBufferSize < CoopSwitchMinBuffer)
+                return;
+            if (!s_stiHltReady)
+            {
+                byte* p = (byte*)s_execBuffer + StiHltOffset;
+                EmitStiHltBootAsm(p);
+                s_stiHlt = (delegate* unmanaged<void>)p;
+                s_stiHltReady = true;
+            }
+            s_stiHlt();
         }
 
         // Load FP/SIMD state from a 512-byte 16-byte aligned image. Lives at

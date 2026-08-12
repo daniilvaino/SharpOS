@@ -1,4 +1,4 @@
-using OS.Hal.Timer;
+﻿using OS.Hal.Timer;
 
 namespace OS.Kernel.Threading
 {
@@ -55,12 +55,15 @@ namespace OS.Kernel.Threading
             if (ticksPerMs == 0UL) ticksPerMs = 1UL;
             ulong deadline = Hpet.ReadCounter() + (ulong)timeoutMs * ticksPerMs;
 
-            while (true)
-            {
-                if (_sem.TryAcquire()) return true;
-                if (Hpet.ReadCounter() >= deadline) return false;
-                Scheduler.Yield();
-            }
+            // A real blocking wait, not a poll: the thread leaves the runnable
+            // queue until a completion arrives or the deadline passes.
+            //
+            // This is where .NET's thread pool parks. As a poll loop it kept
+            // every parked worker in the round-robin, so the thread actually
+            // doing something got a fraction of the CPU and the rest spent
+            // their slices reading the clock — 41% of all samples, called from
+            // right here.
+            return _sem.WaitUntil(deadline);
         }
 
         public void Post(int n)

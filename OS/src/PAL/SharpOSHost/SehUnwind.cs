@@ -1,4 +1,4 @@
-using System.Runtime;
+﻿using System.Runtime;
 using System.Runtime.InteropServices;
 using OS.Boot.EH;
 using OS.Hal;
@@ -310,10 +310,15 @@ namespace OS.PAL.SharpOSHost
             if (baseAddr == 0 || length == 0) return;
             // Phase E10 path-B diagnostic: NOT gated by Verbose — proves
             // registration is reached. Remove after acceptance verified.
-            Console.Write("[stub-reg] #"); Console.WriteInt(s_stubCount);
-            Console.Write(" base=0x");   Console.WriteHex(baseAddr);
-            Console.Write(" len=0x");    Console.WriteHex(length);
-            Console.WriteLine("");
+            // Same story as [vm-reserve]: bring-up proof that registration is
+            // reached, left permanently on, two lines per JIT stub range.
+            if (OS.Kernel.Diagnostics.Probes.VerboseVmReservations)
+            {
+                Console.Write("[stub-reg] #"); Console.WriteInt(s_stubCount);
+                Console.Write(" base=0x");   Console.WriteHex(baseAddr);
+                Console.Write(" len=0x");    Console.WriteHex(length);
+                Console.WriteLine("");
+            }
             int i = s_stubCount;
             if (i >= StubMax) return;
             fixed (ulong* p = s_stubs.S)

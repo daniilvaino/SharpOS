@@ -1,4 +1,4 @@
-using System.Runtime;
+﻿using System.Runtime;
 using System.Runtime.InteropServices;
 using OS.Hal.Timer;
 using OS.Kernel.Diagnostics;
@@ -179,7 +179,7 @@ namespace OS.PAL.SharpOSHost
                 // a fake event (e.g. finalizer wait, IPC pump) would
                 // otherwise busy-spin and starve the rest of the
                 // cooperative scheduler. Skip yield only for ms == 0 polls.
-                if (timeoutMs != 0) Scheduler.Yield();
+                if (timeoutMs != 0) Scheduler.Idle();
                 return WAIT_OBJECT_0;
             }
 
@@ -206,7 +206,7 @@ namespace OS.PAL.SharpOSHost
                 if (infinite)
                 {
                     if (bind != null && bind.JoinEvent != null) bind.JoinEvent.Wait();
-                    else while (t.State != ThreadState.Exited) Scheduler.Yield();
+                    else while (t.State != ThreadState.Exited) Scheduler.Idle();
                     return WAIT_OBJECT_0;
                 }
                 // Finite: yield-poll until exited or deadline.
@@ -216,7 +216,7 @@ namespace OS.PAL.SharpOSHost
                     bool nowExited = bind != null ? bind.HasExited : (t.State == ThreadState.Exited);
                     if (nowExited) return WAIT_OBJECT_0;
                     if (DeadlinePassed(deadlineT)) return WAIT_TIMEOUT;
-                    Scheduler.Yield();
+                    Scheduler.Idle();
                 }
             }
 
@@ -245,7 +245,7 @@ namespace OS.PAL.SharpOSHost
                         return WAIT_OBJECT_0;
                     }
                     if (DeadlinePassed(deadlineE)) return WAIT_TIMEOUT;
-                    Scheduler.Yield();
+                    Scheduler.Idle();
                 }
             }
 
@@ -259,7 +259,7 @@ namespace OS.PAL.SharpOSHost
                 {
                     if (s.TryAcquire()) return WAIT_OBJECT_0;
                     if (DeadlinePassed(deadlineS)) return WAIT_TIMEOUT;
-                    Scheduler.Yield();
+                    Scheduler.Idle();
                 }
             }
 
@@ -300,7 +300,7 @@ namespace OS.PAL.SharpOSHost
                         return rc == 2 ? WAIT_ABANDONED : WAIT_OBJECT_0;
                     }
                     if (DeadlinePassed(deadlineM)) return WAIT_TIMEOUT;
-                    Scheduler.Yield();
+                    Scheduler.Idle();
                 }
             }
 
@@ -373,7 +373,19 @@ namespace OS.PAL.SharpOSHost
                 }
                 if (poll) return WAIT_TIMEOUT;
                 if (!infinite && DeadlinePassed(deadline)) return WAIT_TIMEOUT;
-                Scheduler.Yield();
+
+                // Idle, not Yield — and this one matters beyond its own cost.
+                // A poller that yields without marking itself looks like a
+                // thread with work to every other thread's idle check, so ONE
+                // of them keeps the whole system awake. Measured: halt=13
+                // against busy=23,000,000, with this loop as the top caller.
+                //
+                // Still a poll: waiting on several objects at once needs the
+                // thread on several wait lists, and a thread has one wait
+                // block. Real multi-wait is its own piece of work; marking it
+                // idle at least lets the machine sleep when everyone is
+                // waiting.
+                Scheduler.Idle();
             }
         }
 
@@ -410,7 +422,18 @@ namespace OS.PAL.SharpOSHost
         [RuntimeExport("SharpOSHost_SwitchToThread")]
         public static int SwitchToThread()
         {
-            Scheduler.Yield();
+            // Idle, not Yield. This is how CoreCLR's own spin loops give up
+            // the CPU — Monitor contention, the thread pool, GC helpers — and
+            // they call it in a tight loop with a QueryPerformanceCounter
+            // check each turn. Yield returns immediately when nobody else is
+            // runnable, so the loop became a busy-wait that read the HPET
+            // forever: measured at 41% of all CPU samples in one clock read,
+            // with two such threads owning the whole machine between them.
+            //
+            // Idle still returns immediately when another thread has real
+            // work, so a genuine "let someone else run" is unaffected; it only
+            // sleeps when there is nothing to run at all.
+            Scheduler.Idle();
             return 1;
         }
 

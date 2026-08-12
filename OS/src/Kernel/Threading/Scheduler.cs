@@ -44,6 +44,13 @@ namespace OS.Kernel.Threading
         // which is exactly the window that must not be interrupted.
         private static bool s_switching;
 
+        // Did the idle path actually sleep, or decide somebody had work?
+        // Without these two numbers "the fix did nothing" is indistinguishable
+        // from "the fix never ran", and telling them apart by reasoning has
+        // now failed three times.
+        private static ulong s_idleHalts;
+        private static ulong s_idleBusy;
+
         public static bool SwitchInProgress => s_switching;
 
         private static Thread? s_allHead;
@@ -55,6 +62,8 @@ namespace OS.Kernel.Threading
         public static Thread? Current => s_current;
         public static uint YieldCount  => s_yieldCount;
         public static uint SwitchCount => s_switchCount;
+        public static ulong IdleHalts => s_idleHalts;
+        public static ulong IdleBusy => s_idleBusy;
 
         // Wrap the current execution context as a Thread so its state can
         // be saved on the first switch out. Idempotent: subsequent calls
@@ -326,6 +335,16 @@ namespace OS.Kernel.Threading
                 {
                     DrainExpiredTimers();
                     next = DequeueRunnable();
+
+                    // Nothing to run and we are blocked: sleep until the next
+                    // interrupt instead of spinning. This is the one place in
+                    // the system where the CPU has literally nothing to do,
+                    // and it burned a full core here.
+                    if (next == null && OS.Hal.Apic.LocalApic.IsEnabled)
+                    {
+                        s_idleHalts++;
+                        OS.Hal.X64Asm.StiHlt();
+                    }
                     // No CPU-pause hint yet; tight spin. Once IRQ-driven
                     // wake lands this becomes HLT-in-IST and the spin
                     // collapses to interrupt latency.
@@ -370,7 +389,10 @@ namespace OS.Kernel.Threading
         {
             Thread? curr = s_current;
             if (curr == null) return;
-            if (milliseconds == 0) { Yield(); return; }
+            // Sleep(0) is the other half of CoreCLR's spin escalation, and it
+            // arrives just as often as SwitchToThread. Same reasoning: idle
+            // rather than spin when there is nothing to run.
+            if (milliseconds == 0) { Idle(); return; }
 
             ulong freq = Hpet.FrequencyHz;
             if (freq == 0) return;   // HPET not initialised — degrade silently
@@ -453,6 +475,56 @@ namespace OS.Kernel.Threading
 
             self.Entry();
             Exit();
+        }
+
+        /// <summary>
+        /// Give up the CPU, and if there is genuinely nothing else to run,
+        /// sleep until the next interrupt instead of spinning.
+        /// </summary>
+        /// <remarks>
+        /// For polling waits — "is there a key yet?" — where the answer costs
+        /// a port read and the loop otherwise burns a whole core. The profile
+        /// that prompted this had 54% of all samples in Hpet.ReadCounter and
+        /// 19% in PortIo_Inb: the machine was reading the clock and the
+        /// keyboard controller as fast as it could, forever.
+        ///
+        /// Only halts when something can wake us. With the legacy PIC masked
+        /// and no APIC timer armed, HLT sleeps until the end of the world.
+        ///
+        /// Costs up to one tick (10 ms) of latency before the next poll, which
+        /// is below what anyone notices while typing and is repaid many times
+        /// over by the CPU that other threads get.
+        /// </remarks>
+        public static void Idle()
+        {
+            Thread? self = s_current;
+            if (self == null) { Yield(); return; }
+
+            self.IsIdlePolling = true;
+            Yield();
+
+            // Sleep only if nobody has real work. The queue being non-empty is
+            // NOT enough: with two threads polling for different things, each
+            // sees the other queued and concludes the CPU is wanted, so
+            // neither ever sleeps. Measured: two such threads took 100% of the
+            // machine between them, 41% of all samples inside one clock read.
+            bool someoneWorking = false;
+            for (Thread? t = s_runnableHead; t != null; t = t.Next)
+            {
+                if (!t.IsIdlePolling) { someoneWorking = true; break; }
+            }
+
+            if (!someoneWorking && OS.Hal.Apic.LocalApic.IsEnabled)
+            {
+                s_idleHalts++;
+                OS.Hal.X64Asm.StiHlt();
+            }
+            else
+            {
+                s_idleBusy++;
+            }
+
+            self.IsIdlePolling = false;
         }
 
         public static void Exit()

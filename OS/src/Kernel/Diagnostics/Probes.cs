@@ -34,22 +34,49 @@
         // Preemption during the hosted CoreCLR/PowerShell session. The first
         // application of it to code not written with preemption in mind, so it
         // is its own switch: flip off to get the previous behaviour exactly.
-        // OFF, and not as caution — as a finding.
+        // Preemption of managed code during the hosted session.
         //
-        // With it on the hosted session dies with an access violation inside
-        // managed allocation (Enumerable.ToArray during Import-Module). The
-        // reason is one level down: CoreCLR stops the world by suspending
-        // threads and reading their contexts, and those primitives are stubs
-        // here (GetThreadContext, ResumeThread in the PAL). Cooperative
-        // scheduling made their absence harmless — threads only ever switched
-        // at our yield points, so the world effectively stood still by itself.
-        // Preemption makes that assumption false and the runtime corrupts its
-        // own heap.
+        // Was OFF as a finding, not caution: with it on the session died with
+        // an access violation inside managed allocation, because CoreCLR stops
+        // the world by asking the host to interrupt a thread and that request
+        // returned false — the collector proceeded believing the world had
+        // stopped while a thread kept mutating the heap.
         //
-        // So preemption of managed code waits on real thread suspension in the
-        // PAL. Kernel threads are unaffected: they are preempted in the probes
-        // and that stays green.
+        // Thread activation is implemented now (ThreadActivation.cs + the PAL
+        // forwarders), so the runtime can actually stop threads. Back ON to
+        // find out whether that was the whole of it.
+        // OFF again: with it on the session runs perfectly one launch and
+        // dies with a null dereference in managed code the next — a race, not
+        // a deterministic break. Activation works (the runtime can stop
+        // threads now), but something else does not survive being interrupted.
+        // The act=injected/delivered/notSafe counters in the [prof] line are
+        // there to say which, and they report with this off too: activation is
+        // requested by the runtime, not by us.
+        // OFF. Preemption of managed code is a front, not a switch.
+        //
+        // Three ordering assumptions have fallen out of it so far, each only
+        // visible once the previous was fixed: console output was not
+        // reentrant; the semaphore's check-then-enqueue had a gap; and the
+        // JIT's pages are made executable in a batch that used to be
+        // guaranteed to finish before anyone jumped into them (observed as an
+        // instruction-fetch fault on an NX page).
+        //
+        // Activation itself works — act=2/1/15 in that run: the runtime asked
+        // twice, we delivered once, and correctly declined fifteen times when
+        // the thread was not at a safe point.
         public const bool PreemptHostedSession = false;
+
+        // Per-reservation and per-stub-range chatter from the JIT path
+        // ([vm-reserve], [stub-reg]). Both were bring-up proofs left on; the
+        // JIT emits hundreds per command. On when tracing JIT memory.
+        public const bool VerboseVmReservations = false;
+
+        // Exception-dispatch trace inside the fork ([SFI]/[DESP]/[CCF-*]).
+        // OFF: PowerShell throws on ordinary paths, and each throw was worth
+        // hundreds of serial lines — seconds of dead input per command. Turn
+        // ON when investigating exception dispatch itself, which is what it
+        // was written for.
+        public const bool EhVerboseDiagnostics = false;
 
         // Sampling profiler on the timer tick. On while the question is
         // "where does startup spend its time"; the answer is a [prof] line on

@@ -1,4 +1,4 @@
-using System.Runtime;
+﻿using System.Runtime;
 using OS.Hal;
 using OS.Kernel.Diagnostics;
 
@@ -71,7 +71,7 @@ namespace OS.PAL.SharpOSHost
                     // loop starved the thread doing the writing, so its output was lost.
                     if (TerminalConsole.HasPendingOutput)
                         TerminalConsole.Flush();
-                    OS.Kernel.Threading.Scheduler.Yield();
+                    OS.Kernel.Threading.Scheduler.Idle();
                 }
             }
 

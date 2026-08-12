@@ -241,7 +241,7 @@ namespace OS.Hal.Idt
 
                 // Where was the CPU? Recorded before anything else touches
                 // the frame, and cheap enough to leave on: a hash insert.
-                OS.Kernel.Diagnostics.Sampler.OnTick(frame->Rip);
+                OS.Kernel.Diagnostics.Sampler.OnTick(frame->Rip, frame->Rsp);
                 OS.Kernel.Diagnostics.Sampler.MaybeReport();
 
                 // Acknowledge BEFORE any scheduling: the APIC treats the
@@ -249,6 +249,11 @@ namespace OS.Hal.Idt
                 // here without an EOI would silence every later tick and
                 // strand whichever thread we switch to.
                 OS.Hal.Apic.LocalApic.EndOfInterrupt();
+
+                // Activation before preemption, and independent of it: this is
+                // the runtime asking us to interrupt a thread so it can stop
+                // the world. It has to work whether or not we also preempt.
+                OS.PAL.SharpOSHost.ThreadActivation.OnTick(frame);
 
                 // May run other threads and return much later. The frame is on
                 // this thread's own stack, so it survives untouched.

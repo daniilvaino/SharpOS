@@ -43,6 +43,19 @@ namespace OS.Kernel.Diagnostics
         private struct ThreadTable { public fixed uint Samples[ThreadSlots]; }
         private static ThreadTable s_threads;
 
+        // Callers of whatever we interrupted.
+        //
+        // The address alone says WHERE the CPU is, not WHY. Three fixes in a
+        // row went to the wrong place because the hot spot was a four-
+        // instruction accessor called from somewhere unknown — Hpet.ReadCounter
+        // has a dozen callers and only one of them was spinning.
+        //
+        // A function that small has no prologue and no frame, so the return
+        // address is exactly at the interrupted RSP. That is an assumption
+        // about leaves, not a general truth, which is why this is a separate
+        // table and not presented as a stack trace.
+        private static Table s_callers;
+
         private static Table s_table;
         private static bool s_enabled;
         private static ulong s_total;
@@ -67,6 +80,10 @@ namespace OS.Kernel.Diagnostics
             {
                 for (int i = 0; i < ThreadSlots; i++) th->Samples[i] = 0;
             }
+            fixed (Table* c = &s_callers)
+            {
+                for (int i = 0; i < Slots; i++) { c->Rip[i] = 0; c->Hits[i] = 0; }
+            }
             s_total = 0;
             s_dropped = 0;
             s_evicted = 0;
@@ -80,9 +97,17 @@ namespace OS.Kernel.Diagnostics
         /// Record one sample. Called from the timer interrupt, so it allocates
         /// nothing, takes no locks and never calls back into the runtime.
         /// </summary>
-        public static void OnTick(ulong rip)
+        public static void OnTick(ulong rip) => OnTick(rip, 0);
+
+        public static void OnTick(ulong rip, ulong rsp)
         {
             if (!s_enabled || rip == 0) return;
+
+            if (rsp != 0)
+            {
+                ulong caller = *(ulong*)rsp;
+                if (caller != 0) Record(ref s_callers, caller);
+            }
 
             s_total++;
 
@@ -98,13 +123,14 @@ namespace OS.Kernel.Diagnostics
                 fixed (ThreadTable* th = &s_threads) th->Samples[id]++;
             }
 
-            // Mix the address down to a slot. The low four bits are dropped:
-            // instructions are not that dense, and the point is to find hot
-            // regions rather than exact instructions.
-            ulong key = rip;
+            Record(ref s_table, rip);
+        }
+
+        private static void Record(ref Table table, ulong key)
+        {
             int slot = (int)(((key >> 4) ^ (key >> 20)) & SlotMask);
 
-            fixed (Table* t = &s_table)
+            fixed (Table* t = &table)
             {
                 int weakest = -1;
                 uint weakestHits = uint.MaxValue;
@@ -204,6 +230,20 @@ namespace OS.Kernel.Diagnostics
             // Per-thread first: it answers the coarser question, and a single
             // thread holding almost every sample is the signature of a
             // cooperative scheduler with nobody yielding.
+            // Activation: did the runtime ask us to interrupt a thread, and
+            // did we manage it? Three numbers that separate "never asked",
+            // "asked and we missed it" and "delivered".
+            Serial.WriteString(" act=");
+            WriteULong(OS.PAL.SharpOSHost.ThreadActivation.Injected);
+            Serial.WriteChar('/');
+            WriteULong(OS.PAL.SharpOSHost.ThreadActivation.Delivered);
+            Serial.WriteChar('/');
+            WriteULong(OS.PAL.SharpOSHost.ThreadActivation.NotSafe);
+
+            Serial.WriteString(" halt=");
+            WriteULong(OS.Kernel.Threading.Scheduler.IdleHalts);
+            Serial.WriteString(" busy=");
+            WriteULong(OS.Kernel.Threading.Scheduler.IdleBusy);
             Serial.WriteString(" threads[");
             fixed (ThreadTable* th = &s_threads)
             {
@@ -223,6 +263,21 @@ namespace OS.Kernel.Diagnostics
             if (hits1 != 0) { Serial.WriteString(" | "); WriteULong(hits1); Serial.WriteString("x "); WriteAddress(rip1); }
             if (hits2 != 0) { Serial.WriteString(" | "); WriteULong(hits2); Serial.WriteString("x "); WriteAddress(rip2); }
             if (hits3 != 0) { Serial.WriteString(" | "); WriteULong(hits3); Serial.WriteString("x "); WriteAddress(rip3); }
+
+            // Who called it. This is the line that names the loop.
+            ulong c1 = 0, c2 = 0; uint ch1 = 0, ch2 = 0;
+            fixed (Table* t = &s_callers)
+            {
+                for (int i = 0; i < Slots; i++)
+                {
+                    if (t->Rip[i] == 0) continue;
+                    uint h = t->Hits[i];
+                    if (h > ch1) { ch2 = ch1; c2 = c1; ch1 = h; c1 = t->Rip[i]; }
+                    else if (h > ch2) { ch2 = h; c2 = t->Rip[i]; }
+                }
+            }
+            if (ch1 != 0) { Serial.WriteString(" <= "); WriteULong(ch1); Serial.WriteString("x "); WriteAddress(c1); }
+            if (ch2 != 0) { Serial.WriteString(" , "); WriteULong(ch2); Serial.WriteString("x "); WriteAddress(c2); }
 
             Serial.WriteChar((char)10);
         }
