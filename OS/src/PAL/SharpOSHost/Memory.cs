@@ -234,9 +234,18 @@ namespace OS.PAL.SharpOSHost
         // guess dressed as one.
         private static bool s_setsSaturated;
 
+        // Span of everything ever granted execute. If the faulting address sits
+        // far outside this span, the question stops being "who lost this page's
+        // permission" and becomes "does this whole class of memory ever get
+        // execute at all" — a systematic gap, not a race.
+        private static ulong s_execLow = ulong.MaxValue;
+        private static ulong s_execHigh;
+
         private static void NoteExecPage(ulong page)
         {
             if (s_execPages == null) s_execPages = new ulong[ExecPagesSlots];
+            if (page < s_execLow) s_execLow = page;
+            if (page > s_execHigh) s_execHigh = page;
             ulong h = (page * 0x9E3779B97F4A7C15UL) >> 51;
             int i = (int)(h & (ExecPagesSlots - 1));
             for (int n = 0; n < ExecPagesSlots; n++)
@@ -387,6 +396,10 @@ namespace OS.PAL.SharpOSHost
             Console.Write(covered ? "  <= ADDRESS WAS COVERED" : "  <= address not in the last records");
             Console.Write(" | exec-granted pages=");
             Console.WriteULong(s_execPagesCount);
+            Console.Write(" span=0x");
+            Console.WriteHex(s_execLow);
+            Console.Write("..0x");
+            Console.WriteHex(s_execHigh);
             if (WasEverExecutable(address))
             {
                 Console.WriteLine(" <= PAGE WAS GRANTED EXEC (protection lost afterwards)");

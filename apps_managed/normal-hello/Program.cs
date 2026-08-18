@@ -1498,7 +1498,7 @@ Probe("JIT stress: 1 thread emit+run, 1s", () =>
     int n = 0;
     while (DateTime.UtcNow < deadline)
     {
-        int expected = n + 7;
+        int expected = unchecked((int)0x5EED0000) | (n & 0xFFFF);
         var dm = new DynamicMethod($"solo{n}", typeof(int), Type.EmptyTypes);
         var il = dm.GetILGenerator();
         il.Emit(OpCodes.Ldc_I4, expected);
@@ -1540,7 +1540,7 @@ Probe("JIT stress: 4 threads, retained, 3s", () =>
                 var deadline = DateTime.UtcNow.AddSeconds(3);
                 while (DateTime.UtcNow < deadline)
                 {
-                    int expected = System.Threading.Interlocked.Increment(ref n) + 7;
+                    int expected = unchecked((int)0x5EED0000) | (System.Threading.Interlocked.Increment(ref n) & 0xFFFF);
                     var dm = new DynamicMethod($"ng{expected}", typeof(int), Type.EmptyTypes);
                     var il = dm.GetILGenerator();
                     il.Emit(OpCodes.Ldc_I4, expected);
@@ -1576,7 +1576,7 @@ Probe("JIT stress: 4 threads emit+run, 3s", () =>
             {
                 while (DateTime.UtcNow < deadline)
                 {
-                    int expected = unchecked(n * 2654435761u > int.MaxValue ? n ^ 0x5A5A : n + 7);
+                    int expected = unchecked((int)0x5EED0000) | (n & 0xFFFF);
 
                     var dm = new DynamicMethod($"stress{n}", typeof(int), Type.EmptyTypes);
                     var il = dm.GetILGenerator();

@@ -99,7 +99,6 @@ namespace OS.Kernel.Threading
             if (hz != 0)
             {
                 ulong collectUntil = hz / 10;      // 100 ms of collecting
-                ulong spinUntil = hz / 2;          // then to 500 ms total
 
                 while (Hpet.ReadCounter() - start < collectUntil)
                 {
@@ -107,7 +106,17 @@ namespace OS.Kernel.Threading
                     collections++;
                 }
 
-                while (Hpet.ReadCounter() - start < spinUntil)
+                // The spin window starts when collecting ends, not when the
+                // probe did. Both phases used to count from the same instant,
+                // so a collecting phase that overran the total budget left no
+                // spin phase at all — and the spin phase is the only part that
+                // runs OUTSIDE a critical section, which is where preemption
+                // can actually happen. The probe then failed for want of
+                // switches while reporting spins=0 and no corruption: a broken
+                // measurement, not a broken system.
+                ulong spinStart = Hpet.ReadCounter();
+                ulong spinFor = hz / 2;            // 500 ms of spinning
+                while (Hpet.ReadCounter() - spinStart < spinFor)
                 {
                     spins++;
                 }
