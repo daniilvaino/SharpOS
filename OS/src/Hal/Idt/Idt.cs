@@ -239,6 +239,18 @@ namespace OS.Hal.Idt
             {
                 OS.Hal.Apic.LocalApic.OnTimerTick();
 
+                // If the tick lands while the scheduler owns its queues or
+                // the raw CoopSwitch stub is between stacks/GS bases, do only
+                // the architectural minimum. Running sampler, activation, or
+                // preemption here can mutate scheduler state recursively or
+                // execute managed code on a transient stack.
+                if (OS.Kernel.Threading.Scheduler.SwitchInProgress)
+                {
+                    OS.Hal.Apic.LocalApic.EndOfInterrupt();
+                    if (OS.Hal.X64Asm.TryResumeFrame(frame))
+                        return;                 // iretq — does not return
+                }
+
                 // Where was the CPU? Recorded before anything else touches
                 // the frame, and cheap enough to leave on: a hash insert.
                 OS.Kernel.Diagnostics.Sampler.OnTick(frame->Rip, frame->Rsp);

@@ -1,4 +1,4 @@
-namespace OS.Kernel
+﻿namespace OS.Kernel
 {
     internal static unsafe class PhysicalMemory
     {
@@ -41,7 +41,17 @@ namespace OS.Kernel
         // Push a 4K page back onto the freelist. Lazily initializes storage.
         // Caller MUST ensure the page is no longer mapped anywhere (no VA
         // points at it) and not currently in any other live structure.
+        // Serialized against preemption: the free list is shared, and two threads
+        // interleaved here hand the SAME frame to both — a corruption far worse
+        // than a wrong flag, and one that would surface far from its cause.
         public static void FreePage(ulong pa)
+        {
+            Threading.Preemption.Suppress();
+            try { FreePageCore(pa); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static void FreePageCore(ulong pa)
         {
             if (pa == 0) return;
             if (s_freeList == null) s_freeList = new ulong[FreeListCapacity];
@@ -50,7 +60,17 @@ namespace OS.Kernel
             s_freeTotal++;
         }
 
+        // Serialized against preemption: the free list is shared, and two threads
+        // interleaved here hand the SAME frame to both — a corruption far worse
+        // than a wrong flag, and one that would surface far from its cause.
         public static ulong AllocPage()
+        {
+            Threading.Preemption.Suppress();
+            try { return AllocPageCore(); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static ulong AllocPageCore()
         {
             // Reuse from freelist when possible — keeps long PS sessions
             // from racing the bump cursor past the end of usable RAM.
@@ -63,7 +83,17 @@ namespace OS.Kernel
             return AllocPages(1);
         }
 
+        // Serialized against preemption: the free list is shared, and two threads
+        // interleaved here hand the SAME frame to both — a corruption far worse
+        // than a wrong flag, and one that would surface far from its cause.
         public static ulong AllocPages(uint count)
+        {
+            Threading.Preemption.Suppress();
+            try { return AllocPagesCore(count); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static ulong AllocPagesCore(uint count)
         {
             if (!s_initialized || count == 0)
                 return 0;

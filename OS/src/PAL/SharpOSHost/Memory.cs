@@ -1,4 +1,4 @@
-using System.Runtime;
+﻿using System.Runtime;
 using System.Runtime.InteropServices;
 using OS.Boot;
 using OS.Hal;
@@ -104,10 +104,27 @@ namespace OS.PAL.SharpOSHost
                 const ulong PG = 4096UL;
                 ulong np = (size + PG - 1) / PG;
                 ulong pp = global::OS.Kernel.PhysicalMemory.AllocPages((uint)np);
-                if (pp == 0) return null;
+                if (pp == 0)
+                {
+                    // Returning null without a word is how a failure here
+                    // reaches the runtime as a bare "unspecified error" with
+                    // no hint of its origin. Say which step failed.
+                    Console.Write("[AllocExec] FAIL no frames pages=");
+                    Console.WriteInt((int)np);
+                    Console.WriteLine("");
+                    return null;
+                }
                 if (!global::OS.Kernel.Memory.VirtualMemory.MapFixed(
                         (void*)pp, pp, np * PG, exec: true))
+                {
+                    Console.Write("[AllocExec] FAIL map pa=0x");
+                    Console.WriteHex(pp);
+                    Console.Write(" pages=");
+                    Console.WriteInt((int)np);
+                    Console.WriteLine("");
                     return null;
+                }
+                NoteRegion(pp, pp + np * PG, TagAllocExec);
                 return (void*)pp;
             }
 
@@ -179,6 +196,223 @@ namespace OS.PAL.SharpOSHost
         //   PAGE_READWRITE (0x04)            → Present|W     (NX=1,  W=1)
         //   PAGE_NOACCESS (0x01)             → 0             (P=0)
         // Returns 1 on success, 0 on failure.
+        // Last few protection changes, kept so a fault can ask "was this page
+        // ever made executable?" instead of us guessing. Absence of a log line
+        // proved nothing earlier — the fork's debug print is gated off — so the
+        // record lives on this side, where it is unconditional.
+        private const int HistorySlots = 16;
+        private struct ProtectRecord { public ulong Start; public ulong End; public uint Flags; public int Ok; }
+        private static ProtectRecord[] s_history = null!;
+        private static int s_historyNext;
+        private static ulong s_protectCalls;
+        private static ulong s_protectFails;
+
+        public static ulong ProtectCalls => s_protectCalls;
+        public static ulong ProtectFails => s_protectFails;
+
+        // Tags for regions recorded by paths other than ProtectExecutable, so
+        // the dump answers "how did this page get its protection?" and not only
+        // "was it ever re-protected?". The failing address showed up in neither
+        // — which is itself the finding that sent us here.
+        public const uint TagCommitExec   = 0x1C0;
+        public const uint TagCommitData   = 0x1D0;
+        public const uint TagDemandCommit = 0x1E0;
+        public const uint TagAllocExec    = 0x1F0;
+
+        // A ring of the last N regions cannot answer "was THIS page ever made
+        // executable?" once the volume exceeds N — and it did: 103 calls into
+        // 16 slots. This set answers it exactly, at one bit of bookkeeping per
+        // page, so a miss is a fact rather than an eviction.
+        private const int ExecPagesSlots = 8192;   // power of two, open addressing
+        private static ulong[] s_execPages = null!;
+        private static ulong s_execPagesCount;
+
+        // Set once any of the three page sets runs out of room. A full set
+        // answers "no" to every question, which reads exactly like "we never
+        // saw that page" — and that lie sent this investigation down a wrong
+        // path. Saying so out loud is the difference between a fact and a
+        // guess dressed as one.
+        private static bool s_setsSaturated;
+
+        private static void NoteExecPage(ulong page)
+        {
+            if (s_execPages == null) s_execPages = new ulong[ExecPagesSlots];
+            ulong h = (page * 0x9E3779B97F4A7C15UL) >> 51;
+            int i = (int)(h & (ExecPagesSlots - 1));
+            for (int n = 0; n < ExecPagesSlots; n++)
+            {
+                ulong cur = s_execPages[i];
+                if (cur == page) return;
+                if (cur == 0) { s_execPages[i] = page; s_execPagesCount++; return; }
+                i = (i + 1) & (ExecPagesSlots - 1);
+            }
+            s_setsSaturated = true;
+        }
+
+        // A second exact set, for pages committed as DATA. "Never granted
+        // exec" alone cannot tell two very different stories apart: the
+        // runtime asked for this page as data (so a jump into it means the
+        // POINTER is wrong), or we never saw the page at all (so the mapping
+        // came from somewhere we are not watching). One bit each way.
+        private static ulong[] s_dataPages = null!;
+        private static ulong s_dataPagesCount;
+
+        private static void NoteDataPage(ulong page)
+        {
+            if (s_dataPages == null) s_dataPages = new ulong[ExecPagesSlots];
+            ulong h = (page * 0x9E3779B97F4A7C15UL) >> 51;
+            int i = (int)(h & (ExecPagesSlots - 1));
+            for (int n = 0; n < ExecPagesSlots; n++)
+            {
+                ulong cur = s_dataPages[i];
+                if (cur == page) return;
+                if (cur == 0) { s_dataPages[i] = page; s_dataPagesCount++; return; }
+                i = (i + 1) & (ExecPagesSlots - 1);
+            }
+            s_setsSaturated = true;
+        }
+
+        // Third exact set: pages materialised by a write fault rather than by an
+        // explicit commit. They were falling through both other sets, so the
+        // verdict called them "never seen" — which read as "mapped by some
+        // path we do not control" when in fact we mapped them ourselves, on
+        // demand, with data permissions because a write fault cannot tell that
+        // the bytes being written are code.
+        private static ulong[] s_faultPages = null!;
+        private static ulong s_faultPagesCount;
+
+        private static void NoteFaultPage(ulong page)
+        {
+            if (s_faultPages == null) s_faultPages = new ulong[ExecPagesSlots];
+            ulong h = (page * 0x9E3779B97F4A7C15UL) >> 51;
+            int i = (int)(h & (ExecPagesSlots - 1));
+            for (int n = 0; n < ExecPagesSlots; n++)
+            {
+                ulong cur = s_faultPages[i];
+                if (cur == page) return;
+                if (cur == 0) { s_faultPages[i] = page; s_faultPagesCount++; return; }
+                i = (i + 1) & (ExecPagesSlots - 1);
+            }
+            s_setsSaturated = true;
+        }
+
+        public static bool WasDemandCommitted(ulong address)
+        {
+            if (s_faultPages == null) return false;
+            ulong page = address & ~0xFFFUL;
+            ulong h = (page * 0x9E3779B97F4A7C15UL) >> 51;
+            int i = (int)(h & (ExecPagesSlots - 1));
+            for (int n = 0; n < ExecPagesSlots; n++)
+            {
+                ulong cur = s_faultPages[i];
+                if (cur == page) return true;
+                if (cur == 0) return false;
+                i = (i + 1) & (ExecPagesSlots - 1);
+            }
+            return false;
+        }
+
+        public static bool WasEverData(ulong address)
+        {
+            if (s_dataPages == null) return false;
+            ulong page = address & ~0xFFFUL;
+            ulong h = (page * 0x9E3779B97F4A7C15UL) >> 51;
+            int i = (int)(h & (ExecPagesSlots - 1));
+            for (int n = 0; n < ExecPagesSlots; n++)
+            {
+                ulong cur = s_dataPages[i];
+                if (cur == page) return true;
+                if (cur == 0) return false;
+                i = (i + 1) & (ExecPagesSlots - 1);
+            }
+            return false;
+        }
+
+        public static bool WasEverExecutable(ulong address)
+        {
+            if (s_execPages == null) return false;
+            ulong page = address & ~0xFFFUL;
+            ulong h = (page * 0x9E3779B97F4A7C15UL) >> 51;
+            int i = (int)(h & (ExecPagesSlots - 1));
+            for (int n = 0; n < ExecPagesSlots; n++)
+            {
+                ulong cur = s_execPages[i];
+                if (cur == page) return true;
+                if (cur == 0) return false;
+                i = (i + 1) & (ExecPagesSlots - 1);
+            }
+            return false;
+        }
+
+        public static void NoteRegion(ulong start, ulong end, uint tag)
+        {
+            if (s_history == null) s_history = new ProtectRecord[HistorySlots];
+            int slot = s_historyNext;
+            s_historyNext = (s_historyNext + 1) % HistorySlots;
+            s_history[slot].Start = start;
+            s_history[slot].End = end;
+            s_history[slot].Flags = tag;
+            s_history[slot].Ok = 1;
+            if (tag == TagCommitExec || tag == TagAllocExec)
+                for (ulong pg = start & ~0xFFFUL; pg < end; pg += 0x1000UL) NoteExecPage(pg);
+            else if (tag == TagCommitData)
+                for (ulong pg = start & ~0xFFFUL; pg < end; pg += 0x1000UL) NoteDataPage(pg);
+            else if (tag == TagDemandCommit)
+                for (ulong pg = start & ~0xFFFUL; pg < end; pg += 0x1000UL) NoteFaultPage(pg);
+        }
+
+        /// <summary>Did any ProtectExecutable call cover this address?</summary>
+        public static void DumpHistoryFor(ulong address)
+        {
+            Console.Write("  [protect-history] calls=");
+            Console.WriteULong(s_protectCalls);
+            Console.Write(" fails=");
+            Console.WriteULong(s_protectFails);
+            if (s_history == null) { Console.WriteLine(" (none)"); return; }
+
+            bool covered = false;
+            for (int i = 0; i < HistorySlots; i++)
+            {
+                ref ProtectRecord r = ref s_history[i];
+                if (r.End == 0) continue;
+                if (address >= r.Start && address < r.End) covered = true;
+                Console.Write(" | 0x");
+                Console.WriteHex(r.Start);
+                Console.Write("..0x");
+                Console.WriteHex(r.End);
+                Console.Write(" pr=0x");
+                Console.WriteHex(r.Flags);
+                Console.Write(r.Ok != 0 ? " ok" : " FAIL");
+            }
+            Console.Write(covered ? "  <= ADDRESS WAS COVERED" : "  <= address not in the last records");
+            Console.Write(" | exec-granted pages=");
+            Console.WriteULong(s_execPagesCount);
+            if (WasEverExecutable(address))
+            {
+                Console.WriteLine(" <= PAGE WAS GRANTED EXEC (protection lost afterwards)");
+            }
+            else if (WasEverData(address))
+            {
+                Console.Write(" <= PAGE COMMITTED AS DATA on purpose (data pages=");
+                Console.WriteULong(s_dataPagesCount);
+                Console.WriteLine(") — the pointer is wrong, not the protection");
+            }
+            else if (WasDemandCommitted(address))
+            {
+                Console.Write(" <= PAGE MATERIALISED BY A WRITE FAULT (fault pages=");
+                Console.WriteULong(s_faultPagesCount);
+                Console.WriteLine(") — it got data permissions because a write cannot say it is code");
+            }
+            else if (s_setsSaturated)
+            {
+                Console.WriteLine(" <= UNKNOWN: the page sets are full, so a miss proves nothing");
+            }
+            else
+            {
+                Console.WriteLine(" <= PAGE NEVER SEEN by any of our paths");
+            }
+        }
+
         [RuntimeExport("SharpOSHost_ProtectExecutable")]
         public static int ProtectExecutable(void* address, ulong size, uint flProtect)
         {
@@ -186,6 +420,15 @@ namespace OS.PAL.SharpOSHost
             const ulong PAGE = 4096UL;
             ulong va = ((ulong)address) & ~(PAGE - 1);
             ulong end = ((ulong)address + size + PAGE - 1) & ~(PAGE - 1);
+
+            s_protectCalls++;
+            if (s_history == null) s_history = new ProtectRecord[HistorySlots];
+            int slot = s_historyNext;
+            s_historyNext = (s_historyNext + 1) % HistorySlots;
+            s_history[slot].Start = va;
+            s_history[slot].End = end;
+            s_history[slot].Flags = flProtect;
+            s_history[slot].Ok = 0;
 
             PageFlags pf = PageFlags.Present;
             bool isExec = (flProtect & 0xF0u) != 0;
@@ -212,6 +455,7 @@ namespace OS.PAL.SharpOSHost
                     Console.Write(" largePage=");
                     Console.WriteInt(wasLargePage ? 1 : 0);
                     Console.WriteLine("");
+                    s_protectFails++;
                     return 0;
                 }
                 if (wasLargePage) largePageMods++;
@@ -228,6 +472,9 @@ namespace OS.PAL.SharpOSHost
                 Console.WriteInt(largePageMods);
                 Console.WriteLine("");
             }
+            s_history[slot].Ok = 1;
+            if (isExec)
+                for (ulong pg = va & ~0xFFFUL; pg < end; pg += 0x1000UL) NoteExecPage(pg);
             return 1;
         }
     }

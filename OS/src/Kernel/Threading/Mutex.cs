@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 
 namespace OS.Kernel.Threading
 {

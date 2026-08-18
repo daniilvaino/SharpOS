@@ -92,6 +92,11 @@ namespace OS.Kernel.Memory
             ZeroPage(p);
             s_committedBytes += PageSize;
             s_faultCommits++;
+            // Recorded only now that the page really exists. Noting it on entry
+            // also logged every address the handler declined — the null page
+            // among them — so the record claimed pages it had never made.
+            OS.PAL.SharpOSHost.SharpOSHostMemory.NoteRegion(p, p + PageSize,
+                OS.PAL.SharpOSHost.SharpOSHostMemory.TagDemandCommit);
             return true;
         }
 
@@ -113,7 +118,18 @@ namespace OS.Kernel.Memory
 
         // Reserve `size` bytes of VA, `alignment`-aligned (>=4K). No backing.
         // Returns VA or 0 on window exhaustion / bad args.
+        // Whole-operation critical section, not just the per-page edits underneath:
+        // this loop reads the current mapping and then acts on it, so a thread
+        // interrupted between the two would act on a state another thread has
+        // already changed.
         public static void* Reserve(ulong size, ulong alignment)
+        {
+            Threading.Preemption.Suppress();
+            try { return ReserveCore(size, alignment); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static void* ReserveCore(ulong size, ulong alignment)
         {
             if (size == 0) return null;
             ulong align = alignment < PageSize ? PageSize : alignment;
@@ -151,8 +167,21 @@ namespace OS.Kernel.Memory
         // Commit [va, va+size): back each 4K page with a physical frame and
         // map it RW (+NX unless exec) into the active PML4. Idempotent —
         // already-mapped pages are skipped (GC re-commits sub-ranges).
+        // Whole-operation critical section, not just the per-page edits underneath:
+        // this loop reads the current mapping and then acts on it, so a thread
+        // interrupted between the two would act on a state another thread has
+        // already changed.
         public static bool Commit(void* address, ulong size, bool exec)
         {
+            Threading.Preemption.Suppress();
+            try { return CommitCore(address, size, exec); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static bool CommitCore(void* address, ulong size, bool exec)
+        {
+            OS.PAL.SharpOSHost.SharpOSHostMemory.NoteRegion((ulong)address, (ulong)address + size,
+                exec ? OS.PAL.SharpOSHost.SharpOSHostMemory.TagCommitExec : OS.PAL.SharpOSHost.SharpOSHostMemory.TagCommitData);
             if (address == null || size == 0) return false;
             ulong va  = (ulong)address & ~(PageSize - 1);
             ulong end = ((ulong)address + size + PageSize - 1) & ~(PageSize - 1);
@@ -163,7 +192,25 @@ namespace OS.Kernel.Memory
             for (ulong p = va; p < end; p += PageSize)
             {
                 if (X64PageTable.TryQueryKernel(p, out _, out _))
-                    continue;                                  // already committed (preserve contents)
+                {
+                    // Already mapped — keep the contents, but NOT the old
+                    // protection. The request carries flags, and a page
+                    // committed earlier as data (NX) can be committed again as
+                    // code: that is how the runtime asks for executable memory
+                    // on this path, instead of a separate VirtualProtect.
+                    //
+                    // Skipping outright left such pages non-executable, and the
+                    // JIT faulted on the first instruction fetch. It was
+                    // invisible from the protection side: 103 protect calls,
+                    // all successful, none of them covering the faulting page —
+                    // because nobody was supposed to call protect for it.
+                    //
+                    // Loosen only (clear NX when exec is asked, add W when
+                    // write is asked). Tightening here would revoke rights a
+                    // previous commit legitimately granted.
+                    if (exec) X64PageTable.TrySetKernelFlags(p, PageFlags.Present | PageFlags.Writable);
+                    continue;
+                }
 
                 ulong pa = global::OS.Kernel.PhysicalMemory.AllocPage();
                 if (pa == 0) { s_commitFails++; return false; }
@@ -180,6 +227,11 @@ namespace OS.Kernel.Memory
                 ZeroPage(p);
                 s_committedBytes += PageSize;
             }
+            // Pages we only loosened were already present, so their stale
+            // entries can live in the TLB — those DO need a flush, unlike the
+            // fresh mappings the comment below describes.
+            if (exec) X64PageTable.FlushTlbAll();
+
             // No FlushTlbAll: every mapped page transitioned not-present →
             // Present, and x86 doesn't cache not-present entries. First
             // access by the caller fetches the new PTE for free. The CR3
@@ -194,7 +246,18 @@ namespace OS.Kernel.Memory
         // chunks, GC generational chunks all release VAs but never recycle
         // physical frames. Idempotent; addresses not currently mapped are
         // skipped silently.
+        // Whole-operation critical section, not just the per-page edits underneath:
+        // this loop reads the current mapping and then acts on it, so a thread
+        // interrupted between the two would act on a state another thread has
+        // already changed.
         public static bool Decommit(void* address, ulong size)
+        {
+            Threading.Preemption.Suppress();
+            try { return DecommitCore(address, size); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static bool DecommitCore(void* address, ulong size)
         {
             if (address == null || size == 0) return true;
             ulong va  = (ulong)address & ~(PageSize - 1);
@@ -246,8 +309,24 @@ namespace OS.Kernel.Memory
         /// ENABLE_CNF may never reach the device at all. Anything with
         /// registers behind it — HPET, PCI ECAM, AHCI, xHCI — is Device.
         /// </summary>
+        // Whole-operation critical section, not just the per-page edits underneath:
+        // this loop reads the current mapping and then acts on it, so a thread
+        // interrupted between the two would act on a state another thread has
+        // already changed.
         public static bool MapFixed(void* va, ulong pa, ulong size, bool exec, MemoryKind kind)
         {
+            Threading.Preemption.Suppress();
+            try { return MapFixedCore(va, pa, size, exec, kind); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static bool MapFixedCore(void* va, ulong pa, ulong size, bool exec, MemoryKind kind)
+        {
+            // Direct mappings were in none of the records, which is how a page
+            // laid out this way came back as "never seen by any of our paths".
+            OS.PAL.SharpOSHost.SharpOSHostMemory.NoteRegion((ulong)va, (ulong)va + size,
+                exec ? OS.PAL.SharpOSHost.SharpOSHostMemory.TagAllocExec
+                     : OS.PAL.SharpOSHost.SharpOSHostMemory.TagCommitData);
             if (va == null || size == 0) return false;
             ulong v   = (ulong)va & ~(PageSize - 1);
             ulong end = ((ulong)va + size + PageSize - 1) & ~(PageSize - 1);

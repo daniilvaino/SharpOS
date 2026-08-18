@@ -1,4 +1,4 @@
-namespace OS.Kernel.Threading
+﻿namespace OS.Kernel.Threading
 {
     // Phase E9.c -- Win32 WaitOnAddress / WakeByAddressSingle /
     // WakeByAddressAll. Address-keyed wait queue used by modern .NET

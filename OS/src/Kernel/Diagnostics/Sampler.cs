@@ -233,6 +233,16 @@ namespace OS.Kernel.Diagnostics
             // Activation: did the runtime ask us to interrupt a thread, and
             // did we manage it? Three numbers that separate "never asked",
             // "asked and we missed it" and "delivered".
+            // Pool population: live / created / exited. Steady numbers mean
+            // the pool found its size; a rising created-and-exited pair with a
+            // flat live count means it is oscillating.
+            Serial.WriteString(" thr=");
+            WriteULong(OS.Kernel.Threading.Scheduler.ThreadsLive);
+            Serial.WriteChar('/');
+            WriteULong(OS.Kernel.Threading.Scheduler.ThreadsCreated);
+            Serial.WriteChar('/');
+            WriteULong(OS.Kernel.Threading.Scheduler.ThreadsExited);
+
             Serial.WriteString(" act=");
             WriteULong(OS.PAL.SharpOSHost.ThreadActivation.Injected);
             Serial.WriteChar('/');
@@ -240,6 +250,10 @@ namespace OS.Kernel.Diagnostics
             Serial.WriteChar('/');
             WriteULong(OS.PAL.SharpOSHost.ThreadActivation.NotSafe);
 
+            Serial.WriteString(" yieldsInCrit=");
+            WriteULong(OS.Kernel.Threading.Preemption.YieldsWhileSuppressed);
+            Serial.WriteString(" critDepth=");
+            WriteULong(OS.Kernel.Threading.Preemption.Depth);
             Serial.WriteString(" halt=");
             WriteULong(OS.Kernel.Threading.Scheduler.IdleHalts);
             Serial.WriteString(" busy=");

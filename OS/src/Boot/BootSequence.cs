@@ -275,6 +275,11 @@ namespace OS.Boot
             if (Probes.FpFaultPreservesXmm)
                 OS.Kernel.Diagnostics.FpFaultProbe.Run();
 
+            // Late enough to have paging and frames, early enough to be seen
+            // before the hosted session — which is what depends on the answer.
+            if (Probes.ProtectPages)
+                OS.Kernel.Diagnostics.ProtectPagesProbe.Run();
+
             // Phase B#2 — identity-map the GOP framebuffer MMIO into the
             // pager PML4. Non-fatal: headless / BltOnly / no-GOP boots
             // continue with IsAvailable=false (renderer no-ops).

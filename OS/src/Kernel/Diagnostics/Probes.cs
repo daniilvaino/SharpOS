@@ -64,12 +64,19 @@
         // Activation itself works — act=2/1/15 in that run: the runtime asked
         // twice, we delivered once, and correctly declined fifteen times when
         // the thread was not at a safe point.
-        public const bool PreemptHostedSession = false;
+        public const bool PreemptHostedSession = true;   // измерение пула под вытеснением
 
         // Per-reservation and per-stub-range chatter from the JIT path
         // ([vm-reserve], [stub-reg]). Both were bring-up proofs left on; the
         // JIT emits hundreds per command. On when tracing JIT memory.
         public const bool VerboseVmReservations = false;
+
+        // Per-thread lifecycle trace ([CT]/[RT]/[Tramp]) — five lines for
+        // every thread the runtime starts, interleaved with whatever else is
+        // printing. Bring-up proof that thread creation reached the kernel and
+        // came back; it did, thousands of times. ON when a thread fails to
+        // start or fails to return.
+        public const bool VerboseThreadLifecycle = false;
 
         // Exception-dispatch trace inside the fork ([SFI]/[DESP]/[CCF-*]).
         // OFF: PowerShell throws on ordinary paths, and each throw was worth
@@ -82,6 +89,16 @@
         // "where does startup spend its time"; the answer is a [prof] line on
         // the serial port every ten seconds.
         public const bool SampleProfiler = true;
+
+        // Isolated check of SharpOSHost_ProtectPages, called directly from the
+        // kernel. OFF: it halts the boot (the export is a Panic.Fail stub) and
+        // it is the weaker of the two tests — it proves the function works in
+        // isolation, not that the path the runtime takes works.
+        //
+        // The honest one is end-to-end in apps_managed/normal-hello:
+        // VirtualAlloc → write code → VirtualProtect → execute, exactly as a
+        // JIT does. Run it with LaunchNormalHelloCensus.
+        public const bool ProtectPages = false;
 
         // Phase F3 gate: the timer takes the CPU from a thread that never
         // yields. Enabled only around the probe — the rest of the kernel still
@@ -163,7 +180,7 @@
         // Both DLLs are always built and deployed by run_build.ps1 + added
         // to TPA; the toggle only chooses which one execute_assembly aims
         // at. Const bool so ILC folds the unused branch to nothing.
-        public const bool LaunchNormalHelloCensus = false;
+        public const bool LaunchNormalHelloCensus = true;
 
         // Mute kernel diagnostics while the hosted app owns the screen.
         //

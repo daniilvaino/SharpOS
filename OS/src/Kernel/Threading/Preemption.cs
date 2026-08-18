@@ -27,6 +27,15 @@ namespace OS.Kernel.Threading
     internal static unsafe class Preemption
     {
         private static uint s_disableDepth;
+
+        // A system-wide counter is only a valid critical section while the code
+        // inside never gives up the CPU. If it does, one thread's Suppress is
+        // paired with another thread's Allow and the state goes wrong in both
+        // directions. This counts the violation instead of assuming it away.
+        private static ulong s_yieldsWhileSuppressed;
+        public static ulong YieldsWhileSuppressed => s_yieldsWhileSuppressed;
+        public static uint Depth => s_disableDepth;
+        public static void NoteYield() { if (s_disableDepth != 0) s_yieldsWhileSuppressed++; }
         private static bool s_enabled;
         private static ulong s_switches;
         private static ulong s_declined;

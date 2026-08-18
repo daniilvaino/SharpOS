@@ -1,5 +1,6 @@
-using System.Runtime;
+﻿using System.Runtime;
 using System.Runtime.InteropServices;
+using OS.Hal;
 using OS.Kernel.Memory;
 
 namespace OS.PAL.SharpOSHost
@@ -12,13 +13,38 @@ namespace OS.PAL.SharpOSHost
     // POD-only across the C-ABI line. int returns: 1=ok, 0=fail.
     internal static unsafe class VirtualMemoryHost
     {
+        // Failures here reach the runtime as a bare "unspecified error" that
+        // it turns into a COMException at whatever managed method happened to
+        // be compiling. Naming the failing step at the source is the
+        // difference between a diagnosis and a guess.
         [RuntimeExport("SharpOSHost_VMReserve")]
         public static void* VMReserve(ulong size, ulong alignment)
-            => VirtualMemory.Reserve(size, alignment);
+        {
+            void* r = VirtualMemory.Reserve(size, alignment);
+            if (r == null)
+            {
+                Console.Write("[VMReserve] FAIL size=0x");
+                Console.WriteHex(size);
+                Console.Write(" align=0x");
+                Console.WriteHex(alignment);
+                Console.WriteLine("");
+            }
+            return r;
+        }
 
         [RuntimeExport("SharpOSHost_VMCommit")]
         public static int VMCommit(void* addr, ulong size, int exec)
-            => VirtualMemory.Commit(addr, size, exec != 0) ? 1 : 0;
+        {
+            if (VirtualMemory.Commit(addr, size, exec != 0)) return 1;
+            Console.Write("[VMCommit] FAIL addr=0x");
+            Console.WriteHex((ulong)addr);
+            Console.Write(" size=0x");
+            Console.WriteHex(size);
+            Console.Write(" exec=");
+            Console.WriteInt(exec);
+            Console.WriteLine("");
+            return 0;
+        }
 
         [RuntimeExport("SharpOSHost_VMDecommit")]
         public static int VMDecommit(void* addr, ulong size)

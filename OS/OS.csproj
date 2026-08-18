@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -215,6 +215,10 @@
          this is "see if a kernel image with CoreCLR linked even produces
          output" experiment. -->
     <LinkerArg Include="/FORCE:MULTIPLE" />
+    <!-- Link map. Faults keep landing at fixed image offsets inside the
+         statically linked runtime, and without a map those offsets stay
+         anonymous: a whole day of addresses that could have been names. -->
+    <LinkerArg Include="/MAP:$(MSBuildProjectDirectory)\..\sharpos.map" />
   </ItemGroup>
 
   <!--

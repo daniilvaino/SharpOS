@@ -26,22 +26,21 @@ namespace OS.Kernel.Threading
 
         // Every live thread, newest last. Walked by the garbage collector to
         // find roots on stacks other than the running one.
-        // True while the context-switch stub is mid-flight.
+        // True while the scheduler owns the run queue, or while the context-
+        // switch stub is mid-flight.
         //
-        // The stub saves registers, swaps RSP and restores the next thread's
-        // registers. Between the RSP swap and the end of the restore the CPU
-        // is in neither thread: the stack already belongs to one and s_current
-        // still names the other. A timer interrupt landing there reads the
-        // wrong Current, and if it decides to switch it does so from inside a
-        // half-finished switch.
+        // Queue edits and the raw stack swap are both non-reentrant. A timer
+        // interrupt landing in the middle can otherwise run Scheduler.Yield()
+        // recursively, enqueue a thread twice, or restore a stale ContextBlock.
+        // In the raw stub window the CPU can also be between stacks/GS bases.
         //
         // The per-thread InPreemptiveSwitch flag does NOT cover this: after
         // s_current moves, the tick sees a different thread whose flag is
         // clear. Observed as an access violation with RSP outside the stack
         // bounds of the thread the scheduler believed was running.
         //
-        // Set before the stub and cleared by whichever thread comes out of it,
-        // which is exactly the window that must not be interrupted.
+        // Raised before queue edits and kept raised through CoopSwitch; cleared
+        // on no-switch paths or by whichever thread comes out of the stub.
         private static bool s_switching;
 
         // Did the idle path actually sleep, or decide somebody had work?
@@ -55,6 +54,19 @@ namespace OS.Kernel.Threading
 
         private static Thread? s_allHead;
         private static Thread? s_allTail;
+
+        // Thread population over time. Creating a thread IS the pool's
+        // decision — hill climbing in PortableThreadPool computes a Fourier
+        // component of throughput and adds or removes workers accordingly. We
+        // cannot instrument that code (the shipped CoreLib is precompiled), but
+        // its decisions arrive here.
+        //
+        // A healthy pool settles. One that keeps adding and dropping workers is
+        // reacting to noise — which is what bad throughput samples look like,
+        // whatever the trigonometry behind them.
+        private static uint s_threadsLive;
+        private static uint s_threadsCreated;
+        private static uint s_threadsExited;
         private static int s_nextId = 1;
         private static uint s_yieldCount;
         private static uint s_switchCount;
@@ -271,35 +283,41 @@ namespace OS.Kernel.Threading
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void HostedTrampoline()
         {
-            OS.Hal.Console.WriteLine("[Tramp] entry reached");
+            if (OS.Kernel.Diagnostics.Probes.VerboseThreadLifecycle) OS.Hal.Console.WriteLine("[Tramp] entry reached");
 
             Thread? curr = s_current;
             ManagedThreadBinding? bind = curr == null ? null : curr.Binding;
             if (curr == null || bind == null || bind.HostedEntry == null)
             {
-                OS.Hal.Console.WriteLine("[Tramp] curr/Binding/HostedEntry null -- Exit");
+                if (OS.Kernel.Diagnostics.Probes.VerboseThreadLifecycle) OS.Hal.Console.WriteLine("[Tramp] curr/Binding/HostedEntry null -- Exit");
                 Scheduler.Exit();
                 return;
             }
 
-            OS.Hal.Console.Write("[Tramp] calling entry=0x");
-            OS.Hal.Console.WriteHex((ulong)bind.HostedEntry);
-            OS.Hal.Console.Write(" param=0x");
-            OS.Hal.Console.WriteHex((ulong)bind.ClrThreadOpaquePtr);
-            OS.Hal.Console.WriteLine("");
+            if (OS.Kernel.Diagnostics.Probes.VerboseThreadLifecycle)
+            {
+                OS.Hal.Console.Write("[Tramp] calling entry=0x");
+                OS.Hal.Console.WriteHex((ulong)bind.HostedEntry);
+                OS.Hal.Console.Write(" param=0x");
+                OS.Hal.Console.WriteHex((ulong)bind.ClrThreadOpaquePtr);
+                OS.Hal.Console.WriteLine("");
+            }
 
             uint exitCode = bind.HostedEntry(bind.ClrThreadOpaquePtr);
 
-            OS.Hal.Console.Write("[Tramp] entry returned exitCode=");
-            OS.Hal.Console.WriteUInt(exitCode);
-            OS.Hal.Console.WriteLine("");
+            if (OS.Kernel.Diagnostics.Probes.VerboseThreadLifecycle)
+            {
+                OS.Hal.Console.Write("[Tramp] entry returned exitCode=");
+                OS.Hal.Console.WriteUInt(exitCode);
+                OS.Hal.Console.WriteLine("");
+            }
 
             bind.HostedExitCode = exitCode;
             bind.HasExited = true;
             if (bind.JoinEvent != null)
                 bind.JoinEvent.Set();
 
-            OS.Hal.Console.WriteLine("[Tramp] Exit");
+            if (OS.Kernel.Diagnostics.Probes.VerboseThreadLifecycle) OS.Hal.Console.WriteLine("[Tramp] Exit");
             Scheduler.Exit();
         }
 
@@ -312,43 +330,51 @@ namespace OS.Kernel.Threading
         // single-CPU cooperative; replace with HLT + IRQ in Phase E6+).
         public static void Yield()
         {
+            Preemption.NoteYield();
             s_yieldCount++;
 
-            // Drain expired sleepers first so they participate in the
-            // selection below.
-            DrainExpiredTimers();
+            Thread? curr;
+            Thread? next;
 
-            Thread? curr = s_current;
-            if (curr == null) return;
-
-            Thread? next = DequeueRunnable();
-
-            // If nobody else is runnable AND we're still Running, just
-            // keep going (no-op yield). If we're Waiting (called from
-            // Sleep / Event.Wait) we must NOT continue here — block
-            // until something wakes us.
-            if (next == null)
+            while (true)
             {
-                if (curr.State != ThreadState.Waiting)
-                    return;
-                while (next == null)
-                {
-                    DrainExpiredTimers();
-                    next = DequeueRunnable();
+                s_switching = true;
 
-                    // Nothing to run and we are blocked: sleep until the next
-                    // interrupt instead of spinning. This is the one place in
-                    // the system where the CPU has literally nothing to do,
-                    // and it burned a full core here.
-                    if (next == null && OS.Hal.Apic.LocalApic.IsEnabled)
-                    {
-                        s_idleHalts++;
-                        OS.Hal.X64Asm.StiHlt();
-                    }
-                    // No CPU-pause hint yet; tight spin. Once IRQ-driven
-                    // wake lands this becomes HLT-in-IST and the spin
-                    // collapses to interrupt latency.
+                // Drain expired sleepers first so they participate in the
+                // selection below.
+                DrainExpiredTimers();
+
+                curr = s_current;
+                if (curr == null) { s_switching = false; return; }
+
+                next = DequeueRunnable();
+
+                // If nobody else is runnable AND we're still Running, just
+                // keep going (no-op yield). If we're Waiting (called from
+                // Sleep / Event.Wait) we must NOT continue here — block
+                // until something wakes us.
+                if (next != null)
+                    break;
+
+                if (curr.State != ThreadState.Waiting)
+                {
+                    s_switching = false;
+                    return;
                 }
+
+                // Nothing to run and we are blocked: sleep until the next
+                // interrupt instead of spinning. This is the one place in
+                // the system where the CPU has literally nothing to do,
+                // and it burned a full core here.
+                s_switching = false;
+                if (OS.Hal.Apic.LocalApic.IsEnabled)
+                {
+                    s_idleHalts++;
+                    OS.Hal.X64Asm.StiHlt();
+                }
+                // No CPU-pause hint yet; tight spin. Once IRQ-driven
+                // wake lands this becomes HLT-in-IST and the spin
+                // collapses to interrupt latency.
             }
 
             // Re-enqueue current only if it's still Running. Threads
@@ -366,13 +392,13 @@ namespace OS.Kernel.Threading
             if (next == curr)
             {
                 next.State = ThreadState.Running;
+                s_switching = false;
                 return;
             }
 
             next.State = ThreadState.Running;
             s_current = next;
             s_switchCount++;
-            s_switching = true;
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
             s_switching = false;
             // CoopSwitch returns here when SOMEBODY switches back to curr.
@@ -439,8 +465,14 @@ namespace OS.Kernel.Threading
         /// <summary>Head of the all-threads registry. Walk via Thread.AllNext.</summary>
         public static Thread? AllThreads => s_allHead;
 
+        public static uint ThreadsLive => s_threadsLive;
+        public static uint ThreadsCreated => s_threadsCreated;
+        public static uint ThreadsExited => s_threadsExited;
+
         private static void RegisterThread(Thread t)
         {
+            s_threadsLive++;
+            s_threadsCreated++;
             t.AllNext = null;
             if (s_allTail == null) { s_allHead = t; s_allTail = t; return; }
             s_allTail.AllNext = t;
@@ -452,6 +484,8 @@ namespace OS.Kernel.Threading
         // it would read whatever now lives there and treat it as roots.
         private static void UnregisterThread(Thread t)
         {
+            if (s_threadsLive > 0) s_threadsLive--;
+            s_threadsExited++;
             Thread? prev = null;
             Thread? c = s_allHead;
             while (c != null && c != t) { prev = c; c = c.AllNext; }
@@ -531,20 +565,29 @@ namespace OS.Kernel.Threading
         {
             Thread? curr = s_current;
             if (curr == null) { Panic.Fail("Scheduler.Exit: no current"); return; }
+            s_switching = true;
             curr.State = ThreadState.Exited;
             UnregisterThread(curr);
 
             Thread? next = DequeueRunnable();
-            if (next == null)
+            while (next == null)
             {
-                Panic.Fail("Scheduler.Exit: no other runnable");
-                return;
+                // Nothing runnable at this instant is not a deadlock. Since
+                // waiting became real parking, threads leave the ready queue
+                // and come back on a deadline or a release, so a moment with
+                // zero runnable threads is ordinary — every other thread
+                // sleeping on a timer produces it. Sleep until an interrupt
+                // makes someone runnable, exactly as the idle path does; the
+                // exiting thread's stack is still ours to stand on.
+                s_switching = false;
+                X64Asm.StiHlt();
+                s_switching = true;
+                next = DequeueRunnable();
             }
 
             next.State = ThreadState.Running;
             s_current = next;
             s_switchCount++;
-            s_switching = true;
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
             s_switching = false;
             // Unreachable — curr is Exited, no one re-enters its frame.

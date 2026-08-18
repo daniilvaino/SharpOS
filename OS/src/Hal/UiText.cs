@@ -1,4 +1,4 @@
-namespace OS.Hal
+﻿namespace OS.Hal
 {
     internal static class UiText
     {

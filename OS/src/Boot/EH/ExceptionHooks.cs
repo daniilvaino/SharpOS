@@ -1,4 +1,4 @@
-namespace OS.Boot.EH
+﻿namespace OS.Boot.EH
 {
     // First-chance / unhandled / FailFast hooks. Stock NativeAOT routes
     // these through ClasslibProvider callbacks; we provide minimal direct
@@ -35,7 +35,15 @@ namespace OS.Boot.EH
         {
             var h = FailFastHandler;
             if (h != null) { h(); return; }
-            while (true) { }
+
+            // Was a silent `while (true) { }`. Two things were wrong with it,
+            // and preemption turned both into a puzzle: it said nothing, so a
+            // fatal error looked like a mysterious stall; and it spun as a
+            // runnable thread instead of stopping, so the collector asked it
+            // thousands of times to reach a safe point, never got one, and the
+            // whole system waited on a thread that was already dead.
+            OS.Hal.Console.WriteLine("[failfast] unhandled managed exception — no handler matched");
+            OS.Kernel.Panic.Fail("FailFast: unhandled managed exception");
         }
     }
 }

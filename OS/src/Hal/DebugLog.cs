@@ -1,31 +1,35 @@
-namespace OS.Hal
+﻿namespace OS.Hal
 {
     internal static class DebugLog
     {
-        // Reentrancy guard. Number formatting (Console.WriteUInt /
-        // WriteHex) allocates strings through KernelHeap, which can
-        // call Log.Begin from inside its own GrowHeap path while we're
-        // already mid-line. Without this guard the inner line tears
-        // through the outer one. With the guard the inner Begin/Write/
-        // EndLine become no-ops — we lose the diagnostic but the outer
-        // line stays clean. Single-thread kernel, no atomicity needed.
-        private static bool s_inLine;
+        // Depth counter, balanced across Begin/EndLine.
+        //
+        // The bug this exists to prevent: number formatting allocates, heap
+        // growth logs, so a line can open inside another line. With a plain
+        // flag the INNER EndLine closed the OUTER line and cleared the flag,
+        // and the outer line then ended without a newline — its verdict ran
+        // into whatever printed next and stopped being machine-readable.
+        //
+        // Deliberately NOT tracking which thread owns the line, and NOT holding
+        // preemption off for its duration. Both were tried today and both cost
+        // more than the interleaving they prevented: dropping a second
+        // thread's writes swallowed a panic message whole, suppressing
+        // preemption hung the machine on the first unbalanced Begin, and
+        // asking the scheduler who is running trips the static-constructor
+        // trap on the earliest boot output. Lines from two threads may
+        // interleave. That is cosmetic; silence is not.
+        private static int s_depth;
 
         public static void Write(LogLevel level, string message)
         {
-            if (s_inLine) return;
-            s_inLine = true;
-            UiText.Write("[");
-            UiText.Write(LevelName(level));
-            UiText.Write("] ");
-            UiText.WriteLine(message);
-            s_inLine = false;
+            Begin(level);
+            UiText.Write(message);
+            EndLine();
         }
 
         public static void Begin(LogLevel level)
         {
-            if (s_inLine) return;
-            s_inLine = true;
+            if (s_depth++ > 0) return;
             UiText.Write("[");
             UiText.Write(LevelName(level));
             UiText.Write("] ");
@@ -33,9 +37,9 @@ namespace OS.Hal
 
         public static void EndLine()
         {
-            if (!s_inLine) return;
+            if (s_depth == 0) return;      // unbalanced EndLine — ignore
+            if (--s_depth > 0) return;     // inner one: the outer line owns the newline
             UiText.WriteLine("");
-            s_inLine = false;
         }
 
         private static string LevelName(LogLevel level)

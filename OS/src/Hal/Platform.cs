@@ -482,7 +482,16 @@ namespace OS.Hal
 
         public static void Halt()
         {
-            while (true) ;
+            // Stop the machine, not just this thread. A bare `while (true)`
+            // leaves the CPU running with interrupts on, so the timer keeps
+            // firing, the scheduler keeps this thread runnable, and every
+            // other thread limps along waiting on a thread that has already
+            // died — and the collector waits forever for a safe point it will
+            // never reach. Under cooperative scheduling the spin froze
+            // everything by accident and looked like a halt; preemption turned
+            // the same code into a livelock that reads as a mystery hang.
+            X64Asm.Cli();
+            while (true) X64Asm.Hlt();
         }
     }
 }

@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using OS.Hal;
 using OS.Hal.Idt;
 using OS.Kernel.Memory;
@@ -167,6 +167,44 @@ namespace OS.Boot.EH
             //   bit 4: I  (instruction fetch — NX violation when bit 0 also set)
             if (frame->Vector == 14)
             {
+                // Instruction fetch on a present page inside the VM window is
+                // the JIT jumping into code that was never made executable.
+                // Say straight away whether anyone ever asked for that page to
+                // be executable: guessing cost several wrong diagnoses, and the
+                // fork's own trace is gated off by default so its silence
+                // proves nothing.
+                // Every instruction-fetch fault, not only those inside the
+                // runtime's address window: executable memory is also served
+                // from low identity-mapped RAM once firmware is gone, and
+                // restricting the dump to the window hid exactly that case.
+                if ((frame->ErrorCode & 0x10UL) != 0)
+                {
+                    Log.Begin(LogLevel.Info);
+                    OS.PAL.SharpOSHost.SharpOSHostMemory.DumpHistoryFor(frame->Cr2);
+                    Log.EndLine();
+
+                    // Faults at low addresses keep landing exactly 0x50000000000
+                    // below a region the runtime uses, which is what a code
+                    // pointer truncated to 32 bits looks like. Test that instead
+                    // of matching digits by eye: report the reconstructed
+                    // address, whether it is mapped, and whether anyone ever
+                    // asked for it to be executable.
+                    if (frame->Cr2 < 0x100000000UL)
+                    {
+                        ulong recon = frame->Cr2 | 0x50000000000UL;
+                        Log.Begin(LogLevel.Info);
+                        Console.Write("  [trunc?] cr2|0x50000000000 = 0x");
+                        Console.WriteHex(recon);
+                        Console.Write(" mapped=");
+                        bool mapped = OS.Kernel.Paging.X64PageTable.TryGetKernelLeafPte(recon, out ulong rpte);
+                        Console.Write(mapped ? "Y pte=0x" : "N pte=0x");
+                        Console.WriteHex(rpte);
+                        Console.Write(" execGranted=");
+                        Console.Write(OS.PAL.SharpOSHost.SharpOSHostMemory.WasEverExecutable(recon) ? "Y" : "N");
+                        Log.EndLine();
+                    }
+                }
+
                 Log.Begin(LogLevel.Info);
                 ulong pfec = frame->ErrorCode;
                 Console.Write("  PFEC: P=");

@@ -92,6 +92,18 @@ namespace OS.Kernel.Memory
             if (!s_initialized || pointer == null)
                 return;
 
+            // Same protection as Alloc, and for a sharper reason: freeing
+            // merges with both neighbours, rewriting the shared block list in
+            // several steps. Interrupted midway, it leaves the list in a state
+            // the next Alloc walks straight into. Suppressing only Alloc guards
+            // Alloc alone — it does nothing for the thread that is inside Free.
+            OS.Kernel.Threading.Preemption.Suppress();
+            try { FreeCore(pointer); }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
+
+        private static void FreeCore(void* pointer)
+        {
             HeapBlock* block = HeapBlockOps.FromPayload(pointer);
             if (!ContainsBlock(block))
             {

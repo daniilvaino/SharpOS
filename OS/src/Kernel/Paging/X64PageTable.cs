@@ -1,4 +1,4 @@
-namespace OS.Kernel.Paging
+﻿namespace OS.Kernel.Paging
 {
     internal static unsafe class X64PageTable
     {
@@ -134,7 +134,20 @@ namespace OS.Kernel.Paging
             return kernelCr3 != 0;
         }
 
+        // Serialized against preemption. Editing a page table is a multi-step
+        // edit of shared structure: splitting a large mapping rebuilds a whole
+        // level, and a thread interrupted midway leaves a table another thread
+        // then rebuilds on top of — losing the first thread's flags. That is how
+        // JIT pages allocated as executable came back marked non-executable.
+        // Cooperative scheduling made this safe for free; preemption does not.
         public static bool Map(ulong virtualAddress, ulong physicalAddress, PageFlags flags)
+        {
+            Threading.Preemption.Suppress();
+            try { return MapCore(virtualAddress, physicalAddress, flags); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static bool MapCore(ulong virtualAddress, ulong physicalAddress, PageFlags flags)
         {
             s_mapCalls++;
 
@@ -187,7 +200,20 @@ namespace OS.Kernel.Paging
         // live mapping") and we may want to log/audit them differently later.
         // Intermediate tables auto-created (zeroed) via GetOrCreateNextTable.
         // Caller flushes TLB after a batch.
+        // Serialized against preemption. Editing a page table is a multi-step
+        // edit of shared structure: splitting a large mapping rebuilds a whole
+        // level, and a thread interrupted midway leaves a table another thread
+        // then rebuilds on top of — losing the first thread's flags. That is how
+        // JIT pages allocated as executable came back marked non-executable.
+        // Cooperative scheduling made this safe for free; preemption does not.
         public static bool MapKernel(ulong virtualAddress, ulong physicalAddress, PageFlags flags)
+        {
+            Threading.Preemption.Suppress();
+            try { return MapKernelCore(virtualAddress, physicalAddress, flags); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static bool MapKernelCore(ulong virtualAddress, ulong physicalAddress, PageFlags flags)
         {
             if (s_rootTable == 0)
                 return false;
@@ -218,7 +244,20 @@ namespace OS.Kernel.Paging
         // region (the bug that surfaced after Phase E1 activated the
         // clone). Walk allocates table pages only for the split path;
         // missing intermediate directories still fail Unmap.
+        // Serialized against preemption. Editing a page table is a multi-step
+        // edit of shared structure: splitting a large mapping rebuilds a whole
+        // level, and a thread interrupted midway leaves a table another thread
+        // then rebuilds on top of — losing the first thread's flags. That is how
+        // JIT pages allocated as executable came back marked non-executable.
+        // Cooperative scheduling made this safe for free; preemption does not.
         public static bool Unmap(ulong virtualAddress)
+        {
+            Threading.Preemption.Suppress();
+            try { return UnmapCore(virtualAddress); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static bool UnmapCore(ulong virtualAddress)
         {
             s_unmapCalls++;
 
@@ -330,7 +369,20 @@ namespace OS.Kernel.Paging
             return TrySetKernelFlagsEx(virtualAddress, newFlags, (PageFlags)PresentMask, out _);
         }
 
+        // Serialized against preemption. Editing a page table is a multi-step
+        // edit of shared structure: splitting a large mapping rebuilds a whole
+        // level, and a thread interrupted midway leaves a table another thread
+        // then rebuilds on top of — losing the first thread's flags. That is how
+        // JIT pages allocated as executable came back marked non-executable.
+        // Cooperative scheduling made this safe for free; preemption does not.
         public static bool TrySetKernelFlagsEx(ulong virtualAddress, PageFlags newFlags, PageFlags requiredMask, out bool wasLargePage)
+        {
+            Threading.Preemption.Suppress();
+            try { return TrySetKernelFlagsExCore(virtualAddress, newFlags, requiredMask, out wasLargePage); }
+            finally { Threading.Preemption.Allow(); }
+        }
+
+        private static bool TrySetKernelFlagsExCore(ulong virtualAddress, PageFlags newFlags, PageFlags requiredMask, out bool wasLargePage)
         {
             wasLargePage = false;
             // Post-E1: walks the active root (s_rootTable). See comment above.

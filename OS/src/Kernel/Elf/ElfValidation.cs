@@ -1,4 +1,4 @@
-using OS.Boot;
+﻿using OS.Boot;
 using OS.Hal;
 using OS.Kernel.Exec;
 using OS.Kernel.File;
@@ -95,6 +95,14 @@ namespace OS.Kernel.Elf
             if (result == AppRunResult.Success)
             {
                 passed++;
+                // Success said nothing, so "app run start" was the last word on
+                // this app and a reader could not tell a finished run from one
+                // that died mid-way. Failure always announced itself; success
+                // has to as well, or the log only proves that apps break.
+                DebugLog.Begin(LogLevel.Info);
+                UiText.Write("app run ok: ");
+                UiText.Write(app.Path);
+                DebugLog.EndLine();
                 return;
             }
 

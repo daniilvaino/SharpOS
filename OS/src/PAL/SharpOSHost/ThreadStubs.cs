@@ -76,10 +76,13 @@ namespace OS.PAL.SharpOSHost
         [RuntimeExport("SharpOSHost_CreateThread")]
         public static ulong CreateThread(void* lpStartAddress, void* lpParam, uint dwCreationFlags, uint* lpThreadId)
         {
-            OS.Hal.Console.Write("[CT] entry=0x"); OS.Hal.Console.WriteHex((ulong)lpStartAddress);
-            OS.Hal.Console.Write(" param=0x"); OS.Hal.Console.WriteHex((ulong)lpParam);
-            OS.Hal.Console.Write(" flags=0x"); OS.Hal.Console.WriteHex(dwCreationFlags);
-            OS.Hal.Console.WriteLine("");
+            if (OS.Kernel.Diagnostics.Probes.VerboseThreadLifecycle)
+            {
+                OS.Hal.Console.Write("[CT] entry=0x"); OS.Hal.Console.WriteHex((ulong)lpStartAddress);
+                OS.Hal.Console.Write(" param=0x"); OS.Hal.Console.WriteHex((ulong)lpParam);
+                OS.Hal.Console.Write(" flags=0x"); OS.Hal.Console.WriteHex(dwCreationFlags);
+                OS.Hal.Console.WriteLine("");
+            }
 
             if (!HandleTable.Init()) return 0;
 
@@ -96,7 +99,7 @@ namespace OS.PAL.SharpOSHost
                                               owner: null,
                                               suspended: suspended);
             if (t == null) {
-                OS.Hal.Console.WriteLine("[CT] SpawnHosted FAILED");
+                if (OS.Kernel.Diagnostics.Probes.VerboseThreadLifecycle) OS.Hal.Console.WriteLine("[CT] SpawnHosted FAILED");
                 return 0;
             }
 
@@ -111,22 +114,25 @@ namespace OS.PAL.SharpOSHost
                 // Out of slots. The thread is already enqueued; can't
                 // un-spawn. Mark the entry null so trampoline early-Exits.
                 t.Binding!.HostedEntry = null;
-                OS.Hal.Console.WriteLine("[CT] HandleTable.Alloc FAILED");
+                if (OS.Kernel.Diagnostics.Probes.VerboseThreadLifecycle) OS.Hal.Console.WriteLine("[CT] HandleTable.Alloc FAILED");
                 return 0;
             }
 
             if (lpThreadId != null) *lpThreadId = (uint)t.Id;
-            OS.Hal.Console.Write("[CT] OK id=");
-            OS.Hal.Console.WriteUInt((uint)t.Id);
-            OS.Hal.Console.Write(" handle=0x");
-            OS.Hal.Console.WriteHex(handle);
-            OS.Hal.Console.Write(" teb=0x");
-            OS.Hal.Console.WriteHex((ulong)t.Teb);
-            OS.Hal.Console.Write(" stackBase=0x");
-            OS.Hal.Console.WriteHex((ulong)t.StackBase);
-            OS.Hal.Console.Write(" stackTop=0x");
-            OS.Hal.Console.WriteHex((ulong)t.StackTop);
-            OS.Hal.Console.WriteLine("");
+            if (OS.Kernel.Diagnostics.Probes.VerboseThreadLifecycle)
+            {
+                OS.Hal.Console.Write("[CT] OK id=");
+                OS.Hal.Console.WriteUInt((uint)t.Id);
+                OS.Hal.Console.Write(" handle=0x");
+                OS.Hal.Console.WriteHex(handle);
+                OS.Hal.Console.Write(" teb=0x");
+                OS.Hal.Console.WriteHex((ulong)t.Teb);
+                OS.Hal.Console.Write(" stackBase=0x");
+                OS.Hal.Console.WriteHex((ulong)t.StackBase);
+                OS.Hal.Console.Write(" stackTop=0x");
+                OS.Hal.Console.WriteHex((ulong)t.StackTop);
+                OS.Hal.Console.WriteLine("");
+            }
             return handle;
         }
 
@@ -458,10 +464,13 @@ namespace OS.PAL.SharpOSHost
             // (i.e. already running / exited). Map to Win32 "previous
             // suspend count was 0" -- the resume was a no-op.
             bool wasSuspended = Scheduler.MakeRunnable(t);
-            OS.Hal.Console.Write("[RT] id=");
-            OS.Hal.Console.WriteUInt((uint)t.Id);
-            OS.Hal.Console.Write(wasSuspended ? " -> RUNNABLE" : " -> already-running/exited");
-            OS.Hal.Console.WriteLine("");
+            if (OS.Kernel.Diagnostics.Probes.VerboseThreadLifecycle)
+            {
+                OS.Hal.Console.Write("[RT] id=");
+                OS.Hal.Console.WriteUInt((uint)t.Id);
+                OS.Hal.Console.Write(wasSuspended ? " -> RUNNABLE" : " -> already-running/exited");
+                OS.Hal.Console.WriteLine("");
+            }
             return wasSuspended ? 1u : 0u;
         }
     }

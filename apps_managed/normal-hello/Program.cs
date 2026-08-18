@@ -1,4 +1,4 @@
-// step 73 — PAL / OS-integration boundary census on SharpOS bare metal.
+﻿// step 73 — PAL / OS-integration boundary census on SharpOS bare metal.
 // 100% stock C#, same DLL runs byte-for-byte on the kernel. 5 probe
 // sets, sage order: PAL census → threading → FS-minimal → crypto/RNG →
 // globalization. Each Probe prints its name FIRST (so an uncatchable
@@ -1380,6 +1380,236 @@ Probe("Enum.HasFlag on flags-enum", () =>
 Sec("6. PROCESS CREATION  (last — likely hard-panic)");
 Probe("Process.Start(dummy)", () => { using var p = Process.Start("dummy"); });
 
+// Make a page executable AFTER writing code into it, then run that code.
+//
+// This is the sequence every JIT performs — allocate writable, emit, change
+// protection, jump — and the one that failed under preemption with an
+// instruction-fetch fault on a non-executable page.
+//
+// Deliberately end-to-end through VirtualAlloc/VirtualProtect as the runtime
+// calls them. A kernel-side probe calling our own export directly was written
+// first and rejected: it proves the function works in isolation, not that the
+// path the runtime takes works.
+Probe("VirtualProtect: page executable after write", () =>
+{
+    const uint MEM_COMMIT_RESERVE = 0x1000 | 0x2000;
+    const uint PAGE_READWRITE = 0x04;
+    const uint PAGE_EXECUTE_READWRITE = 0x40;
+
+    IntPtr page = NativeMem.VirtualAlloc(IntPtr.Zero, (UIntPtr)4096, MEM_COMMIT_RESERVE, PAGE_READWRITE);
+    if (page == IntPtr.Zero) throw new Exception("VirtualAlloc returned null");
+
+    // mov eax, 0x5A5A ; ret
+    byte[] code = { 0xB8, 0x5A, 0x5A, 0x00, 0x00, 0xC3 };
+    Marshal.Copy(code, 0, page, code.Length);
+
+    if (!NativeMem.VirtualProtect(page, (UIntPtr)4096, PAGE_EXECUTE_READWRITE, out uint old))
+        throw new Exception("VirtualProtect failed");
+
+    // Flags agreeing is not the same as the CPU agreeing, so the page is
+    // actually executed and the value checked.
+    int got;
+    unsafe { got = ((delegate* unmanaged[Cdecl]<int>)page)(); }
+    if (got != 0x5A5A) throw new Exception($"code returned 0x{got:X}, expected 0x5A5A");
+});
+
+// Brute force at the JIT: freshly compiled code, executed immediately, from
+// several threads at once.
+//
+// The single VirtualProtect probe above only proves the CAPABILITY exists —
+// allocate, write, protect, run, in that order with nobody else about. It
+// would pass while the real defect lived, because the fault we are chasing
+// appeared under preemption: an instruction fetch on a page that was not
+// executable YET. That is a question of ordering, and ordering only breaks
+// when something else is running.
+//
+// So: many small methods, each compiled and jumped into straight away, on
+// several threads, for a bounded stretch of time. Every one of them exercises
+// allocate-emit-protect-execute inside the runtime's own allocator, which is
+// the path the census's VirtualAlloc probe does NOT touch.
+//
+// A wrong answer matters as much as a fault: each method returns a value
+// derived from its own index, so code compiled for one method being reached
+// through another shows up as a mismatch rather than silence.
+// Same stress, one thread. Runs FIRST so a single run separates two very
+// different defects: DynamicMethod being broken at all, versus being broken
+// only when several threads compile at once. Guessing between them is exactly
+// what has cost the most time today.
+// Splits the preemption failure in two. This touches no runtime machinery
+// at all: four threads doing arithmetic on their own locals, each checking
+// its own result. If values come back wrong, preemption loses register or
+// FP state and every workload is unsafe. If it stays clean while the JIT
+// stress fails, switching itself is sound and the problem is WHERE we
+// preempt — a region the runtime treats as indivisible.
+Probe("Register stress: 4 threads pure math, 3s", () =>
+{
+    int bad = 0, iters = 0;
+    var threads = new System.Threading.Thread[4];
+    for (int t = 0; t < 4; t++)
+    {
+        int seed = t + 1;
+        threads[t] = new System.Threading.Thread(() =>
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            int local = 0;
+            while (DateTime.UtcNow < deadline)
+            {
+                // Enough live values to keep several registers busy across
+                // any switch, with a result that is checkable exactly.
+                long a = seed, b = seed + 1, c = seed + 2, d = seed + 3;
+                double x = seed * 1.5, y = seed * 2.5, z = seed * 3.5;
+                for (int i = 0; i < 1000; i++)
+                {
+                    a = a * 3 + 1; b = b * 5 + 2; c = c * 7 + 3; d = d * 11 + 5;
+                    a &= 0xFFFFFF; b &= 0xFFFFFF; c &= 0xFFFFFF; d &= 0xFFFFFF;
+                    x = x * 0.5 + 1.0; y = y * 0.25 + 2.0; z = z * 0.125 + 3.0;
+                }
+                long expA = seed, expB = seed + 1, expC = seed + 2, expD = seed + 3;
+                for (int i = 0; i < 1000; i++)
+                {
+                    expA = expA * 3 + 1; expB = expB * 5 + 2;
+                    expC = expC * 7 + 3; expD = expD * 11 + 5;
+                    expA &= 0xFFFFFF; expB &= 0xFFFFFF; expC &= 0xFFFFFF; expD &= 0xFFFFFF;
+                }
+                if (a != expA || b != expB || c != expC || d != expD) System.Threading.Interlocked.Increment(ref bad);
+                double eX = seed * 1.5, eY = seed * 2.5, eZ = seed * 3.5;
+                for (int i = 0; i < 1000; i++)
+                {
+                    eX = eX * 0.5 + 1.0; eY = eY * 0.25 + 2.0; eZ = eZ * 0.125 + 3.0;
+                }
+                // Recomputed, never compared against a literal: hardcoding the
+                // limits of these series made the check fire on every single
+                // round and told us nothing.
+                if (x != eX || y != eY || z != eZ) System.Threading.Interlocked.Increment(ref bad);
+                local++;
+            }
+            System.Threading.Interlocked.Add(ref iters, local);
+        });
+        threads[t].Start();
+    }
+    for (int t = 0; t < 4; t++) threads[t].Join();
+    Console.Write($"[{iters} rounds] ");
+    if (bad != 0) throw new Exception($"{bad} corrupted results");
+});
+
+Probe("JIT stress: 1 thread emit+run, 1s", () =>
+{
+    var deadline = DateTime.UtcNow.AddSeconds(1);
+    int n = 0;
+    while (DateTime.UtcNow < deadline)
+    {
+        int expected = n + 7;
+        var dm = new DynamicMethod($"solo{n}", typeof(int), Type.EmptyTypes);
+        var il = dm.GetILGenerator();
+        il.Emit(OpCodes.Ldc_I4, expected);
+        il.Emit(OpCodes.Ret);
+        var fn = (Func<int>)dm.CreateDelegate(typeof(Func<int>));
+        int got = fn();
+        if (got != expected) throw new Exception($"emitted {expected}, got {got}");
+        n++;
+    }
+    if (n < 50) throw new Exception($"only {n} methods compiled");
+    Console.Write($"[{n} methods] ");
+});
+
+// Same 4-thread JIT load, but with collection held off. Everything measured
+// so far points at the collector rather than at page protection: register
+// state survives preemption intact, the identical load passes with
+// preemption off, and every failure is a garbage pointer at a different
+// address. A collector expects to see threads in a state it can interpret;
+// preemption stops them anywhere. If this passes while the plain version
+// fails, that is the answer, and it is not something a page flag can fix.
+Probe("JIT stress: 4 threads, retained, 3s", () =>
+{
+    // Same load, except every delegate is kept alive. The plain version drops
+    // each one the moment it returns, so the collector may reclaim the method
+    // and hand its code memory back as data — and a later jump into it faults
+    // on a page nobody ever asked to be executable, which is exactly the
+    // verdict the fault dump prints. If retaining makes the failures stop, the
+    // defect is in what keeps compiled code alive, not in preemption.
+    var keep = new System.Collections.Generic.List<Func<int>>();
+
+    try
+    {
+        int n = 0;
+        var threads = new System.Threading.Thread[4];
+        for (int t = 0; t < 4; t++)
+        {
+            threads[t] = new System.Threading.Thread(() =>
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(3);
+                while (DateTime.UtcNow < deadline)
+                {
+                    int expected = System.Threading.Interlocked.Increment(ref n) + 7;
+                    var dm = new DynamicMethod($"ng{expected}", typeof(int), Type.EmptyTypes);
+                    var il = dm.GetILGenerator();
+                    il.Emit(OpCodes.Ldc_I4, expected);
+                    il.Emit(OpCodes.Ret);
+                    var fn = (Func<int>)dm.CreateDelegate(typeof(Func<int>));
+                    lock (keep) keep.Add(fn);
+                    if (fn() != expected) throw new Exception("wrong value");
+                }
+            });
+            threads[t].Start();
+        }
+        for (int t = 0; t < 4; t++) threads[t].Join();
+        Console.Write($"[{n} methods, {keep.Count} retained] ");
+    }
+    finally { }
+});
+
+Probe("JIT stress: 4 threads emit+run, 3s", () =>
+{
+    const int Threads = 4;
+    var deadline = DateTime.UtcNow.AddSeconds(3);
+    long compiled = 0;
+    Exception? firstFailure = null;
+
+    var workers = new Thread[Threads];
+    for (int t = 0; t < Threads; t++)
+    {
+        int seed = t * 1000000;
+        workers[t] = new Thread(() =>
+        {
+            int n = seed;
+            try
+            {
+                while (DateTime.UtcNow < deadline)
+                {
+                    int expected = unchecked(n * 2654435761u > int.MaxValue ? n ^ 0x5A5A : n + 7);
+
+                    var dm = new DynamicMethod($"stress{n}", typeof(int), Type.EmptyTypes);
+                    var il = dm.GetILGenerator();
+                    il.Emit(OpCodes.Ldc_I4, expected);
+                    il.Emit(OpCodes.Ret);
+                    var fn = (Func<int>)dm.CreateDelegate(typeof(Func<int>));
+
+                    int got = fn();
+                    if (got != expected)
+                        throw new Exception($"emitted {expected:X}, got {got:X}");
+
+                    Interlocked.Increment(ref compiled);
+                    n++;
+                }
+            }
+            catch (Exception e)
+            {
+                Interlocked.CompareExchange(ref firstFailure, e, null);
+            }
+        });
+        workers[t].IsBackground = true;
+        workers[t].Start();
+    }
+
+    foreach (var w in workers) w.Join();
+
+    if (firstFailure != null) throw firstFailure;
+    if (Interlocked.Read(ref compiled) < 100)
+        throw new Exception($"only {Interlocked.Read(ref compiled)} methods compiled — stress did not run");
+
+    Console.Write($"[{Interlocked.Read(ref compiled)} methods] ");
+});
+
 Console.WriteLine();
 Console.WriteLine($"=== PAL/OS census end: OK={ok}  DEG={deg}  FAIL={bad} ===");
 return 42;
@@ -1440,3 +1670,14 @@ public static class RtmModInit
 }
 
 public class RtmRefHolder { public string? Field; }
+
+
+internal static class NativeMem
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern IntPtr VirtualAlloc(IntPtr address, UIntPtr size, uint allocationType, uint protect);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool VirtualProtect(IntPtr address, UIntPtr size, uint newProtect, out uint oldProtect);
+}

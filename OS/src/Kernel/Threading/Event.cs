@@ -1,4 +1,4 @@
-namespace OS.Kernel.Threading
+﻿namespace OS.Kernel.Threading
 {
     // Phase E5 — scheduler-aware Event (manual or auto reset).
     // Threads call Wait() to block until Set() fires; the wait list is
@@ -29,14 +29,24 @@ namespace OS.Kernel.Threading
         // immediately if already set (consuming the signal on auto-reset).
         public void Wait()
         {
+            // Testing the flag and joining the wait list must be one step. A
+            // switch in between lets the signaller run: it sets the flag and
+            // wakes a wait list this thread has not joined yet, and the thread
+            // then sleeps on an event that has already fired. Nothing wakes it
+            // again. That is what left the main thread in Join forever after
+            // all four workers had exited and signalled — the same shape as the
+            // semaphore race, in the primitive next door.
+            Preemption.Suppress();
+
             if (IsSet)
             {
                 if (!IsManualReset) IsSet = false;
+                Preemption.Allow();
                 return;
             }
 
             Thread? curr = Scheduler.Current;
-            if (curr == null) return;   // nothing to block
+            if (curr == null) { Preemption.Allow(); return; }   // nothing to block
 
             // Link onto wait list (LIFO; ordering doesn't matter for
             // manual-reset since all wake at once; for auto-reset we
@@ -46,6 +56,7 @@ namespace OS.Kernel.Threading
             _waitHead = curr;
             curr.State = ThreadState.Waiting;
 
+            Preemption.Allow();
             Scheduler.Yield();
             // When we return, Set woke us. Wait.Next was nulled at wake time.
         }
@@ -54,6 +65,15 @@ namespace OS.Kernel.Threading
         // true. Auto-reset: wake one waiter (if any), IsSet stays false;
         // if no waiter, IsSet becomes true (latched for the next Wait).
         public void Set()
+        {
+            // Same reason as Wait: publishing the flag and draining the wait
+            // list is one step, or a waiter can slip in between the two.
+            Preemption.Suppress();
+            try { SetCore(); }
+            finally { Preemption.Allow(); }
+        }
+
+        private void SetCore()
         {
             if (IsManualReset)
             {

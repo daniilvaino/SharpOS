@@ -515,6 +515,12 @@ foreach ($m in $launchStarts) {
     $after = $text.Substring($m.Index)
     $exit = [regex]::Match($after, 'app run start:[^\n]*\n.*?process exit code = (-?\d+)', 'Singleline')
     $failM = [regex]::Match($after, 'app run start:[^\n]*\n.*?app failed:[^\n]*reason=(\w+)', 'Singleline')
+    # Apps that carry no exit code still announce completion (step158): before
+    # that, a successful run said nothing at all and read here as a halt.
+    $okM = [regex]::Match($after, 'app run start:[^
+]*
+.*?app run ok:[^
+]*', 'Singleline')
     $isExit = $exit.Success
     $isFail = $failM.Success
     if ($isExit -and $isFail) {
@@ -524,6 +530,8 @@ foreach ($m in $launchStarts) {
         $appResults += [PSCustomObject]@{ Cat='Launcher'; Name=$path; Status='OK';   Detail="exitCode=$($exit.Groups[1].Value)" }
     } elseif ($isFail) {
         $appResults += [PSCustomObject]@{ Cat='Launcher'; Name=$path; Status='FAIL'; Detail="reason=$($failM.Groups[1].Value)" }
+    } elseif ($okM.Success) {
+        $appResults += [PSCustomObject]@{ Cat='Launcher'; Name=$path; Status='OK';   Detail='ran to completion' }
     } else {
         $appResults += [PSCustomObject]@{ Cat='Launcher'; Name=$path; Status='HALT'; Detail='started but no exit/fail trailer' }
     }
