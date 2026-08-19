@@ -604,6 +604,33 @@ if (Test-Path -LiteralPath $payloadDir) {
     }
 }
 
+# PowerShell distribution. Staged from payloads\pwsh\<dist>\ rather than
+# copied by hand once, because which build is on the image decides whether its
+# precompiled code is used at all: assemblies carry a ReadyToRun format version,
+# and the runtime loads only its own. A 7.5 distribution (format 10) against
+# this runtime (format 16, .NET 10) has every one of its assemblies rejected,
+# and System.Management.Automation alone is 19 MB that then gets compiled from
+# scratch on every start — the long startup and the pause on a first-time
+# command both came from exactly that.
+#
+# System.Private.CoreLib is deliberately NOT taken from the distribution: that
+# assembly and the runtime binary are one unit, built together and agreeing on
+# internal layout. Ours stays.
+$pwshDist = Get-ChildItem -LiteralPath (Join-Path $repoRoot "payloads\pwsh") -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+if ($pwshDist) {
+    $pwshEsp = Join-Path $espSharpOSDir "pwsh"
+    New-Item -ItemType Directory -Force -Path $pwshEsp | Out-Null
+    $staged = 0
+    foreach ($f in Get-ChildItem -LiteralPath $pwshDist.FullName -File) {
+        if ($f.Name -eq "System.Private.CoreLib.dll") { continue }
+        Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $pwshEsp $f.Name) -Force
+        $staged++
+    }
+    Write-Host "Prepared PowerShell: $($pwshDist.Name) -> \sharpos\pwsh\ ($staged files, CoreLib kept ours)"
+}
+
+
 Write-Host "Prepared EFI image: $bootx64"
 if ($NoRun) {
     Write-Host "NoRun set: build finished, QEMU launch skipped."

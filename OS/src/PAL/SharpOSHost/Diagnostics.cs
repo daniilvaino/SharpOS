@@ -1,4 +1,4 @@
-using System.Runtime;
+﻿using System.Runtime;
 using System.Runtime.InteropServices;
 using OS.Hal;
 using OS.Kernel;
@@ -28,6 +28,11 @@ namespace OS.PAL.SharpOSHost
         public static bool Thread    = false;  // [CT] [RT] [Tramp]
         public static bool Probe     = false;   // [probe-*]
         public static bool Info      = false;   // [info]
+        // Whether the runtime accepts a module's precompiled code. One line
+        // per assembly, and the answer to "why is startup slow" — on by
+        // default because a silent no is indistinguishable from a silent yes.
+        public static bool R2r       = true;
+
         public static bool Unknown   = false;   // any line not matching above
     }
 
@@ -78,6 +83,9 @@ namespace OS.PAL.SharpOSHost
                 case 'p':
                     if (StartsWith(t, "prestub")) return TraceGate.Jit;
                     if (StartsWith(t, "probe"))   return TraceGate.Probe;
+                    break;
+                case 'r':
+                    if (StartsWith(t, "r2r"))     return TraceGate.R2r;
                     break;
                 case 'D':
                     if (StartsWith(t, "DoPrestub")) return TraceGate.Jit;

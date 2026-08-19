@@ -362,15 +362,63 @@ namespace OS.PAL.SharpOSHost
             return IsStdHandle(hConsole) ? 1 : 0;
         }
 
-        // SetConsoleCtrlHandler — Ctrl+C/Ctrl+Break/Ctrl+Close handler
-        // registration. PowerShell registers a BreakHandler to translate
-        // Ctrl+C presses into PipelineStopException. On our UART there's
-        // no Ctrl+C signal source yet, so we accept the registration but
-        // it stays dormant — when we wire keyboard scancode -> Ctrl+C
-        // detection later, we'll invoke the registered handler. For now
-        // return TRUE so PowerShell init proceeds.
+        // SetConsoleCtrlHandler — Ctrl+C/Ctrl+Break handler registration.
+        // PowerShell registers one to turn Ctrl+C into a pipeline stop.
+        //
+        // The registration used to be accepted and the handler pointer thrown
+        // away, so the shell could never be interrupted: the key reached the
+        // line editor and echoed as ^C, which made it look wired up, while
+        // `sleep 1000` ran to completion regardless. Accepting a registration
+        // one cannot honour is worse than refusing it — it looks like support.
+        private const int MaxCtrlHandlers = 8;
+        private static ulong[] s_ctrlHandlers = null!;
+        private static int s_ctrlHandlerCount;
+
         [RuntimeExport("SharpOSHost_SetConsoleCtrlHandler")]
-        public static int SetConsoleCtrlHandler() => 1;  // success
+        public static int SetConsoleCtrlHandler(void* handler, int add)
+        {
+            if (s_ctrlHandlers == null) s_ctrlHandlers = new ulong[MaxCtrlHandlers];
+
+            // A null routine is Windows' "ignore Ctrl+C" switch, not a handler.
+            if (handler == null) return 1;
+
+            if (add != 0)
+            {
+                if (s_ctrlHandlerCount >= MaxCtrlHandlers) return 0;
+                s_ctrlHandlers[s_ctrlHandlerCount++] = (ulong)handler;
+                return 1;
+            }
+
+            for (int i = 0; i < s_ctrlHandlerCount; i++)
+            {
+                if (s_ctrlHandlers[i] != (ulong)handler) continue;
+                for (int j = i; j + 1 < s_ctrlHandlerCount; j++) s_ctrlHandlers[j] = s_ctrlHandlers[j + 1];
+                s_ctrlHandlerCount--;
+                return 1;
+            }
+            return 0;
+        }
+
+        /// <summary>How many handlers are registered. Zero means the shell is
+        /// not up yet: nothing to deliver to, and nobody to attach for.</summary>
+        public static int CtrlHandlerCount => s_ctrlHandlerCount;
+
+        /// <summary>
+        /// Deliver a console control event. Handlers run most-recently-added
+        /// first and the first one to return TRUE consumes it — Win32 order,
+        /// which is what PowerShell's handler expects.
+        /// Returns true if someone handled it.
+        /// </summary>
+        public static bool RaiseCtrlEvent(uint eventType)
+        {
+            for (int i = s_ctrlHandlerCount - 1; i >= 0; i--)
+            {
+                var fn = (delegate* unmanaged<uint, int>)s_ctrlHandlers[i];
+                if (fn == null) continue;
+                if (fn(eventType) != 0) return true;
+            }
+            return false;
+        }
 
         // GetStartupInfoW — populates STARTUPINFOW struct with process
         // startup data (window title, cmd line, std handle inheritance,

@@ -26,6 +26,15 @@ namespace OS.Kernel.Threading
     {
         private const int BlockElements = 48;
 
+        // Hard ceiling on how much the worker may allocate. It leans on the
+        // main thread to collect, and on a host where the timer ticks slowly
+        // the main thread barely runs: the worker then outruns the collector
+        // and eats every physical page — VirtualBox died this way, two
+        // gigabytes of heap growth with the rest of boot left with nothing.
+        // A healthy run needs ~130k allocations, so this bounds the damage
+        // without changing what the probe measures.
+        private const uint AllocationCeiling = 500_000;
+
         private static volatile uint s_allocations;
         private static volatile uint s_corruptions;
         private static volatile bool s_workerDone;
@@ -34,7 +43,7 @@ namespace OS.Kernel.Threading
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void WorkerEntry()
         {
-            while (!s_stop)
+            while (!s_stop && s_allocations < AllocationCeiling)
             {
                 byte[] block = new byte[BlockElements];
                 for (int i = 0; i < BlockElements; i++) block[i] = (byte)(i ^ 0xA5);
@@ -155,7 +164,13 @@ namespace OS.Kernel.Threading
             // sections are not being entered at all.
             const ulong MinimumSwitches = 5;
 
-            bool ok = s_allocations > 0 && collections > 0 &&
+            // Hitting the ceiling means the collector never kept up, which is a
+            // real finding about the host — say it rather than passing quietly.
+            if (s_allocations >= AllocationCeiling)
+                Console.Write(" CEILING-HIT");
+
+            bool ok = s_allocations > 0 && s_allocations < AllocationCeiling &&
+                      collections > 0 &&
                       s_corruptions == 0 && heapAlive &&
                       (Preemption.Switches - switchesBefore) >= MinimumSwitches &&
                       (Preemption.Declined - declinedBefore) > 0;

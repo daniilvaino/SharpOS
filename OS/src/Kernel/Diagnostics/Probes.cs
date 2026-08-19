@@ -85,6 +85,15 @@
         // was written for.
         public const bool EhVerboseDiagnostics = false;
 
+        // Per-page bookkeeping of how each page came to be mapped: committed
+        // as code, as data, materialised by a fault. It answered the question
+        // it was built for — the fault dumps that led to the return-address
+        // hijack — and then became the cost. The sets are fixed-size and long
+        // saturated, so every insert walks all 8192 slots before giving up:
+        // 11% of the CPU during PowerShell startup, on every committed page.
+        // ON only while a fault dump needs to name a page's origin.
+        public const bool TracePageOrigins = false;
+
         // Sampling profiler on the timer tick. On while the question is
         // "where does startup spend its time"; the answer is a [prof] line on
         // the serial port every ten seconds.
@@ -180,7 +189,7 @@
         // Both DLLs are always built and deployed by run_build.ps1 + added
         // to TPA; the toggle only chooses which one execute_assembly aims
         // at. Const bool so ILC folds the unused branch to nothing.
-        public const bool LaunchNormalHelloCensus = true;
+        public const bool LaunchNormalHelloCensus = false;
 
         // Mute kernel diagnostics while the hosted app owns the screen.
         //
@@ -195,7 +204,7 @@
         //
         // Either way this also gates the SERIAL LOG: Console.Quiet is checked
         // before anything reaches Platform.Write.
-        public const bool HostedAppQuietConsole = false;
+        public const bool HostedAppQuietConsole = true;
 
         // Phase E2 — TEB facade swap. Allocates a fresh TebFacade, swaps
         // gs base to it (under CLI), reads gs:[Self] and gs:[StackLimit]

@@ -62,6 +62,7 @@ namespace OS.Kernel.Diagnostics
         private static ulong s_dropped;
         private static ulong s_evicted;
         private static uint s_sinceReport;
+        private static ulong s_haltsAtLastReport;
 
         // Ticks between reports. At 100 Hz this is every ten seconds — often
         // enough to watch a startup unfold, rare enough not to drown the log.
@@ -181,6 +182,17 @@ namespace OS.Kernel.Diagnostics
             if (!s_enabled) return;
             if (++s_sinceReport < ReportEvery) return;
             s_sinceReport = 0;
+
+            // Say nothing about a window the machine spent asleep. The report
+            // was written for a ten-second boot, where every window carried
+            // work; sitting at an interactive prompt it filed the same "the CPU
+            // did nothing" line every ten seconds and buried the log. Idle is
+            // the one state that needs no profile.
+            ulong halts = OS.Kernel.Threading.Scheduler.IdleHalts;
+            ulong sleptThisWindow = halts - s_haltsAtLastReport;
+            s_haltsAtLastReport = halts;
+            if (sleptThisWindow >= (ReportEvery - (ReportEvery / 10))) return;
+
             Report();
         }
 

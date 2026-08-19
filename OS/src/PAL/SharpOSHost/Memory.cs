@@ -355,6 +355,8 @@ namespace OS.PAL.SharpOSHost
 
         public static void NoteRegion(ulong start, ulong end, uint tag)
         {
+            if (!OS.Kernel.Diagnostics.Probes.TracePageOrigins) return;
+
             if (s_history == null) s_history = new ProtectRecord[HistorySlots];
             int slot = s_historyNext;
             s_historyNext = (s_historyNext + 1) % HistorySlots;

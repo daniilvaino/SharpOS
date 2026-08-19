@@ -277,6 +277,12 @@ namespace OS.Boot
                 if (OS.Kernel.Diagnostics.Probes.PreemptHostedSession)
                     OS.Kernel.Threading.Preemption.Enable();
 
+                // Keys have to be collected while a command runs, not only
+                // while the shell is asking for them. Started here because it
+                // needs preemption to be useful: without it the pump would
+                // wait its turn behind the very command it exists to interrupt.
+                OS.Kernel.Input.InputPump.Start();
+
                 BootSequence.RunCoreClrSession(Platform.GetBootInfo());
 
                 OS.Kernel.Threading.Preemption.Disable();
@@ -338,6 +344,13 @@ namespace OS.Boot
             // masked, and both vectors the APIC can raise land in our own
             // dispatcher.
             X64Asm.Sti();
+
+            // Correct the arming against the rate actually delivered, then
+            // check. Order matters: verification without correction only
+            // reports that the clock is wrong.
+            bool retuned = OS.Hal.Apic.LocalApic.RetuneToDeliveredRate(TimerHz);
+            Console.Write("[apic] retune: ");
+            Console.WriteLine(retuned ? "in range" : "OUT OF RANGE after correction");
 
             VerifyTickIsMoving();
         }

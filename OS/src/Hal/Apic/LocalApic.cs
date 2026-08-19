@@ -47,6 +47,8 @@ namespace OS.Hal.Apic
         private static byte* s_base;
         private static bool s_enabled;
         private static uint s_ticksPerSecond;
+        private static uint s_initialCount;
+        private static byte s_vector;
         private static ulong s_timerTicks;
         private static ulong s_spurious;
 
@@ -152,9 +154,58 @@ namespace OS.Hal.Apic
             uint initial = s_ticksPerSecond / hz;
             if (initial == 0) return false;
 
+            s_initialCount = initial;
+            s_vector = vector;
             Write(RegLvtTimer, LvtPeriodic | vector);
             Write(RegTimerInitCount, initial);
             return true;
+        }
+
+        /// <summary>
+        /// Check the rate the timer actually delivers and correct it. Must run
+        /// with interrupts enabled — it counts real interrupts, not register
+        /// reads.
+        ///
+        /// Calibration measures the countdown for 10 ms and trusts the answer.
+        /// On VirtualBox that answer came out five times too high: the timer
+        /// was armed for 20 Hz while everything assumed 100, so every thread
+        /// waited up to 50 ms for its turn and keystrokes lagged visibly. The
+        /// estimate was never wrong in a way anything checked — it was simply
+        /// believed. Measuring what was delivered costs one window and turns a
+        /// silent five-fold error into a corrected clock.
+        /// </summary>
+        public static bool RetuneToDeliveredRate(uint hz, uint rounds = 3)
+        {
+            if (!s_enabled || hz == 0 || s_initialCount == 0) return false;
+            if (!Hpet.IsInitialized || Hpet.FrequencyHz == 0) return false;
+
+            for (uint round = 0; round < rounds; round++)
+            {
+                ulong before = s_timerTicks;
+                ulong hpetStart = Hpet.ReadCounter();
+                ulong window = Hpet.FrequencyHz / 10;           // 100 ms
+                while (Hpet.ReadCounter() - hpetStart < window) { }
+
+                ulong observed = s_timerTicks - before;
+                ulong expected = hz / 10;
+                if (expected == 0) return false;
+                if (observed == 0) return false;                // not ticking at all
+
+                // Within a tenth is as close as this needs to be; the point is
+                // to catch a clock off by a factor, not to trim percentages.
+                ulong low = expected - (expected / 10);
+                ulong high = expected + (expected / 10);
+                if (observed >= low && observed <= high) return true;
+
+                ulong scaled = (ulong)s_initialCount * observed / expected;
+                if (scaled == 0) scaled = 1;
+                if (scaled > 0xFFFFFFFFUL) scaled = 0xFFFFFFFFUL;
+
+                s_initialCount = (uint)scaled;
+                Write(RegTimerInitCount, s_initialCount);
+            }
+
+            return false;
         }
 
         public static void StopTimer()
