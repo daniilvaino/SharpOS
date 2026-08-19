@@ -2,7 +2,7 @@
 
 SharpOS - это экспериментальная операционная система, которая строится как **полностью C#-проект** с управляемым развитием низкоуровневых компонентов.
 
-На SharpOS запускаются стоковый **PowerShell 7.5.5** и играбельный **DOOM**.
+На SharpOS запускаются стоковый **PowerShell 7.6.5** и играбельный **DOOM**.
 
 [![SharpOS launcher](media/screenshot.png)](media/screenshot.png)
  - **весь** код ядра, приложений, загрузки и пользовательского окружения пишется на C# (кроме форка CoreCLR: [dotnet-runtime-sharpos](https://github.com/daniilvaino/dotnet-runtime-sharpos/tree/sharpos/coreclr-port));
@@ -40,6 +40,14 @@ cd .\SharpOS\
 # Данные для приложений (IWAD'ы, картриджи) кладутся в payloads\ —
 # см. payloads\README.md.
 curl.exe -L -o payloads\DOOM1.WAD https://raw.githubusercontent.com/nifanfa/MOOS/refs/heads/master/Ramdisk/DOOM1.WAD
+
+# PowerShell — берётся из payloads\pwsh\ целиком, распакованным.
+# Версия важна: сборки несут предкомпилированный код с номером формата, и
+# рантайм грузит только свой (16 для .NET 10). 7.5 несёт формат 10 — тогда
+# отвергается всё, включая System.Management.Automation (19 МБ), и движок
+# компилируется заново при каждом запуске.
+curl.exe -L -o pwsh.zip https://github.com/PowerShell/PowerShell/releases/download/v7.6.5/PowerShell-7.6.5-win-x64.zip
+Expand-Archive pwsh.zip -DestinationPath payloads\pwsh\PowerShell-7.6.5-win-x64
  
 # --- Приложения (лаунчер, FetchApp, AotTests, DOOM, TriCNES, Fami):
 & .\build_launcher.ps1; & .\build_fetch.ps1; & .\build_aottests.ps1; & .\build_doom.ps1; & .\build_tricnes.ps1; & .\build_fami.ps1
@@ -179,9 +187,9 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 
 ## PowerShell
 
-[![PowerShell 7.5.5 на SharpOS](media/pwsh.png)](media/pwsh.png)
+[![PowerShell 7.6.5 на SharpOS](media/pwsh.png)](media/pwsh.png)
 
-Стоковый **PowerShell 7.5.5** грузится с FAT32 на bare metal до интерактивного prompt'а и выполняет реальные cmdlet'ы (`Get-ChildItem`, `Get-Content`, pipelines, переменные, `[DateTime]::Now`). Это самый требовательный стресс-тест всего стека сразу: TPL, EH, рефлексия, GC, FAT32, ANSI-консоль. Строчный редактор **PSReadLine работает полноценно** (step147): эхо, SGR-цвета, Tab-дополнение, история со стрелками, Backspace/Delete/Home/End — всё поверх нашей framebuffer-консоли на движке XtermSharp. Известные ограничения: ConstrainedLanguage Mode, история не сохраняется между запусками (readonly FAT32)
+Стоковый **PowerShell 7.6.5** грузится с FAT32 на bare metal до интерактивного prompt'а и выполняет реальные cmdlet'ы (`Get-ChildItem`, `Get-Content`, pipelines, переменные, `[DateTime]::Now`). Это самый требовательный стресс-тест всего стека сразу: TPL, EH, рефлексия, GC, FAT32, ANSI-консоль. Строчный редактор **PSReadLine работает полноценно** (step147): эхо, SGR-цвета, Tab-дополнение, история со стрелками, Backspace/Delete/Home/End — всё поверх нашей framebuffer-консоли на движке XtermSharp. **Ctrl+C прерывает выполняющуюся команду** (step159): клавиши забирает отдельный поток, независимо от того, читает ли их оболочка. Известные ограничения: ConstrainedLanguage Mode, история не сохраняется между запусками (readonly FAT32)
 
 ## Сторонние приложения, запускаемые на SharpOS
 
