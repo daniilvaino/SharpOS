@@ -4,6 +4,3 @@
 [submodule "apps_native/Fami/Fami"]
 	path = apps_native/Fami/Fami
 	url = https://github.com/RupertAvery/Fami
-[submodule "vendor/Terminal.Gui"]
-	path = vendor/Terminal.Gui
-	url = https://github.com/tui-cs/Terminal.Gui
