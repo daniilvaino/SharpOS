@@ -1,4 +1,4 @@
-#if !SKIP_CORECLR
+﻿#if !SKIP_CORECLR
 using System;
 using System.Runtime.InteropServices;
 using OS.Boot;
@@ -476,8 +476,60 @@ namespace OS.Kernel.Diagnostics
                     Console.WriteLine("");
                     if (xr == 0 && exitCode == 42)
                         Console.WriteLine("=== NORMAL .NET PROGRAM EXECUTED (byte-for-byte) ===");
+
+                    if (Probes.SequentialAssemblyProbe)
+                        RunAssembliesInSequence(hostHandle, domainId);
                 }
             }
+        }
+
+        // Can more than one assembly be executed in one runtime session?
+        //
+        // Everything the launcher could become depends on the answer, and today
+        // the host calls coreclr_execute_assembly exactly once with a path
+        // fixed at build time. Nobody has ever asked it twice, so "it only runs
+        // one" is an assumption, not a finding.
+        //
+        // Deliberately not judged: whatever comes back — S_OK, a failure code,
+        // a hang — is the fact we need. Written to make the answer readable,
+        // not to make it green.
+        private static void RunAssembliesInSequence(void* hostHandle, uint domainId)
+        {
+            Console.WriteLine("=== [seq] sequential assembly execution probe ===");
+
+            // The simple one twice first: it prints, returns 42 and exits
+            // cleanly, so a second failure points at the runtime rather than at
+            // whatever the app did on its way out. PowerShell goes last for the
+            // opposite reason — it tears its environment down behind it, and
+            // after that "cannot run twice" and "the shell cleaned up" would be
+            // indistinguishable.
+            fixed (byte* p1 = s_appPathNormalHello)
+            {
+                RunOne("normal-hello #1", hostHandle, domainId, p1);
+                RunOne("normal-hello #2", hostHandle, domainId, p1);
+            }
+
+            fixed (byte* p2 = s_appPathPwsh)
+                RunOne("powershell-bootstrap", hostHandle, domainId, p2);
+
+            Console.WriteLine("=== [seq] end ===");
+        }
+
+        private static void RunOne(string label, void* hostHandle, uint domainId, byte* path)
+        {
+            Console.Write("[seq] run "); Console.Write(label); Console.WriteLine(" ...");
+
+            uint exitCode = 0xFFFFFFFF;
+            int hr = coreclr_execute_assembly(
+                hostHandle, domainId,
+                argc: 0, argv: null,
+                managedAssemblyPath: path,
+                exitCode: &exitCode);
+
+            Console.Write("[seq] "); Console.Write(label);
+            Console.Write(" hr=0x"); Console.WriteHex((ulong)(uint)hr);
+            Console.Write(" exitCode="); Console.WriteInt((int)exitCode);
+            Console.WriteLine("");
         }
 
         // Phase 6.1.c first managed code execution. coreclr_create_delegate

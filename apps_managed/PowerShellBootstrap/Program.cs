@@ -1,4 +1,4 @@
-// PowerShell bootstrap shim — runs on SharpOS bare metal via
+﻿// PowerShell bootstrap shim — runs on SharpOS bare metal via
 // coreclr_execute_assembly, then hands off to stock PowerShell's
 // ManagedPSEntry.Main.
 //
@@ -26,6 +26,19 @@ internal static class Program
 {
     public static int Main(string[] args)
     {
+        // Answered on 2026-08-20 and left in place behind a switch: a
+        // collectible load context gives an assembly its own statics, and our
+        // own survive untouched. That is what makes "run one app, then
+        // another, each from scratch" possible from managed code.
+        if (Environment.GetEnvironmentVariable("SHARPOS_ALC_PROBE") == "1")
+        {
+            try { ProbeLoadContexts(); }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[alc] probe threw: " + ex.GetType().Name + ": " + ex.Message);
+            }
+        }
+
         try { ForceFullLanguageMode(); }
         catch (Exception ex)
         {
@@ -36,6 +49,75 @@ internal static class Program
         }
 
         return InvokePsMain(args);
+    }
+
+    // Can one assembly be run more than once with a clean slate?
+    //
+    // Calling coreclr_execute_assembly twice already works, but it is the same
+    // process and the same load context: statics survive between runs. That is
+    // how PowerShell's second start died — its command-line parser keeps a
+    // one-shot flag in a long-lived field, saw it still set, and refused. Any
+    // app that initialises once would hit the same wall.
+    //
+    // The .NET answer is a collectible AssemblyLoadContext: its own statics,
+    // discarded on unload. If it works here, the launcher can run assemblies
+    // back to back, each with a fresh slate, from managed code alone.
+    //
+    // The target is THIS assembly, and the thing invoked is a counter rather
+    // than an entry point: normal-hello's Main runs the whole census, which
+    // would drown the answer in ten seconds of unrelated output. Each round
+    // should report 1. A 1 then a 2 would mean the context shared statics with
+    // us and isolation did not happen.
+    private static int s_bumped;
+
+    public static int Bump() => ++s_bumped;
+
+    private static void ProbeLoadContexts()
+    {
+        string self = typeof(Program).Assembly.Location;
+        Console.WriteLine("[alc] probe start, self=" + (string.IsNullOrEmpty(self) ? "<no location>" : self));
+
+        // Location is empty for assemblies the host loaded from memory; fall
+        // back to the path the kernel uses, since that is where it came from.
+        if (string.IsNullOrEmpty(self))
+            self = @"C:\sharpos\PowerShellBootstrap.dll";
+
+        Console.WriteLine("[alc] default-context counter = " + Bump());
+
+        for (int round = 1; round <= 2; round++)
+        {
+            var alc = new System.Runtime.Loader.AssemblyLoadContext(
+                name: "probe" + round, isCollectible: true);
+            try
+            {
+                Assembly asm = alc.LoadFromAssemblyPath(self);
+                Type? t = asm.GetType("SharpOS.PowerShellBootstrap.Program", throwOnError: false);
+                if (t == null) { Console.WriteLine("[alc] round " + round + ": type not found"); continue; }
+
+                MethodInfo? m = t.GetMethod("Bump", BindingFlags.Public | BindingFlags.Static);
+                if (m == null) { Console.WriteLine("[alc] round " + round + ": Bump not found"); continue; }
+
+                object? rc = m.Invoke(null, null);
+                Console.WriteLine("[alc] round " + round + ": counter = " + (rc?.ToString() ?? "<null>")
+                    + "  (1 means its own statics)");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[alc] round " + round + " failed: " + ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { alc.Unload(); Console.WriteLine("[alc] round " + round + ": unload requested"); }
+                catch (Exception ex) { Console.WriteLine("[alc] round " + round + " unload threw: " + ex.GetType().Name); }
+            }
+        }
+
+        // Unload is asynchronous — it completes once nothing references the
+        // context. Collecting here makes "did it actually go" answerable rather
+        // than assumed.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        Console.WriteLine("[alc] probe end, default-context counter = " + Bump());
     }
 
     // Find SystemPolicy.s_systemLockdownPolicy (Nullable<SystemEnforcementMode>)

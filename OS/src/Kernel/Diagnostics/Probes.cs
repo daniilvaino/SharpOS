@@ -204,6 +204,15 @@
         //
         // Either way this also gates the SERIAL LOG: Console.Quiet is checked
         // before anything reaches Platform.Write.
+        // Run more than one assembly in a single runtime session, to find out
+        // whether that is possible at all. The host has only ever called
+        // coreclr_execute_assembly once, with a path fixed at build time, so
+        // "one per session" is an untested assumption — and every shape the
+        // launcher could take depends on which way it falls.
+        //
+        // Adds ~2 runs of normal-hello plus a PowerShell start to the boot.
+        public const bool SequentialAssemblyProbe = false;
+
         public const bool HostedAppQuietConsole = true;
 
         // Phase E2 — TEB facade swap. Allocates a fresh TebFacade, swaps
