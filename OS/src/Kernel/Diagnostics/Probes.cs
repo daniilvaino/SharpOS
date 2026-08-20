@@ -100,6 +100,19 @@
         // foundation Terminal.Gui stands on.
         public const bool Tasks = true;
 
+        // Locks: is compare-and-swap a real instruction, do threads have
+        // distinct ids, and does  keep two threads from losing an update.
+        // Each of the three fails silently on its own.
+        public const bool Locks = true;
+
+        // Hex dump of the interface-dispatch shellcode at install time.
+        //
+        // Off by default: twelve lines on every boot. On when the dispatch
+        // bridge misbehaves — it is the only way to see what is actually in the
+        // buffer, and reading it once settled a failure that three rounds of
+        // reasoning about registers had not.
+        public const bool DispatchShellcodeDump = false;
+
         // Sampling profiler on the timer tick. On while the question is
         // "where does startup spend its time"; the answer is a [prof] line on
         // the serial port every ten seconds.

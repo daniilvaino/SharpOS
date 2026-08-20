@@ -1,5 +1,4 @@
-﻿using NStack;
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace Terminal.Gui {
@@ -7,7 +6,7 @@ namespace Terminal.Gui {
 	/// MessageBox displays a modal message to the user, with a title, a message and a series of options that the user can choose from.
 	/// </summary>
 	/// <para>
-	///   The difference between the <see cref="Query(ustring, ustring, ustring[])"/> and <see cref="ErrorQuery(ustring, ustring, ustring[])"/> 
+	///   The difference between the <see cref="Query(string, string, string[])"/> and <see cref="ErrorQuery(string, string, string[])"/> 
 	///   method is the default set of colors used for the message box.
 	/// </para>
 	/// <para>
@@ -34,9 +33,9 @@ namespace Terminal.Gui {
 		/// <param name="message">Message to display, might contain multiple lines.</param>
 		/// <param name="buttons">Array of buttons to add.</param>
 		/// <remarks>
-		/// Use <see cref="Query(ustring, ustring, ustring[])"/> instead; it automatically sizes the MessageBox based on the contents.
+		/// Use <see cref="Query(string, string, string[])"/> instead; it automatically sizes the MessageBox based on the contents.
 		/// </remarks>
-		public static int Query (int width, int height, ustring title, ustring message, params ustring [] buttons)
+		public static int Query (int width, int height, string title, string message, params string [] buttons)
 		{
 			return QueryFull (false, width, height, title, message, 0, null, buttons);
 		}
@@ -52,7 +51,7 @@ namespace Terminal.Gui {
 		/// The message box will be vertically and horizontally centered in the container and the size will be automatically determined
 		/// from the size of the message and buttons.
 		/// </remarks>
-		public static int Query (ustring title, ustring message, params ustring [] buttons)
+		public static int Query (string title, string message, params string [] buttons)
 		{
 			return QueryFull (false, 0, 0, title, message, 0, null, buttons);
 		}
@@ -67,9 +66,9 @@ namespace Terminal.Gui {
 		/// <param name="message">Message to display, might contain multiple lines.</param>
 		/// <param name="buttons">Array of buttons to add.</param>
 		/// <remarks>
-		/// Use <see cref="ErrorQuery(ustring, ustring, ustring[])"/> instead; it automatically sizes the MessageBox based on the contents.
+		/// Use <see cref="ErrorQuery(string, string, string[])"/> instead; it automatically sizes the MessageBox based on the contents.
 		/// </remarks>
-		public static int ErrorQuery (int width, int height, ustring title, ustring message, params ustring [] buttons)
+		public static int ErrorQuery (int width, int height, string title, string message, params string [] buttons)
 		{
 			return QueryFull (true, width, height, title, message, 0, null, buttons);
 		}
@@ -85,7 +84,7 @@ namespace Terminal.Gui {
 		/// The message box will be vertically and horizontally centered in the container and the size will be automatically determined
 		/// from the size of the title, message. and buttons.
 		/// </remarks>
-		public static int ErrorQuery (ustring title, ustring message, params ustring [] buttons)
+		public static int ErrorQuery (string title, string message, params string [] buttons)
 		{
 			return QueryFull (true, 0, 0, title, message, 0, null, buttons);
 		}
@@ -101,9 +100,9 @@ namespace Terminal.Gui {
 		/// <param name="defaultButton">Index of the default button.</param>
 		/// <param name="buttons">Array of buttons to add.</param>
 		/// <remarks>
-		/// Use <see cref="Query(ustring, ustring, ustring[])"/> instead; it automatically sizes the MessageBox based on the contents.
+		/// Use <see cref="Query(string, string, string[])"/> instead; it automatically sizes the MessageBox based on the contents.
 		/// </remarks>
-		public static int Query (int width, int height, ustring title, ustring message, int defaultButton = 0, params ustring [] buttons)
+		public static int Query (int width, int height, string title, string message, int defaultButton = 0, params string [] buttons)
 		{
 			return QueryFull (false, width, height, title, message, defaultButton, null, buttons);
 		}
@@ -120,7 +119,7 @@ namespace Terminal.Gui {
 		/// The message box will be vertically and horizontally centered in the container and the size will be automatically determined
 		/// from the size of the message and buttons.
 		/// </remarks>
-		public static int Query (ustring title, ustring message, int defaultButton = 0, params ustring [] buttons)
+		public static int Query (string title, string message, int defaultButton = 0, params string [] buttons)
 		{
 			return QueryFull (false, 0, 0, title, message, defaultButton, null, buttons);
 		}
@@ -137,9 +136,9 @@ namespace Terminal.Gui {
 		/// <param name="border">The border settings.</param>
 		/// <param name="buttons">Array of buttons to add.</param>
 		/// <remarks>
-		/// Use <see cref="Query(ustring, ustring, ustring[])"/> instead; it automatically sizes the MessageBox based on the contents.
+		/// Use <see cref="Query(string, string, string[])"/> instead; it automatically sizes the MessageBox based on the contents.
 		/// </remarks>
-		public static int Query (int width, int height, ustring title, ustring message, int defaultButton = 0, Border border = null, params ustring [] buttons)
+		public static int Query (int width, int height, string title, string message, int defaultButton = 0, Border border = null, params string [] buttons)
 		{
 			return QueryFull (false, width, height, title, message, defaultButton, border, buttons);
 		}
@@ -157,7 +156,7 @@ namespace Terminal.Gui {
 		/// The message box will be vertically and horizontally centered in the container and the size will be automatically determined
 		/// from the size of the message and buttons.
 		/// </remarks>
-		public static int Query (ustring title, ustring message, int defaultButton = 0, Border border = null, params ustring [] buttons)
+		public static int Query (string title, string message, int defaultButton = 0, Border border = null, params string [] buttons)
 		{
 			return QueryFull (false, 0, 0, title, message, defaultButton, border, buttons);
 		}
@@ -174,9 +173,9 @@ namespace Terminal.Gui {
 		/// <param name="defaultButton">Index of the default button.</param>
 		/// <param name="buttons">Array of buttons to add.</param>
 		/// <remarks>
-		/// Use <see cref="ErrorQuery(ustring, ustring, ustring[])"/> instead; it automatically sizes the MessageBox based on the contents.
+		/// Use <see cref="ErrorQuery(string, string, string[])"/> instead; it automatically sizes the MessageBox based on the contents.
 		/// </remarks>
-		public static int ErrorQuery (int width, int height, ustring title, ustring message, int defaultButton = 0, params ustring [] buttons)
+		public static int ErrorQuery (int width, int height, string title, string message, int defaultButton = 0, params string [] buttons)
 		{
 			return QueryFull (true, width, height, title, message, defaultButton, null, buttons);
 		}
@@ -193,7 +192,7 @@ namespace Terminal.Gui {
 		/// The message box will be vertically and horizontally centered in the container and the size will be automatically determined
 		/// from the size of the title, message. and buttons.
 		/// </remarks>
-		public static int ErrorQuery (ustring title, ustring message, int defaultButton = 0, params ustring [] buttons)
+		public static int ErrorQuery (string title, string message, int defaultButton = 0, params string [] buttons)
 		{
 			return QueryFull (true, 0, 0, title, message, defaultButton, null, buttons);
 		}
@@ -210,9 +209,9 @@ namespace Terminal.Gui {
 		/// <param name="border">The border settings.</param>
 		/// <param name="buttons">Array of buttons to add.</param>
 		/// <remarks>
-		/// Use <see cref="ErrorQuery(ustring, ustring, ustring[])"/> instead; it automatically sizes the MessageBox based on the contents.
+		/// Use <see cref="ErrorQuery(string, string, string[])"/> instead; it automatically sizes the MessageBox based on the contents.
 		/// </remarks>
-		public static int ErrorQuery (int width, int height, ustring title, ustring message, int defaultButton = 0, Border border = null, params ustring [] buttons)
+		public static int ErrorQuery (int width, int height, string title, string message, int defaultButton = 0, Border border = null, params string [] buttons)
 		{
 			return QueryFull (true, width, height, title, message, defaultButton, border, buttons);
 		}
@@ -230,13 +229,13 @@ namespace Terminal.Gui {
 		/// The message box will be vertically and horizontally centered in the container and the size will be automatically determined
 		/// from the size of the title, message. and buttons.
 		/// </remarks>
-		public static int ErrorQuery (ustring title, ustring message, int defaultButton = 0, Border border = null, params ustring [] buttons)
+		public static int ErrorQuery (string title, string message, int defaultButton = 0, Border border = null, params string [] buttons)
 		{
 			return QueryFull (true, 0, 0, title, message, defaultButton, border, buttons);
 		}
 
-		static int QueryFull (bool useErrorColors, int width, int height, ustring title, ustring message,
-			int defaultButton = 0, Border border = null, params ustring [] buttons)
+		static int QueryFull (bool useErrorColors, int width, int height, string title, string message,
+			int defaultButton = 0, Border border = null, params string [] buttons)
 		{
 			int defaultWidth = 50;
 			if (defaultWidth > Application.Driver.Cols / 2) {
@@ -252,7 +251,7 @@ namespace Terminal.Gui {
 				maxWidthLine = width;
 			}
 			int textWidth = Math.Min (TextFormatter.MaxWidth (message, maxWidthLine), Application.Driver.Cols);
-			int textHeight = TextFormatter.MaxLines (message, textWidth); // message.Count (ustring.Make ('\n')) + 1;
+			int textHeight = TextFormatter.MaxLines (message, textWidth); // message.Count (RuneText.Make ('\n')) + 1;
 			int msgboxHeight = Math.Min (Math.Max (1, textHeight) + 4, Application.Driver.Rows); // textHeight + (top + top padding + buttons + bottom)
 
 			// Create button array for Dialog

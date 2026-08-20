@@ -1,4 +1,4 @@
-// Mini-LINQ for the NoStdLib kernel/std environment.
+﻿// Mini-LINQ for the NoStdLib kernel/std environment.
 //
 // BCL-signature-compatible System.Linq.Enumerable so real LINQ-to-objects code
 // compiles against our std unchanged. Lazy operators are yield-based (identical
@@ -349,6 +349,69 @@ namespace System.Linq
             long n = 0;
             foreach (var _ in source) n++;
             return n;
+        }
+
+        // Compares two sequences element by element. Added for Terminal.Gui,
+        // which uses it on List<Rune> — without it the call bound to
+        // MemoryExtensions.SequenceEqual (the Span one) and failed on a type
+        // constraint, which named the wrong method entirely.
+        public static bool SequenceEqual<TSource>(this IEnumerable<TSource> first, IEnumerable<TSource> second)
+        {
+            if (first == null) throw new ArgumentNullException(nameof(first));
+            if (second == null) throw new ArgumentNullException(nameof(second));
+
+            EqualityComparer<TSource> comparer = EqualityComparer<TSource>.Default;
+            using (IEnumerator<TSource> a = first.GetEnumerator())
+            using (IEnumerator<TSource> b = second.GetEnumerator())
+            {
+                while (a.MoveNext())
+                {
+                    if (!b.MoveNext() || !comparer.Equals(a.Current, b.Current))
+                        return false;
+                }
+                return !b.MoveNext();
+            }
+        }
+
+        public static IEnumerable<TSource> AsEnumerable<TSource>(this IEnumerable<TSource> source) => source;
+
+        /// <summary>
+        /// Everything in the first sequence that is not in the second.
+        /// </summary>
+        /// <remarks>
+        /// The BCL builds a set from `second` and streams `first` through it.
+        /// This scans `second` per element instead — O(n*m) rather than O(n+m).
+        /// Terminal.Gui uses it to diff a tree node's children, which is a
+        /// handful of entries; a caller with large sequences wants the set.
+        /// </remarks>
+        public static IEnumerable<TSource> Except<TSource>(
+            this IEnumerable<TSource> first, IEnumerable<TSource> second)
+        {
+            if (first == null) throw new ArgumentNullException(nameof(first));
+            if (second == null) throw new ArgumentNullException(nameof(second));
+
+            EqualityComparer<TSource> comparer = EqualityComparer<TSource>.Default;
+
+            var excluded = new List<TSource>();
+            foreach (TSource item in second) excluded.Add(item);
+
+            var seen = new List<TSource>();
+            foreach (TSource item in first)
+            {
+                if (Holds(excluded, item, comparer)) continue;
+                if (Holds(seen, item, comparer)) continue;
+
+                seen.Add(item);
+                yield return item;
+            }
+        }
+
+        private static bool Holds<TSource>(List<TSource> items, TSource value,
+            EqualityComparer<TSource> comparer)
+        {
+            for (int i = 0; i < items.Count; i++)
+                if (comparer.Equals(items[i], value)) return true;
+            return false;
         }
 
         public static bool Any<TSource>(this IEnumerable<TSource> source)

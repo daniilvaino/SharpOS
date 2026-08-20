@@ -7,7 +7,6 @@
 using System;
 using System.Globalization;
 using System.Linq;
-using NStack;
 
 namespace Terminal.Gui {
 	/// <summary>
@@ -106,7 +105,7 @@ namespace Terminal.Gui {
 			AddKeyBinding (Key.F | Key.CtrlMask, Command.Right);
 		}
 
-		void TextField_TextChanged (ustring e)
+		void TextField_TextChanged (string e)
 		{
 			try {
 				if (!TimeSpan.TryParseExact (Text.ToString ().Trim (), format.Trim (), CultureInfo.CurrentCulture, TimeSpanStyles.None, out TimeSpan result))
@@ -174,16 +173,16 @@ namespace Terminal.Gui {
 			newText.Add (key);
 			if (CursorPosition < fieldLen)
 				newText = newText.Concat (text.GetRange (CursorPosition + 1, text.Count - (CursorPosition + 1))).ToList ();
-			return SetText (ustring.Make (newText));
+			return SetText (RuneText.Make (newText));
 		}
 
-		bool SetText (ustring text)
+		bool SetText (string text)
 		{
 			if (text.IsEmpty) {
 				return false;
 			}
 
-			ustring [] vals = text.Split (ustring.Make (sepChar));
+			string [] vals = text.Split (RuneText.Make (sepChar));
 			bool isValidTime = true;
 			int hour = Int32.Parse (vals [0].ToString ());
 			int minute = Int32.Parse (vals [1].ToString ());
@@ -260,7 +259,7 @@ namespace Terminal.Gui {
 			if (ReadOnly)
 				return true;
 
-			if (SetText (TextModel.ToRunes (ustring.Make ((uint)kb.Key)).First ()))
+			if (SetText (TextModel.ToRunes (RuneText.Make ((uint)kb.Key)).First ()))
 				IncCursorPosition ();
 
 			return true;

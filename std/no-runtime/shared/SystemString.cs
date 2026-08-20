@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 
 namespace System
 {
@@ -197,6 +197,13 @@ namespace System
             return SharpOS.Std.NoRuntime.StringQueries.IsNullOrWhiteSpace(str);
         }
 
+        /// <summary>
+        /// A string is its own text. Inherited from Object this returned null,
+        /// which is worse than useless: `value.ToString()` reads as a no-op and
+        /// silently produced a null that faulted wherever it was next indexed.
+        /// </summary>
+        public override string ToString() => this;
+
         public int IndexOf(char value)
         {
             return SharpOS.Std.NoRuntime.StringQueries.IndexOf(this, value, 0);
@@ -212,6 +219,40 @@ namespace System
             return SharpOS.Std.NoRuntime.StringQueries.IndexOf(this, value, 0);
         }
 
+        /// <summary>
+        /// Case-insensitive search when asked for one. Only the ordinal and
+        /// invariant comparisons exist here, and with a single culture in the
+        /// system they are the same comparison — see std Globalization.cs.
+        /// </summary>
+        public int IndexOf(string value, StringComparison comparison)
+        {
+            if (value == null) return -1;
+
+            bool ignoreCase = comparison == StringComparison.OrdinalIgnoreCase
+                || comparison == StringComparison.InvariantCultureIgnoreCase
+                || comparison == StringComparison.CurrentCultureIgnoreCase;
+
+            if (!ignoreCase) return IndexOf(value);
+            if (value.Length == 0) return 0;
+            if (value.Length > Length) return -1;
+
+            for (int start = 0; start <= Length - value.Length; start++)
+            {
+                bool match = true;
+                for (int i = 0; i < value.Length; i++)
+                {
+                    if (char.ToUpperInvariant(this[start + i]) != char.ToUpperInvariant(value[i]))
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) return start;
+            }
+
+            return -1;
+        }
+
         public int IndexOf(string value, int startIndex)
         {
             return SharpOS.Std.NoRuntime.StringQueries.IndexOf(this, value, startIndex);
@@ -220,6 +261,21 @@ namespace System
         public int LastIndexOf(char value)
         {
             return SharpOS.Std.NoRuntime.StringQueries.LastIndexOf(this, value);
+        }
+
+        /// <summary>
+        /// Searches backwards from <paramref name="startIndex"/> — that is the
+        /// LAST position considered, not the first. Reads like a start offset
+        /// and is the opposite, which is why it is spelled out here.
+        /// </summary>
+        public int LastIndexOf(string value, int startIndex)
+        {
+            if (value == null || startIndex < 0) return -1;
+            if (startIndex > Length - 1) startIndex = Length - 1;
+
+            int upto = startIndex + value.Length;
+            string window = upto >= Length ? this : Substring(0, upto);
+            return SharpOS.Std.NoRuntime.StringQueries.LastIndexOf(window, value);
         }
 
         public int LastIndexOf(string value)

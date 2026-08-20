@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using SharpOS.Std.NoRuntime;
 
 namespace OS.Kernel.Memory
@@ -54,9 +54,11 @@ namespace OS.Kernel.Memory
     //     jmp    rax                           ; tail-jump; caller sees original frame
     //
     //   fail_after_spill:
+    //     mov    r10, [rsp+40h]                ; cell again (r10 is volatile)
     //     add    rsp, 0A8h
     //   nullfail:
-    //     mov    rax, [rip + failPtr]
+    //     mov    rcx, r10                      ; arg1 = cell, so the failure
+    //     mov    rax, [rip + failPtr]          ;   can name interface and slot
     //     jmp    rax
     //
     //   resolverPtr: .qword <addr of InterfaceDispatchResolver.Resolve>
@@ -83,7 +85,9 @@ namespace OS.Kernel.Memory
             void* execBuffer,
             uint execBufferSize,
             delegate* unmanaged<nint, nint, nint> resolver,
-            delegate* unmanaged<void> failHandler)
+            // Takes the dispatch cell: the failure names the interface and
+            // slot it was dispatching, instead of only the mechanism.
+            delegate* unmanaged<nint, nint, nint, void> failHandler)
         {
             if (s_initialized) return true;
             if (execBuffer == null || execBufferSize < StubOffset + MaxStubSize) return false;
@@ -102,10 +106,14 @@ namespace OS.Kernel.Memory
             return true;
         }
 
-        // Pre-step-119 manual byte emitter. Kept here as REFERENCE only —
-        // the live code now goes through Emit() in
-        // InterfaceDispatchBridge.BootAsm.cs (compile-time codegen via
-        // BootAsm.Generator + Iced). Build excludes it via `#if false`.
+        // Pre-step-119 manual byte emitter. NOT COMPILED — the live code is
+        // Emit() in InterfaceDispatchBridge.BootAsm.cs (compile-time codegen
+        // via BootAsm.Generator + Iced). This is reference material only.
+        //
+        // Read that sentence before editing anything below it. Three rounds of
+        // a debugging session went into changing this copy and wondering why
+        // the running shellcode never changed; the answer was always twenty
+        // lines above the edit.
 #if false
         private static int WriteShellcode(byte* buf, nint resolverAddr, nint failAddr)
         {
@@ -116,7 +124,19 @@ namespace OS.Kernel.Memory
             // test rcx, rcx            48 85 C9
             buf[o++] = 0x48; buf[o++] = 0x85; buf[o++] = 0xC9;
 
-            // jz nullfail              0F 84 <rel32>          (patch later)
+            // jz slow                  0F 84 <rel32>          (patch later)
+            //
+            // To the SLOW path, not to the failure tail.
+            //
+            // A null `this` used to jump straight to the failure handler, which
+            // meant the one case a person most needs explained arrived with no
+            // arguments the handler could trust — and every attempt to read the
+            // registers there described a machine state that was not the one we
+            // were in. The slow path spills and calls the resolver like any
+            // other dispatch, and the resolver already reports a null `this` by
+            // name, with arguments passed the ordinary way.
+            //
+            // The cost is a spill and a call on a path that is about to panic.
             int jzNullPatch;
             buf[o++] = 0x0F; buf[o++] = 0x84;
             jzNullPatch = o; o += 4;
@@ -221,11 +241,61 @@ namespace OS.Kernel.Memory
 
             // -- fail_after_spill --
             int failAfterSpillLabel = o;
+
+
+
+            // mov r10, [rsp+0x40]      4C 8B 54 24 40
+            //
+            // The cell again. r10 is volatile in the Win64 convention, so the
+            // resolver call above is free to have clobbered it — reading it
+            // afterwards would hand the failure handler a plausible-looking
+            // wrong address, which is worse than none. The spill slot still
+            // holds the real one.
+            buf[o++] = 0x4C; buf[o++] = 0x8B; buf[o++] = 0x54; buf[o++] = 0x24; buf[o++] = 0x40;
+
             // add rsp, 0xA8
             buf[o++] = 0x48; buf[o++] = 0x81; buf[o++] = 0xC4; buf[o++] = 0xA8; buf[o++] = 0x00; buf[o++] = 0x00; buf[o++] = 0x00;
 
-            // -- nullfail --
+            // mov r8d, 2               41 B8 02 00 00 00   (route: resolver found nothing)
+            buf[o++] = 0x41; buf[o++] = 0xB8; buf[o++] = 0x02; buf[o++] = 0x00; buf[o++] = 0x00; buf[o++] = 0x00;
+
+            // jmp +6                   EB 06
+            //
+            // Over the null-route tag below. Without this the spilled route
+            // falls straight through it and arrives claiming to be the other
+            // one — the first version did exactly that.
+            buf[o++] = 0xEB; buf[o++] = 0x06;
+
+            // -- nullthis --
+            //
+            // Its own two instructions rather than sharing the tail: the jump
+            // from the top lands here, so this is where "the reference was
+            // null" can still be said. Falls through into the shared tail.
             int nullfailLabel = o;
+
+            // mov r8d, 1               41 B8 01 00 00 00   (route tag)
+            buf[o++] = 0x41; buf[o++] = 0xB8; buf[o++] = 0x01; buf[o++] = 0x00; buf[o++] = 0x00; buf[o++] = 0x00;
+
+            // mov rdx, rsp             48 89 E2
+            //
+            // The stack pointer, so the handler can print the top few words
+            // and let a human pick out the return address.
+            //
+            // Reading one slot here was the obvious thing and it printed zero:
+            // the frame at this point is not what the layout comment assumes on
+            // every route in. Dumping a handful is honest about that — one of
+            // them is the call site, and tools/symbolize_app.py will say which.
+            buf[o++] = 0x48; buf[o++] = 0x89; buf[o++] = 0xE2;
+
+            // mov rcx, r10             4C 89 D1
+            //
+            // The cell, handed to the failure handler as its argument: it
+            // names the interface and slot being dispatched, which is the
+            // difference between "an interface call failed" and a diagnosis.
+            // Both routes reach here with it in r10 — the null check never
+            // clobbers it, and the spilled path has just restored it.
+            buf[o++] = 0x4C; buf[o++] = 0x89; buf[o++] = 0xD1;
+
             // mov rax, [rip + failPtr]   48 8B 05 <rel32>
             int failRipPatch;
             buf[o++] = 0x48; buf[o++] = 0x8B; buf[o++] = 0x05;
@@ -244,7 +314,7 @@ namespace OS.Kernel.Memory
             WriteI64(buf, o, (long)failAddr); o += 8;
 
             // Patch rel32 displacements: target - (nextInstructionStart)
-            PatchRel32(buf, jzNullPatch,            nullfailLabel);
+            PatchRel32(buf, jzNullPatch,            slowLabel);
             PatchRel32(buf, jnzSlowPatch1,          slowLabel);
             PatchRel32(buf, jnzSlowPatch2,          slowLabel);
             PatchRel32(buf, resolverRipPatch,       resolverSlot);

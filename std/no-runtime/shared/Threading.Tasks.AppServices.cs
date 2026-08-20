@@ -1,4 +1,4 @@
-// App-side thread backend for Tasks.
+﻿// App-side thread backend for Tasks.
 //
 // Linked into freestanding apps only — the kernel gets
 // Threading.Tasks.KernelScheduler.cs instead. The Task code above both is
@@ -35,8 +35,17 @@ namespace SharpOS.AppSdk
 
             if (s_queue == null) s_queue = new ThreadBackend.ThreadEntry?[Capacity];
             ThreadBackend.Install(Spawn, AppThreads.Sleep);
+
+            // Thread identity, which Monitor needs. Only from V4 up; below that
+            // the service returns zero and std keeps its single-thread answer,
+            // which ManagedThreadIds.IsPerThread reports honestly.
+            if (AppThreads.CurrentThreadId() != 0)
+                ManagedThreadIds.Install(&CurrentThreadId);
+
             return true;
         }
+
+        private static int CurrentThreadId() => AppThreads.CurrentThreadId();
 
         private static bool Spawn(ThreadBackend.ThreadEntry entry)
         {

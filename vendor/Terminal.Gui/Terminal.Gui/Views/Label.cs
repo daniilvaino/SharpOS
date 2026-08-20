@@ -6,7 +6,6 @@
 //
 
 using System;
-using NStack;
 
 namespace Terminal.Gui {
 	/// <summary>
@@ -30,25 +29,25 @@ namespace Terminal.Gui {
 		}
 
 		/// <inheritdoc/>
-		public Label (ustring text, bool autosize = true) : base (text)
+		public Label (string text, bool autosize = true) : base (text)
 		{
 			Initialize (autosize);
 		}
 
 		/// <inheritdoc/>
-		public Label (Rect rect, ustring text, bool autosize = false) : base (rect, text)
+		public Label (Rect rect, string text, bool autosize = false) : base (rect, text)
 		{
 			Initialize (autosize);
 		}
 
 		/// <inheritdoc/>
-		public Label (int x, int y, ustring text, bool autosize = true) : base (x, y, text)
+		public Label (int x, int y, string text, bool autosize = true) : base (x, y, text)
 		{
 			Initialize (autosize);
 		}
 
 		/// <inheritdoc/>
-		public Label (ustring text, TextDirection direction, bool autosize = true)
+		public Label (string text, TextDirection direction, bool autosize = true)
 			: base (text, direction)
 		{
 			Initialize (autosize);
@@ -71,12 +70,12 @@ namespace Terminal.Gui {
 		public event Action Clicked;
 
 		///// <inheritdoc/>
-		//public new ustring Text {
+		//public new string Text {
 		//	get => base.Text;
 		//	set {
 		//		base.Text = value;
 		//		// This supports Label auto-sizing when Text changes (preserving backwards compat behavior)
-		//		if (Frame.Height == 1 && !ustring.IsNullOrEmpty (value)) {
+		//		if (Frame.Height == 1 && !string.IsNullOrEmpty (value)) {
 		//			int w = Text.RuneCount;
 		//			Width = w;
 		//			Frame = new Rect (Frame.Location, new Size (w, Frame.Height));

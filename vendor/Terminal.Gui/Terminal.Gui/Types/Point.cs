@@ -1,4 +1,4 @@
-//
+﻿//
 // System.Drawing.Point.cs
 //
 // Author:
@@ -218,8 +218,8 @@ namespace Terminal.Gui
 		
 		public override string ToString ()
 		{
-			return string.Format ("{{X={0},Y={1}}}", X.ToString (CultureInfo.InvariantCulture), 
-				Y.ToString (CultureInfo.InvariantCulture));
+			return string.Format ("{{X={0},Y={1}}}", X.ToString (), 
+				Y.ToString ());
 		}
 
 		/// <summary>

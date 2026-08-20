@@ -1,4 +1,4 @@
-namespace SharpOS.AppSdk
+﻿namespace SharpOS.AppSdk
 {
     internal static unsafe class AppRuntime
     {
@@ -42,10 +42,22 @@ namespace SharpOS.AppSdk
             // kernel — our GC has no write barrier, so the app writes the 15 bytes itself.
             ByRefAssignRefStub.TryInstall();
 
+            // Real compare-and-swap for std's Interlocked. Apps have threads
+            // now and the kernel preempts them, so the managed fallback — read,
+            // compare, write as three statements — can lose an update to a
+            // timer tick landing between them. Everything that locks is built
+            // on this, so it goes in before anything that might.
+            AtomicStub.Install();
+
             // Wire throw/catch into the kernel's shared EH engine: tail-jump our
             // RhpThrowEx stub to the kernel's RhpThrowEx entry. No GC needed.
             ThrowExTrampoline.PatchToKernelThrow(
                 s_services->RhpThrowExAddress);
+
+            // And `throw;` inside a catch, which is a different helper: it
+            // resumes the dispatch already in flight rather than starting one.
+            RethrowTrampoline.PatchToKernelRethrow(
+                s_services->RhpRethrowAddress);
 
             // Bring up the managed GC heap before any `new string` or `new object()`
             // hits its RhNewString / RhpNewFast export. GcMemorySource backing is

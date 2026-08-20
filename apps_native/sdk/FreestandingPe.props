@@ -46,11 +46,14 @@
     <Compile Include="$(MSBuildThisFileDirectory)AppServiceTable.cs"      Link="sdk\AppServiceTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppRuntime.cs"           Link="sdk\AppRuntime.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppThreads.cs"           Link="sdk\AppThreads.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppConsole.cs"           Link="sdk\AppConsole.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppGC.cs"                Link="sdk\AppGC.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ByRefAssignRefStub.cs" Link="sdk\ByRefAssignRefStub.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AtomicStub.cs" Link="sdk\AtomicStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)InterfaceDispatchTrampoline.cs" Link="sdk\InterfaceDispatchTrampoline.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StackProbeStub.cs"       Link="sdk\StackProbeStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ThrowExTrampoline.cs"          Link="sdk\ThrowExTrampoline.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)RethrowTrampoline.cs"          Link="sdk\RethrowTrampoline.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppHost.cs"              Link="sdk\AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StringAlgorithms.cs"     Link="sdk\StringAlgorithms.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)KeyInfo.cs"              Link="sdk\KeyInfo.cs" />
@@ -60,7 +63,6 @@
     <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ProcessStub.cs"          Link="sdk\ProcessStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Stopwatch.AppStub.cs"    Link="sdk\Stopwatch.AppStub.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)DateTime.AppStub.cs"     Link="sdk\DateTime.AppStub.cs" />
 
     <!-- std surface mirrors OS/OS.csproj's std/no-runtime/shared list (step141:
          app runtime upgraded from a minimal slice to full-std for ManagedDoom).
@@ -145,6 +147,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\ReadOnlyDictionary.cs"  Link="std\Bcl\ReadOnlyDictionary.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\ArraySegment.cs"        Link="std\Bcl\ArraySegment.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\SortedList.cs"          Link="std\Bcl\SortedList.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\SortedDictionary.cs"          Link="std\Bcl\SortedDictionary.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Tuple.cs"               Link="std\Bcl\Tuple.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\TimeSpan.cs"            Link="std\Bcl\TimeSpan.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BitConverter.cs"        Link="std\Bcl\BitConverter.cs" />
@@ -161,6 +164,20 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Tasks.cs" Link="std\Threading.Tasks.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Tasks.AppServices.cs" Link="std\Threading.Tasks.AppServices.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Tasks.Await.cs" Link="std\Threading.Tasks.Await.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\ConsoleTypes.cs" Link="std\ConsoleTypes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\UnboxHelpers.cs" Link="std\Runtime\UnboxHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Globalization.DateTimeFormat.cs" Link="std\Globalization.DateTimeFormat.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\DateTime.cs" Link="std\DateTime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Thread.cs" Link="std\Threading.Thread.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Char.Statics.cs" Link="std\Char.Statics.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Monitor.cs" Link="std\Threading.Monitor.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.ManagedThreadId.cs" Link="std\Threading.ManagedThreadId.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Atomics.cs" Link="std\Threading.Atomics.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\SynchronizationContext.cs" Link="std\SynchronizationContext.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\EventHandling.cs" Link="std\EventHandling.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\ComponentModel.cs" Link="std\ComponentModel.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Globalization.cs" Link="std\Globalization.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringComparer.cs" Link="std\StringComparer.cs" />
   </ItemGroup>
 
   <!-- Freestanding CRT stubs (__security_cookie via CoffStub.Generator,

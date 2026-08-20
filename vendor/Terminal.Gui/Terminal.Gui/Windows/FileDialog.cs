@@ -11,7 +11,6 @@
 
 using System;
 using System.Collections.Generic;
-using NStack;
 using System.IO;
 using System.Linq;
 using Terminal.Gui.Resources;
@@ -46,7 +45,7 @@ namespace Terminal.Gui {
 			return false;
 		}
 
-		internal bool Reload (ustring value = null)
+		internal bool Reload (string value = null)
 		{
 			bool valid = false;
 			try {
@@ -139,8 +138,8 @@ namespace Terminal.Gui {
 			Application.MainLoop.Invoke (() => Reload ());
 		}
 
-		ustring directory;
-		public ustring Directory {
+		string directory;
+		public string Directory {
 			get => directory;
 			set {
 				if (directory == value) {
@@ -249,7 +248,7 @@ namespace Terminal.Gui {
 		{
 			var f = Frame;
 			var width = f.Width;
-			var ustr = ustring.Make (str);
+			var ustr = RuneText.Make (str);
 
 			Move (allowsMultipleSelection ? 3 : 2, line);
 			int byteLen = ustr.Length;
@@ -308,8 +307,8 @@ namespace Terminal.Gui {
 		}
 
 		public Action<(string, bool)> SelectedChanged { get; set; }
-		public Action<ustring> DirectoryChanged { get; set; }
-		public Action<ustring> FileChanged { get; set; }
+		public Action<string> DirectoryChanged { get; set; }
+		public Action<string> FileChanged { get; set; }
 
 		string splitString = ",";
 
@@ -606,8 +605,8 @@ namespace Terminal.Gui {
 		/// <param name="nameFieldLabel">The name of the file field label..</param>
 		/// <param name="message">The message.</param>
 		/// <param name="allowedTypes">The allowed types.</param>
-		public FileDialog (ustring title, ustring prompt, ustring nameFieldLabel, ustring message, List<string> allowedTypes = null)
-			: this (title, prompt, ustring.Empty, nameFieldLabel, message, allowedTypes) { }
+		public FileDialog (string title, string prompt, string nameFieldLabel, string message, List<string> allowedTypes = null)
+			: this (title, prompt, string.Empty, nameFieldLabel, message, allowedTypes) { }
 
 		/// <summary>
 		/// Initializes a new instance of <see cref="FileDialog"/>
@@ -616,8 +615,8 @@ namespace Terminal.Gui {
 		/// <param name="prompt">The prompt.</param>
 		/// <param name="message">The message.</param>
 		/// <param name="allowedTypes">The allowed types.</param>
-		public FileDialog (ustring title, ustring prompt, ustring message, List<string> allowedTypes)
-			: this (title, prompt, ustring.Empty, message, allowedTypes) { }
+		public FileDialog (string title, string prompt, string message, List<string> allowedTypes)
+			: this (title, prompt, string.Empty, message, allowedTypes) { }
 
 		/// <summary>
 		/// Initializes a new instance of <see cref="FileDialog"/>
@@ -628,7 +627,7 @@ namespace Terminal.Gui {
 		/// <param name="nameFieldLabel">The name of the file field label..</param>
 		/// <param name="message">The message.</param>
 		/// <param name="allowedTypes">The allowed types.</param>
-		public FileDialog (ustring title, ustring prompt, ustring nameDirLabel, ustring nameFieldLabel, ustring message,
+		public FileDialog (string title, string prompt, string nameDirLabel, string nameFieldLabel, string message,
 			List<string> allowedTypes = null) : base (title)//, Driver.Cols - 20, Driver.Rows - 5, null)
 		{
 			this.message = new Label (message) {
@@ -651,7 +650,7 @@ namespace Terminal.Gui {
 			};
 			dirEntry.TextChanged += (e) => {
 				DirectoryPath = dirEntry.Text;
-				nameEntry.Text = ustring.Empty;
+				nameEntry.Text = string.Empty;
 			};
 			Add (this.nameDirLabel, dirEntry);
 
@@ -694,7 +693,7 @@ namespace Terminal.Gui {
 			Add (dirListView);
 
 			AllowedFileTypes = allowedTypes?.Count > 0 ? allowedTypes?.ToArray () : null;
-			dirListView.DirectoryChanged = (dir) => { nameEntry.Text = ustring.Empty; dirEntry.Text = dir; };
+			dirListView.DirectoryChanged = (dir) => { nameEntry.Text = string.Empty; dirEntry.Text = dir; };
 			dirListView.FileChanged = (file) => nameEntry.Text = file == ".." ? "" : file;
 			dirListView.SelectedChanged = (file) => nameEntry.Text = file.Item1 == ".." ? "" : file.Item1;
 			this.cancel = new Button ("Cancel");
@@ -782,7 +781,7 @@ namespace Terminal.Gui {
 		/// Gets or sets the prompt label for the <see cref="Button"/> displayed to the user
 		/// </summary>
 		/// <value>The prompt.</value>
-		public ustring Prompt {
+		public string Prompt {
 			get => prompt.Text;
 			set {
 				prompt.Text = value;
@@ -793,7 +792,7 @@ namespace Terminal.Gui {
 		/// Gets or sets the name of the directory field label.
 		/// </summary>
 		/// <value>The name of the directory field label.</value>
-		public ustring NameDirLabel {
+		public string NameDirLabel {
 			get => nameDirLabel.Text;
 			set {
 				nameDirLabel.Text = $"{value}: ";
@@ -804,7 +803,7 @@ namespace Terminal.Gui {
 		/// Gets or sets the name field label.
 		/// </summary>
 		/// <value>The name field label.</value>
-		public ustring NameFieldLabel {
+		public string NameFieldLabel {
 			get => nameFieldLabel.Text;
 			set {
 				nameFieldLabel.Text = $"{value}: ";
@@ -815,7 +814,7 @@ namespace Terminal.Gui {
 		/// Gets or sets the message displayed to the user, defaults to nothing
 		/// </summary>
 		/// <value>The message.</value>
-		public ustring Message {
+		public string Message {
 			get => message.Text;
 			set {
 				message.Text = value;
@@ -838,7 +837,7 @@ namespace Terminal.Gui {
 		/// Gets or sets the directory path for this panel
 		/// </summary>
 		/// <value>The directory path.</value>
-		public ustring DirectoryPath {
+		public string DirectoryPath {
 			get => dirEntry.Text;
 			set {
 				dirEntry.Text = value;
@@ -876,7 +875,7 @@ namespace Terminal.Gui {
 		/// The File path that is currently shown on the panel
 		/// </summary>
 		/// <value>The absolute file path for the file path entered.</value>
-		public ustring FilePath {
+		public string FilePath {
 			get => dirListView.MakePath (nameEntry.Text.ToString ());
 			set {
 				nameEntry.Text = Path.GetFileName (value.ToString ());
@@ -913,7 +912,7 @@ namespace Terminal.Gui {
 		/// <param name="title">The title.</param>
 		/// <param name="message">The message.</param>
 		/// <param name="allowedTypes">The allowed types.</param>
-		public SaveDialog (ustring title, ustring message, List<string> allowedTypes = null)
+		public SaveDialog (string title, string message, List<string> allowedTypes = null)
 			: base (title, prompt: Strings.fdSave, nameFieldLabel: $"{Strings.fdSaveAs}", message: message, allowedTypes) { }
 
 		/// <summary>
@@ -921,7 +920,7 @@ namespace Terminal.Gui {
 		/// if the user canceled the <see cref="SaveDialog"/>.
 		/// </summary>
 		/// <value>The name of the file.</value>
-		public ustring FileName {
+		public string FileName {
 			get {
 				if (canceled)
 					return null;
@@ -981,7 +980,7 @@ namespace Terminal.Gui {
 		/// <param name="message">The message.</param>
 		/// <param name="allowedTypes">The allowed types.</param>
 		/// <param name="openMode">The open mode.</param>
-		public OpenDialog (ustring title, ustring message, List<string> allowedTypes = null, OpenMode openMode = OpenMode.File) : base (title,
+		public OpenDialog (string title, string message, List<string> allowedTypes = null, OpenMode openMode = OpenMode.File) : base (title,
 			prompt: openMode == OpenMode.File ? Strings.fdOpen : openMode == OpenMode.Directory ? Strings.fdSelectFolder : Strings.fdSelectMixed,
 			nameFieldLabel: Strings.fdOpen, message: message, allowedTypes)
 		{

@@ -139,10 +139,17 @@ namespace Terminal.Gui {
 				}
 			}
 			if (decodedChar != 0 && scanCode == 0 && char.IsLetter ((char)decodedChar)) {
-				string stFormD = ((char)decodedChar).ToString ().Normalize (System.Text.NormalizationForm.FormD);
+				// Upstream decomposes the character (é -> e + combining acute) and
+				// keeps the base letter, so an accented key maps to the plain
+				// one. Decomposition needs Unicode tables we do not carry, so
+				// the character stands for itself.
+				//
+				// The cost is real and narrow: on a layout where an accented
+				// key should act as its base letter, it will not. ASCII, which
+				// is what the console produces today, is unaffected.
+				string stFormD = ((char)decodedChar).ToString ();
 				for (int i = 0; i < stFormD.Length; i++) {
-					UnicodeCategory uc = CharUnicodeInfo.GetUnicodeCategory (stFormD [i]);
-					if (uc != UnicodeCategory.NonSpacingMark && uc != UnicodeCategory.OtherLetter) {
+					{
 						consoleKey = char.ToUpper (stFormD [i]);
 						scode = GetScanCode ("VirtualKey", char.ToUpper (stFormD [i]), 0);
 						if (scode != null) {

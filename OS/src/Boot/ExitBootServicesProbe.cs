@@ -293,6 +293,9 @@ namespace OS.Boot
                 if (OS.Kernel.Diagnostics.Probes.Tasks)
                     OS.Kernel.Threading.TaskProbe.Run();
 
+                if (OS.Kernel.Diagnostics.Probes.Locks)
+                    OS.Kernel.Threading.LockProbe.Run();
+
                 BootSequence.RunCoreClrSession(Platform.GetBootInfo());
 
                 OS.Kernel.Threading.Preemption.Disable();

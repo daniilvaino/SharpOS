@@ -1,4 +1,4 @@
-namespace SharpOS.AppSdk
+﻿namespace SharpOS.AppSdk
 {
     internal static unsafe class AppHost
     {
@@ -27,23 +27,111 @@ namespace SharpOS.AppSdk
             if (services == null)
                 return;
 
-            delegate* unmanaged<uint, void> writeChar = (delegate* unmanaged<uint, void>)services->WriteCharAddress;
-            if (writeChar != null)
+            // One service call per chunk, encoded as UTF-8.
+            //
+            // This used to hand over one character at a time, which was correct
+            // and expensive: a full-screen repaint became thousands of calls,
+            // and — worse — the kernel paints the screen at the END of a write,
+            // so a stream of single characters never finished a frame. Text
+            // appeared over serial and the display kept the previous picture.
+            //
+            // The ASCII fallback that used to sit here could not carry the box
+            // drawing a UI is made of, which is why the character path existed
+            // at all.
+            if (services->WriteStringAddress != 0)
             {
-                fixed (char* source = text)
-                {
-                    for (int i = 0; i < text.Length; i++)
-                        writeChar((uint)source[i]);
-                }
+                WriteUtf8Chunks(text);
                 return;
             }
 
-            // Fallback: ASCII-only path (WriteChar not available)
-            byte* buffer = stackalloc byte[MaxTempTextChars];
-            if (!TryEncodeAscii(text, buffer, MaxTempTextChars, out _))
-                return;
+            delegate* unmanaged<uint, void> writeChar = (delegate* unmanaged<uint, void>)services->WriteCharAddress;
+            if (writeChar == null) return;
 
-            WriteString(buffer);
+            fixed (char* source = text)
+            {
+                for (int i = 0; i < text.Length; i++)
+                    writeChar((uint)source[i]);
+            }
+        }
+
+        // 4 KiB at a time. The kernel's own limit is larger, but this buffer is
+        // on the stack and a chunk boundary costs only an extra call.
+        private const int WriteChunkBytes = 4096;
+
+        private static void WriteUtf8Chunks(string text)
+        {
+            byte* buffer = stackalloc byte[WriteChunkBytes + 1];
+            int used = 0;
+
+            fixed (char* source = text)
+            {
+                for (int i = 0; i < text.Length; i++)
+                {
+                    // Never split a character across two calls: the far side
+                    // decodes each chunk on its own, and half a rune is a
+                    // different rune.
+                    if (used + 4 > WriteChunkBytes)
+                    {
+                        buffer[used] = 0;
+                        WriteString(buffer);
+                        used = 0;
+                    }
+
+                    used += EncodeUtf8(source, text.Length, ref i, buffer + used);
+                }
+            }
+
+            if (used > 0)
+            {
+                buffer[used] = 0;
+                WriteString(buffer);
+            }
+        }
+
+        /// <summary>
+        /// Encodes one codepoint, consuming a surrogate pair when it finds one.
+        /// Returns the number of bytes written.
+        /// </summary>
+        private static int EncodeUtf8(char* source, int length, ref int index, byte* destination)
+        {
+            uint value = source[index];
+
+            if (value >= 0xD800 && value <= 0xDBFF && index + 1 < length)
+            {
+                uint low = source[index + 1];
+                if (low >= 0xDC00 && low <= 0xDFFF)
+                {
+                    value = ((value - 0xD800u) << 10) + (low - 0xDC00u) + 0x10000u;
+                    index++;
+                }
+            }
+
+            if (value < 0x80)
+            {
+                destination[0] = (byte)value;
+                return 1;
+            }
+
+            if (value < 0x800)
+            {
+                destination[0] = (byte)(0xC0 | (value >> 6));
+                destination[1] = (byte)(0x80 | (value & 0x3F));
+                return 2;
+            }
+
+            if (value < 0x10000)
+            {
+                destination[0] = (byte)(0xE0 | (value >> 12));
+                destination[1] = (byte)(0x80 | ((value >> 6) & 0x3F));
+                destination[2] = (byte)(0x80 | (value & 0x3F));
+                return 3;
+            }
+
+            destination[0] = (byte)(0xF0 | (value >> 18));
+            destination[1] = (byte)(0x80 | ((value >> 12) & 0x3F));
+            destination[2] = (byte)(0x80 | ((value >> 6) & 0x3F));
+            destination[3] = (byte)(0x80 | (value & 0x3F));
+            return 4;
         }
 
         public static void WriteBuildId()

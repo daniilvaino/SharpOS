@@ -11,7 +11,6 @@
 
 using System;
 using System.Linq;
-using NStack;
 
 namespace Terminal.Gui {
 	/// <summary>
@@ -23,13 +22,13 @@ namespace Terminal.Gui {
 	/// </remarks>
 	public class Window : Toplevel {
 		View contentView;
-		ustring title = ustring.Empty;
+		string title = string.Empty;
 
 		/// <summary>
 		/// The title to be displayed for this window.
 		/// </summary>
 		/// <value>The title</value>
-		public ustring Title {
+		public string Title {
 			get => title;
 			set {
 				if (!OnTitleChanging (title, value)) {
@@ -83,7 +82,7 @@ namespace Terminal.Gui {
 		/// Its ONLY reason for being is to provide a simple way for Window to expose to those SubViews that the Window's Bounds 
 		/// are actually deflated due to the border. 
 		/// </summary>
-		class ContentView : View {
+		class ContentView : View, IContentView {
 			Window instance;
 
 			public ContentView (Rect frame, Window instance) : base (frame)
@@ -126,7 +125,7 @@ namespace Terminal.Gui {
 		/// This constructor initializes a Window with a <see cref="LayoutStyle"/> of <see cref="LayoutStyle.Absolute"/>. Use constructors
 		/// that do not take <c>Rect</c> parameters to initialize a Window with <see cref="LayoutStyle.Computed"/>. 
 		/// </remarks>
-		public Window (Rect frame, ustring title = null) : this (frame, title, padding: 0, border: null)
+		public Window (Rect frame, string title = null) : this (frame, title, padding: 0, border: null)
 		{
 		}
 
@@ -138,7 +137,7 @@ namespace Terminal.Gui {
 		///   This constructor initializes a View with a <see cref="LayoutStyle"/> of <see cref="LayoutStyle.Computed"/>. 
 		///   Use <see cref="View.X"/>, <see cref="View.Y"/>, <see cref="View.Width"/>, and <see cref="View.Height"/> properties to dynamically control the size and location of the view.
 		/// </remarks>
-		public Window (ustring title = null) : this (title, padding: 0, border: null)
+		public Window (string title = null) : this (title, padding: 0, border: null)
 		{
 		}
 
@@ -159,7 +158,7 @@ namespace Terminal.Gui {
 		/// This constructor initializes a Window with a <see cref="LayoutStyle"/> of <see cref="LayoutStyle.Absolute"/>. Use constructors
 		/// that do not take <c>Rect</c> parameters to initialize a Window with  <see cref="LayoutStyle"/> of <see cref="LayoutStyle.Computed"/> 
 		/// </remarks>
-		public Window (Rect frame, ustring title = null, int padding = 0, Border border = null) : base (frame)
+		public Window (Rect frame, string title = null, int padding = 0, Border border = null) : base (frame)
 		{
 			Initialize (title, frame, padding, border);
 		}
@@ -175,16 +174,16 @@ namespace Terminal.Gui {
 		///   This constructor initializes a View with a <see cref="LayoutStyle"/> of <see cref="LayoutStyle.Computed"/>. 
 		///   Use <see cref="View.X"/>, <see cref="View.Y"/>, <see cref="View.Width"/>, and <see cref="View.Height"/> properties to dynamically control the size and location of the view.
 		/// </remarks>
-		public Window (ustring title = null, int padding = 0, Border border = null) : base ()
+		public Window (string title = null, int padding = 0, Border border = null) : base ()
 		{
 			Initialize (title, Rect.Empty, padding, border);
 		}
 
-		void Initialize (ustring title, Rect frame, int padding = 0, Border border = null)
+		void Initialize (string title, Rect frame, int padding = 0, Border border = null)
 		{
 			CanFocus = true;
 			ColorScheme = Colors.Base;
-			if (title == null) title = ustring.Empty;
+			if (title == null) title = string.Empty;
 			Title = title;
 			if (border == null) {
 				Border = new Border () {
@@ -194,7 +193,7 @@ namespace Terminal.Gui {
 				};
 			} else {
 				Border = border;
-				if (ustring.IsNullOrEmpty (border.Title)) {
+				if (string.IsNullOrEmpty (border.Title)) {
 					border.Title = title;
 				}
 			}
@@ -343,7 +342,7 @@ namespace Terminal.Gui {
 		/// <summary>
 		///   The text displayed by the <see cref="Label"/>.
 		/// </summary>
-		public override ustring Text {
+		public override string Text {
 			get => contentView?.Text;
 			set {
 				base.Text = value;
@@ -371,12 +370,12 @@ namespace Terminal.Gui {
 			/// <summary>
 			/// The new Window Title.
 			/// </summary>
-			public ustring NewTitle { get; set; }
+			public string NewTitle { get; set; }
 
 			/// <summary>
 			/// The old Window Title.
 			/// </summary>
-			public ustring OldTitle { get; set; }
+			public string OldTitle { get; set; }
 
 			/// <summary>
 			/// Flag which allows cancelling the Title change.
@@ -388,7 +387,7 @@ namespace Terminal.Gui {
 			/// </summary>
 			/// <param name="oldTitle">The <see cref="Window.Title"/> that is/has been replaced.</param>
 			/// <param name="newTitle">The new <see cref="Window.Title"/> to be replaced.</param>
-			public TitleEventArgs (ustring oldTitle, ustring newTitle)
+			public TitleEventArgs (string oldTitle, string newTitle)
 			{
 				OldTitle = oldTitle;
 				NewTitle = newTitle;
@@ -400,7 +399,7 @@ namespace Terminal.Gui {
 		/// <param name="oldTitle">The <see cref="Window.Title"/> that is/has been replaced.</param>
 		/// <param name="newTitle">The new <see cref="Window.Title"/> to be replaced.</param>
 		/// <returns>`true` if an event handler cancelled the Title change.</returns>
-		public virtual bool OnTitleChanging (ustring oldTitle, ustring newTitle)
+		public virtual bool OnTitleChanging (string oldTitle, string newTitle)
 		{
 			var args = new TitleEventArgs (oldTitle, newTitle);
 			TitleChanging?.Invoke (args);
@@ -418,7 +417,7 @@ namespace Terminal.Gui {
 		/// </summary>
 		/// <param name="oldTitle">The <see cref="Window.Title"/> that is/has been replaced.</param>
 		/// <param name="newTitle">The new <see cref="Window.Title"/> to be replaced.</param>
-		public virtual void OnTitleChanged (ustring oldTitle, ustring newTitle)
+		public virtual void OnTitleChanged (string oldTitle, string newTitle)
 		{
 			var args = new TitleEventArgs (oldTitle, newTitle);
 			TitleChanged?.Invoke (args);

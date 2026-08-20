@@ -10,7 +10,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
-using NStack;
 using Terminal.Gui.Resources;
 using Rune = System.Rune;
 
@@ -25,7 +24,7 @@ namespace Terminal.Gui {
 		List<Rune> text;
 		int first, point;
 		int selectedStart = -1; // -1 represents there is no text selection.
-		ustring selectedText;
+		string selectedText;
 		HistoryText historyText = new HistoryText ();
 		CultureInfo currentCulture;
 
@@ -51,15 +50,9 @@ namespace Terminal.Gui {
 		///   This event is raised when the <see cref="Text"/> changes. 
 		/// </remarks>
 		/// <remarks>
-		///   The passed <see cref="EventArgs"/> is a <see cref="ustring"/> containing the old value. 
+		///   The passed <see cref="EventArgs"/> is a <see cref="string"/> containing the old value. 
 		/// </remarks>
-		public event Action<ustring> TextChanged;
-
-		/// <summary>
-		/// Initializes a new instance of the <see cref="TextField"/> class using <see cref="LayoutStyle.Computed"/> positioning.
-		/// </summary>
-		/// <param name="text">Initial text contents.</param>
-		public TextField (string text) : this (ustring.Make (text)) { }
+		public event Action<string> TextChanged;
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="TextField"/> class using <see cref="LayoutStyle.Computed"/> positioning.
@@ -70,7 +63,7 @@ namespace Terminal.Gui {
 		/// Initializes a new instance of the <see cref="TextField"/> class using <see cref="LayoutStyle.Computed"/> positioning.
 		/// </summary>
 		/// <param name="text">Initial text contents.</param>
-		public TextField (ustring text) : base (text)
+		public TextField (string text) : base (text)
 		{
 			Initialize (text, text.RuneCount + 1);
 		}
@@ -82,12 +75,12 @@ namespace Terminal.Gui {
 		/// <param name="y">The y coordinate.</param>
 		/// <param name="w">The width.</param>
 		/// <param name="text">Initial text contents.</param>
-		public TextField (int x, int y, int w, ustring text) : base (new Rect (x, y, w, 1))
+		public TextField (int x, int y, int w, string text) : base (new Rect (x, y, w, 1))
 		{
 			Initialize (text, w);
 		}
 
-		void Initialize (ustring text, int w)
+		void Initialize (string text, int w)
 		{
 			Height = 1;
 
@@ -238,7 +231,7 @@ namespace Terminal.Gui {
 			if (obj == null)
 				return;
 
-			Text = ustring.Make (obj?.Lines [obj.CursorPosition.Y]);
+			Text = RuneText.Make (obj?.Lines [obj.CursorPosition.Y]);
 			CursorPosition = obj.CursorPosition.X;
 			Adjust ();
 		}
@@ -280,13 +273,13 @@ namespace Terminal.Gui {
 		/// </summary>
 		/// <remarks>
 		/// </remarks>
-		public new ustring Text {
+		public new string Text {
 			get {
-				return ustring.Make (text);
+				return RuneText.Make (text);
 			}
 
 			set {
-				var oldText = ustring.Make (text);
+				var oldText = RuneText.Make (text);
 
 				if (oldText == value)
 					return;
@@ -513,7 +506,7 @@ namespace Terminal.Gui {
 
 		void SetText (List<Rune> newText)
 		{
-			Text = ustring.Make (newText);
+			Text = RuneText.Make (newText);
 		}
 
 		void SetText (IEnumerable<Rune> newText)
@@ -530,7 +523,7 @@ namespace Terminal.Gui {
 		void SetClipboard (IEnumerable<Rune> text)
 		{
 			if (!Secret)
-				Clipboard.Contents = ustring.Make (text.ToList ());
+				Clipboard.Contents = RuneText.Make (text.ToList ());
 		}
 
 		int oldCursorPos;
@@ -594,7 +587,7 @@ namespace Terminal.Gui {
 			if (!useOldCursorPos) {
 				oldCursorPos = point;
 			}
-			var kbstr = TextModel.ToRunes (ustring.Make ((uint)kb.Key));
+			var kbstr = TextModel.ToRunes (RuneText.Make ((uint)kb.Key));
 			if (Used) {
 				point++;
 				if (point == newText.Count + 1) {
@@ -670,7 +663,7 @@ namespace Terminal.Gui {
 
 			historyText.Redo ();
 
-			//if (ustring.IsNullOrEmpty (Clipboard.Contents))
+			//if (string.IsNullOrEmpty (Clipboard.Contents))
 			//	return true;
 			//var clip = TextModel.ToRunes (Clipboard.Contents);
 			//if (clip == null)
@@ -835,7 +828,7 @@ namespace Terminal.Gui {
 				Adjust ();
 			} else {
 				var newText = DeleteSelectedText ();
-				Text = ustring.Make (newText);
+				Text = RuneText.Make (newText);
 				Adjust ();
 			}
 		}
@@ -858,7 +851,7 @@ namespace Terminal.Gui {
 				Adjust ();
 			} else {
 				var newText = DeleteSelectedText ();
-				Text = ustring.Make (newText);
+				Text = RuneText.Make (newText);
 				Adjust ();
 			}
 		}
@@ -1010,7 +1003,7 @@ namespace Terminal.Gui {
 		/// <summary>
 		/// The selected text.
 		/// </summary>
-		public ustring SelectedText {
+		public string SelectedText {
 			get => Secret ? null : selectedText;
 			private set => selectedText = value;
 		}
@@ -1137,7 +1130,7 @@ namespace Terminal.Gui {
 				length = Math.Abs (x + direction <= text.Count ? x + direction - selectedStart : text.Count - selectedStart);
 				SetSelectedStartSelectedLength ();
 				if (start > -1 && length > 0) {
-					selectedText = length > 0 ? ustring.Make (text).ToString ().Substring (
+					selectedText = length > 0 ? RuneText.Make (text).ToString ().Substring (
 						start < 0 ? 0 : start, length > text.Count ? text.Count : length) : "";
 					if (first > start) {
 						first = start;
@@ -1197,20 +1190,20 @@ namespace Terminal.Gui {
 
 			Clipboard.Contents = SelectedText;
 			var newText = DeleteSelectedText ();
-			Text = ustring.Make (newText);
+			Text = RuneText.Make (newText);
 			Adjust ();
 		}
 
 		List<Rune> DeleteSelectedText ()
 		{
-			ustring actualText = Text;
+			string actualText = Text;
 			SetSelectedStartSelectedLength ();
 			int selStart = SelectedStart > -1 ? start : point;
 			(var _, var len) = TextModel.DisplaySize (text, 0, selStart, false);
 			(var _, var len2) = TextModel.DisplaySize (text, selStart, selStart + length, false);
 			(var _, var len3) = TextModel.DisplaySize (text, selStart + length, actualText.RuneCount, false);
-			var newText = actualText [0, len] +
-				actualText [len + len2, len + len2 + len3];
+			var newText = actualText.Slice (0, len) +
+				actualText.Slice (len + len2, len + len2 + len3);
 			ClearAllSelection ();
 			point = selStart >= newText.RuneCount ? newText.RuneCount : selStart;
 			return newText.ToRuneList ();
@@ -1221,20 +1214,20 @@ namespace Terminal.Gui {
 		/// </summary>
 		public virtual void Paste ()
 		{
-			if (ReadOnly || ustring.IsNullOrEmpty (Clipboard.Contents)) {
+			if (ReadOnly || string.IsNullOrEmpty (Clipboard.Contents)) {
 				return;
 			}
 
 			SetSelectedStartSelectedLength ();
 			int selStart = start == -1 ? CursorPosition : start;
-			ustring actualText = Text;
+			string actualText = Text;
 			(int _, int len) = TextModel.DisplaySize (text, 0, selStart, false);
 			(var _, var len2) = TextModel.DisplaySize (text, selStart, selStart + length, false);
 			(var _, var len3) = TextModel.DisplaySize (text, selStart + length, actualText.RuneCount, false);
-			ustring cbTxt = Clipboard.Contents.Split ("\n") [0] ?? "";
-			Text = actualText [0, len] +
+			string cbTxt = Clipboard.Contents.Split ("\n") [0] ?? "";
+			Text = actualText.Slice (0, len) +
 				cbTxt +
-				actualText [len + len2, len + len2 + len3];
+				actualText.Slice (len + len2, len + len2 + len3);
 			point = selStart + cbTxt.RuneCount;
 			ClearAllSelection ();
 			SetNeedsDisplay ();
@@ -1246,7 +1239,7 @@ namespace Terminal.Gui {
 		/// </summary>
 		/// <param name="newText">The new text to be replaced.</param>
 		/// <returns>Returns the <see cref="TextChangingEventArgs"/></returns>
-		public virtual TextChangingEventArgs OnTextChanging (ustring newText)
+		public virtual TextChangingEventArgs OnTextChanging (string newText)
 		{
 			var ev = new TextChangingEventArgs (newText);
 			TextChanging?.Invoke (ev);
@@ -1316,7 +1309,7 @@ namespace Terminal.Gui {
 		/// <summary>
 		/// The new text to be replaced.
 		/// </summary>
-		public ustring NewText { get; set; }
+		public string NewText { get; set; }
 		/// <summary>
 		/// Flag which allows to cancel the new text value.
 		/// </summary>
@@ -1326,7 +1319,7 @@ namespace Terminal.Gui {
 		/// Initializes a new instance of <see cref="TextChangingEventArgs"/>
 		/// </summary>
 		/// <param name="newText">The new <see cref="TextField.Text"/> to be replaced.</param>
-		public TextChangingEventArgs (ustring newText)
+		public TextChangingEventArgs (string newText)
 		{
 			NewText = newText;
 		}

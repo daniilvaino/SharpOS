@@ -137,6 +137,19 @@ namespace OS.Hal
             TerminalConsole.Flush();
         }
 
+        /// <summary>
+        /// Paints whatever has been fed to the terminal engine but not drawn.
+        /// </summary>
+        /// <remarks>
+        /// Putc paints on a line break, and Write paints once per string, which
+        /// covers everything that logs. It does not cover a full-screen
+        /// application: a text UI positions the cursor and fills cells, and
+        /// never writes a newline at all — so its output reached the engine and
+        /// stopped there, updating the grid while the screen showed the
+        /// previous frame.
+        /// </remarks>
+        public static void FlushConsole() => TerminalConsole.Flush();
+
         public static void WriteLine(string text)
         {
             Write(text);

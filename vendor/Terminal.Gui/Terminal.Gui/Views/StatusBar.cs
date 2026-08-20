@@ -1,4 +1,4 @@
-//
+﻿//
 // StatusBar.cs: a statusbar for an application
 //
 // Authors:
@@ -8,7 +8,6 @@
 //   Add mouse support
 using System;
 using System.Collections.Generic;
-using NStack;
 
 namespace Terminal.Gui {
 	/// <summary>
@@ -28,7 +27,7 @@ namespace Terminal.Gui {
 		/// <param name="title">Title for the <see cref="StatusItem"/>.</param>
 		/// <param name="action">Action to invoke when the <see cref="StatusItem"/> is activated.</param>
 		/// <param name="canExecute">Function to determine if the action can currently be executed.</param>
-		public StatusItem (Key shortcut, ustring title, Action action, Func<bool> canExecute = null)
+		public StatusItem (Key shortcut, string title, Action action, Func<bool> canExecute = null)
 		{
 			Title = title ?? "";
 			Shortcut = shortcut;
@@ -50,7 +49,7 @@ namespace Terminal.Gui {
 		/// A <see cref="StatusItem.Title"/> set to `~F1~ Help` will render as *F1* using <see cref="ColorScheme.HotNormal"/> and
 		/// *Help* as <see cref="ColorScheme.HotNormal"/>.
 		/// </remarks>
-		public ustring Title { get; set; }
+		public string Title { get; set; }
 
 		/// <summary>
 		/// Gets or sets the action to be invoked when the statusbar item is triggered
@@ -122,15 +121,15 @@ namespace Terminal.Gui {
 			Height = 1;
 		}
 
-		static ustring shortcutDelimiter = "-";
+		static string shortcutDelimiter = "-";
 		/// <summary>
 		/// Used for change the shortcut delimiter separator.
 		/// </summary>
-		public static ustring ShortcutDelimiter {
+		public static string ShortcutDelimiter {
 			get => shortcutDelimiter;
 			set {
 				if (shortcutDelimiter != value) {
-					shortcutDelimiter = value == ustring.Empty ? " " : value;
+					shortcutDelimiter = value == string.Empty ? " " : value;
 				}
 			}
 		}

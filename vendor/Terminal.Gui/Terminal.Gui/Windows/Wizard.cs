@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using NStack;
 using Terminal.Gui.Resources;
 
 namespace Terminal.Gui {
@@ -77,7 +76,7 @@ namespace Terminal.Gui {
 			/// The title of the <see cref="WizardStep"/>. 
 			/// </summary>
 			/// <remarks>The Title is only displayed when the <see cref="Wizard"/> is used as a modal pop-up (see <see cref="Wizard.Modal"/>.</remarks>
-			public new ustring Title {
+			public new string Title {
 				get => title;
 				set {
 					if (!OnTitleChanging (title, value)) {
@@ -90,7 +89,7 @@ namespace Terminal.Gui {
 				}
 			}
 
-			private ustring title = ustring.Empty;
+			private string title = string.Empty;
 
 			/// <summary>
 			/// An <see cref="EventArgs"/> which allows passing a cancelable new <see cref="Title"/> value event.
@@ -99,12 +98,12 @@ namespace Terminal.Gui {
 				/// <summary>
 				/// The new Window Title.
 				/// </summary>
-				public ustring NewTitle { get; set; }
+				public string NewTitle { get; set; }
 
 				/// <summary>
 				/// The old Window Title.
 				/// </summary>
-				public ustring OldTitle { get; set; }
+				public string OldTitle { get; set; }
 
 				/// <summary>
 				/// Flag which allows cancelling the Title change.
@@ -116,7 +115,7 @@ namespace Terminal.Gui {
 				/// </summary>
 				/// <param name="oldTitle">The <see cref="Title"/> that is/has been replaced.</param>
 				/// <param name="newTitle">The new <see cref="Title"/> to be replaced.</param>
-				public TitleEventArgs (ustring oldTitle, ustring newTitle)
+				public TitleEventArgs (string oldTitle, string newTitle)
 				{
 					OldTitle = oldTitle;
 					NewTitle = newTitle;
@@ -129,7 +128,7 @@ namespace Terminal.Gui {
 			/// <param name="oldTitle">The <see cref="Title"/> that is/has been replaced.</param>
 			/// <param name="newTitle">The new <see cref="Title"/> to be replaced.</param>
 			/// <returns><c>true</c> if an event handler cancelled the Title change.</returns>
-			public virtual bool OnTitleChanging (ustring oldTitle, ustring newTitle)
+			public virtual bool OnTitleChanging (string oldTitle, string newTitle)
 			{
 				var args = new TitleEventArgs (oldTitle, newTitle);
 				TitleChanging?.Invoke (args);
@@ -147,7 +146,7 @@ namespace Terminal.Gui {
 			/// </summary>
 			/// <param name="oldTitle">The <see cref="Title"/> that is/has been replaced.</param>
 			/// <param name="newTitle">The new <see cref="Title"/> to be replaced.</param>
-			public virtual void OnTitleChanged (ustring oldTitle, ustring newTitle)
+			public virtual void OnTitleChanged (string oldTitle, string newTitle)
 			{
 				var args = new TitleEventArgs (oldTitle, newTitle);
 				TitleChanged?.Invoke (args);
@@ -172,7 +171,7 @@ namespace Terminal.Gui {
 			/// the help pane will not be visible and the content will fill the entire WizardStep.
 			/// </summary>
 			/// <remarks>The help text is displayed using a read-only <see cref="TextView"/>.</remarks>
-			public ustring HelpText {
+			public string HelpText {
 				get => helpTextView.Text;
 				set {
 					helpTextView.Text = value;
@@ -187,13 +186,13 @@ namespace Terminal.Gui {
 			/// steps after the first step.
 			/// </summary>
 			/// <remarks>The default text is "Back"</remarks>
-			public ustring BackButtonText { get; set; } = ustring.Empty;
+			public string BackButtonText { get; set; } = string.Empty;
 
 			/// <summary>
 			/// Sets or gets the text for the next/finish button.
 			/// </summary>
 			/// <remarks>The default text is "Next..." if the Pane is not the last pane. Otherwise it is "Finish"</remarks>
-			public ustring NextButtonText { get; set; } = ustring.Empty;
+			public string NextButtonText { get; set; } = string.Empty;
 
 			/// <summary>
 			/// Initializes a new instance of the <see cref="Wizard"/> class using <see cref="LayoutStyle.Computed"/> positioning.
@@ -202,7 +201,7 @@ namespace Terminal.Gui {
 			/// "Wizard Title - Wizard Step Title" when this step is active.</param>
 			/// <remarks>
 			/// </remarks>
-			public WizardStep (ustring title)
+			public WizardStep (string title)
 			{
 				this.Title = title; // this.Title holds just the "Wizard Title"; base.Title holds "Wizard Title - Step Title"
 				this.Border.BorderStyle = BorderStyle.Rounded;
@@ -316,7 +315,7 @@ namespace Terminal.Gui {
 
 				SetNeedsDisplay ();
 				var touched = view.Frame;
-				if (view == contentView || view.GetType().Name == "ContentView") {
+				if (view == contentView || view is IContentView) {
 					base.Remove (view);
 				} else {
 					contentView.Remove (view);
@@ -347,7 +346,7 @@ namespace Terminal.Gui {
 		/// The Wizard will be vertically and horizontally centered in the container.
 		/// After initialization use <c>X</c>, <c>Y</c>, <c>Width</c>, and <c>Height</c> change size and position.
 		/// </remarks>
-		public Wizard () : this (ustring.Empty)
+		public Wizard () : this (string.Empty)
 		{
 		}
 
@@ -359,7 +358,7 @@ namespace Terminal.Gui {
 		/// The Wizard will be vertically and horizontally centered in the container.
 		/// After initialization use <c>X</c>, <c>Y</c>, <c>Width</c>, and <c>Height</c> change size and position.
 		/// </remarks>
-		public Wizard (ustring title) : base (title)
+		public Wizard (string title) : base (title)
 		{
 			wizardTitle = title;
 			// Using Justify causes the Back and Next buttons to be hard justified against
@@ -614,7 +613,7 @@ namespace Terminal.Gui {
 		/// <remarks>
 		/// The Title is only displayed when the <see cref="Wizard"/> <see cref="Wizard.Modal"/> is set to <c>false</c>.
 		/// </remarks>
-		public new ustring Title {
+		public new string Title {
 			get {
 				// The base (Dialog) Title holds the full title ("Wizard Title - Step Title")
 				return base.Title;
@@ -624,7 +623,7 @@ namespace Terminal.Gui {
 				base.Title = $"{wizardTitle}{(steps.Count > 0 && currentStep != null ? " - " + currentStep.Title : string.Empty)}";
 			}
 		}
-		private ustring wizardTitle = ustring.Empty;
+		private string wizardTitle = string.Empty;
 
 		/// <summary>	
 		/// <see cref="EventArgs"/> for <see cref="WizardStep"/> transition events.
@@ -801,14 +800,14 @@ namespace Terminal.Gui {
 			base.Title = $"{wizardTitle}{(steps.Count > 0 ? " - " + CurrentStep.Title : string.Empty)}";
 
 			// Configure the Back button
-			backBtn.Text = CurrentStep.BackButtonText != ustring.Empty ? CurrentStep.BackButtonText : Strings.wzBack; // "_Back";
+			backBtn.Text = CurrentStep.BackButtonText != string.Empty ? CurrentStep.BackButtonText : Strings.wzBack; // "_Back";
 			backBtn.Visible = (CurrentStep != GetFirstStep ());
 
 			// Configure the Next/Finished button
 			if (CurrentStep == GetLastStep ()) {
-				nextfinishBtn.Text = CurrentStep.NextButtonText != ustring.Empty ? CurrentStep.NextButtonText : Strings.wzFinish; // "Fi_nish";
+				nextfinishBtn.Text = CurrentStep.NextButtonText != string.Empty ? CurrentStep.NextButtonText : Strings.wzFinish; // "Fi_nish";
 			} else {
-				nextfinishBtn.Text = CurrentStep.NextButtonText != ustring.Empty ? CurrentStep.NextButtonText : Strings.wzNext; // "_Next...";
+				nextfinishBtn.Text = CurrentStep.NextButtonText != string.Empty ? CurrentStep.NextButtonText : Strings.wzNext; // "_Next...";
 			}
 
 			SizeStep (CurrentStep);

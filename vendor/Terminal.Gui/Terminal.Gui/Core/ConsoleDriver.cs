@@ -1,7 +1,6 @@
 ﻿//
 // ConsoleDriver.cs: Base class for Terminal.Gui ConsoleDriver implementations.
 //
-using NStack;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -514,12 +513,17 @@ namespace Terminal.Gui {
 		/// </summary>
 		public static Dictionary<string, ColorScheme> Create ()
 		{
-			// Use reflection to dynamically create the default set of ColorSchemes from the list defined 
-			// by the class. 
-			return typeof (Colors).GetProperties ()
-				.Where (p => p.PropertyType == typeof (ColorScheme))
-				.Select (p => new KeyValuePair<string, ColorScheme> (p.Name, new ColorScheme ()))
-				.ToDictionary (t => t.Key, t => t.Value, comparer: new SchemeNameComparerIgnoreCase ());
+			// Upstream discovers the scheme names by reflecting over this class's
+			// own properties. Naming them here says the same thing without
+			// metadata, and the list cannot drift silently: a scheme with no entry
+			// throws on first use rather than reading as empty.
+			var schemes = new Dictionary<string, ColorScheme> (new SchemeNameComparerIgnoreCase ());
+			schemes ["TopLevel"] = new ColorScheme ();
+			schemes ["Base"] = new ColorScheme ();
+			schemes ["Dialog"] = new ColorScheme ();
+			schemes ["Menu"] = new ColorScheme ();
+			schemes ["Error"] = new ColorScheme ();
+			return schemes;
 		}
 
 		/// <summary>
@@ -760,7 +764,7 @@ namespace Terminal.Gui {
 		/// Adds the <paramref name="str"/> to the display at the cursor position.
 		/// </summary>
 		/// <param name="str">String.</param>
-		public abstract void AddStr (ustring str);
+		public abstract void AddStr (string str);
 
 		/// <summary>
 		/// Prepare the driver and set the key and mouse events handlers.
@@ -906,10 +910,10 @@ namespace Terminal.Gui {
 		/// <param name="paddingBottom">Number of rows to pad on the bottom (if 0 the border will not appear on the bottom).</param>
 		/// <param name="textAlignment">Not yet implemented.</param>
 		/// <remarks></remarks>
-		public virtual void DrawWindowTitle (Rect region, ustring title, int paddingLeft, int paddingTop, int paddingRight, int paddingBottom, TextAlignment textAlignment = TextAlignment.Left)
+		public virtual void DrawWindowTitle (Rect region, string title, int paddingLeft, int paddingTop, int paddingRight, int paddingBottom, TextAlignment textAlignment = TextAlignment.Left)
 		{
 			var width = region.Width - (paddingLeft + 2) * 2;
-			if (!ustring.IsNullOrEmpty (title) && width > 4 && region.Y + paddingTop <= region.Y + paddingBottom) {
+			if (!string.IsNullOrEmpty (title) && width > 4 && region.Y + paddingTop <= region.Y + paddingBottom) {
 				Move (region.X + 1 + paddingLeft, region.Y + paddingTop);
 				AddRune (' ');
 				var str = title.Sum (r => Math.Max (Rune.ColumnWidth (r), 1)) >= width
@@ -1463,68 +1467,8 @@ namespace Terminal.Gui {
 	/// Used primarily by CursesDriver, but also used in Unit tests which is why it is in
 	/// ConsoleDriver.cs.
 	/// </summary>
-	internal static class ClipboardProcessRunner {
-		public static (int exitCode, string result) Bash (string commandLine, string inputText = "", bool waitForOutput = false)
-		{
-			var arguments = $"-c \"{commandLine}\"";
-			var (exitCode, result) = Process ("bash", arguments, inputText, waitForOutput);
-
-			return (exitCode, result.TrimEnd ());
-		}
-
-		public static (int exitCode, string result) Process (string cmd, string arguments, string input = null, bool waitForOutput = true)
-		{
-			var output = string.Empty;
-
-			using (Process process = new Process {
-				StartInfo = new ProcessStartInfo {
-					FileName = cmd,
-					Arguments = arguments,
-					RedirectStandardOutput = true,
-					RedirectStandardError = true,
-					RedirectStandardInput = true,
-					UseShellExecute = false,
-					CreateNoWindow = true,
-				}
-			}) {
-				var eventHandled = new TaskCompletionSource<bool> ();
-				process.Start ();
-				if (!string.IsNullOrEmpty (input)) {
-					process.StandardInput.Write (input);
-					process.StandardInput.Close ();
-				}
-
-				if (!process.WaitForExit (10000)) {
-					var timeoutError = $@"Process timed out. Command line: {process.StartInfo.FileName} {process.StartInfo.Arguments}.";
-					throw new TimeoutException (timeoutError);
-				}
-
-				if (waitForOutput && process.StandardOutput.Peek () != -1) {
-					output = process.StandardOutput.ReadToEnd ();
-				}
-
-				if (process.ExitCode > 0) {
-					output = $@"Process failed to run. Command line: {cmd} {arguments}.
-										Output: {output}
-										Error: {process.StandardError.ReadToEnd ()}";
-				}
-
-				return (process.ExitCode, output);
-			}
-		}
-
-		public static bool DoubleWaitForExit (this System.Diagnostics.Process process)
-		{
-			var result = process.WaitForExit (500);
-			if (result) {
-				process.WaitForExit ();
-			}
-			return result;
-		}
-
-		public static bool FileExists (this string value)
-		{
-			return !string.IsNullOrEmpty (value) && !value.Contains ("not found");
-		}
-	}
+	// Upstream ran bash here — xclip, pbcopy, powershell.exe — to reach the
+	// host's clipboard. There is no process to start on SharpOS, and the only
+	// caller was CursesDriver, which this port does not build. The clipboard
+	// itself lives on in Clipboard/ClipboardBase, backed by memory.
 }

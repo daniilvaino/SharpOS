@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
-using NStack;
 
 namespace Terminal.Gui {
 	/// <summary>
@@ -209,7 +208,7 @@ namespace Terminal.Gui {
 		/// <summary>
 		/// The keystroke combination used in the <see cref="Shortcut"/> as string.
 		/// </summary>
-		public ustring ShortcutTag => ShortcutHelper.GetShortcutTag (shortcutHelper.Shortcut);
+		public string ShortcutTag => ShortcutHelper.GetShortcutTag (shortcutHelper.Shortcut);
 
 		/// <summary>
 		/// The action to run if the <see cref="Shortcut"/> is defined.
@@ -415,7 +414,7 @@ namespace Terminal.Gui {
 		/// </summary>
 		/// <value>The identifier.</value>
 		/// <remarks>The id should be unique across all Views that share a SuperView.</remarks>
-		public ustring Id { get; set; } = "";
+		public string Id { get; set; } = "";
 
 		/// <summary>
 		/// Returns a value indicating if this View is currently on Top (Active)
@@ -608,11 +607,11 @@ namespace Terminal.Gui {
 
 		bool ValidatePosDim (object oldValue, object newValue)
 		{
-			if (!IsInitialized || layoutStyle == LayoutStyle.Absolute || oldValue == null || oldValue.GetType () == newValue.GetType () || this is Toplevel) {
+			if (!IsInitialized || layoutStyle == LayoutStyle.Absolute || oldValue == null || RuntimeTypeId.SameType (oldValue, newValue) || this is Toplevel) {
 				return true;
 			}
 			if (layoutStyle == LayoutStyle.Computed) {
-				if (oldValue.GetType () != newValue.GetType () && !(newValue is Pos.PosAbsolute || newValue is Dim.DimAbsolute)) {
+				if (!RuntimeTypeId.SameType (oldValue, newValue) && !(newValue is Pos.PosAbsolute || newValue is Dim.DimAbsolute)) {
 					return true;
 				}
 			}
@@ -628,10 +627,10 @@ namespace Terminal.Gui {
 		{
 			size = Size.Empty;
 
-			if (!AutoSize && !ustring.IsNullOrEmpty (TextFormatter.Text)) {
+			if (!AutoSize && !string.IsNullOrEmpty (TextFormatter.Text)) {
 				switch (TextFormatter.IsVerticalDirection (TextDirection)) {
 				case true:
-					var colWidth = TextFormatter.GetSumMaxCharWidth (new List<ustring> { TextFormatter.Text }, 0, 1);
+					var colWidth = TextFormatter.GetSumMaxCharWidth (new List<string> { TextFormatter.Text }, 0, 1);
 					if (frame.Width < colWidth && (Width == null || (Bounds.Width >= 0 && Width is Dim.DimAbsolute
 						&& Width.Anchor (0) >= 0 && Width.Anchor (0) < colWidth))) {
 						size = new Size (colWidth, Bounds.Height);
@@ -685,7 +684,7 @@ namespace Terminal.Gui {
 		/// </remarks>
 		public View (Rect frame)
 		{
-			Initialize (ustring.Empty, frame, LayoutStyle.Absolute, TextDirection.LeftRight_TopBottom);
+			Initialize (string.Empty, frame, LayoutStyle.Absolute, TextDirection.LeftRight_TopBottom);
 		}
 
 		/// <summary>
@@ -724,7 +723,7 @@ namespace Terminal.Gui {
 		/// <param name="x">column to locate the View.</param>
 		/// <param name="y">row to locate the View.</param>
 		/// <param name="text">text to initialize the <see cref="Text"/> property with.</param>
-		public View (int x, int y, ustring text) : this (TextFormatter.CalcRect (x, y, text), text) { }
+		public View (int x, int y, string text) : this (TextFormatter.CalcRect (x, y, text), text) { }
 
 		/// <summary>
 		///   Initializes a new instance of <see cref="View"/> using <see cref="Terminal.Gui.LayoutStyle.Absolute"/> layout.
@@ -742,7 +741,7 @@ namespace Terminal.Gui {
 		/// <param name="rect">Location.</param>
 		/// <param name="text">text to initialize the <see cref="Text"/> property with.</param>
 		/// <param name="border">The <see cref="Border"/>.</param>
-		public View (Rect rect, ustring text, Border border = null)
+		public View (Rect rect, string text, Border border = null)
 		{
 			Initialize (text, rect, LayoutStyle.Absolute, TextDirection.LeftRight_TopBottom, border);
 		}
@@ -763,12 +762,12 @@ namespace Terminal.Gui {
 		/// <param name="text">text to initialize the <see cref="Text"/> property with.</param>
 		/// <param name="direction">The text direction.</param>
 		/// <param name="border">The <see cref="Border"/>.</param>
-		public View (ustring text, TextDirection direction = TextDirection.LeftRight_TopBottom, Border border = null)
+		public View (string text, TextDirection direction = TextDirection.LeftRight_TopBottom, Border border = null)
 		{
 			Initialize (text, Rect.Empty, LayoutStyle.Computed, direction, border);
 		}
 
-		void Initialize (ustring text, Rect rect, LayoutStyle layoutStyle = LayoutStyle.Computed,
+		void Initialize (string text, Rect rect, LayoutStyle layoutStyle = LayoutStyle.Computed,
 		    TextDirection direction = TextDirection.LeftRight_TopBottom, Border border = null)
 		{
 			TextFormatter = new TextFormatter ();
@@ -1232,7 +1231,7 @@ namespace Terminal.Gui {
 		/// <para>The hotkey is any character following the hotkey specifier, which is the underscore ('_') character by default.</para>
 		/// <para>The hotkey specifier can be changed via <see cref="HotKeySpecifier"/></para>
 		/// </remarks>
-		public void DrawHotString (ustring text, Attribute hotColor, Attribute normalColor)
+		public void DrawHotString (string text, Attribute hotColor, Attribute normalColor)
 		{
 			var hotkeySpec = HotKeySpecifier == (Rune)0xffff ? (Rune)'_' : HotKeySpecifier;
 			Application.Driver.SetAttribute (normalColor);
@@ -1252,7 +1251,7 @@ namespace Terminal.Gui {
 		/// <param name="text">String to display, the underscore before a letter flags the next letter as the hotkey.</param>
 		/// <param name="focused">If set to <see langword="true"/> this uses the focused colors from the color scheme, otherwise the regular ones.</param>
 		/// <param name="scheme">The color scheme to use.</param>
-		public void DrawHotString (ustring text, bool focused, ColorScheme scheme)
+		public void DrawHotString (string text, bool focused, ColorScheme scheme)
 		{
 			if (focused)
 				DrawHotString (text, scheme.HotFocus, scheme.Focus);
@@ -1500,8 +1499,8 @@ namespace Terminal.Gui {
 
 			if (!IgnoreBorderPropertyOnRedraw && Border != null) {
 				Border.DrawContent (this);
-			} else if (ustring.IsNullOrEmpty (TextFormatter.Text) &&
-				(GetType ().IsNestedPublic && !IsOverridden (this, "Redraw") || GetType ().Name == "View") &&
+			} else if (string.IsNullOrEmpty (TextFormatter.Text) &&
+				RuntimeTypeId.Is<View> (this) &&
 				(!NeedDisplay.IsEmpty || ChildNeedsDisplay || LayoutNeeded)) {
 
 				if (ColorScheme != null) {
@@ -1511,7 +1510,7 @@ namespace Terminal.Gui {
 				}
 			}
 
-			if (!ustring.IsNullOrEmpty (TextFormatter.Text)) {
+			if (!string.IsNullOrEmpty (TextFormatter.Text)) {
 				Rect containerBounds = GetContainerBounds ();
 				Clear (ViewToScreen (GetNeedDisplay (containerBounds)));
 				SetChildNeedsDisplay ();
@@ -1746,7 +1745,7 @@ namespace Terminal.Gui {
 				foreach (var command in KeyBindings [keyEvent.Key]) {
 
 					if (!CommandImplementations.ContainsKey (command)) {
-						throw new NotSupportedException ($"A KeyBinding was set up for the command {command} ({keyEvent.Key}) but that command is not supported by this View ({GetType ().Name})");
+						throw new NotSupportedException ($"A KeyBinding was set up for the command {command} ({keyEvent.Key}) but that command is not supported by this View ({Id})");
 					}
 
 					// each command has its own return value
@@ -2469,7 +2468,7 @@ namespace Terminal.Gui {
 			OnLayoutComplete (new LayoutEventArgs () { OldBounds = oldBounds });
 		}
 
-		ustring text;
+		string text;
 
 		/// <summary>
 		///   The text displayed by the <see cref="View"/>.
@@ -2489,7 +2488,7 @@ namespace Terminal.Gui {
 		///  <c>(Rune)0xffff</c>.
 		/// </para>
 		/// </remarks>
-		public virtual ustring Text {
+		public virtual string Text {
 			get => text;
 			set {
 				text = value;
@@ -2692,7 +2691,9 @@ namespace Terminal.Gui {
 		/// <returns></returns>
 		public override string ToString ()
 		{
-			return $"{GetType ().Name}({Id})({Frame})";
+			// Upstream prints the runtime type name here; naming a type needs
+			// metadata this runtime does not carry, so the Id identifies it.
+			return $"View({Id})({Frame})";
 		}
 
 		void SetHotKey ()
@@ -2814,7 +2815,7 @@ namespace Terminal.Gui {
 		/// <returns>The text formatter size more the <see cref="Terminal.Gui.TextFormatter.HotKeySpecifier"/> length.</returns>
 		public Size GetBoundsTextFormatterSize ()
 		{
-			if (ustring.IsNullOrEmpty (TextFormatter.Text))
+			if (string.IsNullOrEmpty (TextFormatter.Text))
 				return Bounds.Size;
 
 			return new Size (frame.Size.Width + GetHotKeySpecifierLength (),

@@ -11,7 +11,6 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using NStack;
 
 namespace Terminal.Gui {
 	internal class NetWinVTConsole {
@@ -698,7 +697,7 @@ namespace Terminal.Gui {
 			}
 		}
 
-		public override void AddStr (ustring str)
+		public override void AddStr (string str)
 		{
 			foreach (var rune in str)
 				AddRune (rune);

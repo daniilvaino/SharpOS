@@ -1,4 +1,4 @@
-using OS.Boot;
+﻿using OS.Boot;
 using OS.Hal;
 
 namespace OS.Kernel.Memory
@@ -28,7 +28,9 @@ namespace OS.Kernel.Memory
             void* execBuffer,
             uint execBufferSize,
             delegate* unmanaged<nint, nint, nint> resolver,
-            delegate* unmanaged<void> failHandler)
+            // Takes the dispatch cell: the failure names the interface and
+            // slot it was dispatching, instead of only the mechanism.
+            delegate* unmanaged<nint, nint, nint, void> failHandler)
         {
             if (s_installed) return true;
             if (execBuffer == null) return Refuse("execBuffer null", 0, 0, 0);
@@ -39,6 +41,13 @@ namespace OS.Kernel.Memory
 
             byte* shellcode = (byte*)InterfaceDispatchBridge.ShellcodeStart;
             if (shellcode == null) return Refuse("shellcode null", (ulong)execBuffer, 0, 0);
+
+            // The emitted bytes, once, so they can be disassembled rather than
+            // reasoned about. Three rounds of reading registers at the failure
+            // handler produced three different stories, all of them built on an
+            // assumption about code nobody had actually looked at.
+            if (OS.Kernel.Diagnostics.Probes.DispatchShellcodeDump)
+                DumpShellcode(shellcode);
 
             byte* target = (byte*)InterfaceDispatchStub.GetMethodAddress();
             if (target == null) return Refuse("stub address null", (ulong)execBuffer, (ulong)shellcode, 0);
@@ -61,6 +70,30 @@ namespace OS.Kernel.Memory
         // Every refusal names itself and prints the three numbers that decide
         // it. Without them "stub not patched / patch failed" is the first
         // symptom, and it surfaces far away — at the first interface dispatch.
+
+        /// <summary>
+        /// The emitted bytes, for disassembling rather than reasoning about.
+        /// </summary>
+        private static void DumpShellcode(byte* shellcode)
+        {
+            OS.Hal.Console.Write("[ifacepatch] shellcode at 0x");
+            OS.Hal.Console.WriteHex((ulong)(nint)shellcode);
+            OS.Hal.Console.WriteLine("");
+
+            for (int line = 0; line < 12; line++)
+            {
+                OS.Hal.Console.Write("[ifacepatch] ");
+                OS.Hal.Console.WriteHex((ulong)(line * 16));
+                OS.Hal.Console.Write(": ");
+                for (int i = 0; i < 16; i++)
+                {
+                    OS.Hal.Console.WriteHex(shellcode[line * 16 + i]);
+                    OS.Hal.Console.Write(" ");
+                }
+                OS.Hal.Console.WriteLine("");
+            }
+        }
+
         private static bool Refuse(string why, ulong target, ulong shellcode, long displacement)
         {
             Console.Write("[ifacepatch] refused: ");

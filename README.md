@@ -41,11 +41,7 @@ cd .\SharpOS\
 # см. payloads\README.md.
 curl.exe -L -o payloads\DOOM1.WAD https://raw.githubusercontent.com/nifanfa/MOOS/refs/heads/master/Ramdisk/DOOM1.WAD
 
-# PowerShell — берётся из payloads\pwsh\ целиком, распакованным.
-# Версия важна: сборки несут предкомпилированный код с номером формата, и
-# рантайм грузит только свой (16 для .NET 10). 7.5 несёт формат 10 — тогда
-# отвергается всё, включая System.Management.Automation (19 МБ), и движок
-# компилируется заново при каждом запуске.
+# PowerShell — кладется в  payloads\pwsh\ целиком, распакованным
 curl.exe -L -o pwsh.zip https://github.com/PowerShell/PowerShell/releases/download/v7.6.5/PowerShell-7.6.5-win-x64.zip
 Expand-Archive pwsh.zip -DestinationPath payloads\pwsh\PowerShell-7.6.5-win-x64
  
@@ -105,7 +101,7 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | Collections (`List<T>`, `Dictionary<K,V>`, и т.д.) | ✅ | ✅ | ✅ | BCL-порты в std; полный перечень - в limits-доках |
 | `string`, primitives, structs | ✅ | ✅ | ✅ | |
 | `string.Format` / `StringBuilder.AppendFormat` | 🟡 | 🟡 | ✅ | частичное и слабое покрытие в std реализации |
-| `lock` (`Monitor.Enter`/`Exit`) | 🔴 | 🔴 | ✅ | `System.Threading.Monitor` отсутствует в std/no-runtime |
+| `lock` (`Monitor.Enter`/`Exit`) | ✅ | ✅ | ✅ | таблица замков сбоку по тождеству ссылки (в объекте негде хранить слово); ожидание уступкой, не кручением. `Pulse`/`Wait` осознанно не реализованы |
 | `System.Enum` | 🟡 | 🟡 | ✅ | ToString, Parse, GetNames не реализованы |
 | `try` / `catch` / `finally` / `throw;` / `when`-filter | ✅ | ✅ | ✅ |  |
 | HW-fault → managed exception (`#PF` → `NullReferenceException`) | ✅ | ✅ | ✅ | |
@@ -123,11 +119,14 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | Write barrier (`RhpAssignRef`, `RhpStelemRef`) | ✅ (∅) | ✅ (∅) | ✅ | non-generational mark-sweep в AOT → barrier seman'тически no-op; контракт ILC соблюдён.  |
 | `GC.Collect` / explicit collection | ✅ | ✅ | ✅ | full mark-sweep cycle; `GC.WaitForPendingFinalizers` зависает в hosted runtime (SYM-003 - finalizer thread не online) |
 | Array.Copy overlap (memmove semantics) | ✅ | ✅ | ✅ | left + right shift с overlapping src/dst в одном массиве (`List<T>.RemoveAt`/`Insert` path) |
-| `System.Collections.Concurrent.*`, `System.Collections.Immutable.*`, `SortedDictionary`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`| 🔴 | 🔴 | ✅ | еще не реализовано, при этом известных блокеров - нет |
+| `SortedDictionary` | 🟡 | 🟡 | ✅ | поведение BCL-совместимо, внутри сортированный массив вместо дерева: вставка линейна, поиск логарифмичен |
+| `System.Collections.Concurrent.*`, `System.Collections.Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`| 🔴 | 🔴 | ✅ | еще не реализовано, при этом известных блокеров - нет |
 | `System.Text.RegularExpressions.Regex` | 🔴 | 🔴 | ✅ | нет имплементации|
-| `ValueTuple<...>` / `DateTime` / `DateTimeOffset` | 🔴 | 🟡 | ✅ | отсутствуют в std/no-runtime; `Tuple<T1,T2>` + минимальный `TimeSpan` есть, `DateTime` в PE-аппах - стаб (`Now` = epoch, до RTC-сервиса) |
+| `DateTime` / `TimeSpan` | ✅ | ✅ | ✅ | настоящий календарь (високосные годы, сравнение, вычитание, строгий разбор по образцу). «Сейчас» за подложкой: ядро читает CMOS, приложение спросит ядро; без неё — начало эпохи, и `IsRealClock` об этом говорит |
+| `ValueTuple<...>` / `DateTimeOffset` | 🔴 | 🔴 | ✅ | отсутствуют в std/no-runtime; `Tuple<T1,T2>` есть |
 | LINQ extensions | ✅ | ✅ | ✅ | наш `System.Linq.Enumerable` (mini-LINQ). Source - `List<T>` / итератор / string / массив (порт `Array<T>` даёт массивам честные интерфейсы; limits §4) |
 | **Managed delegates / lambdas** | ✅ | ✅ | ✅ | завендорены из dotnet/runtime v8.0.27; вырезано в `NotSupportedException`: reflection-поверхность, GVM, open-instance, variance-cast (limits §5) |
+| **Terminal.Gui (текстовый интерфейс)** | 🚫 | ✅ | ⏳ | вся библиотека на нашей std, свой драйвер поверх эмулятора терминала ядра. Исключены 6 файлов (ADO.NET, маски, `FileSystemWatcher`); мыши нет. Ядру ни к чему — там свой вывод |
 | **Reflection runtime metadata** | 🔴 | 🔴 | ✅ | нет `System.Reflection` в std |
 | **`Reflection.Emit`** | 🚫 | 🚫 | ✅ | требует JIT |
 | **`Activator.CreateInstance(Type)`** | 🔴 | 🔴 | ✅ | нужны метаданные |

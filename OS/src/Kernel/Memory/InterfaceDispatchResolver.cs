@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using OS.Hal;
 using SharpOS.Std.NoRuntime;
 
@@ -29,7 +29,27 @@ namespace OS.Kernel.Memory
         {
             if (thisPtr == 0)
             {
-                OS.Kernel.Panic.Fail("iface-resolve: null this");
+                // An interface call on a null reference — the ordinary
+                // NullReferenceException, arriving here because the dispatch
+                // stub sends this case down the normal path so that it can be
+                // reported with real arguments rather than guessed at.
+                var nullCell = (InterfaceDispatchCell*)cellPtr;
+                OS.Hal.Console.Write("[iface-resolve] null this: cell=0x");
+                OS.Hal.Console.WriteHex((ulong)cellPtr);
+
+                if (cellPtr != 0)
+                {
+                    nullCell->GetDispatchCellInfo(out DispatchCellInfo nullInfo);
+                    OS.Hal.Console.Write(" type=");
+                    OS.Hal.Console.WriteUInt((uint)nullInfo.CellType);
+                    OS.Hal.Console.Write(" slot=");
+                    OS.Hal.Console.WriteUInt(nullInfo.InterfaceSlot);
+                    OS.Hal.Console.Write(" iface=0x");
+                    OS.Hal.Console.WriteHex((ulong)(nint)nullInfo.InterfaceType);
+                }
+
+                OS.Hal.Console.WriteLine("");
+                OS.Kernel.Panic.Fail("iface-resolve: interface call on a null reference");
                 return 0;
             }
 
@@ -40,7 +60,23 @@ namespace OS.Kernel.Memory
 
             if (info.CellType == DispatchCellType.VTableOffset)
             {
-                return *(nint*)((byte*)thisMT + info.VTableOffset);
+                nint vtableTarget = *(nint*)((byte*)thisMT + info.VTableOffset);
+
+                // A zero slot used to be returned as-is, and the stub reads a
+                // zero result as "resolution failed" — so an empty vtable entry
+                // arrived at the failure handler indistinguishable from a null
+                // `this`, with nothing said about which it was.
+                if (vtableTarget == 0)
+                {
+                    OS.Hal.Console.Write("[iface-resolve] empty vtable slot: offset=0x");
+                    OS.Hal.Console.WriteHex(info.VTableOffset);
+                    OS.Hal.Console.Write(" mt=0x");
+                    OS.Hal.Console.WriteHex((ulong)(nint)thisMT);
+                    OS.Hal.Console.WriteLine("");
+                    OS.Kernel.Panic.Fail("iface-resolve: vtable slot is empty");
+                }
+
+                return vtableTarget;
             }
 
             if (info.CellType != DispatchCellType.InterfaceAndSlot)
@@ -68,26 +104,73 @@ namespace OS.Kernel.Memory
             }
 
             ushort implSlot;
-            if (!FindImplSlot(thisMT, info.InterfaceType, info.InterfaceSlot, out implSlot))
+            GcMethodTable* declaringType;
+            if (!FindImplSlot(thisMT, info.InterfaceType, info.InterfaceSlot,
+                              out implSlot, out declaringType))
             {
                 ReportResolveFailure(thisPtr, thisMT, cellPtr, in info);
                 OS.Kernel.Panic.Fail("iface-resolve: no impl slot");
                 return 0;
             }
 
+            // The slot number is relative to the type whose dispatch map
+            // named it — NOT to the object's type.
+            //
+            // The two differ whenever the implementation is inherited, and the
+            // difference is not cosmetic: a derived class with MORE vtable
+            // slots than its base turns a sealed index into a valid-looking
+            // vtable index. That is exactly what happened with
+            // DelegateTreeBuilder<T> (7 slots) inheriting from TreeBuilder<T>
+            // (6 slots plus a sealed table): the map said slot 6, meaning
+            // "sealed entry 0" of the base, and reading slot 6 of the derived
+            // found an empty vtable entry instead.
+            //
+            // A sealed entry is where ILC puts a NON-VIRTUAL method that
+            // implements an interface member — an ordinary auto-property, in
+            // that case — so this is not an exotic path.
             void* target;
-            if (implSlot >= thisMT->NumVtableSlots)
+            if (implSlot >= declaringType->NumVtableSlots)
             {
-                // Sealed virtual: lookup in the side table. We don't yet
-                // handle Reabstraction / Diamond sentinel values — ILC
-                // emits those as special high slot numbers; if we ever hit
-                // them we'll see garbage addresses and diagnose.
-                int sealedIndex = implSlot - thisMT->NumVtableSlots;
-                target = thisMT->GetSealedVirtualSlot(sealedIndex);
+                // Sealed: the side table belongs to the declaring type too.
+                // Reabstraction / Diamond sentinels are still unhandled; ILC
+                // emits those as special high slot numbers, and we would see
+                // a garbage address rather than a wrong answer.
+                int sealedIndex = implSlot - declaringType->NumVtableSlots;
+                target = declaringType->GetSealedVirtualSlot(sealedIndex);
             }
             else
             {
+                // Virtual: read the OBJECT's vtable, so an override wins.
                 target = thisMT->GetSlot(implSlot);
+            }
+
+            // A zero target here reads as "resolution failed" to the stub, so
+            // it must not be returned quietly: the failure handler would report
+            // the generic "fail path reached" and lose the two facts that
+            // matter — which route found it, and which slot was empty.
+            if (target == null)
+            {
+                bool sealedRoute = implSlot >= declaringType->NumVtableSlots;
+
+                OS.Hal.Console.Write("[iface-resolve] empty ");
+                OS.Hal.Console.Write(sealedRoute ? "sealed-virtual slot" : "vtable slot");
+                OS.Hal.Console.Write(": implSlot=");
+                OS.Hal.Console.WriteUInt(implSlot);
+                OS.Hal.Console.Write(" declaringSlots=");
+                OS.Hal.Console.WriteUInt(declaringType->NumVtableSlots);
+                OS.Hal.Console.Write(" objectSlots=");
+                OS.Hal.Console.WriteUInt(thisMT->NumVtableSlots);
+                OS.Hal.Console.Write(" declaring=0x");
+                OS.Hal.Console.WriteHex((ulong)(nint)declaringType);
+                OS.Hal.Console.Write(" mt=0x");
+                OS.Hal.Console.WriteHex((ulong)(nint)thisMT);
+                OS.Hal.Console.Write(" iface=0x");
+                OS.Hal.Console.WriteHex((ulong)(nint)info.InterfaceType);
+                OS.Hal.Console.Write(" ifaceSlot=");
+                OS.Hal.Console.WriteUInt(info.InterfaceSlot);
+                OS.Hal.Console.WriteLine("");
+
+                OS.Kernel.Panic.Fail("iface-resolve: implementation slot is empty");
             }
 
             PublishCache(cell, thisMT, target, in info);
@@ -139,23 +222,85 @@ namespace OS.Kernel.Memory
             cell->Cache = (nuint)cache;
         }
 
+        /// <summary>
+        /// Reached when a dispatch cannot proceed: a null `this`, or a resolver
+        /// that found no implementation.
+        /// </summary>
+        /// <remarks>
+        /// Takes the cell so the failure can name the interface and slot it was
+        /// dispatching. Without that the message described the mechanism and
+        /// left the call site to be guessed at.
+        /// </remarks>
         [UnmanagedCallersOnly]
-        public static void Fail()
+        public static void Fail(nint cellPtr, nint stackPointer, nint route)
         {
-            OS.Kernel.Panic.Fail("InterfaceDispatchResolver fail-path reached");
+            // Route first: 1 = the reference was null, 2 = the resolver found
+            // nothing. Everything else printed here is only meaningful once
+            // that is known — the two arrive with different registers live.
+            OS.Hal.Console.Write("[iface-fail] route=");
+            OS.Hal.Console.WriteUInt((uint)route);
+            OS.Hal.Console.Write(" sp=0x");
+            OS.Hal.Console.WriteHex((ulong)stackPointer);
+            OS.Hal.Console.Write(" cell=0x");
+            OS.Hal.Console.WriteHex((ulong)cellPtr);
+
+            // Only decoded when it looks like a cell at all: a dispatch cell
+            // lives in the image's data, and a stack address here means r10 was
+            // holding something else entirely.
+            if (cellPtr > 0x1000 && (cellPtr & 0x7FFF00000000L) != 0x7FFF00000000L)
+            {
+                var cell = (InterfaceDispatchCell*)cellPtr;
+                cell->GetDispatchCellInfo(out DispatchCellInfo info);
+
+                OS.Hal.Console.Write(" type=");
+                OS.Hal.Console.WriteUInt((uint)info.CellType);
+                OS.Hal.Console.Write(" slot=");
+                OS.Hal.Console.WriteUInt(info.InterfaceSlot);
+                OS.Hal.Console.Write(" iface=0x");
+                OS.Hal.Console.WriteHex((ulong)(nint)info.InterfaceType);
+            }
+
+            OS.Hal.Console.WriteLine("");
+
+            // The top of the stack. One of these is the return address into
+            // whoever made the call — feed the code-looking ones to
+            // tools/symbolize_app.py and it will name the method.
+            if (stackPointer != 0)
+            {
+                for (int i = 0; i < 6; i++)
+                {
+                    OS.Hal.Console.Write("[iface-fail]   [rsp+0x");
+                    OS.Hal.Console.WriteHex((ulong)(i * 8));
+                    OS.Hal.Console.Write("] = 0x");
+                    OS.Hal.Console.WriteHex(*(ulong*)(stackPointer + i * 8));
+                    OS.Hal.Console.WriteLine("");
+                }
+            }
+
+            OS.Kernel.Panic.Fail("InterfaceDispatchResolver fail-path reached (null this, or no implementation)");
         }
 
         // Walks the target type's inheritance chain for a matching DispatchMap
         // entry. Match = (interfaceSlot, interfaceType-at-that-map-index).
         // Returns the impl slot (may be == interface slot, may differ — ILC
         // decides based on the vtable layout of the impl type).
+        /// <summary>
+        /// Walks the inheritance chain for a dispatch entry.
+        /// </summary>
+        /// <param name="declaringType">
+        /// The type whose map held the entry. The slot number means nothing
+        /// without it: it is indexed against that type's vtable, and past the
+        /// end of it means the sealed table of that same type.
+        /// </param>
         private static bool FindImplSlot(
             GcMethodTable* tgtType,
             GcMethodTable* itfType,
             ushort itfSlot,
-            out ushort implSlot)
+            out ushort implSlot,
+            out GcMethodTable* declaringType)
         {
             implSlot = 0;
+            declaringType = tgtType;
             GcMethodTable* cur = tgtType;
             int walkCap = 16; // guard against bad chains
 
@@ -179,6 +324,7 @@ namespace OS.Kernel.Memory
                             if (mapItf == itfType || InterfaceMatchesWithVariance(mapItf, itfType))
                             {
                                 implSlot = e->ImplMethodSlot;
+                                declaringType = cur;
                                 return true;
                             }
                         }

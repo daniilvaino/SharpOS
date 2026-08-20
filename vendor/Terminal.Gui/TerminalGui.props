@@ -1,0 +1,58 @@
+﻿<Project>
+
+  <!-- Terminal.Gui as a compile-in module for SharpOS apps.
+       Imported by anything that wants the library; the list lives here rather
+       than in each csproj so the two cannot drift apart, which is exactly how
+       curated file lists rot.
+
+       Requires C# 14: RuneCount and ConsoleWidth are extension PROPERTIES on
+       string, which is what lets the library keep its own phrasing at 54 call
+       sites. Set by the importing project, since LangVersion is a property. -->
+
+  <ItemGroup>
+    <!-- Ours, replacing NStack. Rune stays (a character is not a cell); the two
+         things ustring was carried for live in TextExtensions; TypeIdentity
+         answers "same type?" without reflection; StringsShim replaces the
+         resource machinery. -->
+    <Compile Include="$(MSBuildThisFileDirectory)SharpOS\Rune.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SharpOS\TextExtensions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SharpOS\TypeIdentity.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SharpOS\StringsShim.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\XtermSharp\XtermSharp\CharWidth.cs" />
+
+    <!-- Our console driver: ANSI through the kernel's terminal emulator, keys
+         from its input service. Init() requires this pair — there is no
+         platform here to sniff a stock driver from. -->
+    <Compile Include="$(MSBuildThisFileDirectory)SharpOS\SharpOSDriver.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SharpOS\SharpOSMainLoop.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SharpOS\SharpOSKeyMap.cs" />
+
+    <!-- The library itself. Core + Types + Windows + Views. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui\Core\**\*.cs"
+             Exclude="$(MSBuildThisFileDirectory)Terminal.Gui\Core\Graphs\**\*.cs" />
+
+    <!-- Two files out of Core\Graphs after all: LineView and TextView name
+         Orientation and LineCanvas, and neither knows anything about GraphView.
+         The rest of that folder does, and stays out. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui\Core\Graphs\Orientation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui\Core\Graphs\LineCanvas.cs" />
+
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui\Types\**\*.cs" />
+
+    <!-- Dialogs and wizards. Not optional: ComboBox names Dialog by type.
+         FileDialog is out — it holds DirectoryInfo, FileSystemInfo and a
+         FileSystemWatcher as fields, and we have a file system but not that
+         API. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui\Windows\**\*.cs"
+             Exclude="$(MSBuildThisFileDirectory)Terminal.Gui\Windows\FileDialog.cs" />
+
+    <!-- Views. Excluded for what they drag in, not for their size: TableView
+         wants ADO.NET, TextValidateField wants MaskedTextProvider and Regex,
+         and HexView wants a byte-stream reader we have not written. Graph
+         widgets match the Core exclusion above. TreeView is IN since
+         SortedDictionary landed. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui\Views\**\*.cs"
+             Exclude="$(MSBuildThisFileDirectory)Terminal.Gui\Views\GraphView.cs;$(MSBuildThisFileDirectory)Terminal.Gui\Views\TableView.cs;$(MSBuildThisFileDirectory)Terminal.Gui\Views\TextValidateField.cs;$(MSBuildThisFileDirectory)Terminal.Gui\Views\HexView.cs" />
+  </ItemGroup>
+
+</Project>

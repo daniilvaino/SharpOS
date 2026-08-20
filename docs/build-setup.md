@@ -1,4 +1,4 @@
-# Building SharpOS on a fresh machine
+﻿# Building SharpOS on a fresh machine
 
 Windows-only. The repo is already cloned; everything below is host setup and
 build order. Times are for a warm cache on a mid-range desktop.
@@ -123,7 +123,8 @@ a real bug.
 
 ### Application build scripts
 
-`build_doom.ps1`, `build_fetch.ps1`, `build_aottests.ps1`, `build_launcher.ps1`
+`build_doom.ps1`, `build_fetch.ps1`, `build_aottests.ps1`, `build_launcher_gui.ps1`,
+`build_launcher.ps1`
 build the freestanding PE apps under `apps_native/`. They need only the .NET
 SDK — no WSL, no separate cross-toolchain — and `run_build.ps1` stages their
 output into the image if it is present.

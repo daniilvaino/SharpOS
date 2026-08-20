@@ -177,6 +177,11 @@ namespace OS.Boot
             if (bootInfo.AsmExecBuffer != null)
             {
                 OS.Hal.X64Asm.SetExecBuffer(bootInfo.AsmExecBuffer, bootInfo.AsmExecBufferSize);
+
+                // Atomics for std, as early as the stubs allow. Everything
+                // that locks is built on Interlocked, and until this runs it
+                // is a plain read-modify-write that a timer tick can split.
+                OS.Kernel.Threading.AtomicBackendInstaller.Install();
             }
 
             if (bootInfo.ExecStubBuffer != null)

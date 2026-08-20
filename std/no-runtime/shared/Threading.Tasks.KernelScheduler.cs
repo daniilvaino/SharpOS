@@ -38,6 +38,17 @@ namespace OS.Kernel.Threading
         {
             if (s_queue == null) s_queue = new ThreadBackend.ThreadEntry?[Capacity];
             ThreadBackend.Install(Spawn, Sleep);
+
+            // Thread identity, which Monitor needs and thread-statics cannot
+            // give us here: the scheduler owns the threads, so it is the one
+            // that can name the running one.
+            ManagedThreadIds.Install(&CurrentThreadId);
+        }
+
+        private static int CurrentThreadId()
+        {
+            Thread? current = Scheduler.Current;
+            return current == null ? 1 : current.Id;
         }
 
         private static bool Spawn(ThreadBackend.ThreadEntry entry)

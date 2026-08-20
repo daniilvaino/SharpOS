@@ -1,4 +1,4 @@
-// System.Collections.Generic.HashSet<T> — BCL-compat surface.
+﻿// System.Collections.Generic.HashSet<T> — BCL-compat surface.
 //
 // Separate chaining hash set: `_buckets` is an array of head-of-chain
 // Entry refs, each Entry holds one value + a `m_next` pointer to the
@@ -33,6 +33,16 @@ namespace System.Collections.Generic
         }
 
         public IEqualityComparer<T> Comparer => _comparer;
+
+        // Ported from dotnet/runtime v8.0.27. Without it "new HashSet<T> (seq)"
+        // binds to the capacity constructor and fails as "cannot convert to
+        // int", which names the wrong problem entirely.
+        public HashSet(IEnumerable<T> collection) : this()
+        {
+            if (collection == null) throw new ArgumentNullException(nameof(collection));
+
+            foreach (T item in collection) Add(item);
+        }
 
         public int Count => _numEntries;
 

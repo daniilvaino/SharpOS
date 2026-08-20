@@ -1,7 +1,5 @@
-using NStack;
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Linq;
 
 namespace Terminal.Gui {
@@ -814,13 +812,13 @@ namespace Terminal.Gui {
 		/// A single tab in a <see cref="TabView"/>
 		/// </summary>
 		public class Tab {
-			private ustring text;
+			private string text;
 
 			/// <summary>
 			/// The text to display in a <see cref="TabView"/>
 			/// </summary>
 			/// <value></value>
-			public ustring Text { get => text ?? "Unamed"; set => text = value; }
+			public string Text { get => text ?? "Unamed"; set => text = value; }
 
 			/// <summary>
 			/// The control to display when the tab is selected

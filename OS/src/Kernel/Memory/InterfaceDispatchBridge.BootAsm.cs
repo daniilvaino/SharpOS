@@ -1,12 +1,14 @@
-// step 119 Wave 5 — compile-time codegen migration of InterfaceDispatchBridge.
+﻿// step 119 Wave 5 — compile-time codegen migration of InterfaceDispatchBridge.
 // 2 DataSlotHoles: resolverSlot + failSlot — 8-byte data slots at the end
 // of the stub, runtime fills with absolute addresses of the managed
 // resolver and fail-handler.
 //
 // Forward Iced labels:
 //   slow              — target of two jnz / jne in fast path
-//   nullfail          — target of `jz` at entry; also fall-through after
-//                       fail_after_spill (no separate jmp needed)
+//   nullfail          — the failure tail; fall-through after fail_after_spill
+//                       (no separate jmp needed). NOT the target of the entry
+//                       `jz` any more: a null `this` goes to `slow` so the
+//                       resolver can report it with real arguments.
 //   failAfterSpill    — target of `jz` mid slow-path (resolver returned 0)
 //   resolverSlot      — RIP-relative load target in slow path
 //   failSlot          — RIP-relative load target in nullfail path
@@ -35,7 +37,19 @@ namespace OS.Kernel.Memory
 
             // -- fast path --
             a.test(rcx, rcx);
-            a.jz(nullfail);
+
+            // A null `this` goes down the SLOW path, not straight to the
+            // failure tail.
+            //
+            // It used to jump to the tail, which meant the case a person most
+            // needs explained arrived where no argument can be trusted — three
+            // rounds of reading registers there produced three different
+            // stories, all wrong. The slow path spills and calls the resolver
+            // like any other dispatch, and the resolver reports a null `this`
+            // by name with arguments passed the ordinary way.
+            //
+            // The cost is a spill and a call on a path that is about to panic.
+            a.jz(slow);
 
             a.mov(rax, __qword_ptr[rcx]);
             a.mov(r11, __qword_ptr[r10 + 8]);
@@ -82,11 +96,25 @@ namespace OS.Kernel.Memory
             a.jmp(rax);
 
             // -- fail_after_spill --
+            //
+            // Reached when the resolver returned nothing. It has already
+            // reported why — every giving-up path in it panics with its own
+            // message — so this tail only has to get to the handler.
             a.Label(ref failAfterSpill);
+
+            // The cell again: r10 is volatile in the Win64 convention, so the
+            // resolver call above was free to clobber it. The spill slot still
+            // holds the real one, and the handler names the interface from it.
+            a.mov(r10, __qword_ptr[rsp + 0x40]);
             a.add(rsp, 0xA8);
 
             // -- nullfail --
             a.Label(ref nullfail);
+
+            // arg1 = the dispatch cell, so the failure can say which interface
+            // and slot it was dispatching rather than only that one failed.
+            a.mov(rcx, r10);
+
             a.mov(rax, __qword_ptr[failData]);     // RIP-relative load of fail*
             a.jmp(rax);
 

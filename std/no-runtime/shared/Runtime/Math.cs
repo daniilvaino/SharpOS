@@ -1,4 +1,4 @@
-// System.Math — integer/short subset. Min/Max/Abs/Clamp/Sign for the
+﻿// System.Math — integer/short subset. Min/Max/Abs/Clamp/Sign for the
 // canonical integer widths. Used by BCL StringBuilder, collections, path
 // helpers and similar.
 //
@@ -19,7 +19,29 @@ namespace System
         public static long   Min(long a, long b)     => a < b ? a : b;
         public static ulong  Min(ulong a, ulong b)   => a < b ? a : b;
 
+        // Floating point, added for Terminal.Gui's RectangleF: with only the
+        // integer overloads present, Math.Max(float, float) bound to the byte
+        // one and failed as "cannot convert float to byte", which reads like a
+        // type error in the CALLER rather than a missing overload here.
+        //
+        // NaN follows the BCL: it wins, because a comparison against NaN is
+        // false either way and picking the other operand would quietly turn a
+        // bad number into a plausible one. Spotted by self-comparison — the one
+        // value that is not equal to itself — since float.IsNaN does not exist
+        // in this environment.
+        public static float Min(float a, float b)
+            => a != a ? a : b != b ? b : (a < b ? a : b);
+
+        public static double Min(double a, double b)
+            => a != a ? a : b != b ? b : (a < b ? a : b);
+
         // ---- Max ----
+        public static float  Max(float a, float b)
+            => a != a ? a : b != b ? b : (a > b ? a : b);
+
+        public static double Max(double a, double b)
+            => a != a ? a : b != b ? b : (a > b ? a : b);
+
         public static byte   Max(byte a, byte b)     => a > b ? a : b;
         public static sbyte  Max(sbyte a, sbyte b)   => a > b ? a : b;
         public static short  Max(short a, short b)   => a > b ? a : b;

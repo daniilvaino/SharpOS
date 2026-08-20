@@ -282,6 +282,51 @@ namespace AotTests
             Check("await resumes", AsyncShape.Stage >= 2);
             Check("async runs to completion", AsyncShape.Stage == 3);
             Check("async task completes", asyncTask.IsCompleted);
+
+            // Locks. Compare-and-swap has to be a real instruction, threads
+            // need distinct ids, and `lock` has to keep two of them from losing
+            // an update — each fails silently on its own.
+            // ToString(). Both of these returned null until step163, and null
+            // from ToString is the worst kind of wrong: it reads as a no-op at
+            // the call site and faults far away, where something indexes it.
+            string sample = "text";
+            Check("string.ToString() is itself", sample.ToString() == "text");
+            Check("object.ToString() is not null", new object().ToString() != null);
+
+            Check("compare-and-swap is atomic", System.Threading.Interlocked.IsAtomic);
+            Check("thread ids are per-thread", System.Threading.ManagedThreadIds.IsPerThread);
+
+            int mainId = System.Threading.ManagedThreadIds.Current;
+            s_otherId = 0;
+            var idTask = System.Threading.Tasks.Task.Run(
+                () => { s_otherId = System.Threading.ManagedThreadIds.Current; });
+            idTask.Wait();
+            Check("threads have distinct ids", s_otherId != 0 && s_otherId != mainId);
+
+            s_gate = new object();
+            s_guarded = 0;
+            var h1 = System.Threading.Tasks.Task.Run(Hammer);
+            var h2 = System.Threading.Tasks.Task.Run(Hammer);
+            h1.Wait();
+            h2.Wait();
+            Check("lock keeps updates", s_guarded == HammerIterations * 2);
+        }
+
+        private const int HammerIterations = 5000;
+        private static object s_gate = null!;
+        private static volatile int s_guarded;
+        private static volatile int s_otherId;
+
+        private static void Hammer()
+        {
+            for (int i = 0; i < HammerIterations; i++)
+            {
+                lock (s_gate)
+                {
+                    int current = s_guarded;
+                    s_guarded = current + 1;
+                }
+            }
         }
 
         private static void Check(string name, bool ok)

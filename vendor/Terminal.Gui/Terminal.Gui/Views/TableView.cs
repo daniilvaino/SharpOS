@@ -1,5 +1,4 @@
-﻿using NStack;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
@@ -621,7 +620,7 @@ namespace Terminal.Gui {
 
 		/// <summary>
 		/// Override to provide custom multi colouring to cells.  Use <see cref="View.Driver"/> to
-		/// with <see cref="ConsoleDriver.AddStr(ustring)"/>.  The driver will already be
+		/// with <see cref="ConsoleDriver.AddStr(string)"/>.  The driver will already be
 		/// in the correct place when rendering and you must render the full <paramref name="render"/>
 		/// or the view will not look right.  For simpler provision of color use <see cref="ColumnStyle.ColorGetter"/>
 		/// For changing the content that is rendered use <see cref="ColumnStyle.RepresentationGetter"/>

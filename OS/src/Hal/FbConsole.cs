@@ -1,4 +1,4 @@
-namespace OS.Hal
+﻿namespace OS.Hal
 {
     // Phase B#2 sub-step 3 — minimal kernel-tier text/graphics renderer
     // straight to the mapped GOP framebuffer (OS.Hal.Framebuffer). No
@@ -144,6 +144,25 @@ namespace OS.Hal
         // Single glyph, scale 1, caller guarantees the 8x8 box is inside the
         // framebuffer. Skips the per-pixel clipping and the scale loops of
         // DrawChar — this is the one that runs cols*rows times per repaint.
+        /// <summary>
+        /// One CP437 cell, 8x16, opaque background. The terminal front-end
+        /// draws with this; FbTty keeps the 8x8 font, since it runs before
+        /// anything has decided what a cell is.
+        /// </summary>
+        public static void DrawCellFast(int px, int py, int glyph, uint fg, uint bg)
+        {
+            uint stride = Framebuffer.Stride;
+            uint* fb = (uint*)Framebuffer.BaseAddress + (ulong)py * stride + (ulong)px;
+
+            for (int row = 0; row < FontCp437.CharHeight; row++)
+            {
+                byte bits = FontCp437.Row(glyph, row);
+                uint* line = fb + (ulong)row * stride;
+                for (int col = 0; col < FontCp437.CharWidth; col++)
+                    line[col] = (bits & (1 << col)) != 0 ? fg : bg;
+            }
+        }
+
         public static void DrawCharFast(int px, int py, char ch, uint fg, uint bg)
         {
             uint stride = Framebuffer.Stride;

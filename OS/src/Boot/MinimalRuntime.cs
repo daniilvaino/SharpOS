@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -54,7 +54,17 @@ namespace System
             return (int)addr ^ (int)((long)addr >> 32);
         }
 
-        public virtual string ToString() => null;
+        /// <summary>
+        /// A placeholder, because a type name needs metadata this runtime does
+        /// not carry.
+        /// </summary>
+        /// <remarks>
+        /// It used to return null, and that is the wrong answer to give: every
+        /// caller writes `x.ToString()` expecting text, and a null travels
+        /// quietly until something indexes it. A visible placeholder says "no
+        /// name available" where an empty string would read as "no text".
+        /// </remarks>
+        public virtual string ToString() => "(object)";
 
         public static bool Equals(object objA, object objB)
         {
@@ -98,7 +108,10 @@ namespace System
         public override string ToString() => _value ? "True" : "False";
     }
 
-    public struct Char : IEquatable<char>, IComparable<char>, IComparable
+    // Partial so the BCL-shaped statics (char.IsDigit, char.ToUpper, the
+    // surrogate helpers) can live in shared std rather than being duplicated
+    // per tier — see std/no-runtime/shared/Char.Statics.cs.
+    public partial struct Char : IEquatable<char>, IComparable<char>, IComparable
     {
         // Canonical BCL values.
         public const char MaxValue = (char)0xFFFF;
@@ -382,7 +395,44 @@ namespace System
     }
 
     public abstract class ValueType { }
-    public abstract class Enum : ValueType { }
+    public abstract class Enum : ValueType
+    {
+        /// <summary>
+        /// Whether every bit set in <paramref name="flag"/> is also set here.
+        /// </summary>
+        /// <remarks>
+        /// The real BCL asks reflection for the underlying type and compares at
+        /// that width. We have no reflection, so this reads eight bytes of the
+        /// boxed payload regardless of whether the enum is a byte or a long.
+        ///
+        /// That is safe, and for a reason worth writing down rather than
+        /// trusting: the smallest object this runtime allocates leaves at least
+        /// eight bytes after the method-table pointer, so the read stays inside
+        /// the object; and allocations are zero-filled, so the bytes above a
+        /// narrow enum are zero in BOTH operands and cannot affect an AND
+        /// comparison. Change either of those two facts and this breaks
+        /// quietly, which is why they are named here.
+        /// </remarks>
+        public bool HasFlag(Enum flag)
+        {
+            if (flag == null)
+                throw new ArgumentNullException(nameof(flag));
+
+            ulong other = ReadUnderlyingValue(flag);
+            return (ReadUnderlyingValue(this) & other) == other;
+        }
+
+        private static unsafe ulong ReadUnderlyingValue(Enum value)
+        {
+            // Data sits immediately after the object header, which is what
+            // RawData exists to express.
+            fixed (byte* payload = &System.Runtime.CompilerServices.Unsafe
+                       .As<System.Runtime.CompilerServices.RawData>(value).Data)
+            {
+                return *(ulong*)payload;
+            }
+        }
+    }
 
     // Ported from dotnet/runtime
     // src/libraries/System.Private.CoreLib/src/System/Nullable.cs

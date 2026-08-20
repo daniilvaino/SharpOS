@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Management;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
@@ -888,22 +887,9 @@ namespace Terminal.Gui {
 		/// <returns>If supported the executable console process, null otherwise.</returns>
 		public static Process GetParentProcess (Process process)
 		{
-			if (!RuntimeInformation.IsOSPlatform (OSPlatform.Windows)) {
-				return null;
-			}
-
-			string query = "SELECT ParentProcessId FROM Win32_Process WHERE ProcessId = " + process.Id;
-			using (ManagementObjectSearcher mos = new ManagementObjectSearcher (query)) {
-				foreach (ManagementObject mo in mos.Get ()) {
-					if (mo ["ParentProcessId"] != null) {
-						try {
-							var id = Convert.ToInt32 (mo ["ParentProcessId"]);
-							return Process.GetProcessById (id);
-						} catch {
-						}
-					}
-				}
-			}
+			// SharpOS: the body was a WMI query for the parent process id,
+			// reachable only on Windows. There is no process tree above a
+			// unikernel to ask about, and the caller already handles null.
 			return null;
 		}
 	}

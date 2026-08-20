@@ -555,16 +555,18 @@ $peApps = @(
     @{ Src = "apps_native\AotTests\bin\Release\out-win-x64\AotTests.exe";         Dest = "AOTTESTS.EXE" },
     @{ Src = "apps_native\GPL_AHEAD_WARNING_DOOM_managed\bin\Release\out-win-x64\DoomApp.exe"; Dest = "DOOM.EXE" },
     @{ Src = "apps_native\TriCNES\bin\Release\out-win-x64\TriCNESApp.exe";        Dest = "TRICNES.EXE" },
-    @{ Src = "apps_native\Fami\bin\Release\out-win-x64\FamiApp.exe";              Dest = "FAMI.EXE" }
+    @{ Src = "apps_native\Fami\bin\Release\out-win-x64\FamiApp.exe";              Dest = "FAMI.EXE" },
+    @{ Src = "apps_native\Launcher\bin\Release\out-win-x64\Launcher.exe";         Dest = "LAUNCHER.EXE" }
 )
 foreach ($peApp in $peApps) {
     $peSrc = Join-Path $repoRoot $peApp.Src
     $peDst = Join-Path $espBootDir $peApp.Dest
     if (Test-Path -LiteralPath $peSrc) {
         Copy-Item -LiteralPath $peSrc -Destination $peDst -Force
-        # AbiV3: adds thread creation and sleep. Safe for apps that ignore them —
-        # the service table only ever grows at the end, so an app reads the
-        # fields it knows by offset and never looks past them.
+        # AbiV3: thread creation, sleep, and which thread is running. The
+        # version stays at 3 while the table grows at the end — apps and kernel
+        # are built together, and a service is detected by its address being
+        # non-zero rather than by a number that would change every time.
         [System.IO.File]::WriteAllBytes("$peDst.abi", (New-AppAbiManifest -AppAbiVersion 3 -ServiceAbi 0))
         Write-Host "Prepared app PE: $peDst"
     }

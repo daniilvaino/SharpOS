@@ -1,5 +1,4 @@
-﻿using NStack;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -27,7 +26,7 @@ namespace Terminal.Gui {
 		/// <summary>
 		/// The keystroke combination used in the <see cref="Shortcut"/> as string.
 		/// </summary>
-		public virtual ustring ShortcutTag => GetShortcutTag (shortcut);
+		public virtual string ShortcutTag => GetShortcutTag (shortcut);
 
 		/// <summary>
 		/// The action to run if the <see cref="Shortcut"/> is defined.
@@ -61,7 +60,7 @@ namespace Terminal.Gui {
 		/// <param name="shortcut">The shortcut key.</param>
 		/// <param name="delimiter">The delimiter string.</param>
 		/// <returns></returns>
-		public static ustring GetShortcutTag (Key shortcut, ustring delimiter = null)
+		public static string GetShortcutTag (Key shortcut, string delimiter = null)
 		{
 			if (shortcut == Key.Null) {
 				return "";
@@ -71,7 +70,7 @@ namespace Terminal.Gui {
 			if (delimiter == null) {
 				delimiter = MenuBar.ShortcutDelimiter;
 			}
-			ustring tag = ustring.Empty;
+			string tag = string.Empty;
 			var sCut = GetKeyToString (k, out Key knm).ToString ();
 			if (knm == Key.Unknown) {
 				k &= ~Key.Unknown;
@@ -93,7 +92,7 @@ namespace Terminal.Gui {
 				tag += "Alt";
 			}
 
-			ustring [] keys = ustring.Make (sCut).Split (",");
+			string [] keys = RuneText.Make (sCut).Split (",");
 			for (int i = 0; i < keys.Length; i++) {
 				var key = keys [i].TrimSpace ();
 				if (key == Key.AltMask.ToString () || key == Key.ShiftMask.ToString () || key == Key.CtrlMask.ToString ()) {
@@ -120,7 +119,7 @@ namespace Terminal.Gui {
 		/// </summary>
 		/// <param name="key">The key to extract.</param>
 		/// <param name="knm">Correspond to the non modifier key.</param>
-		public static ustring GetKeyToString (Key key, out Key knm)
+		public static string GetKeyToString (Key key, out Key knm)
 		{
 			if (key == Key.Null) {
 				knm = Key.Null;
@@ -136,7 +135,9 @@ namespace Terminal.Gui {
 				}
 			}
 			knm &= ~mK;
-			uint.TryParse (knm.ToString (), out uint c);
+			// Upstream formatted the enum and parsed the text back to a number.
+			// The cast says the same thing, and does not need Enum.ToString.
+			uint c = (uint)knm;
 			var s = mK == Key.Null ? "" : mK.ToString ();
 			if (s != "" && (knm != Key.Null || c > 0)) {
 				s += ",";
@@ -150,7 +151,7 @@ namespace Terminal.Gui {
 		/// </summary>
 		/// <param name="tag">The key as string.</param>
 		/// <param name="delimiter">The delimiter string.</param>
-		public static Key GetShortcutFromTag (ustring tag, ustring delimiter = null)
+		public static Key GetShortcutFromTag (string tag, string delimiter = null)
 		{
 			var sCut = tag;
 			if (sCut.IsEmpty) {
@@ -163,7 +164,7 @@ namespace Terminal.Gui {
 				delimiter = MenuBar.ShortcutDelimiter;
 			}
 
-			ustring [] keys = sCut.Split (delimiter);
+			string [] keys = sCut.Split (delimiter);
 			for (int i = 0; i < keys.Length; i++) {
 				var k = keys [i];
 				if (k == "Ctrl") {
@@ -174,15 +175,18 @@ namespace Terminal.Gui {
 				} else if (k == "Alt") {
 					key |= Key.AltMask;
 				} else if (k.StartsWith ("F") && k.Length > 1) {
-					int.TryParse (k.Substring (1).ToString (), out int n);
-					for (uint j = (uint)Key.F1; j <= (uint)Key.F12; j++) {
-						int.TryParse (((Key)j).ToString ().Substring (1), out int f);
-						if (f == n) {
-							key |= (Key)j;
-						}
+					// Upstream found the F-key by formatting every candidate
+					// back to a string and comparing — two round trips through
+					// Enum.ToString, which needs metadata. The keys are
+					// consecutive, so the number is the offset.
+					if (int.TryParse (k.Substring (1), out int n) && n >= 1 && n <= 12) {
+						key |= (Key)((uint)Key.F1 + (uint)(n - 1));
 					}
-				} else {
-					key |= (Key)Enum.Parse (typeof (Key), k.ToString ());
+				} else if (k.Length == 1) {
+					// A named key here would need Enum.Parse, which needs the
+					// name table. A single character does not: the enum's value
+					// IS the character code.
+					key |= (Key)char.ToUpper (k [0]);
 				}
 			}
 

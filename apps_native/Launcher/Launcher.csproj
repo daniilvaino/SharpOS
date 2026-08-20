@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>Launcher</IlcSystemModule>
+    <!-- C# 14: the library's RuneCount / ConsoleWidth are extension properties.
+         See vendor/Terminal.Gui/TerminalGui.props. -->
+    <LangVersion>14.0</LangVersion>
+  </PropertyGroup>
+
+  <!-- The freestanding win-x64 PE recipe every AOT app uses. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <!-- Terminal.Gui, its file list and every exclusion, shared with TuiProbe. -->
+  <Import Project="..\..\vendor\Terminal.Gui\TerminalGui.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="FileTree.cs" />
+  </ItemGroup>
+</Project>

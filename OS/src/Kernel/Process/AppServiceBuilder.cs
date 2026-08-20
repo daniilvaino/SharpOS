@@ -17,7 +17,11 @@ namespace OS.Kernel.Process
     // string.Concat; the copy-back loop at the ABI edge is unavoidable.
     internal static unsafe partial class AppServiceBuilder
     {
-        private const int MaxWriteStringBytes = 512;
+        // Raised from 512 for full-screen output: a text UI repaints its
+        // whole screen in one go, and 512 bytes forced callers back onto the
+        // per-character service — thousands of service calls per frame, and no
+        // paint at the end of any of them.
+        private const int MaxWriteStringBytes = 16384;
         private const uint MaxPathChars = 260;
         private const uint MaxNameChars = 260;
         private const ulong EfiFileAttributeDirectory = 0x0000000000000010UL;
@@ -81,6 +85,10 @@ namespace OS.Kernel.Process
         private static ulong s_systemVWriteBuildIdThunk;
         private static ulong s_win64SpawnThreadThunk;
         private static ulong s_systemVSpawnThreadThunk;
+        private static ulong s_win64ConsoleSizeThunk;
+        private static ulong s_systemVConsoleSizeThunk;
+        private static ulong s_win64CurrentThreadIdThunk;
+        private static ulong s_systemVCurrentThreadIdThunk;
         private static ulong s_win64SleepThunk;
         private static ulong s_systemVSleepThunk;
 
@@ -110,6 +118,8 @@ namespace OS.Kernel.Process
             delegate* managed<void> writeBuildIdAddress = &WriteBuildId;
             delegate* managed<ulong, uint> spawnThreadAddress = &SpawnThread;
             delegate* managed<uint, void> sleepAddress = &SleepMilliseconds;
+            delegate* managed<uint> currentThreadIdAddress = &CurrentThreadId;
+            delegate* managed<uint> consoleSizeAddress = &ConsoleSize;
 
             ulong tableWriteStringAddress = (ulong)writeStringAddress;
             ulong tableWriteUIntAddress = (ulong)writeUIntAddress;
@@ -125,6 +135,8 @@ namespace OS.Kernel.Process
             ulong tableWriteBuildIdAddress = 0;
             ulong tableSpawnThreadAddress = 0;
             ulong tableSleepAddress = 0;
+            ulong tableCurrentThreadIdAddress = 0;
+            ulong tableConsoleSizeAddress = 0;
 
             if (!EnsureServiceThunks(
                 (ulong)writeStringAddress,
@@ -140,7 +152,9 @@ namespace OS.Kernel.Process
                 (ulong)writeCharAddress,
                 (ulong)writeBuildIdAddress,
                 (ulong)spawnThreadAddress,
-                (ulong)sleepAddress))
+                (ulong)sleepAddress,
+                (ulong)currentThreadIdAddress,
+                (ulong)consoleSizeAddress))
             {
                 return false;
             }
@@ -166,6 +180,8 @@ namespace OS.Kernel.Process
                 {
                     tableSpawnThreadAddress = s_systemVSpawnThreadThunk;
                     tableSleepAddress = s_systemVSleepThunk;
+                    tableCurrentThreadIdAddress = s_systemVCurrentThreadIdThunk;
+                    tableConsoleSizeAddress = s_systemVConsoleSizeThunk;
                 }
             }
             else
@@ -189,6 +205,8 @@ namespace OS.Kernel.Process
                 {
                     tableSpawnThreadAddress = s_win64SpawnThreadThunk;
                     tableSleepAddress = s_win64SleepThunk;
+                    tableCurrentThreadIdAddress = s_win64CurrentThreadIdThunk;
+                    tableConsoleSizeAddress = s_win64ConsoleSizeThunk;
                 }
             }
 
@@ -209,6 +227,8 @@ namespace OS.Kernel.Process
             table.WriteBuildIdAddress = tableWriteBuildIdAddress;
             table.SpawnThreadAddress = tableSpawnThreadAddress;
             table.SleepAddress = tableSleepAddress;
+            table.CurrentThreadIdAddress = tableCurrentThreadIdAddress;
+            table.ConsoleSizeAddress = tableConsoleSizeAddress;
 
             // Hand the app the kernel's interface-dispatch bridge entry so it
             // can trampoline its RhpInitialDynamicInterfaceDispatch into our
@@ -222,6 +242,11 @@ namespace OS.Kernel.Process
             // app's throw/catch shares the kernel EH engine (step140).
             table.RhpThrowExAddress =
                 (ulong)OS.Boot.EH.ThrowExStub.GetMethodAddress();
+
+            // And its partner: `throw;` inside a catch lowers to RhpRethrow,
+            // which resumes the dispatch already in flight.
+            table.RhpRethrowAddress =
+                (ulong)OS.Boot.EH.RethrowStub.GetMethodAddress();
 
             // GOP framebuffer geometry (step143): identity-mapped in the shared
             // pager, so the app blits directly. Base stays 0 on headless boots.
@@ -280,7 +305,9 @@ namespace OS.Kernel.Process
             ulong writeCharTarget,
             ulong writeBuildIdTarget,
             ulong spawnThreadTarget,
-            ulong sleepTarget)
+            ulong sleepTarget,
+            ulong currentThreadIdTarget,
+            ulong consoleSizeTarget)
         {
             if (s_serviceThunksInitialized)
                 return true;
@@ -443,6 +470,26 @@ namespace OS.Kernel.Process
 
                 s_systemVSleepThunk = thunkPageVirtual + cursor;
                 if (!TryWriteSystemVOneArgThunk(page + cursor, sleepTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64CurrentThreadIdThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64NoArgThunk(page + cursor, currentThreadIdTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVCurrentThreadIdThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVNoArgThunk(page + cursor, currentThreadIdTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64ConsoleSizeThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64NoArgThunk(page + cursor, consoleSizeTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVConsoleSizeThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVNoArgThunk(page + cursor, consoleSizeTarget))
                     return false;
                 cursor += ServiceThunkSlotSize;
 
@@ -626,15 +673,71 @@ namespace OS.Kernel.Process
             if (textAddress == 0)
                 return;
 
+            // The bytes are UTF-8, and they have to be decoded here.
+            //
+            // This used to cast each byte to a char, which is Latin-1 by
+            // another name: a box-drawing rune arrived as its three UTF-8
+            // bytes and left as three separate characters, each re-encoded to
+            // UTF-8 on the way to the terminal engine. The screen showed the
+            // mojibake that double encoding always produces.
             byte* pointer = (byte*)textAddress;
-            for (int i = 0; i < MaxWriteStringBytes; i++)
+            for (int i = 0; i < MaxWriteStringBytes; )
             {
-                byte value = pointer[i];
-                if (value == 0)
-                    return;
+                byte lead = pointer[i];
+                if (lead == 0)
+                    break;
 
-                UiText.WriteChar((char)value);
+                uint codepoint;
+                int length;
+
+                if (lead < 0x80) { codepoint = lead; length = 1; }
+                else if ((lead & 0xE0) == 0xC0) { codepoint = (uint)(lead & 0x1F); length = 2; }
+                else if ((lead & 0xF0) == 0xE0) { codepoint = (uint)(lead & 0x0F); length = 3; }
+                else if ((lead & 0xF8) == 0xF0) { codepoint = (uint)(lead & 0x07); length = 4; }
+                else
+                {
+                    // A stray continuation byte. Skip it rather than guess: one
+                    // bad byte should cost one character, not resynchronise the
+                    // rest of the string onto the wrong boundary.
+                    i++;
+                    continue;
+                }
+
+                if (i + length > MaxWriteStringBytes) break;
+
+                bool truncated = false;
+                for (int k = 1; k < length; k++)
+                {
+                    byte continuation = pointer[i + k];
+                    if ((continuation & 0xC0) != 0x80) { truncated = true; break; }
+                    codepoint = (codepoint << 6) | (uint)(continuation & 0x3F);
+                }
+
+                if (truncated) { i++; continue; }
+                i += length;
+
+                if (codepoint <= 0xFFFF)
+                {
+                    UiText.WriteChar((char)codepoint);
+                }
+                else
+                {
+                    // Past the basic plane the engine wants the surrogate pair,
+                    // since it consumes chars rather than codepoints.
+                    codepoint -= 0x10000;
+                    UiText.WriteChar((char)(0xD800 + (codepoint >> 10)));
+                    UiText.WriteChar((char)(0xDC00 + (codepoint & 0x3FF)));
+                }
             }
+
+            // Paint once, at the end of the write — the same batching
+            // Platform.Write uses for kernel output.
+            //
+            // Without this a full-screen app draws nothing: the terminal engine
+            // paints on a line break, and a text UI never writes one. Its
+            // escape sequences were reaching the engine and changing the grid,
+            // while the framebuffer kept showing the frame before.
+            OS.Hal.Platform.FlushConsole();
         }
 
         private static void WriteUInt(uint value)
@@ -858,6 +961,32 @@ namespace OS.Kernel.Process
 
         // Sleeping is half of what a thread is for here: a background loop that
         // polls without sleeping is the spin we spent step157 removing.
+        // Which thread is asking. An app cannot answer this for itself:
+        // thread-statics need runtime support neither tier has, and the
+        // scheduler that owns the threads lives here. Monitor is the caller
+        // that matters — without distinct ids a reentrant lock lets every
+        // thread straight through.
+        private static uint CurrentThreadId()
+        {
+            OS.Kernel.Threading.Thread? current = OS.Kernel.Threading.Scheduler.Current;
+            return current == null ? 1u : (uint)current.Id;
+        }
+
+        // Columns in the low 16 bits, rows in the high 16. Zero when there is
+        // no terminal front-end — a caller must treat that as "unknown" rather
+        // than as a screen of size zero.
+        private static uint ConsoleSize()
+        {
+            if (!OS.Hal.TerminalConsole.IsReady) return 0;
+
+            var engine = OS.Hal.TerminalConsole.Engine;
+            if (engine == null) return 0;
+
+            uint cols = (uint)engine.Cols;
+            uint rows = (uint)engine.Rows;
+            return (cols & 0xFFFFu) | ((rows & 0xFFFFu) << 16);
+        }
+
         private static void SleepMilliseconds(uint milliseconds)
             => global::OS.Kernel.Threading.Scheduler.Sleep(milliseconds);
 
@@ -1074,14 +1203,20 @@ namespace OS.Kernel.Process
             ushort rawAppAbi = ReadU16(buffer + 6);
             ushort rawServiceAbi = ReadU16(buffer + 8);
 
-            if (rawAppAbi == AppServiceTable.AbiVersionV1)
-                appAbiVersion = AppServiceTable.AbiVersionV1;
-            else if (rawAppAbi == AppServiceTable.AbiVersionV2)
-                appAbiVersion = AppServiceTable.AbiVersionV2;
-            else if (rawAppAbi == AppServiceTable.AbiVersionV3)
-                appAbiVersion = AppServiceTable.AbiVersionV3;
-            else
+            // A range, not a ladder of known values. The ladder version had to
+            // grow a branch per revision, and forgetting one does not fail
+            // loudly: an unrecognised version was rejected, the app fell back
+            // to V1, and it simply found the newer services missing. Which is
+            // exactly what happened when V4 landed.
+            //
+            // Above our own version is still refused — that is an app built for
+            // a newer kernel, and quietly handing it less than it asked for is
+            // how a missing service becomes a mysterious crash later.
+            if (rawAppAbi < AppServiceTable.AbiVersionV1 ||
+                rawAppAbi > AppServiceTable.CurrentAbiVersion)
                 return false;
+
+            appAbiVersion = AppServiceTable.Normalize(rawAppAbi);
 
             if (rawServiceAbi == (ushort)AppServiceAbi.WindowsX64)
                 serviceAbi = AppServiceAbi.WindowsX64;

@@ -98,6 +98,30 @@ namespace SharpOS.Std.NoRuntime
             if (s_enterCritical != null) s_enterCritical();
             void* allocated = AllocateRawCore(size);
             if (s_leaveCritical != null) s_leaveCritical();
+
+            if (allocated != null) return allocated;
+
+            // Out of room — collect, then ask once more.
+            //
+            // This step was missing, and its absence did not look like a
+            // memory problem from where it surfaced: the heap simply began
+            // returning null, and the first caller to write through that null
+            // faulted. The report named a string constructor, three frames
+            // below whoever had actually been allocating.
+            //
+            // Collection runs OUTSIDE the critical section on purpose: the
+            // collector walks stacks and allocates nothing, but it is long, and
+            // holding off the scheduler for its duration is exactly the pause
+            // suppression exists to keep short.
+            if (GC.s_collectHook != null)
+            {
+                GC.s_collectHook();
+
+                if (s_enterCritical != null) s_enterCritical();
+                allocated = AllocateRawCore(size);
+                if (s_leaveCritical != null) s_leaveCritical();
+            }
+
             return allocated;
         }
 

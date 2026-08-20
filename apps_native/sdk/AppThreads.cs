@@ -43,6 +43,25 @@
         }
 
         /// <summary>
+        /// Which thread is running, as the scheduler names it. Zero when the
+        /// kernel does not publish it, which callers must treat as "unknown"
+        /// rather than as an id — Monitor keys ownership on this, and a shared
+        /// value would make every lock look like it was already ours.
+        /// </summary>
+        public static int CurrentThreadId()
+        {
+            // Gated on the address, not on a version number: the table grows
+            // at the end and an unfilled service reads as zero, which is the
+            // same question asked more directly.
+            var services = AppRuntime.Services;
+            if (services == null || services->CurrentThreadIdAddress == 0)
+                return 0;
+
+            var current = (delegate* unmanaged<uint>)services->CurrentThreadIdAddress;
+            return (int)current();
+        }
+
+        /// <summary>
         /// Gives up the CPU for a while. Not optional for a polling loop: one
         /// that spins instead is the shape we spent step157 removing from the
         /// kernel's own waits.

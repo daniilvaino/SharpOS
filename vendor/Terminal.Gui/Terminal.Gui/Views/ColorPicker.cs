@@ -1,5 +1,4 @@
 ﻿using System;
-using NStack;
 
 namespace Terminal.Gui {
 
@@ -82,7 +81,7 @@ namespace Terminal.Gui {
 		/// Initializes a new instance of <see cref="ColorPicker"/>.
 		/// </summary>
 		/// <param name="title">Title.</param>
-		public ColorPicker (ustring title) : base (title)
+		public ColorPicker (string title) : base (title)
 		{
 			Initialize ();
 		}
@@ -92,7 +91,7 @@ namespace Terminal.Gui {
 		/// </summary>
 		/// <param name="point">Location point.</param>
 		/// <param name="title">Title.</param>
-		public ColorPicker (Point point, ustring title) : this (point.X, point.Y, title)
+		public ColorPicker (Point point, string title) : this (point.X, point.Y, title)
 		{
 		}
 
@@ -102,7 +101,7 @@ namespace Terminal.Gui {
 		/// <param name="x">X location.</param>
 		/// <param name="y">Y location.</param>
 		/// <param name="title">Title</param>
-		public ColorPicker (int x, int y, ustring title) : base (x, y, title)
+		public ColorPicker (int x, int y, string title) : base (x, y, title)
 		{
 			Initialize ();
 		}

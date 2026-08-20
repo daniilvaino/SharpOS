@@ -29,7 +29,7 @@ namespace Terminal.Gui {
 	/// </para>
 	/// </remarks>
 	public class ScrollView : View {
-		private class ContentView : View {
+		private class ContentView : View, IContentView {
 			public ContentView (Rect frame) : base (frame)
 			{
 				CanFocus = true;

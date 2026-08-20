@@ -83,6 +83,40 @@
         // anything. Appending is only appending if it is at the end.
         public ulong SpawnThreadAddress;
         public ulong SleepAddress;
+
+        // Appended without bumping the version, deliberately.
+        //
+        // The table grows at the end and every address is zero until filled, so
+        // "is this service here?" is answered by the field itself. The version
+        // number is for binaries that travel separately from the kernel; ours
+        // are built in the same run. Raising it for each new pointer costs a
+        // migration everywhere and buys nothing — and a number that changes for
+        // no reason is worse than no number, because it stops meaning anything.
+        //
+        // So: V3 stays frozen while the tail grows. Bump it when the SHAPE of
+        // something already published changes, which is when an old app would
+        // genuinely misread the table.
+        public ulong CurrentThreadIdAddress;
+
+        // Console size in cells, packed: columns in the low 16 bits, rows in the
+        // high 16. Appended without a version bump — the table grows at the end
+        // and an unfilled service reads as zero, which is the same question.
+        //
+        // An app cannot work this out for itself: the size comes from the
+        // framebuffer and the font, both of which live on the kernel side.
+        public ulong ConsoleSizeAddress;
+
+        // Kernel RhpRethrow entry, the partner of RhpThrowExAddress above.
+        // ILC emits a call to it for a bare `throw;` inside a catch — a
+        // different helper from `throw expr`, and one an app cannot carry
+        // itself for the same reason: rethrow resumes a dispatch the kernel's
+        // EH engine started.
+        //
+        // Appended without a version bump; the address being zero is the
+        // "not published" answer.
+        public ulong RhpRethrowAddress;
+
+
     }
 
     internal unsafe struct AppFileExistsRequest

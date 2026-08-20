@@ -1,5 +1,4 @@
-using System;
-using NStack;
+﻿using System;
 using System.Linq;
 using System.Collections.Generic;
 
@@ -31,7 +30,7 @@ namespace Terminal.Gui {
 	/// MenuItems can also have a checked indicator (see <see cref="Checked"/>).
 	/// </summary>
 	public class MenuItem {
-		ustring title;
+		string title;
 		ShortcutHelper shortcutHelper;
 		internal int TitleLength => GetMenuBarItemLength (Title);
 
@@ -55,7 +54,7 @@ namespace Terminal.Gui {
 		/// <param name="canExecute">Function to determine if the action can currently be executed.</param>
 		/// <param name="parent">The <see cref="Parent"/> of this menu item.</param>
 		/// <param name="shortcut">The <see cref="Shortcut"/> keystroke combination.</param>
-		public MenuItem (ustring title, ustring help, Action action, Func<bool> canExecute = null, MenuItem parent = null, Key shortcut = Key.Null)
+		public MenuItem (string title, string help, Action action, Func<bool> canExecute = null, MenuItem parent = null, Key shortcut = Key.Null)
 		{
 			Title = title ?? "";
 			Help = help ?? "";
@@ -104,13 +103,13 @@ namespace Terminal.Gui {
 		/// <summary>
 		/// Gets the text describing the keystroke combination defined by <see cref="Shortcut"/>.
 		/// </summary>
-		public ustring ShortcutTag => ShortcutHelper.GetShortcutTag (shortcutHelper.Shortcut);
+		public string ShortcutTag => ShortcutHelper.GetShortcutTag (shortcutHelper.Shortcut);
 
 		/// <summary>
 		/// Gets or sets the title of the menu item .
 		/// </summary>
 		/// <value>The title.</value>
-		public ustring Title {
+		public string Title {
 			get { return title; }
 			set {
 				if (title != value) {
@@ -124,7 +123,7 @@ namespace Terminal.Gui {
 		/// Gets or sets the help text for the menu item. The help text is drawn to the right of the <see cref="Title"/>.
 		/// </summary>
 		/// <value>The help text.</value>
-		public ustring Help { get; set; }
+		public string Help { get; set; }
 
 		/// <summary>
 		/// Gets or sets the action to be invoked when the menu item is triggered.
@@ -216,7 +215,7 @@ namespace Terminal.Gui {
 			}
 		}
 
-		int GetMenuBarItemLength (ustring title)
+		int GetMenuBarItemLength (string title)
 		{
 			int len = 0;
 			foreach (var ch in title) {
@@ -242,7 +241,7 @@ namespace Terminal.Gui {
 		/// <param name="action">Action to invoke when the menu item is activated.</param>
 		/// <param name="canExecute">Function to determine if the action can currently be executed.</param>
 		/// <param name="parent">The parent <see cref="MenuItem"/> of this if exist, otherwise is null.</param>
-		public MenuBarItem (ustring title, ustring help, Action action, Func<bool> canExecute = null, MenuItem parent = null) : base (title, help, action, canExecute, parent)
+		public MenuBarItem (string title, string help, Action action, Func<bool> canExecute = null, MenuItem parent = null) : base (title, help, action, canExecute, parent)
 		{
 			Initialize (title, null, null, true);
 		}
@@ -253,7 +252,7 @@ namespace Terminal.Gui {
 		/// <param name="title">Title for the menu item.</param>
 		/// <param name="children">The items in the current menu.</param>
 		/// <param name="parent">The parent <see cref="MenuItem"/> of this if exist, otherwise is null.</param>
-		public MenuBarItem (ustring title, MenuItem [] children, MenuItem parent = null)
+		public MenuBarItem (string title, MenuItem [] children, MenuItem parent = null)
 		{
 			Initialize (title, children, parent);
 		}
@@ -264,7 +263,7 @@ namespace Terminal.Gui {
 		/// <param name="title">Title for the menu item.</param>
 		/// <param name="children">The list of items in the current menu.</param>
 		/// <param name="parent">The parent <see cref="MenuItem"/> of this if exist, otherwise is null.</param>
-		public MenuBarItem (ustring title, List<MenuItem []> children, MenuItem parent = null)
+		public MenuBarItem (string title, List<MenuItem []> children, MenuItem parent = null)
 		{
 			Initialize (title, children, parent);
 		}
@@ -280,7 +279,7 @@ namespace Terminal.Gui {
 		/// </summary>
 		public MenuBarItem () : this (children: new MenuItem [] { }) { }
 
-		void Initialize (ustring title, object children, MenuItem parent = null, bool isTopLevel = false)
+		void Initialize (string title, object children, MenuItem parent = null, bool isTopLevel = false)
 		{
 			if (!isTopLevel && children == null) {
 				throw new ArgumentNullException (nameof (children), "The parameter cannot be null. Use an empty array instead.");
@@ -361,10 +360,10 @@ namespace Terminal.Gui {
 			return -1;
 		}
 
-		void SetTitle (ustring title)
+		void SetTitle (string title)
 		{
 			if (title == null)
-				title = ustring.Empty;
+				title = string.Empty;
 			Title = title;
 		}
 
@@ -390,7 +389,9 @@ namespace Terminal.Gui {
 			}
 			int minX = x;
 			int minY = y;
-			int maxW = (items.Max (z => z?.Width) ?? 0) + 2; // This 2 is frame border?
+			// The projection returns int rather than int?: our Max has no
+			// nullable overload, and "no items" is already handled above.
+			int maxW = items.Max (z => z == null ? 0 : z.Width) + 2; // This 2 is frame border?
 			int maxH = items.Length + 2; // This 2 is frame border?
 			if (parent != null && x + maxW > Driver.Cols) {
 				minX = Math.Max (parent.Frame.Right - parent.Frame.Width - maxW, 0);
@@ -510,7 +511,7 @@ namespace Terminal.Gui {
 					continue;
 				}
 
-				ustring textToDraw;
+				string textToDraw;
 				var checkChar = Driver.Selected;
 				var uncheckedChar = Driver.UnSelected;
 
@@ -521,9 +522,9 @@ namespace Terminal.Gui {
 
 				// Support Checked even though CheckType wasn't set
 				if (item.Checked) {
-					textToDraw = ustring.Make (new Rune [] { checkChar, ' ' }) + item.Title;
+					textToDraw = RuneText.Make (new Rune [] { checkChar, ' ' }) + item.Title;
 				} else if (item.CheckType.HasFlag (MenuItemCheckStyle.Checked) || item.CheckType.HasFlag (MenuItemCheckStyle.Radio)) {
-					textToDraw = ustring.Make (new Rune [] { uncheckedChar, ' ' }) + item.Title;
+					textToDraw = RuneText.Make (new Rune [] { uncheckedChar, ' ' }) + item.Title;
 				} else {
 					textToDraw = item.Title;
 				}
@@ -917,15 +918,15 @@ namespace Terminal.Gui {
 			}
 		}
 
-		static ustring shortcutDelimiter = "+";
+		static string shortcutDelimiter = "+";
 		/// <summary>
 		/// Sets or gets the shortcut delimiter separator. The default is "+".
 		/// </summary>
-		public static ustring ShortcutDelimiter {
+		public static string ShortcutDelimiter {
 			get => shortcutDelimiter;
 			set {
 				if (shortcutDelimiter != value) {
-					shortcutDelimiter = value == ustring.Empty ? " " : value;
+					shortcutDelimiter = value == string.Empty ? " " : value;
 				}
 			}
 		}

@@ -1,4 +1,4 @@
-using XtermSharp;
+﻿using XtermSharp;
 
 namespace OS.Hal
 {
@@ -32,8 +32,16 @@ namespace OS.Hal
     internal static unsafe class TerminalConsole
     {
         private const int Margin = 8;
-        private const int CellW = 8;                  // Font8x8, scale 1
-        private const int CellH = 8;
+        // CP437 8x16, not the 8x8 boot font.
+        //
+        // Font8x8 carries ASCII plus six box glyphs, which is a boot log's
+        // whole vocabulary and not an interface's: every corner, tee and
+        // vertical rule of a window frame came out as "?". FontCp437 is the
+        // classic IBM repertoire, so the glyphs exist rather than being drawn
+        // by hand. Taller cells also halve the row count, which reads better
+        // than 98 rows of 8-pixel text on a 1280x800 screen.
+        private const int CellW = 8;
+        private const int CellH = 16;
 
         // A kernel console has no way to scroll back yet, so scrollback is only
         // memory. Keep a little for a future pager, not the 1000-line default.
@@ -292,6 +300,20 @@ namespace OS.Hal
         // The cursor is drawn as an inverted cell rather than tracked as terminal
         // state: erase restores the cell from the shadow, so no extra bookkeeping is
         // needed and a repaint of that row simply overwrites it.
+        /// <summary>
+        /// The CP437 glyph for a character, or '?' when the font has none.
+        /// </summary>
+        /// <remarks>
+        /// A question mark is the honest answer for a missing glyph: it says
+        /// the character could not be drawn, where a lookalike would quietly
+        /// change what the screen says.
+        /// </remarks>
+        private static int GlyphOf(char ch)
+        {
+            int glyph = FontCp437.Index(ch);
+            return glyph >= 0 ? glyph : '?';
+        }
+
         private static void EraseCursor(XtermSharp.Buffer buffer)
         {
             if (s_cursorSlot < 0) return;
@@ -299,8 +321,9 @@ namespace OS.Hal
             int y = s_cursorSlot / s_cols;
             int x = s_cursorSlot % s_cols;
             if (s_shadowValid[s_cursorSlot])
-                FbConsole.DrawCharFast(Margin + x * CellW, Margin + y * CellH,
-                    s_shadowChar[s_cursorSlot], s_shadowFg[s_cursorSlot], s_shadowBg[s_cursorSlot]);
+                FbConsole.DrawCellFast(Margin + x * CellW, Margin + y * CellH,
+                    GlyphOf(s_shadowChar[s_cursorSlot]),
+                    s_shadowFg[s_cursorSlot], s_shadowBg[s_cursorSlot]);
             s_cursorSlot = -1;
         }
 
@@ -321,7 +344,7 @@ namespace OS.Hal
             uint fg = s_shadowValid[slot] ? s_shadowFg[slot] : FbConsole.Pack(200, 200, 200);
             uint bg = s_shadowValid[slot] ? s_shadowBg[slot] : FbConsole.Pack(s_bgR, s_bgG, s_bgB);
 
-            FbConsole.DrawCharFast(Margin + x * CellW, Margin + y * CellH, glyph, bg, fg);
+            FbConsole.DrawCellFast(Margin + x * CellW, Margin + y * CellH, GlyphOf(glyph), bg, fg);
             s_cursorSlot = slot;
         }
 
@@ -365,7 +388,7 @@ namespace OS.Hal
                     && s_shadowBg[slot] == bg)
                     continue;
 
-                FbConsole.DrawCharFast(Margin + x * CellW, py, glyph, fg, bg);
+                FbConsole.DrawCellFast(Margin + x * CellW, py, GlyphOf(glyph), fg, bg);
 
                 s_shadowChar[slot] = glyph;
                 s_shadowFg[slot] = fg;

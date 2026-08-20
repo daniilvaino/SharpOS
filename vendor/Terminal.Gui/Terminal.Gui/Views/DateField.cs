@@ -8,7 +8,6 @@
 using System;
 using System.Globalization;
 using System.Linq;
-using NStack;
 
 namespace Terminal.Gui {
 	/// <summary>
@@ -106,7 +105,7 @@ namespace Terminal.Gui {
 			AddKeyBinding (Key.F | Key.CtrlMask, Command.Right);
 		}
 
-		void DateField_Changed (ustring e)
+		void DateField_Changed (string e)
 		{
 			try {
 				if (!DateTime.TryParseExact (GetDate (Text).ToString (), GetInvarianteFormat (), CultureInfo.CurrentCulture, DateTimeStyles.None, out DateTime result))
@@ -123,7 +122,7 @@ namespace Terminal.Gui {
 
 		string GetLongFormat (string lf)
 		{
-			ustring [] frm = ustring.Make (lf).Split (ustring.Make (sepChar));
+			string [] frm = RuneText.Make (lf).Split (RuneText.Make (sepChar));
 			for (int i = 0; i < frm.Length; i++) {
 				if (frm [i].Contains ("M") && frm [i].RuneCount < 2)
 					lf = lf.Replace ("M", "MM");
@@ -198,17 +197,17 @@ namespace Terminal.Gui {
 			newText.Add (key);
 			if (CursorPosition < fieldLen)
 				newText = newText.Concat (text.GetRange (CursorPosition + 1, text.Count - (CursorPosition + 1))).ToList ();
-			return SetText (ustring.Make (newText));
+			return SetText (RuneText.Make (newText));
 		}
 
-		bool SetText (ustring text)
+		bool SetText (string text)
 		{
 			if (text.IsEmpty) {
 				return false;
 			}
 
-			ustring [] vals = text.Split (ustring.Make (sepChar));
-			ustring [] frm = ustring.Make (format).Split (ustring.Make (sepChar));
+			string [] vals = text.Split (RuneText.Make (sepChar));
+			string [] frm = RuneText.Make (format).Split (RuneText.Make (sepChar));
 			bool isValidDate = true;
 			int idx = GetFormatIndex (frm, "y");
 			int year = Int32.Parse (vals [idx].ToString ());
@@ -245,7 +244,7 @@ namespace Terminal.Gui {
 			return true;
 		}
 
-		string GetDate (int month, int day, int year, ustring [] fm)
+		string GetDate (int month, int day, int year, string [] fm)
 		{
 			string date = " ";
 			for (int i = 0; i < fm.Length; i++) {
@@ -269,11 +268,11 @@ namespace Terminal.Gui {
 			return date;
 		}
 
-		ustring GetDate (ustring text)
+		string GetDate (string text)
 		{
-			ustring [] vals = text.Split (ustring.Make (sepChar));
-			ustring [] frm = ustring.Make (format).Split (ustring.Make (sepChar));
-			ustring [] date = { null, null, null };
+			string [] vals = text.Split (RuneText.Make (sepChar));
+			string [] frm = RuneText.Make (format).Split (RuneText.Make (sepChar));
+			string [] date = { null, null, null };
 
 			for (int i = 0; i < frm.Length; i++) {
 				if (frm [i].Contains ("M")) {
@@ -290,11 +289,11 @@ namespace Terminal.Gui {
 					}
 				}
 			}
-			return date [0] + ustring.Make (sepChar) + date [1] + ustring.Make (sepChar) + date [2];
+			return date [0] + RuneText.Make (sepChar) + date [1] + RuneText.Make (sepChar) + date [2];
 
 		}
 
-		int GetFormatIndex (ustring [] fm, string t)
+		int GetFormatIndex (string [] fm, string t)
 		{
 			int idx = -1;
 			for (int i = 0; i < fm.Length; i++) {
@@ -342,7 +341,7 @@ namespace Terminal.Gui {
 			if (ReadOnly)
 				return true;
 
-			if (SetText (TextModel.ToRunes (ustring.Make ((uint)kb.Key)).First ()))
+			if (SetText (TextModel.ToRunes (RuneText.Make ((uint)kb.Key)).First ()))
 				IncCursorPosition ();
 
 			return true;

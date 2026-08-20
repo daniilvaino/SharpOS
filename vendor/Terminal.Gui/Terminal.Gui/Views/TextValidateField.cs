@@ -5,7 +5,6 @@
 //	José Miguel Perricone (jmperricone@hotmail.com)
 //
 
-using NStack;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -83,12 +82,12 @@ namespace Terminal.Gui {
 			/// <summary>
 			/// Set the input text and get the current value.
 			/// </summary>
-			ustring Text { get; set; }
+			string Text { get; set; }
 
 			/// <summary>
 			/// Gets the formatted string for display.
 			/// </summary>
-			ustring DisplayText { get; }
+			string DisplayText { get; }
 		}
 
 		//////////////////////////////////////////////////////////////////////////////
@@ -117,13 +116,13 @@ namespace Terminal.Gui {
 			/// <summary>
 			/// Mask property
 			/// </summary>
-			public ustring Mask {
+			public string Mask {
 				get {
 					return provider?.Mask;
 				}
 				set {
 					var current = provider != null ? provider.ToString (false, false) : string.Empty;
-					provider = new MaskedTextProvider (value == ustring.Empty ? "&&&&&&" : value.ToString ());
+					provider = new MaskedTextProvider (value == string.Empty ? "&&&&&&" : value.ToString ());
 					if (string.IsNullOrEmpty (current) == false) {
 						provider.Set (current);
 					}
@@ -131,7 +130,7 @@ namespace Terminal.Gui {
 			}
 
 			///<inheritdoc/>
-			public ustring Text {
+			public string Text {
 				get {
 					return provider.ToString ();
 				}
@@ -147,7 +146,7 @@ namespace Terminal.Gui {
 			public bool Fixed => true;
 
 			///<inheritdoc/>
-			public ustring DisplayText => provider.ToDisplayString ();
+			public string DisplayText => provider.ToDisplayString ();
 
 			///<inheritdoc/>
 			public int Cursor (int pos)
@@ -230,9 +229,9 @@ namespace Terminal.Gui {
 			/// <summary>
 			/// Regex pattern property.
 			/// </summary>
-			public ustring Pattern {
+			public string Pattern {
 				get {
-					return ustring.Make (pattern);
+					return RuneText.Make (pattern);
 				}
 				set {
 					pattern = value.ToRuneList ();
@@ -242,18 +241,18 @@ namespace Terminal.Gui {
 			}
 
 			///<inheritdoc/>
-			public ustring Text {
+			public string Text {
 				get {
-					return ustring.Make (text);
+					return RuneText.Make (text);
 				}
 				set {
-					text = value != ustring.Empty ? value.ToRuneList () : null;
+					text = value != string.Empty ? value.ToRuneList () : null;
 					SetupText ();
 				}
 			}
 
 			///<inheritdoc/>
-			public ustring DisplayText => Text;
+			public string DisplayText => Text;
 
 			///<inheritdoc/>
 			public bool IsValid {
@@ -273,7 +272,7 @@ namespace Terminal.Gui {
 
 			bool Validate (List<Rune> text)
 			{
-				var match = regex.Match (ustring.Make (text).ToString ());
+				var match = regex.Match (RuneText.Make (text).ToString ());
 				return match.Success;
 			}
 
@@ -354,7 +353,7 @@ namespace Terminal.Gui {
 			/// </summary>
 			private void CompileMask ()
 			{
-				regex = new Regex (ustring.Make (pattern).ToString (), RegexOptions.Compiled);
+				regex = new Regex (RuneText.Make (pattern).ToString (), RegexOptions.Compiled);
 			}
 		}
 		#endregion
@@ -420,7 +419,7 @@ namespace Terminal.Gui {
 			set {
 				provider = value;
 				if (provider.Fixed == true) {
-					this.Width = provider.DisplayText == ustring.Empty ? 10 : Text.Length;
+					this.Width = provider.DisplayText == string.Empty ? 10 : Text.Length;
 				}
 				HomeKeyHandler ();
 				SetNeedsDisplay ();
@@ -447,10 +446,10 @@ namespace Terminal.Gui {
 		/// <summary>
 		/// Text
 		/// </summary>
-		public new ustring Text {
+		public new string Text {
 			get {
 				if (provider == null) {
-					return ustring.Empty;
+					return string.Empty;
 				}
 
 				return provider.Text;

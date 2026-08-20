@@ -5,7 +5,10 @@
         public const uint AbiVersionV1 = 1;
         public const uint AbiVersionV2 = 2;
         public const uint AbiVersionV3 = 3;
-        public const uint CurrentAbiVersion = AbiVersionV3;
+        // Follows the service table rather than naming a number: this was a
+        // fourth copy of the same constant, and it stayed at 3 while the rest
+        // moved to 4.
+        public const uint CurrentAbiVersion = AppServiceTable.CurrentAbiVersion;
         public const uint FlagMarkerAddressIsPhysical = 1U << 0;
         public const uint FlagServiceTableAddressIsPhysical = 1U << 1;
 

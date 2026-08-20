@@ -10,7 +10,6 @@
 // Any udpates done here should probably be done in Window as well; TODO: Merge these classes
 
 using System.Linq;
-using NStack;
 
 namespace Terminal.Gui {
 	/// <summary>
@@ -19,13 +18,13 @@ namespace Terminal.Gui {
 	/// </summary>
 	public class FrameView : View {
 		View contentView;
-		ustring title;
+		string title;
 
 		/// <summary>
 		/// The title to be displayed for this <see cref="FrameView"/>.
 		/// </summary>
 		/// <value>The title.</value>
-		public ustring Title {
+		public string Title {
 			get => title;
 			set {
 				title = value;
@@ -75,7 +74,7 @@ namespace Terminal.Gui {
 		/// Its ONLY reason for being is to provide a simple way for Window to expose to those SubViews that the Window's Bounds 
 		/// are actually deflated due to the border. 
 		/// </summary>
-		class ContentView : View {
+		class ContentView : View, IContentView {
 			public ContentView (Rect frame) : base (frame) { }
 			public ContentView () : base () { }
 		}
@@ -87,7 +86,7 @@ namespace Terminal.Gui {
 		/// <param name="title">Title.</param>
 		/// <param name="views">Views.</param>
 		/// <param name="border">The <see cref="Border"/>.</param>
-		public FrameView (Rect frame, ustring title = null, View [] views = null, Border border = null) : base (frame)
+		public FrameView (Rect frame, string title = null, View [] views = null, Border border = null) : base (frame)
 		{
 			//var cFrame = new Rect (1, 1, Math.Max (frame.Width - 2, 0), Math.Max (frame.Height - 2, 0));
 			Initialize (frame, title, views, border);
@@ -98,7 +97,7 @@ namespace Terminal.Gui {
 		/// </summary>
 		/// <param name="title">Title.</param>
 		/// <param name="border">The <see cref="Border"/>.</param>
-		public FrameView (ustring title, Border border = null)
+		public FrameView (string title, Border border = null)
 		{
 			Initialize (Rect.Empty, title, null, border);
 		}
@@ -108,9 +107,9 @@ namespace Terminal.Gui {
 		/// </summary>
 		public FrameView () : this (title: string.Empty) { }
 
-		void Initialize (Rect frame, ustring title, View [] views = null, Border border = null)
+		void Initialize (Rect frame, string title, View [] views = null, Border border = null)
 		{
-			if (title == null) title = ustring.Empty;
+			if (title == null) title = string.Empty;
 			this.Title = title;
 			if (border == null) {
 				Border = new Border () {
@@ -119,7 +118,7 @@ namespace Terminal.Gui {
 				};
 			} else {
 				Border = border;
-				if (ustring.IsNullOrEmpty (border.Title)) {
+				if (string.IsNullOrEmpty (border.Title)) {
 					border.Title = title;
 				}
 			}
@@ -243,7 +242,7 @@ namespace Terminal.Gui {
 		/// <summary>
 		///   The text displayed by the <see cref="Label"/>.
 		/// </summary>
-		public override ustring Text {
+		public override string Text {
 			get => contentView?.Text;
 			set {
 				base.Text = value;

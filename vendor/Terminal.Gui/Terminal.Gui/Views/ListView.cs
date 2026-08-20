@@ -1,10 +1,9 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using NStack;
 
 namespace Terminal.Gui {
 	/// <summary>
@@ -76,8 +75,8 @@ namespace Terminal.Gui {
 	/// </para>
 	/// <para>
 	///   <see cref="ListView"/> can display any object that implements the <see cref="IList"/> interface.
-	///   <see cref="string"/> values are converted into <see cref="ustring"/> values before rendering, and other values are
-	///   converted into <see cref="string"/> by calling <see cref="object.ToString"/> and then converting to <see cref="ustring"/> .
+	///   <see cref="string"/> values are converted into <see cref="string"/> values before rendering, and other values are
+	///   converted into <see cref="string"/> by calling <see cref="object.ToString"/> and then converting to <see cref="string"/> .
 	/// </para>
 	/// <para>
 	///   To change the contents of the ListView, set the <see cref="Source"/> property (when 
@@ -143,13 +142,17 @@ namespace Terminal.Gui {
 		/// </remarks>
 		public Task SetSourceAsync (IList source)
 		{
-			return Task.Factory.StartNew (() => {
+			// Task.Run rather than Task.Factory.StartNew: the options upstream
+			// passes (DenyChildAttach, the default scheduler) describe a task
+			// system with nesting and schedulers, and ours is a thread plus a
+			// wait. Naming options that cannot be honoured would suggest they
+			// were.
+			return Task.Run (() => {
 				if (source == null && (Source == null || !(Source is ListWrapper)))
 					Source = null;
 				else
 					Source = MakeWrapper (source);
-				return source;
-			}, CancellationToken.None, TaskCreationOptions.DenyChildAttach, TaskScheduler.Default);
+			});
 		}
 
 		bool allowsMarking;
@@ -262,7 +265,7 @@ namespace Terminal.Gui {
 		/// contents of the object implementing the <see cref="IList"/> interface, 
 		/// with relative positioning.
 		/// </summary>
-		/// <param name="source">An <see cref="IList"/> data source, if the elements are strings or ustrings, 
+		/// <param name="source">An <see cref="IList"/> data source, if the elements are strings, 
 		/// the string is rendered, otherwise the ToString() method is invoked on the result.</param>
 		public ListView (IList source) : this (MakeWrapper (source))
 		{
@@ -292,7 +295,7 @@ namespace Terminal.Gui {
 		/// Initializes a new instance of <see cref="ListView"/> that will display the contents of the object implementing the <see cref="IList"/> interface with an absolute position.
 		/// </summary>
 		/// <param name="rect">Frame for the listview.</param>
-		/// <param name="source">An IList data source, if the elements of the IList are strings or ustrings, 
+		/// <param name="source">An IList data source, if the elements of the IList are strings, 
 		/// the string is rendered, otherwise the ToString() method is invoked on the result.</param>
 		public ListView (Rect rect, IList source) : this (rect, MakeWrapper (source))
 		{
@@ -872,7 +875,7 @@ namespace Terminal.Gui {
 			for (int i = 0; i < src.Count; i++) {
 				var t = src [i];
 				int l;
-				if (t is ustring u) {
+				if (t is string u) {
 					l = TextFormatter.GetTextWidth (u);
 				} else if (t is string s) {
 					l = s.Length;
@@ -888,10 +891,10 @@ namespace Terminal.Gui {
 			return maxLength;
 		}
 
-		void RenderUstr (ConsoleDriver driver, ustring ustr, int col, int line, int width, int start = 0)
+		void RenderUstr (ConsoleDriver driver, string ustr, int col, int line, int width, int start = 0)
 		{
-			ustring str = start > ustr.ConsoleWidth ? string.Empty : ustr.Substring (Math.Min (start, ustr.ToRunes ().Length - 1));
-			ustring u = TextFormatter.ClipAndJustify (str, width, TextAlignment.Left);
+			string str = start > ustr.ConsoleWidth ? string.Empty : ustr.Substring (Math.Min (start, ustr.ToRunes ().Length - 1));
+			string u = TextFormatter.ClipAndJustify (str, width, TextAlignment.Left);
 			driver.AddStr (u);
 			width -= TextFormatter.GetTextWidth (u);
 			while (width-- + start > 0) {
@@ -906,9 +909,9 @@ namespace Terminal.Gui {
 			container.Move (Math.Max (col - start, 0), line);
 			var t = src? [item];
 			if (t == null) {
-				RenderUstr (driver, ustring.Make (""), col, line, width);
+				RenderUstr (driver, RuneText.Make (""), col, line, width);
 			} else {
-				if (t is ustring u) {
+				if (t is string u) {
 					RenderUstr (driver, u, col, line, width, start);
 				} else if (t is string s) {
 					RenderUstr (driver, s, col, line, width, start);
@@ -949,7 +952,7 @@ namespace Terminal.Gui {
 
 			for (int i = 0; i < src.Count; i++) {
 				var t = src [i];
-				if (t is ustring u) {
+				if (t is string u) {
 					if (u.ToUpper ().StartsWith (search.ToUpperInvariant ())) {
 						return i;
 					}

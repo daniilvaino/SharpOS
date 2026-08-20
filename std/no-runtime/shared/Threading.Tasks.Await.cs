@@ -163,6 +163,65 @@ namespace System.Runtime.CompilerServices
     }
 
     /// <summary>
+    /// The builder for `async void`.
+    /// </summary>
+    /// <remarks>
+    /// An async void method has no task to hand back, so nobody can wait for it
+    /// and nobody can observe its failure. That is a property of the shape, not
+    /// of this implementation — but here it is worth stating twice, because
+    /// there is no synchronisation context to re-raise the exception on. An
+    /// exception escaping one of these is simply lost, exactly as SetException
+    /// below says.
+    /// </remarks>
+    public struct AsyncVoidMethodBuilder
+    {
+        private sealed class Shared
+        {
+            public IAsyncStateMachine? Box;
+        }
+
+        private Shared _shared;
+
+        public static AsyncVoidMethodBuilder Create()
+            => new AsyncVoidMethodBuilder { _shared = new Shared() };
+
+        private Shared Ensure() => _shared ??= new Shared();
+
+        public void Start<TStateMachine>(ref TStateMachine stateMachine)
+            where TStateMachine : IAsyncStateMachine
+            => stateMachine.MoveNext();
+
+        public void SetStateMachine(IAsyncStateMachine stateMachine) => Ensure().Box = stateMachine;
+
+        public void SetResult() { }
+
+        public void SetException(Exception exception) { /* nowhere to report it */ }
+
+        public void AwaitOnCompleted<TAwaiter, TStateMachine>(
+            ref TAwaiter awaiter, ref TStateMachine stateMachine)
+            where TAwaiter : INotifyCompletion
+            where TStateMachine : IAsyncStateMachine
+            => Suspend(ref awaiter, ref stateMachine);
+
+        public void AwaitUnsafeOnCompleted<TAwaiter, TStateMachine>(
+            ref TAwaiter awaiter, ref TStateMachine stateMachine)
+            where TAwaiter : ICriticalNotifyCompletion
+            where TStateMachine : IAsyncStateMachine
+            => Suspend(ref awaiter, ref stateMachine);
+
+        private void Suspend<TAwaiter, TStateMachine>(ref TAwaiter awaiter, ref TStateMachine stateMachine)
+            where TAwaiter : INotifyCompletion
+            where TStateMachine : IAsyncStateMachine
+        {
+            Shared shared = Ensure();
+            shared.Box ??= stateMachine;
+
+            IAsyncStateMachine box = shared.Box;
+            awaiter.OnCompleted(() => box.MoveNext());
+        }
+    }
+
+    /// <summary>
     /// A task completed by a builder rather than by a thread finishing. Task's
     /// own completion is private to it, so async results get their own door in
     /// rather than a public setter everyone could push.

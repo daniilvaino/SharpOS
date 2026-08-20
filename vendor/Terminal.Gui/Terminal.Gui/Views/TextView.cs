@@ -1,4 +1,4 @@
-// TextView.cs: multi-line text editing
+﻿// TextView.cs: multi-line text editing
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -7,9 +7,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
-using NStack;
 using Terminal.Gui.Resources;
-using static Terminal.Gui.Graphs.PathAnnotation;
 using Rune = System.Rune;
 
 namespace Terminal.Gui {
@@ -37,9 +35,9 @@ namespace Terminal.Gui {
 			return true;
 		}
 
-		// Turns the ustring into runes, this does not split the 
+		// Turns the string into runes, this does not split the 
 		// contents on a newline if it is present.
-		internal static List<Rune> ToRunes (ustring str)
+		internal static List<Rune> ToRunes (string str)
 		{
 			List<Rune> runes = new List<Rune> ();
 			foreach (var x in str.ToRunes ()) {
@@ -49,7 +47,7 @@ namespace Terminal.Gui {
 		}
 
 		// Splits a string into a List that contains a List<Rune> for each line
-		public static List<List<Rune>> StringToRunes (ustring content)
+		public static List<List<Rune>> StringToRunes (string content)
 		{
 			var lines = new List<List<Rune>> ();
 			int start = 0, i = 0;
@@ -63,21 +61,21 @@ namespace Terminal.Gui {
 				}
 				if (content [i] == 10) {
 					if (i - start > 0)
-						lines.Add (ToRunes (content [start, hasCR ? i - 1 : i]));
+						lines.Add (ToRunes (content.Slice (start, hasCR ? i - 1 : i)));
 					else
-						lines.Add (ToRunes (ustring.Empty));
+						lines.Add (ToRunes (string.Empty));
 					start = i + 1;
 					hasCR = false;
 				}
 			}
 			if (i - start >= 0)
-				lines.Add (ToRunes (content [start, null]));
+				lines.Add (ToRunes (content.Slice (start, null)));
 			return lines;
 		}
 
 		void Append (List<byte> line)
 		{
-			var str = ustring.Make (line.ToArray ());
+			var str = RuneText.Make (line.ToArray ());
 			lines.Add (ToRunes (str));
 		}
 
@@ -87,7 +85,10 @@ namespace Terminal.Gui {
 				throw new ArgumentNullException (nameof (input));
 
 			lines = new List<List<Rune>> ();
-			var buff = new BufferedStream (input);
+			// No BufferedStream here — and none needed: the loop below reads a
+			// byte at a time from the stream it was handed, and buffering is
+			// the stream implementation's business.
+			var buff = input;
 			int v;
 			var line = new List<byte> ();
 			var wasNewLine = false;
@@ -111,7 +112,7 @@ namespace Terminal.Gui {
 			OnLinesLoaded ();
 		}
 
-		public void LoadString (ustring content)
+		public void LoadString (string content)
 		{
 			lines = StringToRunes (content);
 
@@ -127,7 +128,7 @@ namespace Terminal.Gui {
 		{
 			var sb = new StringBuilder ();
 			for (int i = 0; i < lines.Count; i++) {
-				sb.Append (ustring.Make (lines [i]));
+				sb.Append (RuneText.Make (lines [i]));
 				if ((i + 1) < lines.Count) {
 					sb.AppendLine ();
 				}
@@ -319,7 +320,7 @@ namespace Terminal.Gui {
 
 		(Point startPointToFind, Point currentPointToFind, bool found) toFind;
 
-		internal (Point current, bool found) FindNextText (ustring text, out bool gaveFullTurn, bool matchCase = false, bool matchWholeWord = false)
+		internal (Point current, bool found) FindNextText (string text, out bool gaveFullTurn, bool matchCase = false, bool matchWholeWord = false)
 		{
 			if (text == null || lines.Count == 0) {
 				gaveFullTurn = false;
@@ -338,7 +339,7 @@ namespace Terminal.Gui {
 			return foundPos;
 		}
 
-		internal (Point current, bool found) FindPreviousText (ustring text, out bool gaveFullTurn, bool matchCase = false, bool matchWholeWord = false)
+		internal (Point current, bool found) FindPreviousText (string text, out bool gaveFullTurn, bool matchCase = false, bool matchWholeWord = false)
 		{
 			if (text == null || lines.Count == 0) {
 				gaveFullTurn = false;
@@ -359,7 +360,7 @@ namespace Terminal.Gui {
 			return foundPos;
 		}
 
-		internal (Point current, bool found) ReplaceAllText (ustring text, bool matchCase = false, bool matchWholeWord = false, ustring textToReplace = null)
+		internal (Point current, bool found) ReplaceAllText (string text, bool matchCase = false, bool matchWholeWord = false, string textToReplace = null)
 		{
 			bool found = false;
 			Point pos = Point.Empty;
@@ -396,7 +397,7 @@ namespace Terminal.Gui {
 
 			string GetText (List<Rune> x)
 			{
-				var txt = ustring.Make (x).ToString ();
+				var txt = RuneText.Make (x).ToString ();
 				if (!matchCase) {
 					txt = txt.ToUpper ();
 				}
@@ -406,16 +407,16 @@ namespace Terminal.Gui {
 			return (pos, found);
 		}
 
-		ustring ReplaceText (List<Rune> source, ustring textToReplace, string matchText, int col)
+		string ReplaceText (List<Rune> source, string textToReplace, string matchText, int col)
 		{
-			var origTxt = ustring.Make (source);
+			var origTxt = RuneText.Make (source);
 			(int _, int len) = TextModel.DisplaySize (source, 0, col, false);
 			(var _, var len2) = TextModel.DisplaySize (source, col, col + matchText.Length, false);
 			(var _, var len3) = TextModel.DisplaySize (source, col + matchText.Length, origTxt.RuneCount, false);
 
-			return origTxt [0, len] +
+			return origTxt.Slice (0, len) +
 				textToReplace.ToString () +
-				origTxt [len + len2, len + len2 + len3];
+				origTxt.Slice (len + len2, len + len2 + len3);
 		}
 
 		bool ApplyToFind ((Point current, bool found) foundPos)
@@ -435,11 +436,11 @@ namespace Terminal.Gui {
 			return gaveFullTurn;
 		}
 
-		(Point current, bool found) GetFoundNextTextPoint (ustring text, int linesCount, bool matchCase, bool matchWholeWord, Point start)
+		(Point current, bool found) GetFoundNextTextPoint (string text, int linesCount, bool matchCase, bool matchWholeWord, Point start)
 		{
 			for (int i = start.Y; i < linesCount; i++) {
 				var x = lines [i];
-				var txt = ustring.Make (x).ToString ();
+				var txt = RuneText.Make (x).ToString ();
 				if (!matchCase) {
 					txt = txt.ToUpper ();
 				}
@@ -460,11 +461,11 @@ namespace Terminal.Gui {
 			return (Point.Empty, false);
 		}
 
-		(Point current, bool found) GetFoundPreviousTextPoint (ustring text, int linesCount, bool matchCase, bool matchWholeWord, Point start)
+		(Point current, bool found) GetFoundPreviousTextPoint (string text, int linesCount, bool matchCase, bool matchWholeWord, Point start)
 		{
 			for (int i = linesCount; i >= 0; i--) {
 				var x = lines [i];
-				var txt = ustring.Make (x).ToString ();
+				var txt = RuneText.Make (x).ToString ();
 				if (!matchCase) {
 					txt = txt.ToUpper ();
 				}
@@ -553,7 +554,7 @@ namespace Terminal.Gui {
 
 		List<HistoryTextItem> historyTextItems = new List<HistoryTextItem> ();
 		int idxHistoryText = -1;
-		ustring originalText;
+		string originalText;
 
 		public bool IsFromHistory { get; private set; }
 
@@ -714,7 +715,7 @@ namespace Terminal.Gui {
 			ChangeText?.Invoke (lines);
 		}
 
-		public void Clear (ustring text)
+		public void Clear (string text)
 		{
 			historyTextItems.Clear ();
 			idxHistoryText = -1;
@@ -722,7 +723,7 @@ namespace Terminal.Gui {
 			OnChangeText (null);
 		}
 
-		public bool IsDirty (ustring text)
+		public bool IsDirty (string text)
 		{
 			return originalText != text;
 		}
@@ -769,7 +770,7 @@ namespace Terminal.Gui {
 			for (int i = 0; i < Model.Count; i++) {
 				var line = Model.GetLine (i);
 				var wrappedLines = ToListRune (
-					TextFormatter.Format (ustring.Make (line), width, TextAlignment.Left, true, preserveTrailingSpaces, tabWidth));
+					TextFormatter.Format (RuneText.Make (line), width, TextAlignment.Left, true, preserveTrailingSpaces, tabWidth));
 				int sumColWidth = 0;
 				for (int j = 0; j < wrappedLines.Count; j++) {
 					var wrapLine = wrappedLines [j];
@@ -826,7 +827,7 @@ namespace Terminal.Gui {
 			return wrappedModel;
 		}
 
-		public List<List<Rune>> ToListRune (List<ustring> textList)
+		public List<List<Rune>> ToListRune (List<string> textList)
 		{
 			var runesList = new List<List<Rune>> ();
 
@@ -1478,7 +1479,7 @@ namespace Terminal.Gui {
 		/// The <see cref="TextChanged"/> event is fired whenever this property is set. Note, however,
 		/// that Text is not set by <see cref="TextView"/> as the user types.
 		/// </remarks>
-		public override ustring Text {
+		public override string Text {
 			get {
 				if (wordWrap) {
 					return wrapManager.Model.ToString ();
@@ -1603,10 +1604,10 @@ namespace Terminal.Gui {
 		/// <summary>
 		/// The selected text.
 		/// </summary>
-		public ustring SelectedText {
+		public string SelectedText {
 			get {
 				if (!selecting || (model.Count == 1 && model.GetLine (0).Count == 0)) {
-					return ustring.Empty;
+					return string.Empty;
 				}
 
 				return GetSelectedRegion ();
@@ -2072,15 +2073,15 @@ namespace Terminal.Gui {
 		}
 
 		//
-		// Returns a ustring with the text in the selected 
+		// Returns a string with the text in the selected 
 		// region.
 		//
-		ustring GetRegion (int? sRow = null, int? sCol = null, int? cRow = null, int? cCol = null, TextModel model = null)
+		string GetRegion (int? sRow = null, int? sCol = null, int? cRow = null, int? cCol = null, TextModel model = null)
 		{
 			long start, end;
 			GetEncodedRegionBounds (out start, out end, sRow, sCol, cRow, cCol);
 			if (start == end) {
-				return ustring.Empty;
+				return string.Empty;
 			}
 			int startRow = (int)(start >> 32);
 			var maxrow = ((int)(end >> 32));
@@ -2091,14 +2092,14 @@ namespace Terminal.Gui {
 			if (startRow == maxrow)
 				return StringFromRunes (line.GetRange (startCol, endCol - startCol));
 
-			ustring res = StringFromRunes (line.GetRange (startCol, line.Count - startCol));
+			string res = StringFromRunes (line.GetRange (startCol, line.Count - startCol));
 
 			for (int row = startRow + 1; row < maxrow; row++) {
-				res = res + ustring.Make (Environment.NewLine) + StringFromRunes (model == null
+				res = res + RuneText.Make (Environment.NewLine) + StringFromRunes (model == null
 					? this.model.GetLine (row) : model.GetLine (row));
 			}
 			line = model == null ? this.model.GetLine (maxrow) : model.GetLine (maxrow);
-			res = res + ustring.Make (Environment.NewLine) + StringFromRunes (line.GetRange (0, endCol));
+			res = res + RuneText.Make (Environment.NewLine) + StringFromRunes (line.GetRange (0, endCol));
 			return res;
 		}
 
@@ -2191,8 +2192,8 @@ namespace Terminal.Gui {
 		/// <param name="textToReplace">The text to replace.</param>
 		/// <param name="replace"><c>true</c>If is replacing.<c>false</c>otherwise.</param>
 		/// <returns><c>true</c>If the text was found.<c>false</c>otherwise.</returns>
-		public bool FindNextText (ustring textToFind, out bool gaveFullTurn, bool matchCase = false,
-			bool matchWholeWord = false, ustring textToReplace = null, bool replace = false)
+		public bool FindNextText (string textToFind, out bool gaveFullTurn, bool matchCase = false,
+			bool matchWholeWord = false, string textToReplace = null, bool replace = false)
 		{
 			if (model.Count == 0) {
 				gaveFullTurn = false;
@@ -2216,8 +2217,8 @@ namespace Terminal.Gui {
 		/// <param name="textToReplace">The text to replace.</param>
 		/// <param name="replace"><c>true</c>If the text was found.<c>false</c>otherwise.</param>
 		/// <returns><c>true</c>If the text was found.<c>false</c>otherwise.</returns>
-		public bool FindPreviousText (ustring textToFind, out bool gaveFullTurn, bool matchCase = false,
-			bool matchWholeWord = false, ustring textToReplace = null, bool replace = false)
+		public bool FindPreviousText (string textToFind, out bool gaveFullTurn, bool matchCase = false,
+			bool matchWholeWord = false, string textToReplace = null, bool replace = false)
 		{
 			if (model.Count == 0) {
 				gaveFullTurn = false;
@@ -2247,8 +2248,8 @@ namespace Terminal.Gui {
 		/// <param name="matchWholeWord">The match whole word setting.</param>
 		/// <param name="textToReplace">The text to replace.</param>
 		/// <returns><c>true</c>If the text was found.<c>false</c>otherwise.</returns>
-		public bool ReplaceAllText (ustring textToFind, bool matchCase = false, bool matchWholeWord = false,
-			ustring textToReplace = null)
+		public bool ReplaceAllText (string textToFind, bool matchCase = false, bool matchWholeWord = false,
+			string textToReplace = null)
 		{
 			if (isReadOnly || model.Count == 0) {
 				return false;
@@ -2261,8 +2262,8 @@ namespace Terminal.Gui {
 			return SetFoundText (textToFind, foundPos, textToReplace, false, true);
 		}
 
-		bool SetFoundText (ustring text, (Point current, bool found) foundPos,
-			ustring textToReplace = null, bool replace = false, bool replaceAll = false)
+		bool SetFoundText (string text, (Point current, bool found) foundPos,
+			string textToReplace = null, bool replace = false, bool replaceAll = false)
 		{
 			if (foundPos.found) {
 				StartSelecting ();
@@ -2277,7 +2278,7 @@ namespace Terminal.Gui {
 				if (!isReadOnly && replace) {
 					Adjust ();
 					ClearSelectedRegion ();
-					InsertText (textToReplace);
+					InsertTextIntoModel (textToReplace);
 					StartSelecting ();
 					selectionStartColumn = currentColumn - textToReplace.RuneCount;
 				} else {
@@ -2365,7 +2366,7 @@ namespace Terminal.Gui {
 			UnwrappedCursorPosition?.Invoke (new Point ((int)col, (int)row));
 		}
 
-		ustring GetSelectedRegion ()
+		string GetSelectedRegion ()
 		{
 			var cRow = currentRow;
 			var cCol = currentColumn;
@@ -2476,14 +2477,14 @@ namespace Terminal.Gui {
 			set { base.CanFocus = value; }
 		}
 
-		void SetClipboard (ustring text)
+		void SetClipboard (string text)
 		{
 			if (text != null) {
 				Clipboard.Contents = text;
 			}
 		}
 
-		void AppendClipboard (ustring text)
+		void AppendClipboard (string text)
 		{
 			Clipboard.Contents += text;
 		}
@@ -2535,7 +2536,7 @@ namespace Terminal.Gui {
 			}
 		}
 
-		ustring StringFromRunes (List<Rune> runes)
+		string StringFromRunes (List<Rune> runes)
 		{
 			if (runes == null)
 				throw new ArgumentNullException (nameof (runes));
@@ -2548,7 +2549,7 @@ namespace Terminal.Gui {
 			foreach (var rune in runes) {
 				offset += Utf8.EncodeRune (rune, encoded, offset);
 			}
-			return ustring.Make (encoded);
+			return RuneText.Make (encoded);
 		}
 
 		/// <summary>
@@ -2559,9 +2560,12 @@ namespace Terminal.Gui {
 		/// <returns></returns>
 		public List<Rune> GetCurrentLine () => model.GetLine (currentRow);
 
-		void InsertText (ustring text)
+		// Renamed from InsertText: this one writes into the model directly,
+		// while the public InsertText above replays the text as key events.
+		// They used to be told apart by their parameter type.
+		void InsertTextIntoModel (string text)
 		{
-			if (ustring.IsNullOrEmpty (text)) {
+			if (string.IsNullOrEmpty (text)) {
 				return;
 			}
 
@@ -3408,7 +3412,7 @@ namespace Terminal.Gui {
 					model.RemoveLine (currentRow);
 
 					if (model.Count > 0 || lastWasKill) {
-						var val = ustring.Make (Environment.NewLine);
+						var val = RuneText.Make (Environment.NewLine);
 						if (lastWasKill) {
 							AppendClipboard (val);
 						} else {
@@ -3434,7 +3438,7 @@ namespace Terminal.Gui {
 			} else {
 				var restCount = currentColumn;
 				var rest = currentLine.GetRange (0, restCount);
-				var val = ustring.Empty;
+				var val = string.Empty;
 				val += StringFromRunes (rest);
 				if (lastWasKill) {
 					AppendClipboard (val);
@@ -3492,7 +3496,7 @@ namespace Terminal.Gui {
 						HistoryText.LineStatus.Removed);
 				}
 				if (model.Count > 0 || lastWasKill) {
-					var val = ustring.Make (Environment.NewLine);
+					var val = RuneText.Make (Environment.NewLine);
 					if (lastWasKill) {
 						AppendClipboard (val);
 					} else {
@@ -3506,7 +3510,7 @@ namespace Terminal.Gui {
 			} else {
 				var restCount = currentLine.Count - currentColumn;
 				var rest = currentLine.GetRange (currentColumn, restCount);
-				var val = ustring.Empty;
+				var val = string.Empty;
 				val += StringFromRunes (rest);
 				if (lastWasKill) {
 					AppendClipboard (val);
@@ -3945,7 +3949,7 @@ namespace Terminal.Gui {
 				copyWithoutSelection = false;
 			} else {
 				var currentLine = GetCurrentLine ();
-				SetClipboard (ustring.Make (currentLine));
+				SetClipboard (RuneText.Make (currentLine));
 				copyWithoutSelection = true;
 			}
 			UpdateWrapModel ();
@@ -4007,7 +4011,7 @@ namespace Terminal.Gui {
 					ClearRegion ();
 				}
 				copyWithoutSelection = false;
-				InsertText (contents);
+				InsertTextIntoModel (contents);
 
 				if (selecting) {
 					historyText.ReplaceLast (new List<List<Rune>> () { new List<Rune> (GetCurrentLine ()) }, CursorPosition,

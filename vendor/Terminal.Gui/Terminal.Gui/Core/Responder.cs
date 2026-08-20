@@ -245,15 +245,17 @@ namespace Terminal.Gui {
 		/// <returns><see langword="true"/> if it's overridden, <see langword="false"/> otherwise.</returns>
 		internal static bool IsOverridden (Responder subclass, string method)
 		{
-			MethodInfo m = subclass.GetType ().GetMethod (method,
-				BindingFlags.Instance
-				| BindingFlags.Public
-				| BindingFlags.NonPublic
-				| BindingFlags.DeclaredOnly);
-			if (m == null) {
-				return false;
-			}
-			return m.GetBaseDefinition ().DeclaringType != m.DeclaringType;
+			// Upstream searches the subclass for a declaration of the named
+			// method. That needs reflection metadata, which this runtime does
+			// not carry, so the answer is a constant — and the constant is
+			// "yes, assume it is overridden", which forwards work to the
+			// subclass rather than skipping it.
+			//
+			// Both remaining callers ask about MouseEvent, and there is no
+			// mouse in SharpOS yet: no mouse event is generated, so neither
+			// branch runs. When a mouse arrives, this is the line to revisit —
+			// it decides whether a scrolled view sees the event at all.
+			return true;
 		}
 
 		/// <summary>

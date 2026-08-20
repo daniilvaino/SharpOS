@@ -1,4 +1,4 @@
-// System.GC — shim layer. BCL exposes GC controls (Collect, allocator
+﻿// System.GC — shim layer. BCL exposes GC controls (Collect, allocator
 // hints, etc.); we only need the Array-uninitialized allocation helper
 // that several BCL types call. Zero-init (normal `new T[n]`) is
 // functionally equivalent — you observe the same content before first
@@ -11,6 +11,15 @@ namespace System
 {
     public static class GC
     {
+        /// <summary>
+        /// Says the object's finalizer need not run. Nothing to do here: this
+        /// collector has no finalizer queue, so no finalizer was ever going to
+        /// run and suppressing one is already the state of the world.
+        /// </summary>
+        public static void SuppressFinalize(object obj) { }
+
+        public static void ReRegisterForFinalize(object obj) { }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static T[] AllocateUninitializedArray<T>(int length, bool pinned = false)
         {

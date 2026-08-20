@@ -1,4 +1,4 @@
-//
+﻿//
 // Core.cs: The core engine for gui.cs
 //
 // Authors:
@@ -396,36 +396,22 @@ namespace Terminal.Gui {
 			}
 
 			if (Driver == null) {
-				var p = Environment.OSVersion.Platform;
-				if (ForceFakeConsole) {
-					// For Unit Testing only
-					Driver = new FakeDriver ();
-				} else if (UseSystemConsole) {
-					Driver = new NetDriver ();
-				} else if (p == PlatformID.Win32NT || p == PlatformID.Win32S || p == PlatformID.Win32Windows) {
-					Driver = new WindowsDriver ();
-				} else {
-					Driver = new CursesDriver ();
-				}
-				if (Driver == null) {
-					throw new InvalidOperationException ("Init could not determine the ConsoleDriver to use.");
-				}
+				// Upstream picks a driver by sniffing the platform: Windows,
+				// curses or the System.Console one. None of those hosts exist
+				// here, and SharpOS gets a driver of its own — so the driver is
+				// supplied by the caller rather than guessed at.
+				throw new InvalidOperationException (
+					"No ConsoleDriver: SharpOS has no platform to detect one from. " +
+					"Pass a driver to Init().");
 			}
 
 			if (mainLoopDriver == null) {
-				// TODO: Move this logic into ConsoleDriver
-				if (Driver is FakeDriver) {
-					mainLoopDriver = new FakeMainLoop (Driver);
-				} else if (Driver is NetDriver) {
-					mainLoopDriver = new NetMainLoop (Driver);
-				} else if (Driver is WindowsDriver) {
-					mainLoopDriver = new WindowsMainLoop (Driver);
-				} else if (Driver is CursesDriver) {
-					mainLoopDriver = new UnixMainLoop (Driver);
-				}
-				if (mainLoopDriver == null) {
-					throw new InvalidOperationException ("Init could not determine the MainLoopDriver to use.");
-				}
+				// Upstream chose the main loop to match the driver it had just
+				// sniffed out. With the driver supplied from outside, the loop
+				// has to come with it — there is no stock pairing to fall back
+				// on here.
+				throw new InvalidOperationException (
+					"No IMainLoopDriver: pass one to Init() alongside the ConsoleDriver.");
 			}
 
 			MainLoop = new MainLoop (mainLoopDriver);
@@ -609,7 +595,7 @@ namespace Terminal.Gui {
 
 		static View FindDeepestMdiView (View start, int x, int y, out int resx, out int resy)
 		{
-			if (start.GetType ().BaseType != typeof (Toplevel)
+			if (!(start is Toplevel)
 				&& !((Toplevel)start).IsMdiContainer) {
 				resx = 0;
 				resy = 0;
@@ -838,7 +824,7 @@ namespace Terminal.Gui {
 				view = FindDeepestView (top, me.X, me.Y, out rx, out ry);
 
 				if (view != null && view != MdiTop && top != Current && top.MostFocused != null
-					&& top.MostFocused.GetType ().Name != "ContentView") {
+					&& !(top.MostFocused is IContentView)) {
 
 					MoveCurrent ((Toplevel)top);
 				}
@@ -883,7 +869,7 @@ namespace Terminal.Gui {
 		static void EnsuresMdiTopOnFrontIfMdiTopMostFocused ()
 		{
 			if (MdiTop != null && Current != MdiTop && MdiTop.MostFocused != null
-				&& MdiTop.MostFocused.GetType ().Name != "ContentView") {
+				&& !(MdiTop.MostFocused is IContentView)) {
 
 				MoveCurrent (Top);
 			}
@@ -1292,7 +1278,7 @@ namespace Terminal.Gui {
 		static void EnsuresMdiChildOnFrontIfMdiTopNotMostFocused ()
 		{
 			if (MdiTop != null && Current == MdiTop && (MdiTop.MostFocused == null
-				|| MdiTop.MostFocused.GetType ().Name == "ContentView")) {
+				|| MdiTop.MostFocused is IContentView)) {
 
 				MoveNext ();
 			}
@@ -1388,19 +1374,20 @@ namespace Terminal.Gui {
 		/// This parameteter must be <see langword="null"/> if <see cref="Init(ConsoleDriver, IMainLoopDriver)"/> has already been called. 
 		/// </param>
 		/// <param name="mainLoopDriver">Specifies the <see cref="MainLoop"/> to use.</param>
-		public static void Run<T> (Func<Exception, bool> errorHandler = null, ConsoleDriver driver = null, IMainLoopDriver mainLoopDriver = null) where T : Toplevel, new()
+		// Takes a factory rather than constructing T itself. `new T()` compiles
+		// into a call to Activator.CreateInstance, which needs runtime support
+		// this environment does not have (limits §2) — and a factory says the
+		// same thing without asking the runtime to find a constructor by type.
+		public static void Run<T> (Func<T> factory, Func<Exception, bool> errorHandler = null, ConsoleDriver driver = null, IMainLoopDriver mainLoopDriver = null) where T : Toplevel
 		{
 			if (_initialized) {
 				if (Driver != null) {
 					// Init() has been called and we have a driver, so just run the app.
-					var top = new T ();
-					var type = top.GetType ().BaseType;
-					while (type != typeof (Toplevel) && type != typeof (object)) {
-						type = type.BaseType;
-					}
-					if (type != typeof (Toplevel)) {
-						throw new ArgumentException ($"{top.GetType ().Name} must be derived from TopLevel");
-					}
+					var top = factory ();
+					// Upstream walked the base chain here to check that T derives
+					// from Toplevel. The constraint on this method already says
+					// so, and the compiler enforces it — the check could only
+					// ever have passed.
 					Run (top, errorHandler);
 				} else {
 					// This codepath should be impossible because Init(null, null) will select the platform default driver
@@ -1408,7 +1395,7 @@ namespace Terminal.Gui {
 				}
 			} else {
 				// Init() has NOT been called.
-				InternalInit (() => new T (), driver, mainLoopDriver, calledViaRunT: true);
+				InternalInit (() => factory (), driver, mainLoopDriver, calledViaRunT: true);
 				Run (Top, errorHandler);
 			}
 		}
@@ -1706,23 +1693,15 @@ namespace Terminal.Gui {
 
 		internal static List<CultureInfo> GetSupportedCultures ()
 		{
-			CultureInfo [] culture = CultureInfo.GetCultures (CultureTypes.AllCultures);
-
-			// Get the assembly
-			Assembly assembly = Assembly.GetExecutingAssembly ();
-
-			//Find the location of the assembly
-			string assemblyLocation = AppDomain.CurrentDomain.BaseDirectory;
-
-			// Find the resource file name of the assembly
-			string resourceFilename = $"{Path.GetFileNameWithoutExtension (assembly.Location)}.resources.dll";
-
-			// Return all culture for which satellite folder found with culture code.
-			return culture.Where (cultureInfo =>
-			     assemblyLocation != null &&
-			     Directory.Exists (Path.Combine (assemblyLocation, cultureInfo.Name)) &&
-			     File.Exists (Path.Combine (assemblyLocation, cultureInfo.Name, resourceFilename))
-			).ToList ();
+			// Upstream answers this by looking on disk: it enumerates every
+			// culture the framework knows, then keeps the ones with a satellite
+			// resource assembly sitting next to the executable. Both halves are
+			// absent here — one culture in the system, and the strings are
+			// compiled in rather than shipped beside us (SharpOS/StringsShim.cs).
+			//
+			// So the answer is the one culture there is, which is the truthful
+			// reply to "what does this build support" rather than a stub.
+			return new List<CultureInfo> { CultureInfo.InvariantCulture };
 		}
 	}
 }

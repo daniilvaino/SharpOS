@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>eh-actual-map</title>
+	<style>
+		/* Basic styles for readability */
+		body {
+			font-family: sans-serif;
+			max-width: 800px;
+			margin: 2em auto;
+			padding: 0 1em;
+			line-height: 1.6;
+		}
+		img { max-width: 100%; height: auto; }
+		pre { background-color: #f4f4f4; padding: 1em; overflow-x: auto; }
+		code { font-family: monospace; }
+	</style>
+</head>
+<body>
+	<h1>EH as-built map — фактическая карта раскрутки исключений</h1>
+<p>Снято по коду на состояние <strong>step 128</strong> (2026-07-02). Это <strong>as-built</strong>
+диаграмма: только то, что реально происходит, включая поведение
+«как есть» (отброшенные return-коды, лимиты, hard-coded константы,
+патчи-пластыри). Ничего проектируемого/желаемого здесь нет — для
+модели и статуса фич см. <a href="eh-model.md"><code>eh-model.md</code></a>, для известных
+дыр — <a href="eh-audit-2026-06.md"><code>eh-audit-2026-06.md</code></a> и <code>donext.md</code>
+(P0-1 XMM / P0-2 CollidedUnwind).</p>
+<p>Метод: прямое чтение <code>OS/src/PAL/SharpOSHost/*</code>, <code>OS/src/Boot/EH/*</code>,
+<code>dotnet-runtime-sharpos/src/coreclr/vm/{exceptionhandling,jithelpers, clrex,excep}.cpp</code>. Исключение: внутренности <code>__CxxFrameHandler3</code> и
+часть FH4 — по цитатам из <code>eh-audit-2026-06.md</code> (code-read аудит с
+точными <code>file:line</code>).</p>
+<p>При изменении EH-поверхности обновлять эту карту в том же коммите
+(тот же протокол, что для limits-таблиц).</p>
+<h2>Как читать</h2>
+<ul>
+<li><strong>Зелёное</strong> — ядро C# (наш код), <strong>синее</strong> — форк C++ (<code>vm/</code>),
+<strong>фиолетовое</strong> — managed SPC (сток, ноль SHARPOS-ifdef),
+<strong>жёлтое</strong> — поведение «как есть» (факт кода, важный для точности),
+<strong>красное</strong> — halt/panic-концовки.</li>
+<li>Два диспетчера: зелёный <code>DispatchException</code>/<code>RtlUnwind</code> (наш, ходит
+по нативным кадрам через personality-рутины) и фиолетовый
+<code>DispatchEx</code> (сток, ходит по managed-кадрам через SfiNext).
+Точки сцепления: <code>ProcessCLRException</code> (наш pass1 → форк),
+<code>ClrUnwindEx → наш RtlUnwind</code> (форк → наш pass2),
+<code>Thread::VirtualUnwindCallFrame → наш RtlVirtualUnwind</code>
+(SFI форка → наш декодер).</li>
+<li>Маршрут HW-fault — строгий порядок из трёх попыток:
+<code>SOS-HHE → DispatchFromHwFault → Tier A Dispatch</code>. <code>#DE</code> (vec 0)
+фактически минует CoreCLR-маршрут — гейт стоит на <code>vec == 13 || 14</code>
+(<code>HwFaultBridge.cs:450</code>), хотя SOS-HHE внутри умеет
+<code>INT_DIVIDE_BY_ZERO</code>.</li>
+</ul>
+<pre><code class="language-mermaid">flowchart TB
+
+%% ================= LEGEND =================
+subgraph LEGEND[&quot;Легенда&quot;]
+  L1[&quot;зелёное = ядро C# (наш код)&quot;]:::kern
+  L2[&quot;синее = форк C++ (vm/)&quot;]:::fork
+  L3[&quot;фиолетовое = managed SPC (сток, 0 патчей)&quot;]:::spc
+  L4[&quot;жёлтое = поведение как-есть (факт кода)&quot;]:::asis
+  L5[&quot;красное = halt/panic-концовка&quot;]:::halt
+end
+
+%% ================= HW / IDT =================
+subgraph HW[&quot;HW-исключение (kernel C#)&quot;]
+  CPU[&quot;CPU trap: vec 0 #DE / 6 #UD / 13 #GP / 14 #PF&quot;]
+  IDT[&quot;IDT-трамплин (шеллкод) → InterruptFrame на kernel-стеке&quot;]:::kern
+  IDISP[&quot;Idt.Dispatch&quot;]:::kern
+  SUPP{&quot;IsSupported: vec ∈ {0,13,14}?&lt;br/&gt;(vec 6 #UD объявлен константой,&lt;br/&gt;но в switch НЕ входит)&quot;}:::asis
+  PANIC0[&quot;PanicDump (legacy)&quot;]:::halt
+  DTRAP[&quot;HwFaultBridge.DispatchTrap&lt;br/&gt;(HwFaultBridge.cs:77)&quot;]:::kern
+  GUARD{&quot;vec14 &amp;&amp; CR2 ∈ guard-page&lt;br/&gt;текущего потока?&quot;}
+  SOHALT[&quot;print '*** STACK OVERFLOW' + while(true)&quot;]:::halt
+  BUILD[&quot;BuildPal + ResolveException +&lt;br/&gt;ExInfo(HardwareFault) → ExInfoHead.s_head;&lt;br/&gt;диагностика PFEC/PTE; FaultClassify; STI&quot;]:::kern
+  V1314{&quot;vec == 13 или 14?&quot;}
+  BREC[&quot;BuildHwExceptionRecord +&lt;br/&gt;BuildContextFromInterruptFrame&lt;br/&gt;(static s_hwRec/s_hwCtx, без аллокаций;&lt;br/&gt;Context: GP+сегменты+EFlags, XMM-полей нет)&quot;]:::kern
+end
+
+CPU --&gt; IDT --&gt; IDISP --&gt; SUPP
+SUPP --&gt;|нет| PANIC0
+SUPP --&gt;|да| DTRAP --&gt; GUARD
+GUARD --&gt;|да| SOHALT
+GUARD --&gt;|нет| BUILD --&gt; V1314
+V1314 --&gt;|&quot;да&quot;| BREC
+V1314 --&gt;|&quot;нет (vec 0 #DE → мимо CoreCLR-маршрута)&quot;| TIERADISP
+
+%% ================= FORK: SOS-HHE =================
+subgraph FORKHW[&quot;Форк: HW-fault вход (exceptionhandling.cpp)&quot;]
+  SOSHHE[&quot;SharpOS_CoreCLR_TryHandleHardwareException (:1654)&lt;br/&gt;guards: rec/ctx≠null; g_fEEStarted;&lt;br/&gt;code ∈ {AV, INT_DIV0, INT_OVF};&lt;br/&gt;ExecutionManager::IsManagedCode(RIP)&quot;]:::fork
+  SOSFEF[&quot;AdjustContextForVirtualStub +&lt;br/&gt;FaultingExceptionFrame::InitAndLink(ctx);&lt;br/&gt;ExInfo(HardwareFault);&lt;br/&gt;AV с info[1] &lt; NULL_AREA_SIZE → code=0 (NRE-маркер)&quot;]:::fork
+  RHHW[&quot;вызов managed Ex.RhThrowHwEx(code, &amp;exInfo)&lt;br/&gt;(METHOD__EH__RH_THROWHW_EX, :1709)&quot;]:::fork
+end
+
+BREC --&gt; SOSHHE
+SOSHHE --&gt;|&quot;guards прошли&quot;| SOSFEF --&gt; RHHW --&gt; MDISPEX
+SOSHHE --&gt;|&quot;return 0 (любой guard)&quot;| PALSEH
+
+%% ================= ИСТОЧНИКИ THROW (Tier C) =================
+subgraph SRC[&quot;Форк: программные источники исключений&quot;]
+  ILTHROW[&quot;managed throw в JIT-коде:&lt;br/&gt;IL_Throw / IL_ThrowExact (jithelpers.cpp:780/933)&lt;br/&gt;→ SoftwareExceptionFrame захватывает контекст&quot;]:::fork
+  ILRETHROW[&quot;managed 'throw;': IL_Rethrow (jithelpers.cpp:883)&quot;]:::fork
+  COMPLUS[&quot;native COMPlusThrow / EX_THROW&lt;br/&gt;→ PAL_CPP_THROW = MSVC 'throw ptr'&lt;br/&gt;→ символ _CxxThrowException&quot;]:::fork
+  RAWSEH[&quot;raw RaiseException из PAL-стабов&quot;]:::fork
+  DME[&quot;DispatchManagedException (:1740)&lt;br/&gt;EXCEPTION_COMPLUS-record 'MarkAsThrownByUs';&lt;br/&gt;ExInfo(ExKind::Throw)&quot;]:::fork
+  RHTHROW[&quot;вызов managed Ex.RhThrowEx&lt;br/&gt;(METHOD__EH__RH_THROW_EX, :1804)&quot;]:::fork
+  RHRETHROW[&quot;вызов managed Ex.RhRethrow&lt;br/&gt;(METHOD__EH__RH_RETHROW, :1861)&quot;]:::fork
+end
+
+ILTHROW --&gt; DME --&gt; RHTHROW --&gt; MDISPEX
+ILRETHROW --&gt; RHRETHROW --&gt; MDISPEX
+
+%% ================= MANAGED SPC =================
+subgraph SPC[&quot;Managed SPC (сток, диспетчер №2)&quot;]
+  MDISPEX[&quot;DispatchEx — двухпроходный managed-диспетчер&lt;br/&gt;(Runtime.Base/ExceptionHandling.cs, 1238 строк,&lt;br/&gt;0 SHARPOS-ifdef); pass1: поиск catch,&lt;br/&gt;filter/finally через QCall-funclet'ы;&lt;br/&gt;результат кладётся в ExInfo (_handlingFrameSP и пр.)&quot;]:::spc
+  SFIC[&quot;InternalCalls: SfiInit / SfiNext&quot;]:::spc
+  ASMOFF[&quot;AsmOffsets.cs: 9× '#if false &amp;&amp; TARGET_UNIX...'&lt;br/&gt;→ принудительно Windows-layout&lt;br/&gt;REGDISPLAY(0xbf0)/ExInfo/SFI(0x148)&quot;]:::asis
+end
+
+MDISPEX &lt;--&gt; SFIC
+MDISPEX -. &quot;layout по offset'ам&quot; .- ASMOFF
+
+%% ================= FORK C++ WALKER =================
+subgraph FORKW[&quot;Форк C++: walker и funclet-механика (vm/)&quot;]
+  SFI[&quot;StackFrameIterator + ExInfo:&lt;br/&gt;managed-кадры через EECodeManager/GcInfoDecoder,&lt;br/&gt;explicit-кадры через Thread::m_pFrame;&lt;br/&gt;все exit-пути SfiNext логируются [SFI] (step124)&quot;]:::fork
+  VUC[&quot;для нативных кадров:&lt;br/&gt;Thread::VirtualUnwindCallFrame&lt;br/&gt;→ наш RtlVirtualUnwind (__imp_-алиас)&quot;]:::fork
+  DESP[&quot;DispatchExSecondPass (:~4900):&lt;br/&gt;цикл SfiNext + InvokeSecondPass&lt;br/&gt;(finally/fault-funclet'ы) до handlingFrameSP, лог [DESP]&quot;]:::fork
+  CCF[&quot;CallCatchFunclet (:3350):&lt;br/&gt;UpdateNonvolatileRegisters из KNCP&quot;]:::fork
+  P71[&quot;патч step71: save/restore RBP вокруг UNR&lt;br/&gt;(native-origin RBP из KNCP битый)&quot;]:::asis
+  P124[&quot;патч step124 CCF-inv: скан 64 байт resume-PC&lt;br/&gt;на 'add rsp,imm32; pop rbp; ret' → патч RSP;&lt;br/&gt;другая форма эпилога → патча нет;&lt;br/&gt;+ безусловные [CCF-resume] принты на каждый catch&quot;]:::asis
+  RAC[&quot;ResumeAfterCatch → continuation после catch&quot;]:::fork
+  CFF[&quot;CallFinallyFunclet (:3729) /&lt;br/&gt;CallFilterFunclet (:3756)&quot;]:::fork
+end
+
+SFIC --&gt; SFI
+SFI --&gt; VUC
+MDISPEX --&gt;|&quot;pass1 нашёл catch, managed вернулся&quot;| DESP
+DESP --&gt; CCF --&gt; P71 --&gt; P124 --&gt; RAC
+MDISPEX -.-&gt;|&quot;filter/finally&quot;| CFF
+
+%% ================= PCRE PERSONALITY =================
+subgraph PCREG[&quot;Форк: ProcessCLRException — personality JIT-кадров&quot;]
+  PCRE[&quot;ProcessCLRException (:569),&lt;br/&gt;вызывается НАШИМ диспетчером на JIT-кадре&quot;]:::fork
+  PCRE1[&quot;pass1: [PCRE-corr]-принт;&lt;br/&gt;SHARPOS-патч: bypass corrupted-state fatal&lt;br/&gt;для managed null-deref AV;&lt;br/&gt;иначе IsProcessCorruptedState → FATAL;&lt;br/&gt;затем ClrUnwindEx(rec, thread,&lt;br/&gt;INVALID_RESUME_ADDRESS, establisherFrame) (:754)&quot;]:::fork
+  PCRE2[&quot;pass2 (флаг UNWINDING):&lt;br/&gt;ExInfo::CreateThrowable — step103c msc-recovery:&lt;br/&gt;double-deref einfo[1] → EEException::GetThrowable&lt;br/&gt;(excep.cpp:5567 + clrex.cpp:586)&lt;br/&gt;→ DispatchManagedException (:782)&quot;]:::fork
+  CLRUW[&quot;ClrUnwindEx (:1891) → наш RtlUnwind&quot;]:::fork
+end
+
+PCRE --&gt; PCRE1 --&gt; CLRUW --&gt; RTLU
+PCRE --&gt; PCRE2 --&gt; DME
+
+%% ================= НАШ ДИСПЕТЧЕР №1 =================
+subgraph OURS[&quot;Ядро C#: PAL SEH — диспетчер №1 (OS/src/PAL/SharpOSHost)&quot;]
+  CXXT[&quot;CxxThrow = наш _CxxThrowException&lt;br/&gt;(SehDispatch.cs:231)&quot;]:::kern
+  RIMPL[&quot;RaiseExceptionImpl (:50):&lt;br/&gt;принт типа из RTTI; NativeArena-alloc rec+ctx;&lt;br/&gt;CaptureCurrentContext; UnwindOneFrame;&lt;br/&gt;возврат = Panic&quot;]:::kern
+  DEXC[&quot;DispatchException (:449):&lt;br/&gt;alloc dc + 3×Context (итого ~5 КБ на throw)&quot;]:::kern
+  PASS1[&quot;PASS 1 search, лимит 64 кадра:&lt;br/&gt;controlPc = Rip (throw-site) / Rip-1;&lt;br/&gt;учитывается ТОЛЬКО disp==0x100 (ExecuteHandlerMarker);&lt;br/&gt;disp 0/1/2/3 (в т.ч. ContinueExecution и&lt;br/&gt;CollidedUnwind) → просто advance&quot;]:::asis
+  IVIP[&quot;IsValidIp (:356): canonical-биты;&lt;br/&gt;CoffMethodLookup; InDynamicRange&lt;br/&gt;(dyn+static+stub); IsImageTextGap;&lt;br/&gt;fail → one-shot [ivip]-дамп&quot;]:::kern
+  FCH[&quot;TryActivateFrameChain (:1361):&lt;br/&gt;чтение Thread::m_pFrame,&lt;br/&gt;hop-limit 16&quot;]:::kern
+  MATCHQ{&quot;handler найден?&quot;}
+  HREXQ{&quot;C++-throw и в type-chain&lt;br/&gt;есть подстрока 'HRException'?&quot;}
+  HRRES[&quot;fallback: повторный walk от startCtx&lt;br/&gt;до первого кадра в hard-coded RVA-окне&lt;br/&gt;0xCB5000..0xCDE000 (:715);&lt;br/&gt;RAX = m_hr = *(obj+0x14);&lt;br/&gt;RestoreContextAsm (деструкторы по пути не бегут)&quot;]:::asis
+  UNH[&quot;Panic 'unhandled exception'&quot;]:::halt
+  PASS2[&quot;PASS 2 unwind, лимит 64:&lt;br/&gt;флаги UNWINDING / TARGET_UNWIND;&lt;br/&gt;return personality ПОЛНОСТЬЮ отбрасывается (:818);&lt;br/&gt;на matchedFrame при FH4: pre-place Continuation0&lt;br/&gt;в [preRsp-8] (Continuation1 и RAX funclet'а&lt;br/&gt;не используются), Rdx=parent, Rcx=объект&quot;]:::asis
+  RTLU[&quot;RtlUnwind — наш экспорт (:877):&lt;br/&gt;capture + UnwindOneFrame; цикл 64;&lt;br/&gt;те же FrameChain-хуки; return personality&lt;br/&gt;не читается; на target: Rip=targetIp,&lt;br/&gt;Rsp=target, Rax=retval → RestoreContextAsm;&lt;br/&gt;не дошёл → Panic 'target not found'&quot;]:::kern
+  CAPT[&quot;CaptureCurrentContext — шаблон BootAsm&lt;br/&gt;@AsmExecBuffer+0x80: GP+EFlags,&lt;br/&gt;ContextFlags=0x100003, XMM/MxCsr НЕ пишутся&quot;]:::asis
+  REST[&quot;RestoreContextAsm @+0x200: GP+EFlags,&lt;br/&gt;XMM/MxCsr НЕ читаются; target-Rip кладётся&lt;br/&gt;в [newRsp-8] ДО переключения RSP&quot;]:::asis
+end
+
+COMPLUS --&gt; CXXT --&gt; RIMPL --&gt; DEXC
+RAWSEH --&gt; RIMPL
+PALSEH[&quot;SehDispatch.DispatchFromHwFault (:223)&lt;br/&gt;— вход без capture, ctx от HwFaultBridge&quot;]:::kern
+PALSEH --&gt; DEXC
+DEXC --&gt; PASS1
+PASS1 --&gt; IVIP
+PASS1 --&gt;|&quot;invalid Rip / walked out&quot;| FCH
+PASS1 --&gt; MATCHQ
+MATCHQ --&gt;|да| PASS2 --&gt; REST
+MATCHQ --&gt;|нет| HREXQ
+HREXQ --&gt;|да| HRRES
+HREXQ --&gt;|нет| UNH
+RIMPL --&gt; CAPT
+RTLU --&gt; REST
+PALSEH --&gt;|&quot;вернулся: handler не найден&quot;| TIERADISP
+
+%% ================= PERSONALITIES =================
+subgraph PERS[&quot;Personality-рутины в образе (вызываются PASS1/PASS2/RtlUnwind)&quot;]
+  PCSH[&quot;__C_specific_handler (CrtAndEhStubs.cs:86, наш):&lt;br/&gt;scope-таблица RVA; filter → 1=0x100 / 0=search /&lt;br/&gt;-1=return 0 (ContinueExecution);&lt;br/&gt;__finally-funclet на unwind (rcx=1, rdx=establisher)&quot;]:::kern
+  PFH3[&quot;__CxxFrameHandler3 (CxxFrameHandler.cs, 424 стр., наш):&lt;br/&gt;FH3 state-machine, dtor-funclet'ы,&lt;br/&gt;state lookup RVA-based&quot;]:::kern
+  PFH4[&quot;__CxxFrameHandler4 (CxxFrameHandler4.cs, 540 стр., наш):&lt;br/&gt;compact FH4; CatchTransfer наружу через&lt;br/&gt;dc-&gt;HistoryTable side-channel;&lt;br/&gt;catch-obj slot = establisherFrame + objOffset&quot;]:::kern
+  PGSH[&quot;__GSHandlerCheck — НЕ слинкован&lt;br/&gt;(0 вхождений в дереве)&quot;]:::asis
+end
+
+PASS1 --&gt;|&quot;personality != null&quot;| PCSH &amp; PFH3 &amp; PFH4 &amp; PCRE
+PASS2 -.-&gt;|&quot;UNWINDING-вызов&quot;| PCSH &amp; PFH3 &amp; PFH4 &amp; PCRE
+RTLU -.-&gt;|&quot;UNWINDING-вызов&quot;| PCSH &amp; PFH3 &amp; PFH4 &amp; PCRE
+
+%% ================= LOOKUP REGISTRIES =================
+subgraph LOOKUP[&quot;SehUnwind: RIP → UNWIND_INFO (LookupFunctionEntry :79, по порядку)&quot;]
+  S1[&quot;1. kernel-image .pdata&lt;br/&gt;(CoffMethodLookup, bin-search)&quot;]:::kern
+  S2[&quot;2. DynamicLookup: s_dyn, max 64,&lt;br/&gt;переполнение = молчаливый drop (:152)&lt;br/&gt;← SharpOSHost_RegisterFunctionTableCallback&lt;br/&gt;← fork RtlInstallFunctionTableCallback (JIT-хипы)&lt;br/&gt;→ GET_RUNTIME_FUNCTION_CALLBACK форка&quot;]:::asis
+  S3[&quot;3. StaticTableLookup: s_stat, max 64&lt;br/&gt;← SharpOSHost_RegisterStaticFunctionTable&lt;br/&gt;← RtlAddFunctionTable (R2R .pdata,&lt;br/&gt;peimagelayout.cpp под SHARPOS)&quot;]:::kern
+  S4[&quot;4. StubRangeLookup: s_stubs, max 1024&lt;br/&gt;← RegisterStubRange ← VirtualMemory.Reserve (C#)&lt;br/&gt;+ fork ExecutableAllocator-хуки&lt;br/&gt;→ синтетический leaf-RF (просто pop [rsp])&quot;]:::kern
+  S5[&quot;5. ImageTextGapLookup: RIP внутри span .pdata,&lt;br/&gt;но между записями (linker-thunk)&lt;br/&gt;→ тот же leaf-RF&quot;]:::kern
+  VU2[&quot;VirtualUnwind / ApplyUnwindInfo (:610):&lt;br/&gt;опкоды 0-5 полные (PUSH_NONVOL, ALLOC_L/S,&lt;br/&gt;SET_FPREG c mid-prolog prescan, SAVE_NONVOL/_FAR);&lt;br/&gt;CHAININFO-рекурсия; EstablisherFrame =&lt;br/&gt;fpregEstablished ? FrameReg−off×16 : origRsp&quot;]:::kern
+  VUQ[&quot;опкоды как-есть: EPILOG(6) = всегда 2 слота;&lt;br/&gt;SAVE_XMM128(8)/FAR(9) = consume-only,&lt;br/&gt;регистры НЕ восстанавливаются;&lt;br/&gt;PUSH_MACHFRAME(10) = no-op 1 слот;&lt;br/&gt;unknown → null + console-принт&quot;]:::asis
+  KNCP[&quot;RecordSpill → KNONVOLATILE_CONTEXT_POINTERS:&lt;br/&gt;только GP-половина (+0x80), только для&lt;br/&gt;PUSH_NONVOL/SAVE_NONVOL(_FAR);&lt;br/&gt;XMM-половина (0x00-0x7F) не заполняется никогда&quot;]:::asis
+end
+
+IVIP -.-&gt; S1 &amp; S2 &amp; S3 &amp; S4
+PASS1 --&gt; VU2
+RTLU --&gt; VU2
+VUC --&gt; VU2
+VU2 --&gt; VUQ
+VU2 --&gt; KNCP
+KNCP -. &quot;потребители: GcInfoDecoder (GC roots),&lt;br/&gt;UpdateNonvolatileRegisters (resume)&quot; .-&gt; CCF
+S1 ~~~ S2 ~~~ S3 ~~~ S4 ~~~ S5
+
+%% ================= FRAME CHAIN =================
+subgraph FCHT[&quot;TryActivateFrameChain: типы Frame (Thread::m_pFrame)&quot;]
+  FOK[&quot;обрабатываются: 1 InlinedCallFrame (f3/f4/f5);&lt;br/&gt;4 FaultingExceptionFrame (ctx @+0x20);&lt;br/&gt;5 SoftwareExceptionFrame (ctx @+0x120,&lt;br/&gt;ctxPtrs @+0x18, RA-fallback @+0x10);&lt;br/&gt;7 PInvokeCalli, 9 PrestubMethod,&lt;br/&gt;10 CallCountingHelper, 11 StubDispatch,&lt;br/&gt;12 ExternalMethod, 13 DynamicHelper —&lt;br/&gt;через TransitionBlock @f[2]:&lt;br/&gt;RA=tb[8], SP=tb+72, RBP=tb[3]&quot;]:::kern
+  FNO[&quot;любой другой id (HelperMethodFrame,&lt;br/&gt;TransitionFrame, UMThunk...) →&lt;br/&gt;'[fchain] unhandled' → skip к m_Next&quot;]:::asis
+  FFILT[&quot;фильтры активации: validRA =&lt;br/&gt;InDynamicRange(RA−1); spOk = CallSiteSP &gt; Rsp&lt;br/&gt;(exception-кадры от spOk освобождены)&quot;]:::kern
+end
+
+FCH --&gt; FOK
+FCH --&gt; FNO
+FCH --&gt; FFILT
+
+%% ================= TIER A =================
+subgraph TIERA[&quot;Tier A: kernel-AOT EH (OS/src/Boot/EH) — отдельный стек&quot;]
+  TAE[&quot;RhpThrowEx / RhpRethrow / RhpCaptureContext —&lt;br/&gt;9 шеллкод-стабов, патчатся в BootSequence:347-417&quot;]:::kern
+  TIERADISP[&quot;DispatchEx.Dispatch (DispatchEx.cs:209):&lt;br/&gt;два прохода, свой StackFrameIterator&lt;br/&gt;(порт CoreCLR SFI) + RegDisplay&quot;]:::kern
+  TAEH[&quot;клаузы: CoffEhDecoder (ILC ehInfoRVA varint);&lt;br/&gt;RIP→метод: CoffMethodLookup (.pdata)&quot;]:::kern
+  TAF[&quot;CallCatch/Finally/FilterFunclet-стабы, RethrowStub&quot;]:::kern
+  TAP[&quot;покрытие: пробы L8..L17 зелёные (Probes.cs:37-56)&quot;]:::kern
+end
+
+TAE --&gt; TIERADISP --&gt; TAEH
+TIERADISP --&gt; TAF
+TIERADISP --&gt;|&quot;вернулся (unhandled HW)&quot;| HALTHW[&quot;'Dispatch returned' + while(true)&quot;]:::halt
+
+%% ================= TIER B =================
+subgraph TIERB[&quot;Tier B: ELF-apps&quot;]
+  TB[&quot;EH НЕТ: ThrowHelpers = while(true)&lt;br/&gt;(apps/sdk/MinimalRuntime.cs:264-287)&quot;]:::halt
+end
+
+%% ================= CLASSES =================
+classDef kern fill:#d5f0d5,stroke:#2e7d32,color:#000
+classDef fork fill:#d5e4fa,stroke:#1a56db,color:#000
+classDef spc  fill:#ead5f7,stroke:#7e22ce,color:#000
+classDef asis fill:#fdf0c2,stroke:#b45309,color:#000
+classDef halt fill:#f8d7da,stroke:#b91c1c,color:#000
+</code></pre>
+<h2>Сводка «как есть» (жёлтые узлы одним списком)</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Факт</th>
+<th>Где</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>PASS 1 учитывает только disp==0x100; <code>ContinueExecution</code>(0) и <code>CollidedUnwind</code>(3) → advance</td>
+<td><code>SehDispatch.cs:607</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>PASS 2 и <code>RtlUnwind</code> отбрасывают return personality целиком</td>
+<td><code>SehDispatch.cs:818,950</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Context/capture/restore — GP+EFlags only; XMM/MxCsr нигде не переносятся</td>
+<td><code>SehStructs.cs:106</code>, <code>SehDispatch.BootAsm.cs</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>SAVE_XMM128(_FAR)</code> — consume-only; <code>PUSH_MACHFRAME</code> — no-op; <code>EPILOG</code> — всегда 2 слота</td>
+<td><code>SehUnwind.cs:868-884</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td>KNCP: только GP-половина, только PUSH/SAVE_NONVOL; XMM-указатели не пишутся</td>
+<td><code>SehUnwind.cs:602</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td>Реестры s_dyn(64)/s_stat(64)/s_stubs(1024): переполнение = молчаливый drop регистрации</td>
+<td><code>SehUnwind.cs:152,229,321</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td>Лимиты walk’а: 64 кадра (все три цикла), 16 hop’ов FrameChain; исчерпание не логируется</td>
+<td><code>SehDispatch.cs:483,769,897,1386</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td>HRException-fallback: hard-coded RVA-окно 0xCB5000…0xCDE000, <code>m_hr</code> по эмпирическому offset 0x14</td>
+<td><code>SehDispatch.cs:715,704</code></td>
+</tr>
+<tr>
+<td>9</td>
+<td>FH4: используется только Continuation0; Continuation1 и RAX funclet’а игнорируются</td>
+<td><code>SehDispatch.cs:821-837</code></td>
+</tr>
+<tr>
+<td>10</td>
+<td>RestoreContextAsm пишет target-Rip в <code>[newRsp-8]</code> до переключения RSP (окно для IRQ на том же стеке)</td>
+<td><code>SehDispatch.BootAsm.cs:75-108</code></td>
+</tr>
+<tr>
+<td>11</td>
+<td>CCF-inv патч распознаёт единственную форму эпилога <code>add rsp,imm32; pop rbp; ret</code></td>
+<td><code>exceptionhandling.cpp:3568-3600</code></td>
+</tr>
+<tr>
+<td>12</td>
+<td>step71: RBP save/restore вокруг UpdateNonvolatileRegisters — consumer-side workaround, корень в KNCP</td>
+<td><code>exceptionhandling.cpp:3494</code></td>
+</tr>
+<tr>
+<td>13</td>
+<td>AsmOffsets: 9× <code>#if false &amp;&amp; TARGET_UNIX</code> — принудительный Windows-layout, без runtime-assert’а</td>
+<td>SPC <code>AsmOffsets.cs</code></td>
+</tr>
+<tr>
+<td>14</td>
+<td>vec 0 (#DE) минует SOS-HHE/PAL-SEH (гейт `vec==13</td>
+<td></td>
+</tr>
+<tr>
+<td>15</td>
+<td>vec 6 (#UD) объявлен, но не входит в IsSupported → PanicDump</td>
+<td><code>HwFaultBridge.cs:38,60</code></td>
+</tr>
+<tr>
+<td>16</td>
+<td><code>__GSHandlerCheck</code> не слинкован (0 вхождений)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>17</td>
+<td>Каждый catch в hosted печатает безусловный <code>[CCF-resume]</code>-блок (~10 строк + 16-qword стек)</td>
+<td><code>exceptionhandling.cpp:3540+</code></td>
+</tr>
+</tbody>
+</table>
+
+</body>
+</html>

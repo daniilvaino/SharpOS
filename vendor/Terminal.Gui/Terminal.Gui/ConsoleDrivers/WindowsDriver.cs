@@ -1,7 +1,6 @@
-//
+﻿//
 // WindowsDriver.cs: Windows specific driver
 //
-using NStack;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -1586,7 +1585,7 @@ namespace Terminal.Gui {
 			}
 		}
 
-		public override void AddStr (ustring str)
+		public override void AddStr (string str)
 		{
 			foreach (var rune in str)
 				AddRune (rune);

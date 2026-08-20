@@ -5,7 +5,6 @@
 //   Ross Ferguson (ross.c.ferguson@btinternet.com)
 //
 
-using NStack;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -229,7 +228,7 @@ namespace Terminal.Gui {
 		public event Action<ListViewItemEventArgs> OpenSelectedItem;
 
 		readonly IList searchset = new List<object> ();
-		ustring text = "";
+		string text = "";
 		readonly TextField search;
 		readonly ComboListView listview;
 		bool autoHide = true;
@@ -246,7 +245,7 @@ namespace Terminal.Gui {
 		/// Public constructor
 		/// </summary>
 		/// <param name="text"></param>
-		public ComboBox (ustring text) : base ()
+		public ComboBox (string text) : base ()
 		{
 			search = new TextField ("");
 			listview = new ComboListView (this, HideDropdownListOnClick) { LayoutStyle = LayoutStyle.Computed, CanFocus = true, TabStop = false };
@@ -713,7 +712,7 @@ namespace Terminal.Gui {
 		/// <summary>
 		/// The currently selected list item
 		/// </summary>
-		public new ustring Text {
+		public new string Text {
 			get {
 				return text;
 			}
@@ -725,7 +724,7 @@ namespace Terminal.Gui {
 		/// <summary>
 		/// Current search text 
 		/// </summary>
-		public ustring SearchText {
+		public string SearchText {
 			get {
 				return search.Text;
 			}
@@ -765,7 +764,7 @@ namespace Terminal.Gui {
 			HideList ();
 		}
 
-		private int GetSelectedItemFromSource (ustring value)
+		private int GetSelectedItemFromSource (string value)
 		{
 			if (source == null) {
 				return -1;
@@ -797,7 +796,7 @@ namespace Terminal.Gui {
 			}
 		}
 
-		private void SetSearchText (ustring value)
+		private void SetSearchText (string value)
 		{
 			search.Text = text = value;
 		}
@@ -820,13 +819,13 @@ namespace Terminal.Gui {
 			}
 		}
 
-		private void Search_Changed (ustring text)
+		private void Search_Changed (string text)
 		{
 			if (source == null) { // Object initialization		
 				return;
 			}
 
-			if (ustring.IsNullOrEmpty (search.Text) && ustring.IsNullOrEmpty (text)) {
+			if (string.IsNullOrEmpty (search.Text) && string.IsNullOrEmpty (text)) {
 				ResetSearchSet ();
 			} else if (search.Text != text) {
 				isShow = true;

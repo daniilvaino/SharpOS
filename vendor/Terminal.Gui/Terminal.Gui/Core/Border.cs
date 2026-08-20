@@ -1,5 +1,4 @@
-﻿using NStack;
-using System;
+﻿using System;
 
 namespace Terminal.Gui {
 	/// <summary>
@@ -168,7 +167,7 @@ namespace Terminal.Gui {
 				if (border == null) {
 					Border = new Border () {
 						BorderStyle = BorderStyle.Single,
-						Title = (ustring)title
+						Title = (string)title
 					};
 				} else {
 					Border = border;
@@ -271,7 +270,7 @@ namespace Terminal.Gui {
 				if (HasFocus)
 					Driver.SetAttribute (ColorScheme.HotNormal);
 				if (Border.DrawMarginFrame) {
-					if (!ustring.IsNullOrEmpty (Border.Title))
+					if (!string.IsNullOrEmpty (Border.Title))
 						Border.DrawTitle (this);
 					else
 						Border.DrawTitle (this, Frame);
@@ -327,7 +326,7 @@ namespace Terminal.Gui {
 		private bool effect3D;
 		private Point effect3DOffset = new Point (1, 1);
 		private Attribute? effect3DBrush;
-		private ustring title = ustring.Empty;
+		private string title = string.Empty;
 		private View child;
 
 		/// <summary>
@@ -379,7 +378,10 @@ namespace Terminal.Gui {
 		public Color BorderBrush {
 			get => borderBrush != null ? (Color)borderBrush : (Color)(-1);
 			set {
-				if (Enum.IsDefined (typeof (Color), value)) {
+				// Upstream asks Enum.IsDefined, which needs the enum's value
+				// table — metadata this runtime does not carry. Color is a
+				// contiguous 0..15, so the range IS the definition.
+				if (value >= Color.Black && value <= Color.White) {
 					borderBrush = value;
 					OnBorderChanged ();
 				}
@@ -392,7 +394,7 @@ namespace Terminal.Gui {
 		public Color Background {
 			get => background != null ? (Color)background : (Color)(-1);
 			set {
-				if (Enum.IsDefined (typeof (Color), value)) {
+				if (value >= Color.Black && value <= Color.White) {
 					background = value;
 					OnBorderChanged ();
 				}
@@ -507,7 +509,7 @@ namespace Terminal.Gui {
 		/// <summary>
 		/// The title to be displayed for this view.
 		/// </summary>
-		public ustring Title {
+		public string Title {
 			get => title;
 			set {
 				title = value;

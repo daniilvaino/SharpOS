@@ -6,7 +6,6 @@
 //
 
 using System;
-using NStack;
 
 namespace Terminal.Gui {
 	/// <summary>
@@ -58,7 +57,7 @@ namespace Terminal.Gui {
 		///   If <c>true</c>, a special decoration is used, and the user pressing the enter key 
 		///   in a <see cref="Dialog"/> will implicitly activate this button.
 		/// </param>
-		public Button (ustring text, bool is_default = false) : base (text)
+		public Button (string text, bool is_default = false) : base (text)
 		{
 			Initialize (text, is_default);
 		}
@@ -73,7 +72,7 @@ namespace Terminal.Gui {
 		/// <param name="x">X position where the button will be shown.</param>
 		/// <param name="y">Y position where the button will be shown.</param>
 		/// <param name="text">The button's text</param>
-		public Button (int x, int y, ustring text) : this (x, y, text, false) { }
+		public Button (int x, int y, string text) : this (x, y, text, false) { }
 
 		/// <summary>
 		///   Initializes a new instance of <see cref="Button"/> using <see cref="LayoutStyle.Absolute"/> layout, based on the given text.
@@ -89,13 +88,13 @@ namespace Terminal.Gui {
 		///   If <c>true</c>, a special decoration is used, and the user pressing the enter key 
 		///   in a <see cref="Dialog"/> will implicitly activate this button.
 		/// </param>
-		public Button (int x, int y, ustring text, bool is_default)
+		public Button (int x, int y, string text, bool is_default)
 		    : base (new Rect (x, y, text.RuneCount + 4 + (is_default ? 2 : 0), 1), text)
 		{
 			Initialize (text, is_default);
 		}
 
-		void Initialize (ustring text, bool is_default)
+		void Initialize (string text, bool is_default)
 		{
 			TextAlignment = TextAlignment.Centered;
 			VerticalTextAlignment = VerticalTextAlignment.Middle;
@@ -166,9 +165,9 @@ namespace Terminal.Gui {
 		protected override void UpdateTextFormatterText ()
 		{
 			if (IsDefault)
-				TextFormatter.Text = ustring.Make (_leftBracket) + ustring.Make (_leftDefault) + " " + Text + " " + ustring.Make (_rightDefault) + ustring.Make (_rightBracket);
+				TextFormatter.Text = RuneText.Make (_leftBracket) + RuneText.Make (_leftDefault) + " " + Text + " " + RuneText.Make (_rightDefault) + RuneText.Make (_rightBracket);
 			else
-				TextFormatter.Text = ustring.Make (_leftBracket) + " " + Text + " " + ustring.Make (_rightBracket);
+				TextFormatter.Text = RuneText.Make (_leftBracket) + " " + Text + " " + RuneText.Make (_rightBracket);
 		}
 
 		///<inheritdoc/>

@@ -1,5 +1,4 @@
-﻿using NStack;
-using System;
+﻿using System;
 namespace Terminal.Gui {
 	/// <summary>
 	/// Specifies the style that a <see cref="ProgressBar"/> uses to indicate the progress of an operation.
@@ -184,7 +183,7 @@ namespace Terminal.Gui {
 		}
 
 		///<inheritdoc/>
-		public override ustring Text {
+		public override string Text {
 			get => GetPercentageText ();
 			set {
 				base.Text = SetPercentageText (value);
@@ -206,7 +205,7 @@ namespace Terminal.Gui {
 			}
 		}
 
-		ustring GetPercentageText ()
+		string GetPercentageText ()
 		{
 			switch (progressBarStyle) {
 			case ProgressBarStyle.Blocks:
@@ -220,7 +219,7 @@ namespace Terminal.Gui {
 			return base.Text;
 		}
 
-		ustring SetPercentageText (ustring value)
+		string SetPercentageText (string value)
 		{
 			switch (progressBarStyle) {
 			case ProgressBarStyle.Blocks:

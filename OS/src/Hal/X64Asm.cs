@@ -70,6 +70,11 @@
         // Buffer is 1024 bytes; free zones used: 0x28C..0x300 (~116 B) and
         // 0x380..0x400 (~128 B). If future phases overflow, bump
         // UefiBootInfoBuilder.AsmBufferSize.
+        // 32-bit compare-and-swap, in the gap left after the sti;hlt stub
+        // (0x29C, 8 bytes) and clear of the IRETQ resume stub at 0x300.
+        private const uint CmpXchg32Offset       = 0x2B0;
+        private const uint CmpXchg32MinBuffer    = 0x2C0;
+
         private const uint FxsaveOffset          = 0x28C;
         private const uint FxrstorOffset         = 0x294;
         private const uint StiHltOffset          = 0x29C;
@@ -98,6 +103,8 @@
         private static delegate* unmanaged<ulong, void> s_writeGsBaseMsr;
         private static bool s_readGsBaseMsrReady;
         private static delegate* unmanaged<ulong> s_readGsBaseMsr;
+        private static bool s_cmpXchg32Ready;
+        private static delegate* unmanaged<uint*, uint, uint, uint> s_cmpXchg32;
         private static bool s_cmpXchg64Ready;
         private static delegate* unmanaged<ulong*, ulong, ulong, ulong> s_cmpXchg64;
         private static bool s_xchg64Ready;
@@ -364,6 +371,30 @@
                 s_cmpXchg64Ready = true;
             }
             return s_cmpXchg64(location, value, comparand);
+        }
+
+        // 32-bit compare-and-swap. Win64 ABI: RCX = location, EDX = value,
+        // R8D = comparand; returns the previous value in EAX.
+        //
+        // The 64-bit form above cannot stand in for this one: a wider swap
+        // would read and write the four bytes next door, and those belong to
+        // someone else.
+        //
+        //   44 89 C0       mov eax, r8d       ; EAX = comparand
+        //   F0 0F B1 11    lock cmpxchg [rcx], edx
+        //   C3             ret                ; EAX = old *location
+        public static uint CmpXchg32(uint* location, uint value, uint comparand)
+        {
+            if (s_execBuffer == null || s_execBufferSize < CmpXchg32MinBuffer)
+                return 0;
+            if (!s_cmpXchg32Ready)
+            {
+                byte* p = (byte*)s_execBuffer + CmpXchg32Offset;
+                EmitCmpXchg32BootAsm(p);
+                s_cmpXchg32 = (delegate* unmanaged<uint*, uint, uint, uint>)p;
+                s_cmpXchg32Ready = true;
+            }
+            return s_cmpXchg32(location, value, comparand);
         }
 
         // Phase E3 — atomic exchange. Win64 ABI: RCX = location, RDX = value.

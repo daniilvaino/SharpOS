@@ -153,6 +153,19 @@ namespace OS.Hal
             a.ret();
         }
 
+        // mov eax, r8d ; lock cmpxchg [rcx], edx ; ret
+        [CompileTimeAsm]
+        private static partial int EmitCmpXchg32BootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitCmpXchg32BootAsm))]
+        private static void EmitCmpXchg32BootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.mov(eax, r8d);
+            a.db(0xF0);                       // lock prefix
+            a.cmpxchg(__dword_ptr[rcx], edx);
+            a.ret();
+        }
+
         // xchg [rcx], rdx ; mov rax, rdx ; ret  (xchg mem is implicit-locked)
         [CompileTimeAsm]
         private static partial int EmitXchg64BootAsm(byte* dst);

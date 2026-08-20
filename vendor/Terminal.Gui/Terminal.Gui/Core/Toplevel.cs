@@ -723,7 +723,7 @@ namespace Terminal.Gui {
 				return Application.Top;
 			}
 			var superView = view.SuperView;
-			if (superView.GetType ().Name == "ContentView") {
+			if (superView is IContentView) {
 				return superView.SuperView;
 			}
 			return superView;
@@ -735,7 +735,7 @@ namespace Terminal.Gui {
 			foreach (var top in Subviews) {
 				if (top is Toplevel) {
 					PositionToplevel ((Toplevel)top);
-				} else if (top.GetType ().Name == "ContentView") {
+				} else if (top is IContentView) {
 					foreach (var subTop in top.Subviews.Where (v => v is Toplevel)) {
 						PositionToplevel ((Toplevel)subTop);
 					}
@@ -1010,18 +1010,18 @@ namespace Terminal.Gui {
 		/// <param name="type">The type.</param>
 		/// <param name="exclude">The strings to exclude.</param>
 		/// <returns>The matched view.</returns>
-		public View GetTopMdiChild (Type type = null, string [] exclude = null)
+		// The Type filter is gone: selecting by type needs a Type value, which
+		// needs reflection to obtain. Nothing calls this with one — MDI is not
+		// used in the SharpOS port — so the parameter went rather than becoming
+		// a silently ignored argument.
+		public View GetTopMdiChild (string [] exclude = null)
 		{
 			if (Application.MdiTop == null) {
 				return null;
 			}
 
 			foreach (var top in Application.MdiChildes) {
-				if (type != null && top.GetType () == type
-					&& exclude?.Contains (top.Data.ToString ()) == false) {
-					return top;
-				} else if ((type != null && top.GetType () != type)
-					|| (exclude?.Contains (top.Data.ToString ()) == true)) {
+				if (exclude?.Contains (top.Data.ToString ()) == true) {
 					continue;
 				}
 				return top;

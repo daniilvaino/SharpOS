@@ -1,4 +1,4 @@
-// Small marker attributes that BCL types expect to exist. They carry no
+﻿// Small marker attributes that BCL types expect to exist. They carry no
 // behaviour for our purposes; ILC/JIT uses them as hints in certain
 // versioning / layout decisions. We declare them empty.
 
@@ -77,10 +77,48 @@ namespace System
     // BCL throws this from Unsafe.* intrinsic bodies (never actually
     // executes — ILC replaces with IL). We need the type to exist so the
     // throws compile.
+    public class ObjectDisposedException : InvalidOperationException
+    {
+        public ObjectDisposedException(string? objectName)
+            : base("Cannot access a disposed object: " + (objectName ?? ""))
+            { ObjectName = objectName ?? ""; }
+
+        public ObjectDisposedException(string? objectName, string? message)
+            : base(message ?? "") { ObjectName = objectName ?? ""; }
+
+        public string ObjectName { get; }
+    }
+
     public class PlatformNotSupportedException : NotSupportedException
     {
         public PlatformNotSupportedException() { }
         public PlatformNotSupportedException(string message) : base(message) { }
         public PlatformNotSupportedException(string message, Exception innerException) : base(message, innerException) { }
+    }
+}
+
+namespace System.Runtime.CompilerServices
+{
+    /// <summary>
+    /// Fills the parameter with the name of the calling member. The compiler
+    /// supplies the value at each call site, so the attribute only has to
+    /// exist and be found by name.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
+    public sealed class CallerMemberNameAttribute : Attribute
+    {
+        public CallerMemberNameAttribute() { }
+    }
+
+    [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
+    public sealed class CallerFilePathAttribute : Attribute
+    {
+        public CallerFilePathAttribute() { }
+    }
+
+    [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
+    public sealed class CallerLineNumberAttribute : Attribute
+    {
+        public CallerLineNumberAttribute() { }
     }
 }
