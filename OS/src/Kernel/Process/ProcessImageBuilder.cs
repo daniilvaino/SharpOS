@@ -1,4 +1,4 @@
-using OS.Kernel.Elf;
+﻿using OS.Kernel.Elf;
 using OS.Kernel.Paging;
 using OS.Kernel.Util;
 using OS.Hal;
@@ -67,12 +67,7 @@ namespace OS.Kernel.Process
         }
 
         private static uint NormalizeAbiVersion(uint value)
-        {
-            if (value <= AppServiceTable.AbiVersionV1)
-                return AppServiceTable.AbiVersionV1;
-
-            return AppServiceTable.AbiVersionV2;
-        }
+            => AppServiceTable.Normalize(value);
 
         private static bool MapStack(ref ProcessImage processImage)
         {

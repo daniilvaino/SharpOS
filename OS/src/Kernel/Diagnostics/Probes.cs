@@ -94,6 +94,12 @@
         // ON only while a fault dump needs to name a page's origin.
         public const bool TracePageOrigins = false;
 
+        // Tasks on the kernel scheduler: does Task.Run get its own thread,
+        // does Wait return, does Delay take the time it promises, does a
+        // cancelled token break a wait. Cheap (~100 ms) and it guards the
+        // foundation Terminal.Gui stands on.
+        public const bool Tasks = true;
+
         // Sampling profiler on the timer tick. On while the question is
         // "where does startup spend its time"; the answer is a [prof] line on
         // the serial port every ten seconds.

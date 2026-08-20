@@ -1,4 +1,4 @@
-namespace OS.Kernel.Process
+﻿namespace OS.Kernel.Process
 {
     internal enum AppServiceStatus : uint
     {
@@ -16,8 +16,31 @@ namespace OS.Kernel.Process
     {
         public const uint AbiVersionV1 = 1;
         public const uint AbiVersionV2 = 2;
-        public const uint CurrentAbiVersion = AbiVersionV2;
+
+        // V3 adds threads. Terminal.Gui keeps its input decoding and its resize
+        // watch on background loops, so a task there is a thread and nothing
+        // else — without these an app can only ever do one thing at a time, and
+        // Task.Run has nowhere to run.
+        public const uint AbiVersionV3 = 3;
+        public const uint CurrentAbiVersion = AbiVersionV3;
         public const uint AutoSelectAbiVersion = 0xFFFFFFFF;
+
+        /// <summary>
+        /// Clamps a requested version to one this kernel actually publishes.
+        ///
+        /// Lives here, beside the constants, because it was written three times
+        /// — in AppServiceBuilder, in ProcessImageBuilder, and in the launcher
+        /// path — and when V3 landed only some of them moved. The result was
+        /// apps that failed a version compare against a table the same kernel
+        /// had just filled. A rule duplicated per caller is a rule that will
+        /// disagree with itself.
+        /// </summary>
+        public static uint Normalize(uint requested)
+        {
+            if (requested <= AbiVersionV1) return AbiVersionV1;
+            if (requested == AbiVersionV2) return AbiVersionV2;
+            return CurrentAbiVersion;
+        }
 
         public uint AbiVersion;
         public uint Reserved;
@@ -79,6 +102,16 @@ namespace OS.Kernel.Process
         // the isolation that SMP and preemption will need. Sharing the walker
         // costs nothing, because the machinery is image-aware already.
         public ulong GcWalkRootsAddress;
+
+        // V3 — threads. At the END of the struct, which is the whole point:
+        // the first attempt put them after WriteBuildIdAddress, which is the end
+        // of the V2 *service* block but nowhere near the end of the table. Every
+        // field below it shifted by 16 bytes, so an app built against the old
+        // layout read InterfaceDispatchBridgeAddress from the wrong offset,
+        // patched its dispatch stub with garbage and died before printing
+        // anything. Appending is only appending if it is at the end.
+        public ulong SpawnThreadAddress;
+        public ulong SleepAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

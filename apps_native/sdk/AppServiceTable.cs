@@ -1,4 +1,4 @@
-namespace SharpOS.AppSdk
+﻿namespace SharpOS.AppSdk
 {
     internal enum AppServiceStatus : uint
     {
@@ -16,7 +16,13 @@ namespace SharpOS.AppSdk
     {
         public const uint AbiVersionV1 = 1;
         public const uint AbiVersionV2 = 2;
-        public const uint CurrentAbiVersion = AbiVersionV2;
+
+        // V3 adds threads. Terminal.Gui keeps its input decoding and its resize
+        // watch on background loops, so a task there is a thread and nothing
+        // else — without these an app can only ever do one thing at a time, and
+        // Task.Run has nowhere to run.
+        public const uint AbiVersionV3 = 3;
+        public const uint CurrentAbiVersion = AbiVersionV3;
         public const uint AutoSelectAbiVersion = 0xFFFFFFFF;
 
         public uint AbiVersion;
@@ -67,6 +73,16 @@ namespace SharpOS.AppSdk
         // live managed root to our callback; we mark into OUR heap and sweep it
         // ourselves. Layout must match OS/.../AppServiceTable.cs.
         public ulong GcWalkRootsAddress;
+
+        // V3 — threads. At the END of the struct, which is the whole point:
+        // the first attempt put them after WriteBuildIdAddress, which is the end
+        // of the V2 *service* block but nowhere near the end of the table. Every
+        // field below it shifted by 16 bytes, so an app built against the old
+        // layout read InterfaceDispatchBridgeAddress from the wrong offset,
+        // patched its dispatch stub with garbage and died before printing
+        // anything. Appending is only appending if it is at the end.
+        public ulong SpawnThreadAddress;
+        public ulong SleepAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

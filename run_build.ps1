@@ -546,7 +546,7 @@ foreach ($staleElf in @("HELLO.ELF", "ABIINFO.ELF", "MARKER.ELF", "HELLOCS.ELF",
 }
 
 # step137/138: freestanding win-x64 PE apps (built by build_launcher.ps1 /
-# build_fetch.ps1 / build_aottests.ps1). Stage each to ESP as <NAME>.EXE + .abi (AbiV2,
+# build_fetch.ps1 / build_aottests.ps1). Stage each to ESP as <NAME>.EXE + .abi (AbiV3,
 # ServiceAbi 0 = WindowsX64); the kernel dispatches on the MZ magic to PeLoader.
 # Absent build output just skips (that app won't appear in the launcher).
 $peApps = @(
@@ -562,7 +562,10 @@ foreach ($peApp in $peApps) {
     $peDst = Join-Path $espBootDir $peApp.Dest
     if (Test-Path -LiteralPath $peSrc) {
         Copy-Item -LiteralPath $peSrc -Destination $peDst -Force
-        [System.IO.File]::WriteAllBytes("$peDst.abi", (New-AppAbiManifest -AppAbiVersion 2 -ServiceAbi 0))
+        # AbiV3: adds thread creation and sleep. Safe for apps that ignore them —
+        # the service table only ever grows at the end, so an app reads the
+        # fields it knows by offset and never looks past them.
+        [System.IO.File]::WriteAllBytes("$peDst.abi", (New-AppAbiManifest -AppAbiVersion 3 -ServiceAbi 0))
         Write-Host "Prepared app PE: $peDst"
     }
     elseif (Test-Path -LiteralPath "$peDst.abi") {

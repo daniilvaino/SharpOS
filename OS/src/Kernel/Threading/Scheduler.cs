@@ -421,7 +421,18 @@ namespace OS.Kernel.Threading
             if (milliseconds == 0) { Idle(); return; }
 
             ulong freq = Hpet.FrequencyHz;
-            if (freq == 0) return;   // HPET not initialised — degrade silently
+            if (freq == 0)
+            {
+                // No clock yet — early boot, before the HPET comes up. Yield
+                // rather than return: a sleep that quietly does nothing turns
+                // any "wait until someone else finishes" loop into a spin that
+                // never lets that someone else run. Cooperatively that is a
+                // dead machine, and it cost a hang the first time a task waited
+                // here. Yielding is not a sleep, but it keeps the promise that
+                // matters — the caller gives up the CPU.
+                Yield();
+                return;
+            }
             ulong ticksPerMs = freq / 1000;
             if (ticksPerMs == 0) ticksPerMs = 1;
 
@@ -580,8 +591,20 @@ namespace OS.Kernel.Threading
                 // makes someone runnable, exactly as the idle path does; the
                 // exiting thread's stack is still ours to stand on.
                 s_switching = false;
-                X64Asm.StiHlt();
+                if (OS.Hal.Apic.LocalApic.IsEnabled)
+                {
+                    s_idleHalts++;
+                    X64Asm.StiHlt();
+                }
                 s_switching = true;
+
+                // Drain before looking, exactly as Yield does. Without this the
+                // exiting thread waits for a runnable thread that can only
+                // become runnable by having its deadline noticed — and nobody
+                // was left to notice it. A thread sleeping one millisecond and a
+                // thread finishing its work were enough to park the machine for
+                // good, while the missing halt counter made it look like a spin.
+                DrainExpiredTimers();
                 next = DequeueRunnable();
             }
 

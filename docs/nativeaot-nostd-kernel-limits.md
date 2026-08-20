@@ -2,7 +2,7 @@
 
 Живой документ. Перечень managed-паттернов C#, которые **не работают** или работают с оговорками в **самом ядре SharpOS** (NativeAOT **8.0.27 / RTR major 9** + `NoStdLib=true` + наш `MinimalRuntime` без полной BCL; бампнут с 7.0.20 в step130 — вся батарея проб зелёная под ILC 8, кроме `EnumToString`).
 
-**Область применения:** только kernel-side код (`OS/` дерево). У ELF-приложений своя поверхность ограничений (`apps/` через `apps/sdk/AppHost.cs` сервис-таблицу) — см. [`nativeaot-nostd-elf-limits.md`](nativeaot-nostd-elf-limits.md). У stock CoreCLR-hosted кода ещё другая поверхность — см. [`coreclr-hosted-limits.md`](coreclr-hosted-limits.md). Общий обзор всех трёх tier'ов с компаративной таблицей — в [`README.md`](../README.md).
+**Область применения:** код ядра (`OS/`) **и** свободностоящих PE-приложений (`apps_native/`) — с step141 они компилят тот же std, поэтому карта у них общая, а немногочисленная app-специфика помечена по месту. ELF-ярус удалён; [`nativeaot-nostd-elf-limits.md`](nativeaot-nostd-elf-limits.md) оставлен как исторический снимок. У stock CoreCLR-hosted кода ещё другая поверхность — см. [`coreclr-hosted-limits.md`](coreclr-hosted-limits.md). Общий обзор всех трёх tier'ов с компаративной таблицей — в [`README.md`](../README.md).
 
 Все пункты проверены на практике через `OS/src/Kernel/Diagnostics/NativeAotProbe.cs` — там живут минимальные repro-ы. Если что-то из этого списка понадобится для конкретной задачи — сначала убеждаемся что работаем через workaround, потом принимаем решение: либо оставить ограничение, либо дописать недостающий helper.
 
@@ -343,19 +343,24 @@ probe-run'а).
 
 ## 5. Delegates / Lambdas
 
-### 🔧 `yield return` — Roslyn краш на iterator rewrite
+### ✅ `yield return` — работает
 
 ```csharp
 IEnumerable<int> Foo() { yield return 1; yield return 2; }
 ```
 
-**Ошибка компиляции** (!): Roslyn внутри `IteratorRewriter.GenerateEnumeratorImplementation` зовёт `SyntheticBoundNodeFactory.New(...)` который через `Single()` ищет ctor по сигнатуре и получает `Sequence contains no elements` → `FailFast`. То есть **компилятор крашится** до ILC, полная трассировка видна в `Roslyn/Microsoft.CSharp.Core.targets(89,5)`.
+Долго значилось как «Roslyn крашится на iterator rewrite»: переписыватель
+итераторов ищет опорные типы **по имени и сигнатуре** через `.Single()`, и на
+отсутствующем получал `Sequence contains no elements` — то есть падал сам
+компилятор, до ILC. Не хватало трёх: `Interlocked.CompareExchange`,
+`Environment.CurrentManagedThreadId`, `InvalidOperationException(string)`.
+Все три лежат в `std/no-runtime/shared/Threading.cs`, и с ними `yield`
+компилируется и исполняется обычным порядком (generic-итераторы тоже —
+на них стоит mini-LINQ, step134).
 
-Причина: Iterator-state-machine rewriter Roslyn ищет в окружении какой-то тип/ctor по канонической сигнатуре. Наши минимальные `IEnumerator<T>` / `IEnumerable<T>` интерфейсы технически есть, но Roslyn хочет ещё что-то (скорее всего `System.Threading.Interlocked.CompareExchange` для thread-ID serialization в state machine, или `System.Environment.CurrentManagedThreadId`, или generated closure base class).
-
-**⚠️ Workaround (уже используется):** писать `Enumerator` классы явно, как в нашем `Dictionary<TKey, TValue>.Enumerator`, `HashSet<T>.Enumerator`, `SortedList<K,V>.Enumerator`. Это sealed class с полями для состояния + MoveNext/Current/Reset/Dispose + IEnumerator<T>/IEnumerator implementation. Boxing-lessness теряется (когда struct), но работает.
-
-**Фикс-позже:** добавить недостающие stub-ы (`Interlocked.CompareExchange<T>`, `Environment.CurrentManagedThreadId`) и попробовать снова. Если Roslyn захочет ещё что-то — trace покажет какой именно тип/ctor ищется.
+Урок общего свойства: отказ переписывателя означает «не нашёл тип», а не
+«среда не тянет». Список недостающего компилятор называет сам, по одному за
+попытку.
 
 ### ✅ Managed delegate + lambda — РАБОТАЕТ (step 131)
 
@@ -383,6 +388,20 @@ invoke, variance-cast (`Func<string,bool>`→`Func<object,bool>`). Serialization
 **`delegate* unmanaged<T>` / `delegate*<T>`** (IL function pointers) — работают
 как и раньше, отдельный механизм (не требует Delegate-инфраструктуры).
 
+### ❌ Делегат на **интерфейсный** метод
+
+```csharp
+IAsyncStateMachine box = ...;
+Action a = box.MoveNext;        // рантайм: delegate to interface method not supported
+Action b = () => box.MoveNext();  // обход: обычный интерфейсный вызов внутри замыкания
+```
+
+Связывание делегата с интерфейсным слотом не поддержано, хотя сама
+интерфейсная диспетчеризация работает полностью. Собирается молча, падает при
+исполнении — то есть ошибка рантаймовая, а не компиляторная, и в отладке видна
+только по сообщению. Правило: если приёмник делегата объявлен интерфейсом,
+пишем лямбду. Всплыло в построителе асинхронных методов (§5.1).
+
 **App-tier (freestanding PE): те же файлы с step 141.** FreestandingPe.props
 компилит тот же `Delegate.cs`/`MulticastDelegate.cs`/`ActionFunc.cs` (плюс
 LINQ/StringBuilder/полный Bcl-набор) — app-std теперь зеркалит kernel-список
@@ -391,19 +410,60 @@ StringRuntime.RhNewString, DebugOutput.AppHost). Матрица делегато
 вырезки выше применимы к аппам as-is (боевой потребитель — ManagedDoom,
 done/step141.md).
 
+### ✅ `Task` / `async` / `await` — работают
+
+`Task.Run`, `Task.Delay`, `Wait(token)` и полноценный `async`/`await` собираются
+и исполняются на обоих AOT-ярусах (проба ядра `TaskProbe` → `async=3/3`,
+батарея приложения `AotTests` 42/42). Поддержка — `std/no-runtime/shared/`:
+`Threading.Tasks.cs` (задачи), `Threading.Tasks.Await.cs` (`TaskAwaiter`,
+`AsyncTaskMethodBuilder`, `IAsyncStateMachine`), плюс подложка потоков на ярус
+(`KernelScheduler` / `AppServices`).
+
+Это **не планировщик**: задача = поток плюс способ его дождаться, пула потоков
+и очереди продолжений нет. Каждое ожидание занимает поток.
+
+**Ограничения по замыслу:**
+
+- продолжение исполняется на потоке, **завершившем ожидание**; контекст
+  синхронизации не захватывается. Коду, рассчитывающему вернуться в свой
+  поток, этого недостаточно;
+- `ThreadPool.QueueUserWorkItem` не реализован.
+
+**Две ловушки, стоившие отладки.** Построитель и машина состояний — **структуры**,
+и компилятор копирует их свободно: возобновление копии теряет всё после первого
+ожидания, а ленивое создание задачи даёт **две** задачи (ждём одну, завершается
+другая). Всё, что обязано пережить копирование, держим за одной ссылкой, а
+машину упаковываем один раз при первой приостановке. Вторая — делегат на
+интерфейсный метод, см. выше.
+
+Отдельно стоит записать, почему фронт так долго считался закрытым: он был не
+сломан, а **заслонён**. Без `Task` асинхронный метод падал на типе возврата
+раньше, чем включался переписыватель, поэтому список недостающего не был виден
+никогда. Появился `Task` — и компилятор назвал требования сам, по одному.
+
 ---
 
 ## 6. Exceptions
 
-### ❌ `try { ... } catch (Exception e) { ... }` — не работает
+### ✅ `try` / `catch` / `finally` / `when`-фильтр / `throw` — работают
 
-Требует полноценный exception engine: personality function, unwind tables из `.eh_frame`, класс `Exception` с `Message/StackTrace/InnerException`, и пр.
+Полный конвейер закрыт в step90 (Phase D): personality-функции FH3/FH4,
+раскрутка по `.pdata`/`.xdata`, funclet-и, фильтры, аппаратный сбой →
+управляемое исключение (`#PF` → `NullReferenceException`, `#DE` →
+`DivideByZeroException`), `Exception.StackTrace` через обход `.pdata`.
 
-### ⚠️ `throw new SomeException()`
+Практическое следствие для портов из BCL: **бросать по-настоящему**.
+`ArgumentException`, `InvalidOperationException` и прочие пишутся как в
+оригинале, а не подменяются на `Panic.Fail`. Halt остаётся только для
+невосстановимых путей самого ядра.
 
-ILC генерит bounds-check throws, overflow throws, null-ref throws через класс `Internal.Runtime.CompilerHelpers.ThrowHelpers` — у нас есть stub где каждый Throw\* делает `while(true)`. То есть **реальный** bounds check на выходе за пределы массива приведёт к halt-у, не к exception. Это не крэш — просто program hangs.
+### ⚠️ `ThrowHelpers` в приложениях — всё ещё заглушка
 
-Для явного `throw new X()` в user-коде — compiler expects runtime helpers (`RhThrow`, unwind machinery), которых нет. Практически это значит: **нельзя писать `throw` в нашем managed коде**, надо делать error-codes или direct halt через Panic.
+В `apps_native/sdk/MinimalRuntime.cs` `Internal.Runtime.CompilerHelpers.ThrowHelpers`
+остаётся halt-only копией: сгенерированный ILC-ом бросок при выходе за границы
+массива или переполнении **в приложении** даёт остановку, а не исключение.
+Явный `throw` в коде приложения при этом работает — конвейер общий с ядром
+(step139/140: приложения одалживают рантайм ядра через таблицу служб).
 
 ---
 

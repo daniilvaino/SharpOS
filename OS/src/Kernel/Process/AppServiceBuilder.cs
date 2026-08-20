@@ -1,4 +1,4 @@
-using OS.Boot;
+﻿using OS.Boot;
 using OS.Hal;
 using OS.Kernel.Elf;
 using OS.Kernel.Exec;
@@ -79,6 +79,10 @@ namespace OS.Kernel.Process
         private static ulong s_systemVWriteCharThunk;
         private static ulong s_win64WriteBuildIdThunk;
         private static ulong s_systemVWriteBuildIdThunk;
+        private static ulong s_win64SpawnThreadThunk;
+        private static ulong s_systemVSpawnThreadThunk;
+        private static ulong s_win64SleepThunk;
+        private static ulong s_systemVSleepThunk;
 
         public static bool TryBuild(
             ulong serviceVirtual,
@@ -104,6 +108,8 @@ namespace OS.Kernel.Process
             delegate* managed<ulong, uint> runAppAddress = &RunApp;
             delegate* managed<uint, void> writeCharAddress = &WriteChar;
             delegate* managed<void> writeBuildIdAddress = &WriteBuildId;
+            delegate* managed<ulong, uint> spawnThreadAddress = &SpawnThread;
+            delegate* managed<uint, void> sleepAddress = &SleepMilliseconds;
 
             ulong tableWriteStringAddress = (ulong)writeStringAddress;
             ulong tableWriteUIntAddress = (ulong)writeUIntAddress;
@@ -117,6 +123,8 @@ namespace OS.Kernel.Process
             ulong tableRunAppAddress = 0;
             ulong tableWriteCharAddress = 0;
             ulong tableWriteBuildIdAddress = 0;
+            ulong tableSpawnThreadAddress = 0;
+            ulong tableSleepAddress = 0;
 
             if (!EnsureServiceThunks(
                 (ulong)writeStringAddress,
@@ -130,7 +138,9 @@ namespace OS.Kernel.Process
                 (ulong)tryReadKeyAddress,
                 (ulong)runAppAddress,
                 (ulong)writeCharAddress,
-                (ulong)writeBuildIdAddress))
+                (ulong)writeBuildIdAddress,
+                (ulong)spawnThreadAddress,
+                (ulong)sleepAddress))
             {
                 return false;
             }
@@ -152,6 +162,11 @@ namespace OS.Kernel.Process
                     tableTryReadKeyAddress = s_systemVTryReadKeyThunk;
                     tableRunAppAddress = s_systemVRunAppThunk;
                 }
+                if (publishedAbiVersion >= AppServiceTable.AbiVersionV3)
+                {
+                    tableSpawnThreadAddress = s_systemVSpawnThreadThunk;
+                    tableSleepAddress = s_systemVSleepThunk;
+                }
             }
             else
             {
@@ -170,6 +185,11 @@ namespace OS.Kernel.Process
                     tableTryReadKeyAddress = s_win64TryReadKeyThunk;
                     tableRunAppAddress = s_win64RunAppThunk;
                 }
+                if (publishedAbiVersion >= AppServiceTable.AbiVersionV3)
+                {
+                    tableSpawnThreadAddress = s_win64SpawnThreadThunk;
+                    tableSleepAddress = s_win64SleepThunk;
+                }
             }
 
             AppServiceTable table = default;
@@ -187,6 +207,8 @@ namespace OS.Kernel.Process
             table.RunAppAddress = tableRunAppAddress;
             table.WriteCharAddress = tableWriteCharAddress;
             table.WriteBuildIdAddress = tableWriteBuildIdAddress;
+            table.SpawnThreadAddress = tableSpawnThreadAddress;
+            table.SleepAddress = tableSleepAddress;
 
             // Hand the app the kernel's interface-dispatch bridge entry so it
             // can trampoline its RhpInitialDynamicInterfaceDispatch into our
@@ -242,12 +264,7 @@ namespace OS.Kernel.Process
         }
 
         private static uint NormalizeAbiVersion(uint requestedAbiVersion)
-        {
-            if (requestedAbiVersion <= AppServiceTable.AbiVersionV1)
-                return AppServiceTable.AbiVersionV1;
-
-            return AppServiceTable.AbiVersionV2;
-        }
+            => AppServiceTable.Normalize(requestedAbiVersion);
 
         private static bool EnsureServiceThunks(
             ulong writeStringTarget,
@@ -261,7 +278,9 @@ namespace OS.Kernel.Process
             ulong tryReadKeyTarget,
             ulong runAppTarget,
             ulong writeCharTarget,
-            ulong writeBuildIdTarget)
+            ulong writeBuildIdTarget,
+            ulong spawnThreadTarget,
+            ulong sleepTarget)
         {
             if (s_serviceThunksInitialized)
                 return true;
@@ -402,6 +421,28 @@ namespace OS.Kernel.Process
 
                 s_systemVWriteBuildIdThunk = thunkPageVirtual + cursor;
                 if (!TryWriteSystemVNoArgThunk(page + cursor, writeBuildIdTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                // V3 — threads. One argument each (entry pointer, milliseconds),
+                // so they fit the same one-arg thunk both ABIs already use.
+                s_win64SpawnThreadThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64OneArgThunk(page + cursor, spawnThreadTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVSpawnThreadThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVOneArgThunk(page + cursor, spawnThreadTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64SleepThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64OneArgThunk(page + cursor, sleepTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVSleepThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVOneArgThunk(page + cursor, sleepTarget))
                     return false;
                 cursor += ServiceThunkSlotSize;
 
@@ -730,6 +771,96 @@ namespace OS.Kernel.Process
             return (uint)AppServiceStatus.Ok;
         }
 
+        // V3 — threads for apps.
+        //
+        // The app runs mapped into the kernel's address space and on the
+        // kernel's scheduler, so "spawn a thread" is the scheduler's own Spawn
+        // with the app's entry pointer. No new machinery, just a door that was
+        // not there: without it an app can only do one thing at a time, and a
+        // library that keeps its input decoding on a background loop cannot run
+        // at all.
+        // The app entry is wrapped rather than spawned directly, so that a
+        // thread whose work is done ENDS instead of returning off the end of
+        // its entry point into whatever follows. The app cannot do this for
+        // itself — Scheduler.Exit is kernel-side — and without it the first app
+        // thread to finish left the machine in a state where the thread waiting
+        // on it never came back.
+        private const int PendingAppEntries = 32;
+        private static ulong[] s_appEntries = null!;
+        private static int s_appEntryHead;
+        private static int s_appEntryTail;
+
+        // Why a child could not be started, named at the point it happened.
+        //
+        // Every one of these used to be the same "device error", and the status
+        // alone could not tell reading the file apart from mapping its pages —
+        // a launcher that silently redrew its menu was the whole diagnosis.
+        // Numbers rather than strings because this is the loader: no allocation,
+        // and the step is trivially findable in this file.
+        private static AppServiceStatus FailedAtStep(uint step)
+        {
+            DebugLog.Begin(LogLevel.Warn);
+            UiText.Write("---- child failed at step ");
+            UiText.WriteUInt(step);
+            DebugLog.EndLine();
+            return AppServiceStatus.DeviceError;
+        }
+
+        private static uint SpawnThread(ulong entryAddress)
+        {
+            if (entryAddress == 0)
+                return (uint)AppServiceStatus.InvalidParameter;
+
+            const uint AppThreadStackBytes = 64 * 1024;
+
+            global::OS.Kernel.Threading.Preemption.Suppress();
+            if (s_appEntries == null) s_appEntries = new ulong[PendingAppEntries];
+            int next = (s_appEntryTail + 1) % PendingAppEntries;
+            bool full = next == s_appEntryHead;
+            if (!full)
+            {
+                s_appEntries[s_appEntryTail] = entryAddress;
+                s_appEntryTail = next;
+            }
+            global::OS.Kernel.Threading.Preemption.Allow();
+
+            if (full)
+                return (uint)AppServiceStatus.DeviceError;
+
+            if (global::OS.Kernel.Threading.Scheduler.Spawn(&AppThreadThunk, AppThreadStackBytes) != null)
+                return (uint)AppServiceStatus.Ok;
+
+            global::OS.Kernel.Threading.Preemption.Suppress();
+            s_appEntryTail = (s_appEntryTail - 1 + PendingAppEntries) % PendingAppEntries;
+            s_appEntries[s_appEntryTail] = 0;
+            global::OS.Kernel.Threading.Preemption.Allow();
+            return (uint)AppServiceStatus.DeviceError;
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void AppThreadThunk()
+        {
+            global::OS.Kernel.Threading.Preemption.Suppress();
+            ulong entryAddress = 0;
+            if (s_appEntryHead != s_appEntryTail)
+            {
+                entryAddress = s_appEntries[s_appEntryHead];
+                s_appEntries[s_appEntryHead] = 0;
+                s_appEntryHead = (s_appEntryHead + 1) % PendingAppEntries;
+            }
+            global::OS.Kernel.Threading.Preemption.Allow();
+
+            if (entryAddress != 0)
+                ((delegate* unmanaged<void>)entryAddress)();
+
+            global::OS.Kernel.Threading.Scheduler.Exit();
+        }
+
+        // Sleeping is half of what a thread is for here: a background loop that
+        // polls without sleeping is the spin we spent step157 removing.
+        private static void SleepMilliseconds(uint milliseconds)
+            => global::OS.Kernel.Threading.Scheduler.Sleep(milliseconds);
+
         private static uint TryReadKey(ulong requestAddress)
         {
             if (requestAddress == 0)
@@ -947,6 +1078,8 @@ namespace OS.Kernel.Process
                 appAbiVersion = AppServiceTable.AbiVersionV1;
             else if (rawAppAbi == AppServiceTable.AbiVersionV2)
                 appAbiVersion = AppServiceTable.AbiVersionV2;
+            else if (rawAppAbi == AppServiceTable.AbiVersionV3)
+                appAbiVersion = AppServiceTable.AbiVersionV3;
             else
                 return false;
 
@@ -1112,7 +1245,7 @@ namespace OS.Kernel.Process
                     MemoryBlock image = new MemoryBlock(imagePointer, imageSize);
                     if (!image.IsValid)
                     {
-                        result = AppServiceStatus.DeviceError;
+                        result = FailedAtStep(1);
                         break;
                     }
 
@@ -1124,7 +1257,7 @@ namespace OS.Kernel.Process
                     {
                         if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out loadedImage, out _))
                         {
-                            result = AppServiceStatus.DeviceError;
+                            result = FailedAtStep(2);
                             break;
                         }
                     }
@@ -1144,7 +1277,7 @@ namespace OS.Kernel.Process
 
                         if (!ElfLoader.TryLoad(ref parseResult, out loadedImage, out _))
                         {
-                            result = AppServiceStatus.DeviceError;
+                            result = FailedAtStep(3);
                             break;
                         }
                     }
@@ -1153,7 +1286,7 @@ namespace OS.Kernel.Process
 
                     if (!ProcessImageBuilder.TryBuild(ref loadedImage, 0, serviceAbi, appAbiVersion, ProcessImageBuilder.NestedStackMappedTop, out processImage))
                     {
-                        result = AppServiceStatus.DeviceError;
+                        result = FailedAtStep(4);
                         break;
                     }
 
@@ -1161,32 +1294,32 @@ namespace OS.Kernel.Process
 
                     if (!TryValidateProcess(ref processImage, appAbiVersion))
                     {
-                        result = AppServiceStatus.DeviceError;
+                        result = FailedAtStep(5);
                         break;
                     }
 
                     if (!JumpStub.EnsureInitialized())
                     {
-                        result = AppServiceStatus.DeviceError;
+                        result = FailedAtStep(6);
                         break;
                     }
 
                     if (!TrySyncKernelLowMappings(ref processImage))
                     {
-                        result = AppServiceStatus.DeviceError;
+                        result = FailedAtStep(7);
                         break;
                     }
 
                     if (!Pager.TryGetPagerCr3(out ulong pagerCr3))
                     {
-                        result = AppServiceStatus.DeviceError;
+                        result = FailedAtStep(8);
                         break;
                     }
 
                     pagerCr3 &= 0x000FFFFFFFFFF000UL;
                     if (pagerCr3 == 0)
                     {
-                        result = AppServiceStatus.DeviceError;
+                        result = FailedAtStep(9);
                         break;
                     }
 
@@ -1198,7 +1331,7 @@ namespace OS.Kernel.Process
                         pagerCr3,
                         out returnExitCode))
                     {
-                        result = AppServiceStatus.DeviceError;
+                        result = FailedAtStep(10);
                         break;
                     }
 
@@ -1222,7 +1355,7 @@ namespace OS.Kernel.Process
                     if (!CleanupProcessMappings(ref processImage, ref loadedImage))
                     {
                         DebugLog.Write(LogLevel.Warn, "child cleanup mappings failed");
-                        result = AppServiceStatus.DeviceError;
+                        result = FailedAtStep(11);
                     }
                 }
                 else if (imageLoaded)
@@ -1244,6 +1377,17 @@ namespace OS.Kernel.Process
                     // end-of-child marker; this was redundant noise.
                     // else { DebugLog.Write(LogLevel.Info, "parent context restored"); }
                 }
+            }
+
+            // A child that never started said nothing at all: the launcher just
+            // redrew its menu, and "the app is broken" and "the loader refused"
+            // looked identical. Name the status on the way out.
+            if (result != AppServiceStatus.Ok)
+            {
+                DebugLog.Begin(LogLevel.Warn);
+                UiText.Write("---- child failed: status=");
+                UiText.WriteUInt((uint)result);
+                DebugLog.EndLine();
             }
 
             return result;

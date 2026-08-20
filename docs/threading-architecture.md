@@ -368,6 +368,12 @@ suspends), APIC-IPI (requires SMP), or some hybrid. Out of scope here.
 
 ## 9. ThreadPool / Task / async-await
 
+> **Область:** этот раздел — про hosted-ярус (стоковый CoreCLR со своим
+> ThreadPool). У AOT-ярусов с 2026-08 своя, куда более скромная реализация:
+> задача = поток плюс ожидание, пула и очереди продолжений нет, контекст
+> синхронизации не захватывается. См. `nativeaot-nostd-kernel-limits.md` §5.
+
+
 **Fixed N=4 worker threads** at Phase E. Grow-bound to 8 only if a
 specific scenario demonstrates need (Roslyn deadlock on N=4 not yet
 observed; PowerShell minimal needs measurement). `Environment.Processor-

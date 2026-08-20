@@ -49,7 +49,10 @@ namespace OS.Kernel.Elf
             ExternalElfApp peHello = default;
             peHello.Name = ElfAppContract.PeHelloAppName;
             peHello.Path = ElfAppContract.PeHelloAppPath;
-            peHello.AppAbiVersion = ProcessStartupBlock.AbiVersionV2;
+            // Follows CurrentAbiVersion rather than naming a number: pinned to
+            // V2 it kept working after V3 landed, which hid the version
+            // mismatch that broke every app launched from the launcher.
+            peHello.AppAbiVersion = ProcessStartupBlock.CurrentAbiVersion;
             peHello.ExpectedExitCode = ElfAppContract.HelloCsExitCodeExpected;
             peHello.ValidateMarker = false;
             peHello.OptionalIfMissing = true;

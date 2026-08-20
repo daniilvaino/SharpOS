@@ -1,4 +1,4 @@
-using SharpOS.AppSdk;
+﻿using SharpOS.AppSdk;
 using System;
 using System.Collections.Generic;
 using System.Runtime;
@@ -216,6 +216,8 @@ namespace AotTests
             catch (FormatException) { which = 2; }
             Check("multi-catch select", which == 2);
 
+            CheckThreadsAndTasks();
+
             AppHost.WriteString("==== ");
             AppHost.WriteUInt(s_pass);
             AppHost.WriteString("/");
@@ -224,6 +226,62 @@ namespace AotTests
 
             // Exit code = pass count (all-green => equals total).
             return (int)s_pass;
+        }
+
+        // Threads and tasks in an app (ABI V3).
+        //
+        // Terminal.Gui keeps input decoding and the resize watch on background
+        // loops, so a task there is a thread and nothing more. Until this
+        // passes, that library cannot run here at all — an inline Task.Run
+        // would enter a loop that never returns.
+        private static volatile int s_threadRan;
+
+        private static void CheckThreadsAndTasks()
+        {
+            Check("threads available (abi v3)", SharpOS.AppSdk.AppThreads.IsAvailable);
+            if (!SharpOS.AppSdk.AppThreads.IsAvailable) return;
+
+            Check("task backend installs", SharpOS.AppSdk.TaskBackendInstaller.Install());
+
+            // The body must run somewhere else: if Task.Run were inline, the
+            // sleep below would happen before Wait was ever reached and the
+            // check would pass for the wrong reason. Sleeping inside the task
+            // and reading the flag before Wait is what tells them apart.
+            s_threadRan = 0;
+            var task = System.Threading.Tasks.Task.Run(() =>
+            {
+                SharpOS.AppSdk.AppThreads.Sleep(20);
+                s_threadRan = 1;
+            });
+
+            bool startedElsewhere = s_threadRan == 0;
+
+            // Waits the way a caller actually would. This is the shape that
+            // hung: the waiter enters Wait before the worker finishes, so it
+            // has to be woken by work completing on another thread. Polling
+            // first would let the flag be observed before Wait ever ran, and
+            // prove nothing about the case that failed.
+            task.Wait();
+
+            Check("task ran on its own thread", startedElsewhere && s_threadRan == 1);
+            Check("task wait returns", task.IsCompleted);
+
+            // async/await end to end. The stage counter only advances past 1
+            // if the state machine resumed after an await, which is the half
+            // that compiling cannot prove.
+            AsyncShape.Stage = 0;
+            var asyncTask = AsyncShape.RunAsync();
+
+            // Bounded, unlike an ordinary Wait: a state machine that never
+            // resumes leaves this task unfinished forever, and waiting properly
+            // on it takes the whole battery down with it, which is exactly how
+            // this failed the first time, and silently.
+            for (int waited = 0; waited < 500 && !asyncTask.IsCompleted; waited++)
+                AppThreads.Sleep(10);
+            Check("async method starts", AsyncShape.Stage >= 1);
+            Check("await resumes", AsyncShape.Stage >= 2);
+            Check("async runs to completion", AsyncShape.Stage == 3);
+            Check("async task completes", asyncTask.IsCompleted);
         }
 
         private static void Check(string name, bool ok)

@@ -437,6 +437,13 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Bcl\SortedList.cs" Link="src\Std\Bcl\SortedList.cs" />
     <Compile Include="..\std\no-runtime\shared\Linq\Enumerable.cs" Link="src\Std\Linq\Enumerable.cs" />
     <Compile Include="..\std\no-runtime\shared\StringRuntime.KernelHeap.cs" Link="src\Std\StringRuntime.cs" />
+
+    <!-- Tasks: the shared surface plus the kernel's thread backend. Terminal.Gui
+         needs Task.Run for background loops, and the kernel is where threads
+         already exist — so the shape gets exercised here before apps get them. -->
+    <Compile Include="..\std\no-runtime\shared\Threading.Tasks.cs" Link="src\Std\Threading.Tasks.cs" />
+    <Compile Include="..\std\no-runtime\shared\Threading.Tasks.KernelScheduler.cs" Link="src\Std\Threading.Tasks.KernelScheduler.cs" />
+    <Compile Include="..\std\no-runtime\shared\Threading.Tasks.Await.cs" Link="src\Std\Threading.Tasks.Await.cs" />
   </ItemGroup>
 
 </Project>

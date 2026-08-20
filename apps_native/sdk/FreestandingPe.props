@@ -1,4 +1,4 @@
-<Project>
+﻿<Project>
 
   <!-- Shared freestanding win-x64 PE recipe for SharpOS native apps (step138).
        Imported by each app csproj (HelloSharpFs, FetchApp, AotTests, ...). Turns
@@ -45,6 +45,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)AppStartupBlock.cs"      Link="sdk\AppStartupBlock.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppServiceTable.cs"      Link="sdk\AppServiceTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppRuntime.cs"           Link="sdk\AppRuntime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppThreads.cs"           Link="sdk\AppThreads.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppGC.cs"                Link="sdk\AppGC.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ByRefAssignRefStub.cs" Link="sdk\ByRefAssignRefStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)InterfaceDispatchTrampoline.cs" Link="sdk\InterfaceDispatchTrampoline.cs" />
@@ -154,6 +155,12 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Numerics\Vector3.cs"        Link="std\Numerics\Vector3.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Linq\Enumerable.cs"         Link="std\Linq\Enumerable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
+    <!-- Tasks: shared surface plus the app's thread backend (service table V3).
+         Terminal.Gui keeps input decoding and the resize watch on background
+         loops, so without threads it does not run slowly — it does not run. -->
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Tasks.cs" Link="std\Threading.Tasks.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Tasks.AppServices.cs" Link="std\Threading.Tasks.AppServices.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Tasks.Await.cs" Link="std\Threading.Tasks.Await.cs" />
   </ItemGroup>
 
   <!-- Freestanding CRT stubs (__security_cookie via CoffStub.Generator,

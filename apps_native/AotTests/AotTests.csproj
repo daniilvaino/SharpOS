@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IlcSystemModule>AotTests</IlcSystemModule>
   </PropertyGroup>
@@ -10,5 +10,6 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="AsyncShape.cs" />
   </ItemGroup>
 </Project>

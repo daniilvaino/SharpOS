@@ -132,3 +132,4 @@ boot.txt
 
 # Машинные срезы прогонов от tools/probe_report.ps1 — выход, не исходник.
 OS/.qemu/reports/
+sharpos.map

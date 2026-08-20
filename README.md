@@ -114,8 +114,8 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | Boxing / unboxing | ✅ | ✅ | ✅ | int/long/struct/Nullable<T>-as-underlying - все работают; `[BoxedEnumerator]` thunks для интерфейсных enumerator'ов на value-типах |
 | `[ModuleInitializer]` | ✅ | ✅ | ✅ |  |
 | `yield return` (Roslyn state machine) | ✅ | ✅ | ✅ | |
-| `async/await` | ⏳ | ⏳ | ⏳ | |
-| `Task.Run`, `Task.Delay` | ⏳ | ⏳ | ✅ | |
+| `async/await` | ✅ | ✅ | ✅ | свои `TaskAwaiter` / `AsyncTaskMethodBuilder` в std. Продолжение исполняется на потоке, завершившем ожидание: контекст синхронизации не захватывается |
+| `Task.Run`, `Task.Delay` | ✅ | ✅ | ✅ | не планировщик: задача = поток плюс ожидание, пула потоков нет. В приложениях потоки через таблицу служб (ABI v3) |
 | `ThreadPool.QueueUserWorkItem` | ⏳ | ⏳ | ✅ | |
 | Array covariance / `stelem.ref` | 🟡 | 🟡 | ✅ | в AOT `RhpStelemRef` **skipped все checks** (null/bounds/covariance) - wrong-type store даёт silent UB вместо `ArrayTypeMismatchException`. Монотипичный stelem работает корректно |
 | Generic sharing (USG - `__Canon`) | ✅ | ✅ | ✅ |  |
@@ -136,11 +136,11 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | **Generic `as T` / `(T)x` с `where T : class`** | 🟡 | 🟡 | ✅ | AOT: `RhTypeCast_CheckCastAny`/`IsInstanceOfAny` есть в std на обоих тирах; вариантный интерфейс-каст не резолвится (limits §2), выделенной пробы нет |
 | **Runtime x64 assembled (Iced lib)** | ✅ | 🚫 | 🚫 | пока что `NO_EVEX`, без managed-delegate путей; Guest tiers - by design, доступно после инициализации std |
 | **Compile time x64 assembled (Iced lib)** | ✅ | 🚫 | 🚫 | пока что `NO_EVEX`, без managed-delegate путей; Guest tiers - by design |
-| `System.Threading.Thread.Start()` | ✅ | ⏳ | ✅ | |
+| `System.Threading.Thread.Start()` | ✅ | 🟡 | ✅ | в приложениях самого `Thread` нет; поток заводится через `AppThreads.Spawn` / `Task.Run` |
 | `Interlocked.CompareExchange` (real atomic) | ✅ | 🟡 | ✅ | `System.Threading.Interlocked` это fake-stub из std (read-compare-write без `LOCK` prefix, корректно только для single-thread); ядро же зовёт `X64Asm.CmpXchg64` (real LOCK CMPXCHG) напрямую через `OS.Hal`. AppSDK не expose'ит kernel atomic primitives |
-| Cooperative `Yield()` / `Sleep(ms)` | ✅ | ⏳ | ✅ | |
+| Cooperative `Yield()` / `Sleep(ms)` | ✅ | ✅ | ✅ | в приложениях через `AppThreads.Sleep` (таблица служб) |
 | `Event` / `Semaphore` / `Mutex` | ✅ | ⏳ | ✅ | |
-| Multi-thread Process | ✅  | ⏳ | ✅  | |
+| Multi-thread Process | ✅ | ✅ | ✅ | потоки приложения живут на планировщике ядра |
 | **`AssemblyLoadContext` (multiple ALCs)** | 🚫 | 🚫 | ⏳ | требует JIT |
 | File I/O (read) | ✅ | ✅ | ✅ | hosted-tier читает DLL/файлы с собственного FAT (в т.ч. post-EBS) |
 | File I/O (write) | 🟡 | 🔴 | 🔴 | FAT32: перезапись на месте + создание файла (8.3, зеркалит все FAT). Нет: удаление, рост файла/каталога, LFN |
@@ -154,13 +154,12 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | `Math.Sin` `Cos` `Exp` `Log` `Pow` (транцы) | 🟡 | 🟡 | 🟡 | AOT: managed-реализации в std (`Math.Double.cs`) - ряды с редукцией аргумента, ~1e-9, **не ulp-точные**; `Tan`/`Atan`/`Asin`/`Acos`/гиперболики - нет. Hosted: `lm_*` Taylor-приближения в форке (грубее). Порт точных алгоритмов (Cody-Waite + Remez) - в планах |
 | `Math.Floor` / `Math.Ceiling` / `Math.Truncate` / `Math.Round` | ✅ | ✅ | ✅ | AOT: managed в std через целочисленную трункацию (контракт: \|x\| < 2^63); Round - half-to-even. Hosted: битовые операции над IEEE 754 |
 | Свои аппаратные прерывания (local APIC, тик 100 Гц) | 🟡 | 🚫 | 🚫 | после снятия UEFI: старый PIC замаскирован, тик свой. Устройства опрашиваются, IO-APIC не поднят |
-| Вытеснение потоков | 🟡 | 🚫 | 🚫 | работает на одном ядре (тик → переключение), включается только вокруг проб: остальное ядро построено на кооперативности. Остановка мира для GC = подавление вытеснения. SMP нет |
+| Вытеснение потоков (тик → переключение) | 🟡 | ⏳ | 🟡 | одно ядро, SMP нет. Включается вокруг проб: остальное ядро кооперативное. В hosted вытесняется и JIT-код (подмена адреса возврата в рантайме отключена, замки настоящие). Остановка мира для GC = подавление вытеснения. В приложениях не проверялось |
 | GC (mark-sweep, precise stack scan) | ✅ | ✅ | ✅ | hosted - свой GC через PAL; PE-app несёт **свой** сборщик (своя куча, своя разметка), у ядра одалживает только обход корней стека |
-| Многомерные массивы (`int[,]`) | ✅ | ✅ | ✅ | ненулевые нижние границы и ранг 1 (`int[*]`) не поддержаны |
+| Многомерные массивы (`int[,]`) | 🟡 | 🟡 | ✅ | ненулевые нижние границы и ранг 1 (`int[*]`) не поддержаны |
 | Process exit code propagation | ✅ | ✅ | ⏳ | |
 | **Per-process MMU isolation** | 🚫 | 🚫 | 🚫 | unikernel design |
 | **Parallel execution at same VA** | 🚫 | 🚫 | 🟡 | single ALC (threads) ✅; multi-ALC ⏳ |
-| Preemptive scheduling | ⏳ | ⏳ | ⏳ | IRQ-driven HPET wake |
 | SMP / multi-core | ⏳ | ⏳ | ⏳ | AP startup + per-CPU TEB + memory barriers |
 
 Реестр того, что сломано, висит или ждёт hardening, вынесен отдельно:

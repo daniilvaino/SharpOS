@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>TuiProbe</IlcSystemModule>
+  </PropertyGroup>
+
+  <!-- Same freestanding win-x64 PE recipe every AOT app uses, so whatever this
+       finds transfers to the real launcher unchanged. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+
+    <!-- Our replacement for NStack, and the fixed wcwidth port it delegates to.
+         Both ours; see vendor/Terminal.Gui/SharpOS/NStackShim.cs for why the
+         dependency is not vendored. -->
+    <Compile Include="..\..\vendor\Terminal.Gui\SharpOS\NStackShim.cs" />
+    <Compile Include="..\..\vendor\XtermSharp\XtermSharp\CharWidth.cs" />
+
+    <!-- Library core plus the one driver we need. NetDriver speaks through
+         System.Console, which is the surface PSReadLine already exercises;
+         WindowsDriver, CursesDriver and FakeDriver are excluded rather than
+         ported.
+
+         Core\Graphs and Core\Trees are excluded too: despite living under Core
+         they are widget support and reference GraphView / TreeView from Views,
+         so the "core" does not stand on its own. Views come later — the question
+         right now is what the core alone needs from our std. -->
+    <Compile Include="..\..\vendor\Terminal.Gui\Terminal.Gui\Core\**\*.cs"
+             Exclude="..\..\vendor\Terminal.Gui\Terminal.Gui\Core\Graphs\**\*.cs;..\..\vendor\Terminal.Gui\Terminal.Gui\Core\Trees\**\*.cs" />
+    <Compile Include="..\..\vendor\Terminal.Gui\Terminal.Gui\Types\**\*.cs" />
+    <Compile Include="..\..\vendor\Terminal.Gui\Terminal.Gui\ConsoleDrivers\NetDriver.cs" />
+  </ItemGroup>
+</Project>

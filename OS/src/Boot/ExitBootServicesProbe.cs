@@ -283,6 +283,16 @@ namespace OS.Boot
                 // wait its turn behind the very command it exists to interrupt.
                 OS.Kernel.Input.InputPump.Start();
 
+                // Tasks, and here rather than among the early thread probes for
+                // a reason found the hard way: a task is a thread plus a wait,
+                // and waiting means sleeping. Before the timer interrupt exists,
+                // a sleeping thread can only be woken by another thread yielding
+                // — so the moment every thread sleeps at once, the machine parks
+                // forever. That is exactly what a waiter plus a worker do.
+                OS.Kernel.Threading.TaskBackendInstaller.Install();
+                if (OS.Kernel.Diagnostics.Probes.Tasks)
+                    OS.Kernel.Threading.TaskProbe.Run();
+
                 BootSequence.RunCoreClrSession(Platform.GetBootInfo());
 
                 OS.Kernel.Threading.Preemption.Disable();
