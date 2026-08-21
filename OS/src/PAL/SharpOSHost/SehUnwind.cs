@@ -81,6 +81,10 @@ namespace OS.PAL.SharpOSHost
             if (!CoffRuntimeFunctionTable.IsInitialized)
                 return null;
 
+            // A provisional answer, replaced below by the base of the image the
+            // lookup actually landed in. It is only ever right by luck: the
+            // global base belongs to the kernel, and an app's frames live in
+            // their own image.
             byte* imageBase = CoffRuntimeFunctionTable.ImageBase;
             if (pImageBase != null) *pImageBase = (ulong)imageBase;
 
@@ -114,6 +118,19 @@ namespace OS.PAL.SharpOSHost
                 //    Release fork (Debug had different code shape due to ICF).
                 return ImageTextGapLookup(controlPc, pImageBase);
             }
+
+            // The base of the image the method was found in, not the global
+            // one. Everything the caller computes from the returned entry —
+            // the unwind-info address above all — is an RVA against THIS base.
+            //
+            // Getting this wrong is not a near miss. An app's image sits at
+            // 0x100000000 while the global base is the kernel's, so
+            // base + UnwindInfoAddress landed in the app's stack and the
+            // unwinder read whatever was there as unwind codes; the giveaway
+            // was "unknown UNWIND_CODE op=15", an opcode that does not exist.
+            // Harmless while one image was registered, wrong from the moment
+            // apps brought their own (step140).
+            if (pImageBase != null) *pImageBase = (ulong)info.ImageBase;
 
             // CoffMethodLookup returns CurrentRuntimeFunction (which may be
             // a funclet inside the method). For Windows ABI, that IS what

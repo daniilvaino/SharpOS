@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using OS.Hal;
 
 namespace OS.Boot.EH
@@ -16,10 +16,14 @@ namespace OS.Boot.EH
     //   UWOP_PUSH_NONVOL (0)  — pop saved nonvol from current SP
     //   UWOP_ALLOC_LARGE (1)  — add SP, imm16*8 (opInfo=0) or imm32 (opInfo=1)
     //   UWOP_ALLOC_SMALL (2)  — add SP, (opInfo+1)*8
+    //   UWOP_SAVE_NONVOL (4)  — register at frameBase + offset*8, SP unchanged
+    //   UWOP_SAVE_NONVOL_FAR (5) — same, 32-bit offset
+    //   UWOP_SAVE_XMM128 (8)  — XMM6-15 parked in the frame; slots skipped
+    //   UWOP_SAVE_XMM128_FAR (9) — same, 32-bit offset
     //   UWOP_SET_FPREG   (3)  — SP = *pRbp - FrameOffset*16  (FrameOffset
     //                            stored in UNWIND_INFO header byte 3)
     //
-    // Unsupported opcodes (UWOP_SAVE_NONVOL, _SAVE_XMM128, _PUSH_MACHFRAME,
+    // Unsupported opcodes (_PUSH_MACHFRAME,
     // their FAR variants) — log + return iterator-exhausted. Empirically
     // ILC doesn't emit them for our codebase; will extend if seen.
     //
@@ -63,6 +67,10 @@ namespace OS.Boot.EH
         private const int UWOP_ALLOC_LARGE = 1;
         private const int UWOP_ALLOC_SMALL = 2;
         private const int UWOP_SET_FPREG = 3;
+        private const int UWOP_SAVE_NONVOL = 4;
+        private const int UWOP_SAVE_NONVOL_FAR = 5;
+        private const int UWOP_SAVE_XMM128 = 8;
+        private const int UWOP_SAVE_XMM128_FAR = 9;
 
         // Initialise iterator from a captured PAL_LIMITED_CONTEXT.
         // Register-pointer table starts pointing INTO the PAL — caller
@@ -111,6 +119,12 @@ namespace OS.Boot.EH
             // FrameRegister low 4 bits — we only support rbp (5) or none (0)
 
             ushort* codes = (ushort*)(unwindInfo + 4);
+
+            // Frame base: where offsets in the SAVE_* codes are measured from.
+            // With no frame register the ABI defines it as RSP once the prologue
+            // has finished, which is the SP we are starting from — the codes
+            // that move SP have not been applied yet.
+            ulong frameBase = iter->RegDisplay.SP;
 
             // Apply unwind codes forward (which reverses the prolog).
             int i = 0;
@@ -170,6 +184,34 @@ namespace OS.Boot.EH
                         ulong rbpVal = *iter->RegDisplay.pRbp;
                         iter->RegDisplay.SP = rbpVal - (ulong)(frameOffsetUnits * 16);
                         i += 1;
+                        break;
+
+                    case UWOP_SAVE_NONVOL:
+                        // Register parked at frameBase + offset*8, SP untouched.
+                        // The pointer matters: a catch restores callee-saved
+                        // registers through it, and a frame that saved RBX this
+                        // way rather than by pushing it would otherwise hand the
+                        // handler a stale value.
+                        UpdateRegPtr(iter, opInfo, (ulong*)(frameBase + codes[i + 1] * 8u));
+                        i += 2;
+                        break;
+
+                    case UWOP_SAVE_NONVOL_FAR:
+                        UpdateRegPtr(iter, opInfo,
+                            (ulong*)(frameBase + (codes[i + 1] | ((uint)codes[i + 2] << 16))));
+                        i += 3;
+                        break;
+
+                    case UWOP_SAVE_XMM128:
+                        // XMM6-XMM15 are callee-saved on Win64, so vector code
+                        // parks them in the frame. Nothing here tracks XMM, and
+                        // the walk does not need them: skip the slots and leave
+                        // SP alone. Appeared the moment SIMD entered the image.
+                        i += 2;
+                        break;
+
+                    case UWOP_SAVE_XMM128_FAR:
+                        i += 3;
                         break;
 
                     default:

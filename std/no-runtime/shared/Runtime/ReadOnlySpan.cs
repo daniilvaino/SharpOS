@@ -1,4 +1,4 @@
-// System.ReadOnlySpan<T> — ported from dotnet/runtime:
+﻿// System.ReadOnlySpan<T> — ported from dotnet/runtime:
 //   src/libraries/System.Private.CoreLib/src/System/ReadOnlySpan.cs
 //
 // Cuts mirror Span<T> — see that file's header for full list.
@@ -158,7 +158,41 @@ namespace System
             left._length == right._length &&
             Unsafe.AreSame<T>(ref left._reference, ref right._reference);
 
-        public override string ToString() => null;
+        /// <summary>
+        /// For a span of characters, the characters themselves; for anything
+        /// else, a description.
+        /// </summary>
+        /// <remarks>
+        /// This used to return null, which is how a manifest parsed correctly
+        /// and still came back without a name: every consumer that turns a span
+        /// into a string calls ToString, gets null, and carries on as if the
+        /// value had simply been absent. Returning null from ToString breaks
+        /// object's contract, and the failure lands far from here.
+        ///
+        /// Element type is told by size rather than by typeof, which this
+        /// environment has no support for. A span of ushort or short therefore
+        /// renders as text where the BCL would print its type name — a
+        /// debugging string either way, and the wrong side of the trade would
+        /// be silently losing real text.
+        /// </remarks>
+        public override string ToString()
+        {
+            if (Unsafe.SizeOf<T>() != sizeof(char))
+                return "System.ReadOnlySpan<T>[" + _length.ToString() + "]";
+
+            if (_length == 0)
+                return string.Empty;
+
+            string result = string.FastAllocateString(_length);
+            ref char destination = ref result.GetRawStringData();
+            ref char source = ref Unsafe.As<T, char>(ref Unsafe.AsRef(in _reference));
+
+            for (int i = 0; i < _length; i++)
+                Unsafe.Add(ref destination, i) = Unsafe.Add(ref source, i);
+
+            return result;
+        }
+
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ReadOnlySpan<T> Slice(int start)

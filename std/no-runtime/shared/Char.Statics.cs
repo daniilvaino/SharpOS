@@ -1,4 +1,4 @@
-// char.IsLetter(c) and friends — the spelling everyone actually writes.
+﻿// char.IsLetter(c) and friends — the spelling everyone actually writes.
 //
 // The classification itself has lived in CharHelpers for a long time, reachable
 // only as CharHelpers.IsDigit(c). Its own header noted the obvious next step and
@@ -48,6 +48,25 @@ namespace System
         // Surrogates: the two halves a codepoint above 0xFFFF is stored as in a
         // UTF-16 string. Anything walking text by index has to know about them,
         // or it will hand back half a character.
+        // .NET 7 additions. Inclusive at both ends, and the ASCII ones answer
+        // false for everything above 0x7F rather than consulting Unicode — the
+        // BCL definitions, verbatim in behaviour.
+        public static bool IsBetween(char c, char minInclusive, char maxInclusive)
+            => (uint)(c - minInclusive) <= (uint)(maxInclusive - minInclusive);
+
+        public static bool IsAsciiDigit(char c) => IsBetween(c, '0', '9');
+
+        public static bool IsAsciiLetter(char c)
+            => IsBetween((char)(c | 0x20), 'a', 'z');
+
+        public static bool IsAsciiLetterOrDigit(char c)
+            => IsAsciiLetter(c) || IsAsciiDigit(c);
+
+        public static bool IsAsciiHexDigit(char c)
+            => IsAsciiDigit(c) || IsBetween((char)(c | 0x20), 'a', 'f');
+
+        public static bool IsAscii(char c) => c <= 0x7F;
+
         public static bool IsHighSurrogate(char c) => c >= 0xD800 && c <= 0xDBFF;
 
         public static bool IsLowSurrogate(char c) => c >= 0xDC00 && c <= 0xDFFF;

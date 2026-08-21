@@ -16,9 +16,9 @@ namespace System.Diagnostics
 
     public class ProcessModule
     {
-        // Apps are staged to \EFI\BOOT (run_build.ps1), so the exe-directory
-        // idiom (Path.GetDirectoryName(...FileName)) resolves to "\EFI\BOOT" —
-        // where the WADs/configs sit next to the .EXEs.
-        public string FileName => "\\EFI\\BOOT\\APP.EXE";
+        // Apps are staged to \apps (run_build.ps1), so the exe-directory idiom
+        // (Path.GetDirectoryName(...FileName)) resolves to "\apps" — where the
+        // WADs/configs sit next to the .EXEs.
+        public string FileName => "\\apps\\APP.EXE";
     }
 }

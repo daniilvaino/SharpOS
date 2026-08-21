@@ -140,52 +140,7 @@ function Resolve-OptionalPath {
     return $null
 }
 
-function Write-U16 {
-    param([byte[]]$Buffer, [int]$Offset, [uint16]$Value)
-    $Buffer[$Offset + 0] = [byte]($Value -band 0xFF)
-    $Buffer[$Offset + 1] = [byte](($Value -shr 8) -band 0xFF)
-}
 
-function Write-U32 {
-    param([byte[]]$Buffer, [int]$Offset, [uint32]$Value)
-    $Buffer[$Offset + 0] = [byte]($Value -band 0xFF)
-    $Buffer[$Offset + 1] = [byte](($Value -shr 8) -band 0xFF)
-    $Buffer[$Offset + 2] = [byte](($Value -shr 16) -band 0xFF)
-    $Buffer[$Offset + 3] = [byte](($Value -shr 24) -band 0xFF)
-}
-
-function Write-U64 {
-    param([byte[]]$Buffer, [int]$Offset, [uint64]$Value)
-    Write-U32 -Buffer $Buffer -Offset $Offset -Value ([uint32]($Value -band 0xFFFFFFFF))
-    Write-U32 -Buffer $Buffer -Offset ($Offset + 4) -Value ([uint32](($Value -shr 32) -band 0xFFFFFFFF))
-}
-
-function Write-Bytes {
-    param([byte[]]$Buffer, [int]$Offset, [byte[]]$Values)
-    for ($i = 0; $i -lt $Values.Length; $i++) {
-        $Buffer[$Offset + $i] = $Values[$i]
-    }
-}
-
-function New-AppAbiManifest {
-    param(
-        [uint16]$AppAbiVersion,
-        [uint16]$ServiceAbi,
-        [uint32]$Flags = 0
-    )
-
-    [byte[]]$bytes = New-Object byte[] 16
-    $bytes[0] = [byte][char]'S'
-    $bytes[1] = [byte][char]'A'
-    $bytes[2] = [byte][char]'B'
-    $bytes[3] = [byte][char]'I'
-    Write-U16 -Buffer $bytes -Offset 4 -Value 1
-    Write-U16 -Buffer $bytes -Offset 6 -Value $AppAbiVersion
-    Write-U16 -Buffer $bytes -Offset 8 -Value $ServiceAbi
-    Write-U16 -Buffer $bytes -Offset 10 -Value 0
-    Write-U32 -Buffer $bytes -Offset 12 -Value $Flags
-    return $bytes
-}
 
 $repoRoot = Split-Path -Parent $PSCommandPath
 $efiProjectDir = Join-Path $repoRoot "OS"
@@ -324,6 +279,13 @@ if (-not $builtEfi -or -not (Test-Path -LiteralPath $builtEfi)) {
 
 $espBootDir = Join-Path $qemuWorkDir "esp\EFI\BOOT"
 New-Item -ItemType Directory -Force -Path $espBootDir | Out-Null
+
+# Applications and the data they open live in \apps, not beside the
+# firmware entry point. \EFI\BOOT is where UEFI looks for BOOTX64.EFI, and
+# nothing else belongs there — a launcher listing that folder was offering
+# the bootloader as if it were something to run.
+$espAppsDir = Join-Path $qemuWorkDir "esp\apps"
+New-Item -ItemType Directory -Force -Path $espAppsDir | Out-Null
 $bootx64 = Join-Path $espBootDir "BOOTX64.EFI"
 Copy-Item -LiteralPath $builtEfi -Destination $bootx64 -Force
 
@@ -546,9 +508,15 @@ foreach ($staleElf in @("HELLO.ELF", "ABIINFO.ELF", "MARKER.ELF", "HELLOCS.ELF",
 }
 
 # step137/138: freestanding win-x64 PE apps (built by build_launcher.ps1 /
-# build_fetch.ps1 / build_aottests.ps1). Stage each to ESP as <NAME>.EXE + .abi (AbiV3,
-# ServiceAbi 0 = WindowsX64); the kernel dispatches on the MZ magic to PeLoader.
-# Absent build output just skips (that app won't appear in the launcher).
+# build_fetch.ps1 / build_aottests.ps1). Stage each to ESP as <NAME>.EXE; the
+# kernel dispatches on the MZ magic to PeLoader. Absent build output just skips
+# (that app won't appear in the launcher).
+#
+# The .abi sidecar is gone: an app's ABI record now travels inside the file, in
+# its own manifest resource (apps_native/sdk/SharpAppManifest.props). Two files
+# could be separated by a copy, and a missing one meant a silent fall back to
+# V1 — the failure looked like the app misbehaving rather than like a file left
+# behind. Stale sidecars from earlier builds are deleted below.
 $peApps = @(
     @{ Src = "apps_native\FetchApp\bin\Release\out-win-x64\FetchApp.exe";         Dest = "FETCH.EXE" },
     @{ Src = "apps_native\AotTests\bin\Release\out-win-x64\AotTests.exe";         Dest = "AOTTESTS.EXE" },
@@ -559,17 +527,17 @@ $peApps = @(
 )
 foreach ($peApp in $peApps) {
     $peSrc = Join-Path $repoRoot $peApp.Src
-    $peDst = Join-Path $espBootDir $peApp.Dest
+    $peDst = Join-Path $espAppsDir $peApp.Dest
+
+    # Anything left where apps used to be staged: remove it, or the launcher
+    # would list two copies and run whichever it found first.
+    $peStale = Join-Path $espBootDir $peApp.Dest
+    if (Test-Path -LiteralPath $peStale) { Remove-Item -LiteralPath $peStale -Force }
     if (Test-Path -LiteralPath $peSrc) {
         Copy-Item -LiteralPath $peSrc -Destination $peDst -Force
-        # AbiV3: thread creation, sleep, and which thread is running. The
-        # version stays at 3 while the table grows at the end — apps and kernel
-        # are built together, and a service is detected by its address being
-        # non-zero rather than by a number that would change every time.
-        [System.IO.File]::WriteAllBytes("$peDst.abi", (New-AppAbiManifest -AppAbiVersion 3 -ServiceAbi 0))
         Write-Host "Prepared app PE: $peDst"
     }
-    elseif (Test-Path -LiteralPath "$peDst.abi") {
+    if (Test-Path -LiteralPath "$peDst.abi") {
         Remove-Item -LiteralPath "$peDst.abi" -Force
     }
 }
@@ -582,8 +550,8 @@ foreach ($peApp in $peApps) {
 # Routed to the ESP by extension, because the extension already says what the
 # file is and asking anyone to remember a second rule is how folders get put in
 # the wrong place:
-#   *.wad -> \EFI\BOOT\<NAME>.WAD  (ManagedDoom probes there for known IWADs)
-#   *.nes -> \EFI\BOOT\GAME.NES    (the fixed name both emulators open)
+#   *.wad -> \apps\<NAME>.WAD      (ManagedDoom probes there for known IWADs)
+#   *.nes -> \apps\GAME.NES        (the fixed name both emulators open)
 #
 # One cartridge is staged, the first by name, because the apps have no way to
 # be told which to load yet. That is the argument-passing work; when it lands,
@@ -591,14 +559,14 @@ foreach ($peApp in $peApps) {
 $payloadDir = Join-Path $repoRoot "payloads"
 if (Test-Path -LiteralPath $payloadDir) {
     foreach ($wad in Get-ChildItem -LiteralPath $payloadDir -Filter "*.wad") {
-        $wadDst = Join-Path $espBootDir $wad.Name.ToUpperInvariant()
+        $wadDst = Join-Path $espAppsDir $wad.Name.ToUpperInvariant()
         Copy-Item -LiteralPath $wad.FullName -Destination $wadDst -Force
         Write-Host "Prepared IWAD: $wadDst"
     }
 
     $roms = @(Get-ChildItem -LiteralPath $payloadDir -Filter "*.nes" | Sort-Object Name)
     if ($roms.Count -gt 0) {
-        Copy-Item -LiteralPath $roms[0].FullName -Destination (Join-Path $espBootDir "GAME.NES") -Force
+        Copy-Item -LiteralPath $roms[0].FullName -Destination (Join-Path $espAppsDir "GAME.NES") -Force
         Write-Host "Prepared cartridge: GAME.NES ($($roms[0].Name))"
         # Say what was left behind rather than staging it silently: "I dropped
         # the ROM in and got the other game" is otherwise a mystery.
@@ -607,6 +575,15 @@ if (Test-Path -LiteralPath $payloadDir) {
         }
     }
 }
+
+# Game data from earlier builds, back when applications were staged beside the
+# firmware entry point. Left there it would be dead weight on the image, and the
+# kind that reads as "the WAD is on the disk" while the app looks elsewhere.
+foreach ($stalePayload in @(Get-ChildItem -LiteralPath $espBootDir -Filter "*.WAD" -ErrorAction SilentlyContinue)) {
+    Remove-Item -LiteralPath $stalePayload.FullName -Force
+}
+$staleRom = Join-Path $espBootDir "GAME.NES"
+if (Test-Path -LiteralPath $staleRom) { Remove-Item -LiteralPath $staleRom -Force }
 
 # PowerShell distribution. Staged from payloads\pwsh\<dist>\ rather than
 # copied by hand once, because which build is on the image decides whether its

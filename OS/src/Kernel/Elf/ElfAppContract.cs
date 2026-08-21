@@ -29,7 +29,7 @@
         // the process model keeps one suspended context, so anything it starts
         // would otherwise be refused.
         public const string PeLauncherAppName = "LAUNCHER.EXE";
-        public const string PeLauncherAppPath = "\\EFI\\BOOT\\LAUNCHER.EXE";
+        public const string PeLauncherAppPath = "\\apps\\LAUNCHER.EXE";
 
         // It exits cleanly when the user leaves it; there is no test value to
         // check the way HELLOCS had one.

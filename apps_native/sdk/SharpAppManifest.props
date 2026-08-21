@@ -1,0 +1,76 @@
+﻿<Project>
+
+  <!--
+    The application manifest, generated per app.
+
+    Every PE the SDK links already carries one in .rsrc: the stock XML naming
+    itself "MyApplication.app" and asking Windows for a UAC level, neither of
+    which means anything here. That is the file's manifest, so it is where the
+    app's identity belongs rather than beside it in a sidecar that copying can
+    lose.
+
+    Generated instead of checked in because the values are per app: a single
+    shared file would give every app one name, which is the placeholder problem
+    again with our name on it.
+  -->
+
+  <PropertyGroup>
+    <!-- Bumped when the SHAPE of the record changes, not when a field is added. -->
+    <SharpAppManifestSchema Condition="'$(SharpAppManifestSchema)' == ''">1</SharpAppManifestSchema>
+
+    <!-- ABI the app was built against; the kernel refuses a mismatch. -->
+    <SharpAppAbiVersion Condition="'$(SharpAppAbiVersion)' == ''">3</SharpAppAbiVersion>
+
+    <!-- Calling convention of the service thunks: 0 = Windows x64. -->
+    <SharpAppServiceAbi Condition="'$(SharpAppServiceAbi)' == ''">0</SharpAppServiceAbi>
+
+    <SharpAppVersion Condition="'$(SharpAppVersion)' == ''">1.0.0.0</SharpAppVersion>
+  </PropertyGroup>
+
+  <!--
+    Paths are resolved inside the target, not here: AssemblyName comes from the
+    project below this import and IntermediateOutputPath from the SDK targets
+    after it, so at evaluation time both are empty. An empty Outputs reads as
+    "already up to date" and the target silently never runs.
+  -->
+  <Target Name="GenerateSharpAppManifest" BeforeTargets="PrepareForBuild;Build;Publish">
+
+    <PropertyGroup>
+      <SharpAppDisplayName Condition="'$(SharpAppDisplayName)' == ''">$(AssemblyName)</SharpAppDisplayName>
+      <SharpAppManifestFile>$(IntermediateOutputPath)$(AssemblyName).sharpos.manifest</SharpAppManifestFile>
+      <ApplicationManifest>$(SharpAppManifestFile)</ApplicationManifest>
+    </PropertyGroup>
+
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+
+    <!--
+      The assembly/assemblyIdentity shell is kept because that is what makes
+      this a manifest to everything that reads PE files. The sharpos element is
+      ours, in our own namespace, so neither reader has to know about the other.
+    -->
+    <ItemGroup>
+      <!--
+        %3F is an escaped '?': MSBuild treats Include as a file pattern, where
+        '?' is a wildcard, and an item matching no file is dropped without a
+        word — which is exactly how the XML declaration went missing. %20 is a
+        space, because leading whitespace in Include is trimmed.
+      -->
+      <SharpAppManifestLine Include="&lt;%3Fxml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot; standalone=&quot;yes&quot;%3F&gt;" />
+      <SharpAppManifestLine Include="&lt;assembly xmlns=&quot;urn:schemas-microsoft-com:asm.v1&quot; manifestVersion=&quot;1.0&quot;&gt;" />
+      <SharpAppManifestLine Include="%20%20&lt;assemblyIdentity type=&quot;win32&quot; name=&quot;$(SharpAppDisplayName)&quot; version=&quot;$(SharpAppVersion)&quot; processorArchitecture=&quot;amd64&quot; /&gt;" />
+      <SharpAppManifestLine Include="%20%20&lt;sharpos xmlns=&quot;urn:sharpos:app.v1&quot;&gt;" />
+      <SharpAppManifestLine Include="%20%20%20%20&lt;app schema=&quot;$(SharpAppManifestSchema)&quot; abi=&quot;$(SharpAppAbiVersion)&quot; serviceAbi=&quot;$(SharpAppServiceAbi)&quot; /&gt;" />
+      <SharpAppManifestLine Include="%20%20&lt;/sharpos&gt;" />
+      <SharpAppManifestLine Include="&lt;/assembly&gt;" />
+    </ItemGroup>
+
+    <WriteLinesToFile File="$(SharpAppManifestFile)"
+                      Lines="@(SharpAppManifestLine)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true"
+                      Encoding="UTF-8" />
+
+    <Message Importance="normal" Text="SharpOS manifest: $(SharpAppManifestFile) (abi $(SharpAppAbiVersion), serviceAbi $(SharpAppServiceAbi))" />
+  </Target>
+
+</Project>

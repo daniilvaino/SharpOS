@@ -622,7 +622,12 @@ namespace System
             public MethodImplAttribute(MethodImplOptions methodImplOptions) { }
         }
 
-        [AttributeUsage(AttributeTargets.Method)]
+        // Same targets as upstream. Vector128<T> and friends carry it on the
+        // TYPE, which is how ILC knows the struct itself is a machine register
+        // rather than two ulong fields it should lay out.
+        [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct
+            | AttributeTargets.Method | AttributeTargets.Constructor | AttributeTargets.Field,
+            Inherited = false)]
         public sealed class IntrinsicAttribute : Attribute
         {
             public IntrinsicAttribute() { }

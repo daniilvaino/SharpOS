@@ -123,6 +123,14 @@ namespace OS.Hal
             return true;
         }
 
+        /// <summary>
+        /// True while the alternate screen buffer is active — that is, while
+        /// something is drawing a full-screen interface rather than printing
+        /// lines.
+        /// </summary>
+        public static bool IsAlternateScreen
+            => s_ready && s_terminal != null && s_terminal.Buffers.IsAlternateBuffer;
+
         /// <summary>Feeds one character; nothing is drawn until Flush.</summary>
         public static void Putc(char ch)
         {

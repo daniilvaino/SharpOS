@@ -26,7 +26,7 @@ namespace Launcher
 {
     internal static unsafe class AppEntry
     {
-        private const string BootDirectory = "\\EFI\\BOOT";
+        private const string BootDirectory = "\\apps";
 
         // Where the tree is rooted right now. Enter on a folder moves it; the
         // ".." row at the top moves it back.
@@ -306,6 +306,7 @@ namespace Launcher
                 case NodeKind.Up: return "parent folder";
                 case NodeKind.Directory: return "folder";
                 case NodeKind.Application: return "application";
+                case NodeKind.ManagedApplication: return "managed assembly";
                 case NodeKind.More: return "hidden entries";
                 default: return "file";
             }
@@ -332,6 +333,7 @@ namespace Launcher
                     return;
 
                 case NodeKind.Application:
+                case NodeKind.ManagedApplication:
                     Launch(node);
                     return;
 
@@ -356,11 +358,26 @@ namespace Launcher
             SetStatus("Running " + node.Name + " ...");
             Application.Refresh();
 
-            AppServiceStatus status = AppHost.TryRunApp(node.Path, out int exitCode);
+            // Step out of the way first. A child that prints lines would
+            // otherwise start writing over the interface, and what the user
+            // reads is then half its output and half our frames.
+            var driver = Application.Driver as SharpOSDriver;
+            driver?.Suspend();
 
-            // The child owned the screen while it ran and left whatever it drew
-            // behind. Nothing on OUR side changed, so the library would repaint
-            // nothing — every cell has to be declared stale by hand.
+            // Two different things behind one key. A PE is loaded into the
+            // address space and jumped to; an assembly is handed to a runtime
+            // that already exists. Neither the waiting nor the screen handling
+            // differs, so only the call does.
+            bool managed = node.Kind == NodeKind.ManagedApplication;
+
+            AppServiceStatus status = managed
+                ? AppHost.TryRunManagedApp(node.Path, out int exitCode)
+                : AppHost.TryRunApp(node.Path, out exitCode);
+
+            // Take the screen back: wipe what the child left, then declare
+            // every cell stale. Nothing on OUR side changed while it ran, so
+            // without that the library would repaint nothing.
+            driver?.Resume();
             Repaint();
 
             if (status == AppServiceStatus.Ok)
@@ -371,14 +388,25 @@ namespace Launcher
             }
             else if (status == AppServiceStatus.Unsupported)
             {
-                // Named exactly, because this is a rule rather than a failure:
-                // the kernel permits one level of nested launching, and a
-                // launcher started BY a launcher is already at it.
-                SetStatus("Nested launch refused.");
-                MessageBox.ErrorQuery("Cannot run",
-                    "The kernel allows one level of nested launching, and\n"
-                    + "this launcher was itself started by another one.\n\n"
-                    + "Replacing the old launcher removes the nesting.", "OK");
+                // Named exactly, because both of these are rules rather than
+                // failures: the kernel permits one level of nested launching,
+                // and it hosts a runtime only if it was built with one.
+                if (managed)
+                {
+                    SetStatus("No hosted runtime.");
+                    MessageBox.ErrorQuery("Cannot run",
+                        "This kernel published no hosted runtime, so a\n"
+                        + "managed assembly has nothing to run on.\n\n"
+                        + "A build with CoreCLR left out looks like this.", "OK");
+                }
+                else
+                {
+                    SetStatus("Nested launch refused.");
+                    MessageBox.ErrorQuery("Cannot run",
+                        "The kernel allows one level of nested launching, and\n"
+                        + "this launcher was itself started by another one.\n\n"
+                        + "Replacing the old launcher removes the nesting.", "OK");
+                }
             }
             else
             {

@@ -142,6 +142,16 @@ namespace AotTests
             Check("jagged array", jagged[0].Length == 1 && jagged[2].Length == 3
                                   && jagged[2][2] == 99);
 
+            // SIMD.
+            //
+            // Whether ILC turned the vector types in our std into instructions.
+            // Correctness alone cannot tell: a scalar fallback computes the same
+            // answers. IsHardwareAccelerated is the signal, and the lanes below
+            // are mixed on purpose — uniform data makes every lane agree, so a
+            // swapped lane order or a half-formed mask would read as correct.
+            Check("Vector128 accelerated", System.Runtime.Intrinsics.Vector128.IsHardwareAccelerated);
+            Check("Vector128 lane mask", SimdLaneMaskOk());
+
             // Strings.
             Check("string concat", ("a" + "b" + "c") == "abc");
             Check("string equality", "Sharp" == s);
@@ -351,6 +361,32 @@ namespace AotTests
                     s_guarded = current + 1;
                 }
             }
+        }
+
+        private static unsafe bool SimdLaneMaskOk()
+        {
+            char* text = stackalloc char[8];
+            text[0] = 'a'; text[1] = 'b'; text[2] = '<'; text[3] = 'd';
+            text[4] = 'e'; text[5] = '&'; text[6] = 'g'; text[7] = 'h';
+
+            var data = System.Runtime.CompilerServices.Unsafe
+                .ReadUnaligned<System.Runtime.Intrinsics.Vector128<ushort>>(text);
+
+            var hits = System.Runtime.Intrinsics.Vector128.Equals(
+                           data, System.Runtime.Intrinsics.Vector128.Create((ushort)'<'))
+                     | System.Runtime.Intrinsics.Vector128.Equals(
+                           data, System.Runtime.Intrinsics.Vector128.Create((ushort)'&'));
+
+            ushort* lanes = stackalloc ushort[8];
+            System.Runtime.CompilerServices.Unsafe.WriteUnaligned(lanes, hits);
+
+            uint mask = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                if (lanes[i] != 0) mask |= 1u << i;
+            }
+
+            return mask == ((1u << 2) | (1u << 5));
         }
 
         private static void Check(string name, bool ok)

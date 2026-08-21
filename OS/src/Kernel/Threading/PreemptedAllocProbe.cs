@@ -83,6 +83,7 @@ namespace OS.Kernel.Threading
 
             ulong switchesBefore = Preemption.Switches;
             ulong declinedBefore = Preemption.Declined;
+            ulong gcBefore = global::OS.Kernel.Memory.KernelGC.Collections;
             Preemption.Enable();
             Scheduler.Yield();
 
@@ -155,6 +156,16 @@ namespace OS.Kernel.Threading
             Console.WriteULong(Preemption.Declined - declinedBefore);
             Console.Write(" corrupt=");
             Console.WriteUInt(s_corruptions);
+
+            // Collections the WORKER ran, as opposed to the ones this thread
+            // asked for. Each one holds preemption off for its whole duration,
+            // so a worker that collects is a worker the timer cannot move —
+            // which shows up here as declines rather than switches.
+            ulong gcTotal = global::OS.Kernel.Memory.KernelGC.Collections - gcBefore;
+            Console.Write(" gcTotal=");
+            Console.WriteULong(gcTotal);
+            Console.Write(" gcWorker=");
+            Console.WriteULong(gcTotal >= collections ? gcTotal - collections : 0);
 
             // Both counters carry meaning here, and neither alone is enough:
             //   switches — the two threads really were interleaved;

@@ -1,0 +1,113 @@
+﻿// Copyright (c) Alexandre Mutel. All rights reserved.
+// Licensed under the BSD-Clause 2 license.
+// See license.txt file in the project root for full license information.
+//
+// SharpOS cut: the Stream overloads are gone with StreamCharProvider — they
+// need System.IO and an incremental decoder, and a manifest is already a
+// resource in memory by the time the kernel parses it. See PROVENANCE.md.
+
+using System;
+using System.Text;
+
+namespace TurboXml;
+
+/// <summary>
+/// Parsing options for the <see cref="XmlParser"/> class.
+/// </summary>
+/// <param name="Encoding">Force using this encoding when parsing a stream. By default, TurboXml will detect the encoding by following the XML specs.</param>
+public readonly record struct XmlParserOptions(Encoding? Encoding = null)
+{
+    /// <summary>
+    /// Default constructor.
+    /// </summary>
+    public XmlParserOptions() : this(null)
+    {
+    }
+
+    /// <summary>Force using this encoding when parsing a stream. By default, TurboXml will detect the encoding by following the XML specs.</summary>
+    public Encoding? Encoding { get; init; } = Encoding;
+
+    /// <summary>
+    /// Gets whether document type declarations are accepted and ignored.
+    /// </summary>
+    /// <remarks>
+    /// The default value is <see langword="false"/>, which rejects document type declarations. When <see langword="true"/>,
+    /// TurboXml skips the declaration without fetching external resources, processing DTD declarations, or expanding custom entities.
+    /// </remarks>
+    public bool IgnoreDtd { get; init; }
+}
+
+/// <summary>
+/// The TurboXML main parser. Use the static methods to parse XML from a string or a stream.
+/// </summary>
+public static class XmlParser
+{
+
+    /// <summary>
+    /// Parses the specified XML string using the specified handler.
+    /// </summary>
+    /// <typeparam name="TXmlHandler">The type of the XML handler.</typeparam>
+    /// <param name="text">The XML text to parse.</param>
+    /// <param name="handler">The handler to use to parse the XML.</param>
+    public static void Parse<TXmlHandler>(string text, TXmlHandler handler)
+        where TXmlHandler : class, IXmlReadHandler
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        var charProvider = new StringCharProvider(text);
+        using var parser = new XmlParserInternal<TXmlHandler, StringCharProvider>(ref handler, ref charProvider, default);
+        parser.Parse();
+    }
+
+    /// <summary>
+    /// Parses the specified XML string using the specified handler.
+    /// </summary>
+    /// <typeparam name="TXmlHandler">The type of the XML handler.</typeparam>
+    /// <param name="text">The XML text to parse.</param>
+    /// <param name="handler">The handler to use to parse the XML.</param>
+    public static void Parse<TXmlHandler>(string text, ref TXmlHandler handler)
+        where TXmlHandler : struct, IXmlReadHandler
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var charProvider = new StringCharProvider(text);
+        using var parser = new XmlParserInternal<TXmlHandler, StringCharProvider>(ref handler, ref charProvider, default);
+        parser.Parse();
+    }
+
+    /// <summary>
+    /// Parses the specified XML string using the specified handler and options.
+    /// </summary>
+    /// <typeparam name="TXmlHandler">The type of the XML handler.</typeparam>
+    /// <param name="text">The XML text to parse.</param>
+    /// <param name="handler">The handler to use to parse the XML.</param>
+    /// <param name="options">The options to use to parse the XML.</param>
+    public static void Parse<TXmlHandler>(string text, TXmlHandler handler, XmlParserOptions options)
+        where TXmlHandler : class, IXmlReadHandler
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        var charProvider = new StringCharProvider(text);
+        using var parser = new XmlParserInternal<TXmlHandler, StringCharProvider>(ref handler, ref charProvider, options);
+        parser.Parse();
+    }
+
+    /// <summary>
+    /// Parses the specified XML string using the specified handler and options.
+    /// </summary>
+    /// <typeparam name="TXmlHandler">The type of the XML handler.</typeparam>
+    /// <param name="text">The XML text to parse.</param>
+    /// <param name="handler">The handler to use to parse the XML.</param>
+    /// <param name="options">The options to use to parse the XML.</param>
+    public static void Parse<TXmlHandler>(string text, ref TXmlHandler handler, XmlParserOptions options)
+        where TXmlHandler : struct, IXmlReadHandler
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var charProvider = new StringCharProvider(text);
+        using var parser = new XmlParserInternal<TXmlHandler, StringCharProvider>(ref handler, ref charProvider, options);
+        parser.Parse();
+    }
+}

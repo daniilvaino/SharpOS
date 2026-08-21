@@ -11,7 +11,9 @@ namespace OS.Kernel.Elf
     internal static unsafe class ElfValidation
     {
         private const ulong PageSize = X64PageTable.PageSize;
-        private const string BootDirectoryPath = "\\EFI\\BOOT";
+        // Where applications live. \EFI\BOOT holds the firmware entry point and
+        // nothing else worth listing.
+        private const string AppDirectoryPath = "\\apps";
         private const ulong KernelLowSyncStart = 0x00100000UL;
         private const ulong KernelLowSyncEndExclusive = 0x20000000UL;
 
@@ -38,7 +40,7 @@ namespace OS.Kernel.Elf
                 OS.Kernel.Panic.Fail("fs init failed — no filesystem, nothing to run");
 
             DebugLog.Write(LogLevel.Info, "fs init ok");
-            FileDiagnostics.DumpDirectory(BootDirectoryPath);
+            FileDiagnostics.DumpDirectory(AppDirectoryPath);
 
             // The launcher, started directly by the kernel.
             //

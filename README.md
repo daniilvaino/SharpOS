@@ -148,6 +148,8 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | Console keyboard input | ✅ | ✅ | ⏳ | |
 | **Direct hardware (CR3 / PCI / MMIO / IDT)** | ✅ | 🚫 | 🚫 | guest tiers - design boundary |
 | AVX / AVX-512 | 🔴 | 🔴 | 🔴 | XCR0 заперт на x87\|SSE |
+| `Vector128<T>` (SSE через `System.Runtime.Intrinsics`) | ✅ | ✅ | ✅ | step165: порт из CoreLib в наш std, ILC подменяет машинными инструкциями. `Vector256` объявлен, ускорение выключено (см. строку выше) |
+| Разбор XML | ✅ | ⏳ | ✅ | step165: вендорный TurboXml (SAX, без аллокаций). В ядре читает манифест приложения из ресурсов PE |
 | `Math.Abs` (int/long/short/sbyte) | ✅ | ✅ | ✅ | integer-only в std/no-runtime |
 | `Math.Sqrt` / `Math.Abs` (double, SSE intrinsics) | ✅ | ✅ | ✅ | |
 | `Math.Sin` `Cos` `Exp` `Log` `Pow` (транцы) | 🟡 | 🟡 | 🟡 | AOT: managed-реализации в std (`Math.Double.cs`) - ряды с редукцией аргумента, ~1e-9, **не ulp-точные**; `Tan`/`Atan`/`Asin`/`Acos`/гиперболики - нет. Hosted: `lm_*` Taylor-приближения в форке (грубее). Порт точных алгоритмов (Cody-Waite + Remez) - в планах |

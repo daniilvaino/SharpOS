@@ -260,7 +260,44 @@ namespace Terminal.Gui
             throw new NotSupportedException("SharpOSDriver: synthetic key injection is not implemented.");
         }
 
-        public override void Suspend() { }
+        /// <summary>
+        /// Hands the screen over to something else — a child process — leaving
+        /// it blank, with a visible cursor and no attribute of ours still set.
+        /// </summary>
+        /// <remarks>
+        /// Stays in the alternate screen: leaving it would bring the boot log
+        /// back, and the point is a clean screen, not the previous one. Call
+        /// <see cref="Resume"/> to take it back.
+        /// </remarks>
+        public override void Suspend()
+        {
+            Write(Esc + "[0m");
+            Write(Esc + "[2J");
+            Write(Esc + "[H");
+            Write(Esc + "[?25h");
+            Flush();
+        }
+
+        /// <summary>
+        /// Takes the screen back after <see cref="Suspend"/>, wiping whatever
+        /// the other side left and declaring every cell stale.
+        /// </summary>
+        /// <remarks>
+        /// The shadow copy is what makes this necessary: the driver writes only
+        /// cells that changed, and nothing on our side changed while somebody
+        /// else was drawing. Without dropping the shadow the interface would
+        /// repaint nothing over the intruder's screen.
+        /// </remarks>
+        public void Resume()
+        {
+            Write(Esc + "[0m");
+            Write(Esc + "[2J");
+            Write(Esc + "[H");
+            Write(Esc + "[?25l");
+            Flush();
+
+            UpdateOffScreen();
+        }
 
         public override void StartReportingMouseMoves() { }
 

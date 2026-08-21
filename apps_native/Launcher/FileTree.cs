@@ -23,6 +23,10 @@ namespace Launcher
     {
         Directory,
         Application,
+
+        /// <summary>An assembly for the kernel's hosted runtime, not an image.</summary>
+        ManagedApplication,
+
         File,
 
         /// <summary>The tail of a folder that was cut short.</summary>
@@ -50,6 +54,7 @@ namespace Launcher
             {
                 case NodeKind.Directory: return Name + "\\";
                 case NodeKind.Application: return Name + "  *";
+                case NodeKind.ManagedApplication: return Name + "  #";
                 case NodeKind.More: return "... " + Hidden.ToString() + " more";
                 case NodeKind.Up: return "..  (up)";
                 default: return Name;
@@ -130,6 +135,7 @@ namespace Launcher
                     Path = Combine(directory, name),
                     Kind = isDirectory ? NodeKind.Directory
                          : IsApplication(name) ? NodeKind.Application
+                         : IsManagedApplication(name) ? NodeKind.ManagedApplication
                          : NodeKind.File,
                 });
             }
@@ -191,8 +197,9 @@ namespace Launcher
                 case NodeKind.Up: return 0;
                 case NodeKind.Directory: return 1;
                 case NodeKind.Application: return 2;
-                case NodeKind.More: return 4;   // always last: it stands for the tail
-                default: return 3;
+                case NodeKind.ManagedApplication: return 3;
+                case NodeKind.More: return 5;   // always last: it stands for the tail
+                default: return 4;              // plain files
             }
         }
 
@@ -214,6 +221,19 @@ namespace Launcher
 
             string tail = name.Substring(name.Length - 4);
             return tail == ".EXE" || tail == ".exe";
+        }
+
+        /// <summary>
+        /// An assembly the hosted runtime can run. Told apart by extension for
+        /// the same reason as above — the directory says nothing else, and the
+        /// kernel decides for real when it hands the file to the runtime.
+        /// </summary>
+        public static bool IsManagedApplication(string name)
+        {
+            if (name.Length < 4) return false;
+
+            string tail = name.Substring(name.Length - 4);
+            return tail == ".DLL" || tail == ".dll";
         }
     }
 }

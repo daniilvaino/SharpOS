@@ -116,6 +116,10 @@
         // "not published" answer.
         public ulong RhpRethrowAddress;
 
+        // Runs a managed assembly on the kernel's hosted CoreCLR. Zero when the
+        // kernel published none — a build without CoreCLR, or an older one.
+        public ulong RunManagedAppAddress;
+
 
     }
 
@@ -148,6 +152,13 @@
     {
         public ushort UnicodeChar;
         public ushort ScanCode;
+        public uint Reserved;
+    }
+
+    internal unsafe struct AppRunManagedRequest
+    {
+        public ulong PathAddress;
+        public int ExitCode;
         public uint Reserved;
     }
 

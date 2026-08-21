@@ -20,8 +20,21 @@ namespace OS.Kernel.Memory
         // KernelHeapSmokeTest and the unit GcStressTest invoke Collect
         // from CaptureStackTop-bounded callers where it's intentionally
         // safe.
+        /// <summary>
+        /// Every collection this kernel has run, whoever asked for it.
+        /// </summary>
+        /// <remarks>
+        /// A plain counter, and it answers a question nothing else could: a
+        /// collection holds preemption off for as long as it takes, so a thread
+        /// that collects is a thread the timer cannot move. Without this,
+        /// "who was collecting" is guesswork.
+        /// </remarks>
+        public static ulong Collections;
+
         public static void Collect()
         {
+            Collections++;
+
             if (KernelGcPreciseWalk.IsAvailable)
             {
                 CollectPrecise();

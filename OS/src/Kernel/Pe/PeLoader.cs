@@ -99,6 +99,8 @@ namespace OS.Kernel.Pe
             // CoffRuntimeFunctionTable.UnregisterImage in UnmapMappedRange.
             TryRegisterExceptionTable((byte*)imageBase, (int)sizeOfImage, imageBase);
 
+            TryReadManifest((byte*)imageBase, (uint)sizeOfImage, ref loadedImage);
+
             loadedImage.EntryPoint = entryPoint;
             loadedImage.LowestVirtualAddress = imageBase;
             loadedImage.HighestVirtualAddressExclusive = imageBase + (ulong)pageCount * PageSize;
@@ -106,6 +108,57 @@ namespace OS.Kernel.Pe
             loadedImage.LoadedSegmentCount = sectionCount;
             stage = 7;
             return true;
+        }
+
+        /// <summary>
+        /// Reads the SharpOS record out of the image's manifest resource.
+        /// </summary>
+        /// <remarks>
+        /// Best-effort. An image without a manifest, or with one that carries no
+        /// sharpos element, simply reports nothing found — the launch path then
+        /// falls back the way it always did. A manifest that is present but does
+        /// not parse is a different thing, and the caller is the one that
+        /// decides what to do about it.
+        /// </remarks>
+        private static void TryReadManifest(byte* imageBase, uint imageSize, ref ElfLoadedImage loadedImage)
+        {
+            if (!global::OS.Kernel.Pe.PeResources.TryFind(
+                    imageBase, imageSize, PeResources.TypeManifest, out byte* data, out uint size))
+                return;
+
+            string? xml = DecodeUtf8(data, size);
+            if (xml == null)
+                return;
+
+            SharpAppManifest manifest = SharpAppManifest.Parse(xml);
+            if (!manifest.Found)
+                return;
+
+            loadedImage.ManifestFound = true;
+            loadedImage.ManifestSchema = manifest.Schema;
+            loadedImage.ManifestAbi = manifest.Abi;
+            loadedImage.ManifestServiceAbi = manifest.ServiceAbi;
+        }
+
+        /// <summary>
+        /// Turns the resource bytes into a string, skipping a byte-order mark.
+        /// </summary>
+        /// <remarks>
+        /// The linker writes the manifest as UTF-8 with a BOM. Left in place it
+        /// would be the first character of the document, and the parser would
+        /// reject the whole thing over a character nobody wrote.
+        /// </remarks>
+        private static string? DecodeUtf8(byte* data, uint size)
+        {
+            if (data == null || size == 0)
+                return null;
+
+            uint start = 0;
+            if (size >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF)
+                start = 3;
+
+            return global::System.Text.Encoding.UTF8.GetString(
+                new global::System.ReadOnlySpan<byte>(data + start, (int)(size - start)));
         }
 
         // Parse data-directory index 3 (IMAGE_DIRECTORY_ENTRY_EXCEPTION) from the

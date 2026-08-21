@@ -86,17 +86,37 @@ namespace OS.Hal
             finally { OS.Kernel.Threading.Preemption.Allow(); }
         }
 
+        /// <summary>
+        /// Suppresses the log mirror for the text written while it is set.
+        /// </summary>
+        /// <remarks>
+        /// For one case only: a full-screen interface. Its frames are escape
+        /// sequences by the tens of kilobytes per keystroke, and every byte of
+        /// that was going to the UART and to the disk log. On hardware where a
+        /// port write traps to a hypervisor, that alone was most of the time
+        /// the machine spent — the interface was not slow to draw, it was slow
+        /// to be copied somewhere nobody reads a screen from.
+        ///
+        /// Deliberately narrow: kernel diagnostics, warnings and panics do not
+        /// go through it, so the log keeps saying what happened even while an
+        /// application owns the screen.
+        /// </remarks>
+        public static bool SuppressLogMirror;
+
         private static void WriteCharCore(char value)
         {
             // Mirror to the on-disk log before anything else: whatever kills
             // the machine next, this line is already on its way to the platter.
-            BootLog.Putc(value);
+            if (!SuppressLogMirror)
+                BootLog.Putc(value);
 
             if (s_ownConsole)
             {
-                // Serial stays raw and unconditional: if the terminal engine breaks, the
-                // UART log has to survive to say so.
-                Serial.WriteChar(value);
+                // Serial stays raw and unconditional — except for a full-screen
+                // interface, which nobody reads out of a log: if the terminal
+                // engine breaks, the UART log has to survive to say so.
+                if (!SuppressLogMirror)
+                    Serial.WriteChar(value);
 
                 if (TerminalConsole.IsReady)
                     TerminalConsole.Putc(value);

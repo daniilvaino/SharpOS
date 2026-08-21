@@ -445,6 +445,11 @@ namespace OS.Kernel.Diagnostics
                 {
                     Console.WriteLine("=== S_OK — CoreCLR initialized ===");
 
+                    // Keep the session. Without this the handle dies with this
+                    // frame, and the machine can host exactly one assembly —
+                    // the one chosen at build time.
+                    global::OS.Kernel.Exec.CoreClrHost.Publish(hostHandle, domainId);
+
                     // Stage A — host a byte-for-byte stock `dotnet build` app
                     // via the normal-program entry point (runs its Main).
                     Console.WriteLine("--- coreclr_execute_assembly(\\\\sharpos\\pwsh\\pwsh.dll) ---");

@@ -109,6 +109,10 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ClassConstructorRunner.cs" Link="std\Runtime\ClassConstructorRunner.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\FunctionPointerOps.cs" Link="std\Runtime\FunctionPointerOps.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\RuntimeImports.Delegate.cs" Link="std\Runtime\RuntimeImports.Delegate.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Intrinsics\Vector128_1.cs" Link="std\Runtime\Intrinsics\Vector128_1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Intrinsics\Vector128.cs" Link="std\Runtime\Intrinsics\Vector128.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Intrinsics\Vector256_1.cs" Link="std\Runtime\Intrinsics\Vector256_1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Intrinsics\Vector256.cs" Link="std\Runtime\Intrinsics\Vector256.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Delegate.cs"        Link="std\Runtime\Delegate.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\MulticastDelegate.cs" Link="std\Runtime\MulticastDelegate.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ActionFunc.cs"      Link="std\Runtime\ActionFunc.cs" />
@@ -201,6 +205,8 @@
     <LinkerArg Include="/DYNAMICBASE:NO" />
     <LinkerArg Include="/NODEFAULTLIB" />
   </ItemGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)SharpAppManifest.props" />
 
   <Import Project="$(MSBuildThisFileDirectory)..\..\bootasm\CoffStub.Generator\CoffStub.Generator.targets"
           Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(MSBuildThisFileDirectory)..\..\bootasm\CoffStub.Generator\CoffStub.Generator.targets')" />

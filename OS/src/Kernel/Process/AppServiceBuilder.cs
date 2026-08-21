@@ -26,9 +26,6 @@ namespace OS.Kernel.Process
         private const uint MaxNameChars = 260;
         private const ulong EfiFileAttributeDirectory = 0x0000000000000010UL;
         private const ulong PageSize = X64PageTable.PageSize;
-        private const uint AbiManifestBufferSize = 64;
-        private const uint AbiManifestByteSize = 16;
-        private const string AbiManifestSuffix = ".abi";
 
         private const uint ServiceThunkPageSize = 4096;
         private const uint ServiceThunkSlotSize = 64;
@@ -40,7 +37,7 @@ namespace OS.Kernel.Process
         private enum AbiResolveSource : uint
         {
             Request = 0,
-            Manifest = 1,
+            ImageManifest = 1,
             Fallback = 2,
         }
 
@@ -69,6 +66,8 @@ namespace OS.Kernel.Process
         private static ulong s_win64ReadDirEntryThunk;
         private static ulong s_win64TryReadKeyThunk;
         private static ulong s_win64RunAppThunk;
+        private static ulong s_win64RunManagedAppThunk;
+        private static ulong s_systemVRunManagedAppThunk;
         private static ulong s_systemVWriteStringThunk;
         private static ulong s_systemVWriteUIntThunk;
         private static ulong s_systemVWriteHexThunk;
@@ -114,6 +113,7 @@ namespace OS.Kernel.Process
             delegate* managed<ulong, uint> readDirEntryAddress = &ReadDirEntry;
             delegate* managed<ulong, uint> tryReadKeyAddress = &TryReadKey;
             delegate* managed<ulong, uint> runAppAddress = &RunApp;
+            delegate* managed<ulong, uint> runManagedAppAddress = &RunManagedApp;
             delegate* managed<uint, void> writeCharAddress = &WriteChar;
             delegate* managed<void> writeBuildIdAddress = &WriteBuildId;
             delegate* managed<ulong, uint> spawnThreadAddress = &SpawnThread;
@@ -131,6 +131,7 @@ namespace OS.Kernel.Process
             ulong tableReadDirEntryAddress = 0;
             ulong tableTryReadKeyAddress = 0;
             ulong tableRunAppAddress = 0;
+            ulong tableRunManagedAppAddress = 0;
             ulong tableWriteCharAddress = 0;
             ulong tableWriteBuildIdAddress = 0;
             ulong tableSpawnThreadAddress = 0;
@@ -149,6 +150,7 @@ namespace OS.Kernel.Process
                 (ulong)readDirEntryAddress,
                 (ulong)tryReadKeyAddress,
                 (ulong)runAppAddress,
+                (ulong)runManagedAppAddress,
                 (ulong)writeCharAddress,
                 (ulong)writeBuildIdAddress,
                 (ulong)spawnThreadAddress,
@@ -175,6 +177,7 @@ namespace OS.Kernel.Process
                     tableReadDirEntryAddress = s_systemVReadDirEntryThunk;
                     tableTryReadKeyAddress = s_systemVTryReadKeyThunk;
                     tableRunAppAddress = s_systemVRunAppThunk;
+                    tableRunManagedAppAddress = s_systemVRunManagedAppThunk;
                 }
                 if (publishedAbiVersion >= AppServiceTable.AbiVersionV3)
                 {
@@ -200,6 +203,7 @@ namespace OS.Kernel.Process
                     tableReadDirEntryAddress = s_win64ReadDirEntryThunk;
                     tableTryReadKeyAddress = s_win64TryReadKeyThunk;
                     tableRunAppAddress = s_win64RunAppThunk;
+                    tableRunManagedAppAddress = s_win64RunManagedAppThunk;
                 }
                 if (publishedAbiVersion >= AppServiceTable.AbiVersionV3)
                 {
@@ -223,6 +227,7 @@ namespace OS.Kernel.Process
             table.ReadDirEntryAddress = tableReadDirEntryAddress;
             table.TryReadKeyAddress = tableTryReadKeyAddress;
             table.RunAppAddress = tableRunAppAddress;
+            table.RunManagedAppAddress = tableRunManagedAppAddress;
             table.WriteCharAddress = tableWriteCharAddress;
             table.WriteBuildIdAddress = tableWriteBuildIdAddress;
             table.SpawnThreadAddress = tableSpawnThreadAddress;
@@ -302,6 +307,7 @@ namespace OS.Kernel.Process
             ulong readDirEntryTarget,
             ulong tryReadKeyTarget,
             ulong runAppTarget,
+            ulong runManagedAppTarget,
             ulong writeCharTarget,
             ulong writeBuildIdTarget,
             ulong spawnThreadTarget,
@@ -381,6 +387,11 @@ namespace OS.Kernel.Process
                     return false;
                 cursor += ServiceThunkSlotSize;
 
+                s_win64RunManagedAppThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64OneArgThunk(page + cursor, runManagedAppTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
                 s_systemVWriteStringThunk = thunkPageVirtual + cursor;
                 if (!TryWriteSystemVOneArgThunk(page + cursor, writeStringTarget))
                     return false;
@@ -428,6 +439,11 @@ namespace OS.Kernel.Process
 
                 s_systemVRunAppThunk = thunkPageVirtual + cursor;
                 if (!TryWriteSystemVOneArgThunk(page + cursor, runAppTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVRunManagedAppThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVOneArgThunk(page + cursor, runManagedAppTarget))
                     return false;
                 cursor += ServiceThunkSlotSize;
 
@@ -680,6 +696,18 @@ namespace OS.Kernel.Process
             // bytes and left as three separate characters, each re-encoded to
             // UTF-8 on the way to the terminal engine. The screen showed the
             // mojibake that double encoding always produces.
+            // While an application is drawing a full-screen interface, its
+            // output is frames, not messages: copying every escape byte to the
+            // UART and the disk log costs more than the drawing does, and the
+            // log is unreadable for it anyway. Decided per write from the
+            // terminal's own state rather than by asking the app, because the
+            // app already said so — it switched to the alternate screen.
+            bool restoreMirror = OS.Hal.Platform.SuppressLogMirror;
+            OS.Hal.Platform.SuppressLogMirror = OS.Hal.TerminalConsole.IsAlternateScreen;
+
+            try
+            {
+
             byte* pointer = (byte*)textAddress;
             for (int i = 0; i < MaxWriteStringBytes; )
             {
@@ -738,6 +766,12 @@ namespace OS.Kernel.Process
             // escape sequences were reaching the engine and changing the grid,
             // while the framebuffer kept showing the frame before.
             OS.Hal.Platform.FlushConsole();
+
+            }
+            finally
+            {
+                OS.Hal.Platform.SuppressLogMirror = restoreMirror;
+            }
         }
 
         private static void WriteUInt(uint value)
@@ -753,7 +787,19 @@ namespace OS.Kernel.Process
 
         private static void WriteChar(uint codePoint)
         {
-            UiText.WriteChar((char)codePoint);
+            // Same rule as WriteString: a character belonging to a full-screen
+            // frame is not a log line.
+            bool restoreMirror = OS.Hal.Platform.SuppressLogMirror;
+            OS.Hal.Platform.SuppressLogMirror = OS.Hal.TerminalConsole.IsAlternateScreen;
+
+            try
+            {
+                UiText.WriteChar((char)codePoint);
+            }
+            finally
+            {
+                OS.Hal.Platform.SuppressLogMirror = restoreMirror;
+            }
         }
 
         private static void WriteBuildId()
@@ -1019,6 +1065,55 @@ namespace OS.Kernel.Process
             return (uint)AppServiceStatus.Ok;
         }
 
+        /// <summary>
+        /// Hands a managed assembly to the hosted runtime and waits for it.
+        /// </summary>
+        /// <remarks>
+        /// No process is built and nothing is mapped: the assembly runs inside
+        /// the runtime that boot already brought up, on the stack that runtime
+        /// needs. The caller is blocked meanwhile, exactly as it is for a PE
+        /// app, and gets the exit code back the same way.
+        /// </remarks>
+        private static uint RunManagedApp(ulong requestAddress)
+        {
+            if (requestAddress == 0)
+                return (uint)AppServiceStatus.InvalidParameter;
+
+            AppRunManagedRequest* request = (AppRunManagedRequest*)requestAddress;
+            request->ExitCode = 0;
+
+            if (request->PathAddress == 0)
+                return (uint)AppServiceStatus.InvalidParameter;
+
+            if (!global::OS.Kernel.Exec.CoreClrHost.IsRunning)
+                return (uint)AppServiceStatus.Unsupported;
+
+            char* pathBuffer = stackalloc char[(int)MaxPathChars];
+            if (!TryReadAsciiPath(request->PathAddress, pathBuffer, MaxPathChars))
+                return (uint)AppServiceStatus.InvalidParameter;
+
+            string path = string.FromUtf16Z(pathBuffer, (int)MaxPathChars);
+            if (path.Length == 0)
+                return (uint)AppServiceStatus.InvalidParameter;
+
+            DebugLog.Begin(LogLevel.Info);
+            Console.Write("---- managed child start: ");
+            Console.Write(path);
+            Console.Write(" ----");
+            DebugLog.EndLine();
+
+            bool ok = global::OS.Kernel.Exec.CoreClrHost.TryExecute(path, out int exitCode);
+            request->ExitCode = exitCode;
+
+            DebugLog.Begin(LogLevel.Info);
+            Console.Write("---- managed child end: exit=");
+            Console.WriteInt(exitCode);
+            Console.Write(ok ? " ----" : " (host refused) ----");
+            DebugLog.EndLine();
+
+            return ok ? (uint)AppServiceStatus.Ok : (uint)AppServiceStatus.DeviceError;
+        }
+
         private static uint RunApp(ulong requestAddress)
         {
             if (requestAddress == 0)
@@ -1054,7 +1149,9 @@ namespace OS.Kernel.Process
             s_exitRequested = 0;
             s_exitCode = 0;
 
-            AppServiceStatus runStatus = RunExternalApp(pathBuffer, appAbiVersion, serviceAbi, out int childExitCode);
+            AppServiceStatus runStatus = RunExternalApp(pathBuffer, appAbiVersion, serviceAbi,
+                abiFromRequest: abiSource == AbiResolveSource.Request,
+                out int childExitCode);
             request->ExitCode = childExitCode;
 
             s_exitRequested = savedExitRequested;
@@ -1117,117 +1214,15 @@ namespace OS.Kernel.Process
             if (!autoServiceAbi && !TryParseServiceAbi(requestedServiceAbi, out resolvedFromRequestService))
                 return false;
 
-            if (TryReadAbiManifest(path, out uint manifestAbiVersion, out AppServiceAbi manifestServiceAbi))
-            {
-                appAbiVersion = autoAppAbi ? manifestAbiVersion : resolvedFromRequestAbi;
-                serviceAbi = autoServiceAbi ? manifestServiceAbi : resolvedFromRequestService;
-                source = AbiResolveSource.Manifest;
-                return true;
-            }
-
+            // Nothing to read from here any more: the record lives inside the
+            // image, and the image is not loaded yet. What is chosen here is a
+            // starting point, refined in RunExternalApp once the manifest
+            // resource is addressable.
             appAbiVersion = autoAppAbi ? AppServiceTable.AbiVersionV1 : resolvedFromRequestAbi;
             serviceAbi = autoServiceAbi ? AppServiceAbi.WindowsX64 : resolvedFromRequestService;
             source = AbiResolveSource.Fallback;
             return true;
         }
-
-        private static bool TryReadAbiManifest(char* path, out uint appAbiVersion, out AppServiceAbi serviceAbi)
-        {
-            appAbiVersion = AppServiceTable.AbiVersionV1;
-            serviceAbi = AppServiceAbi.WindowsX64;
-
-            BootInfo bootInfo = Platform.GetBootInfo();
-            if (bootInfo.FileReadIntoBuffer == null)
-                return false;
-
-            char* manifestPath = stackalloc char[(int)MaxPathChars];
-            if (!TryBuildAbiManifestPath(path, manifestPath, MaxPathChars))
-                return false;
-
-            byte* manifestBuffer = stackalloc byte[(int)AbiManifestBufferSize];
-            uint bytesRead = 0;
-            uint status = bootInfo.FileReadIntoBuffer(
-                manifestPath,
-                manifestBuffer,
-                AbiManifestBufferSize,
-                &bytesRead);
-
-            if (status != (uint)BootFileStatus.Ok)
-                return false;
-
-            if (bytesRead < AbiManifestByteSize)
-                return false;
-
-            return TryParseAbiManifest(manifestBuffer, out appAbiVersion, out serviceAbi);
-        }
-
-        private static bool TryBuildAbiManifestPath(char* path, char* destination, uint destinationChars)
-        {
-            if (path == null || destination == null || destinationChars < 6)
-                return false;
-
-            string basePath = string.FromUtf16Z(path, (int)destinationChars);
-            if (basePath.Length == 0 || basePath.Length + AbiManifestSuffix.Length + 1 > destinationChars)
-            {
-                destination[0] = '\0';
-                return false;
-            }
-
-            string manifestPath = string.Concat(basePath, AbiManifestSuffix);
-            for (int i = 0; i < manifestPath.Length; i++)
-                destination[i] = manifestPath[i];
-            destination[manifestPath.Length] = '\0';
-            return true;
-        }
-
-        private static bool TryParseAbiManifest(byte* buffer, out uint appAbiVersion, out AppServiceAbi serviceAbi)
-        {
-            appAbiVersion = AppServiceTable.AbiVersionV1;
-            serviceAbi = AppServiceAbi.WindowsX64;
-
-            if (buffer == null)
-                return false;
-
-            if (buffer[0] != (byte)'S' ||
-                buffer[1] != (byte)'A' ||
-                buffer[2] != (byte)'B' ||
-                buffer[3] != (byte)'I')
-            {
-                return false;
-            }
-
-            ushort formatVersion = ReadU16(buffer + 4);
-            if (formatVersion != 1)
-                return false;
-
-            ushort rawAppAbi = ReadU16(buffer + 6);
-            ushort rawServiceAbi = ReadU16(buffer + 8);
-
-            // A range, not a ladder of known values. The ladder version had to
-            // grow a branch per revision, and forgetting one does not fail
-            // loudly: an unrecognised version was rejected, the app fell back
-            // to V1, and it simply found the newer services missing. Which is
-            // exactly what happened when V4 landed.
-            //
-            // Above our own version is still refused — that is an app built for
-            // a newer kernel, and quietly handing it less than it asked for is
-            // how a missing service becomes a mysterious crash later.
-            if (rawAppAbi < AppServiceTable.AbiVersionV1 ||
-                rawAppAbi > AppServiceTable.CurrentAbiVersion)
-                return false;
-
-            appAbiVersion = AppServiceTable.Normalize(rawAppAbi);
-
-            if (rawServiceAbi == (ushort)AppServiceAbi.WindowsX64)
-                serviceAbi = AppServiceAbi.WindowsX64;
-            else if (rawServiceAbi == (ushort)AppServiceAbi.SystemV)
-                serviceAbi = AppServiceAbi.SystemV;
-            else
-                return false;
-
-            return true;
-        }
-
         private static ushort ReadU16(byte* source)
         {
             return (ushort)(source[0] | (source[1] << 8));
@@ -1268,7 +1263,7 @@ namespace OS.Kernel.Process
             switch (source)
             {
                 case AbiResolveSource.Request: return "request";
-                case AbiResolveSource.Manifest: return "manifest";
+                case AbiResolveSource.ImageManifest: return "image-manifest";
                 case AbiResolveSource.Fallback: return "fallback";
                 default: return "fallback";
             }
@@ -1328,10 +1323,24 @@ namespace OS.Kernel.Process
             return AppServiceStatus.DeviceError;
         }
 
+        private static void LogImageManifest(ref ElfLoadedImage loadedImage,
+            uint appAbiVersion, AppServiceAbi serviceAbi)
+        {
+            DebugLog.Begin(LogLevel.Info);
+            Console.Write("[abi] from image manifest schema=");
+            Console.WriteUInt(loadedImage.ManifestSchema);
+            Console.Write(" abi=");
+            Console.WriteUInt(appAbiVersion);
+            Console.Write(" serviceAbi=");
+            Console.WriteUInt((uint)serviceAbi);
+            DebugLog.EndLine();
+        }
+
         private static AppServiceStatus RunExternalApp(
             char* path,
             uint appAbiVersion,
             AppServiceAbi serviceAbi,
+            bool abiFromRequest,
             out int exitCode)
         {
             exitCode = 0;
@@ -1418,6 +1427,34 @@ namespace OS.Kernel.Process
                     }
 
                     imageLoaded = true;
+
+                    // The image's own manifest outranks the sidecar and the
+                    // fallback, but not a caller who named the ABI outright.
+                    // Read here rather than before the load because this is
+                    // where the resource directory is addressable — see
+                    // PeLoader.TryReadManifest.
+                    if (loadedImage.ManifestFound && !abiFromRequest)
+                    {
+                        appAbiVersion = NormalizeAbiVersion(loadedImage.ManifestAbi);
+
+                        if (TryParseServiceAbi(loadedImage.ManifestServiceAbi, out AppServiceAbi imageServiceAbi))
+                            serviceAbi = imageServiceAbi;
+
+                        LogImageManifest(ref loadedImage, appAbiVersion, serviceAbi);
+                    }
+                    else if (!loadedImage.ManifestFound && !abiFromRequest)
+                    {
+                        // Said out loud, because the fallback is V1 and an app
+                        // built against a later table would find its services
+                        // simply missing — which reads as the app misbehaving.
+                        // Every app built from this tree carries a manifest, so
+                        // this means a stale image or a build that skipped
+                        // SharpAppManifest.props.
+                        DebugLog.Begin(LogLevel.Warn);
+                        Console.Write("[abi] image carries no manifest — falling back to V");
+                        Console.WriteUInt(appAbiVersion);
+                        DebugLog.EndLine();
+                    }
 
                     if (!ProcessImageBuilder.TryBuild(ref loadedImage, 0, serviceAbi, appAbiVersion, ProcessImageBuilder.NestedStackMappedTop, out processImage))
                     {

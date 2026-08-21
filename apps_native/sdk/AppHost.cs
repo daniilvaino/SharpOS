@@ -429,6 +429,62 @@
             return TryRunApp(path, AppServiceTable.AutoSelectAbiVersion, AppServiceAbi.Auto, out exitCode);
         }
 
+        /// <summary>
+        /// Runs a managed assembly on the kernel's hosted CoreCLR and waits.
+        /// </summary>
+        /// <remarks>
+        /// Unsupported when the kernel published no such service — a build
+        /// without CoreCLR, or an older kernel. Detected by the address being
+        /// zero, which is how every service appended to the table is detected;
+        /// the ABI version does not move for a new pointer.
+        /// </remarks>
+        public static AppServiceStatus TryRunManagedApp(byte* path, out int exitCode)
+        {
+            exitCode = 0;
+
+            AppServiceTable* services = AppRuntime.Services;
+            if (path == null)
+                return AppServiceStatus.InvalidParameter;
+
+            if (services == null)
+                return AppServiceStatus.Unsupported;
+
+            delegate* unmanaged<ulong, uint> runManaged =
+                (delegate* unmanaged<ulong, uint>)services->RunManagedAppAddress;
+            if (runManaged == null)
+                return AppServiceStatus.Unsupported;
+
+            AppRunManagedRequest request = default;
+            request.PathAddress = (ulong)path;
+            request.ExitCode = 0;
+
+            AppServiceStatus status = (AppServiceStatus)runManaged((ulong)(&request));
+            exitCode = request.ExitCode;
+            return status;
+        }
+
+        public static AppServiceStatus TryRunManagedApp(string path, out int exitCode)
+        {
+            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
+            if (!TryEncodeAscii(path, pathBuffer, MaxTempPathChars + 1, out _))
+            {
+                exitCode = 0;
+                return AppServiceStatus.InvalidParameter;
+            }
+
+            return TryRunManagedApp(pathBuffer, out exitCode);
+        }
+
+        /// <summary>True when this kernel can host managed assemblies.</summary>
+        public static bool CanRunManagedApps
+        {
+            get
+            {
+                AppServiceTable* services = AppRuntime.Services;
+                return services != null && services->RunManagedAppAddress != 0;
+            }
+        }
+
         // GOP framebuffer geometry from the service table (step143). False on
         // headless boots (Base==0) or when services are absent. The FB memory
         // itself is identity-mapped in the shared address space — the caller

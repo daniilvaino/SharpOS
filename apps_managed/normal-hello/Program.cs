@@ -1610,6 +1610,52 @@ Probe("JIT stress: 4 threads emit+run, 3s", () =>
     Console.Write($"[{Interlocked.Read(ref compiled)} methods] ");
 });
 
+// -- SIMD -------------------------------------------------------------
+//
+// The third tier for vector code. Nothing here is ported: this is the stock
+// CoreLib and the JIT emits the instructions itself. What is under test is
+// whether OUR environment survives them — SSE state has to be live, MXCSR sane,
+// and the registers preserved across a context switch. A wrong MXCSR has already
+// cost us a #XM once, and it showed only on one host.
+Sec("SIMD");
+
+Probe("Vector128.IsHardwareAccelerated", () =>
+{
+    if (!System.Runtime.Intrinsics.Vector128.IsHardwareAccelerated)
+        throw new Exception("not accelerated under the JIT");
+});
+
+Probe("Vector128 lane mask", () =>
+{
+    var text = "ab<de&gh";
+    var data = System.Runtime.InteropServices.MemoryMarshal
+        .Cast<char, ushort>(text.AsSpan());
+
+    var vector = System.Runtime.Intrinsics.Vector128.Create(data[0], data[1], data[2], data[3],
+                                                            data[4], data[5], data[6], data[7]);
+    var hits = System.Runtime.Intrinsics.Vector128.Equals(
+                   vector, System.Runtime.Intrinsics.Vector128.Create((ushort)'<'))
+             | System.Runtime.Intrinsics.Vector128.Equals(
+                   vector, System.Runtime.Intrinsics.Vector128.Create((ushort)'&'));
+
+    uint mask = 0;
+    for (int i = 0; i < 8; i++)
+    {
+        if (hits[i] != 0) mask |= 1u << i;
+    }
+
+    uint expected = (1u << 2) | (1u << 5);
+    if (mask != expected)
+        throw new Exception($"lane mask 0x{mask:X}, expected 0x{expected:X}");
+});
+
+Probe("Vector256 availability reported", () =>
+{
+    // Not a requirement — only that asking does not fault. AVX state is not
+    // saved across our context switches, so false is the wanted answer.
+    _ = System.Runtime.Intrinsics.Vector256.IsHardwareAccelerated;
+});
+
 Console.WriteLine();
 Console.WriteLine($"=== PAL/OS census end: OK={ok}  DEG={deg}  FAIL={bad} ===");
 return 42;

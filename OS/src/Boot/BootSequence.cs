@@ -159,6 +159,10 @@ namespace OS.Boot
 
             if (Probes.KernelHeapSmoke)
                 KernelHeapSmokeTest.Run();
+
+            if (Probes.Simd)
+                SimdProbe.Run();
+
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -409,6 +413,13 @@ namespace OS.Boot
             if (Probes.NativeAotFeatures)
                 NativeAotProbe.Run();
 
+            // After the runtime is up, not beside the SIMD probe in phase 1.
+            // Parsing allocates and can throw, and in phase 1 the throw stub is
+            // not patched yet — the first exception there panics instead of
+            // saying what happened.
+            if (Probes.XmlManifest)
+                XmlProbe.Run();
+
             if (Probes.Cctor)
                 CctorProbe.Run();
 
@@ -518,6 +529,9 @@ namespace OS.Boot
             void* bigBuf = AllocateBigStack(BigStackSize);
             if (bigBuf != null)
             {
+                // Remembered so a launcher can run assemblies on it later.
+                global::OS.Kernel.Exec.CoreClrHost.PublishBigStack(bigBuf, BigStackSize);
+
                 Console.Write("[bigstack] buf=0x");
                 Console.WriteHex((ulong)bigBuf);
                 Console.Write(" size=0x");

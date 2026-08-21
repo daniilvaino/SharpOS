@@ -145,6 +145,17 @@
         // "not published" answer.
         public ulong RhpRethrowAddress;
 
+        // Runs a managed assembly on the hosted CoreCLR and waits for it.
+        //
+        // Not the same thing as RunAppAddress: that one loads a PE into the
+        // address space and jumps to it. A managed assembly has no image of its
+        // own here — it is handed to a runtime that already exists, on the
+        // stack that runtime was brought up on.
+        //
+        // Appended without a version bump; zero is the "not published" answer,
+        // which is also the honest answer on a build with CoreCLR left out.
+        public ulong RunManagedAppAddress;
+
 
     }
 
@@ -177,6 +188,13 @@
     {
         public ushort UnicodeChar;
         public ushort ScanCode;
+        public uint Reserved;
+    }
+
+    internal unsafe struct AppRunManagedRequest
+    {
+        public ulong PathAddress;
+        public int ExitCode;
         public uint Reserved;
     }
 

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Runtime;
 using Fami.Core;
@@ -25,7 +25,7 @@ namespace Fami
     {
         // Where the cartridge lives on the ESP, staged by the build like
         // DOOM1.WAD is.
-        private const string RomPath = "EFI/BOOT/GAME.NES";
+        private const string RomPath = "apps/GAME.NES";
 
         // One frame of NTSC master cycles, from upstream's own frame loop
         // (Fami.Core\Interface\Main.cs). Duplicated rather than referenced

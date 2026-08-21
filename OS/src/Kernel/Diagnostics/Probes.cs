@@ -18,6 +18,12 @@
         // Phase 1
         public const bool KernelHeapSmoke = true;
 
+        // Reports whether ILC turned our own Vector128 into instructions.
+        public const bool Simd = true;
+
+        // Runs the vendored XML parser against a sample manifest.
+        public const bool XmlManifest = true;
+
         // Phase 2 diagnostics
         public const bool GcStaticsSummary = true;
 
@@ -208,7 +214,7 @@
         // Both DLLs are always built and deployed by run_build.ps1 + added
         // to TPA; the toggle only chooses which one execute_assembly aims
         // at. Const bool so ILC folds the unused branch to nothing.
-        public const bool LaunchNormalHelloCensus = false;
+        public const bool LaunchNormalHelloCensus = true;
 
         // Mute kernel diagnostics while the hosted app owns the screen.
         //

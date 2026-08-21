@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime;
 using SharpOS.AppSdk;
 
@@ -19,7 +19,7 @@ namespace TriCNES
     {
         // Where the cartridge lives on the ESP, staged by the build like
         // DOOM1.WAD is.
-        private const string RomPath = "EFI/BOOT/GAME.NES";
+        private const string RomPath = "apps/GAME.NES";
 
         // Controller bit order, as the NES shift register reads them:
         // A, B, Select, Start, Up, Down, Left, Right.
