@@ -55,9 +55,10 @@ identity). Детальная карта препятствий — [eh-model.md
 `apps_managed/` (normal-hello, PowerShellBootstrap — CoreCLR-hosted;
 сюда же пойдёт managed-DOOM). Ссылки в build-скриптах (`build_fetch_wsl.ps1`,
 `build_launcher_wsl.ps1`, `run_build.ps1`) и `.gitignore` обновлены.
-Лаунчер `HelloSharpFs` **переименовать при самой PE-миграции** (тогда же
-уходит ELF-логика). Относительные `..\sdk\`/`..\..\std\` в native-csproj
-остались валидны (глубина сохранена).
+Лаунчер `HelloSharpFs` **заменён** (step163): ядро запускает `LAUNCHER.EXE` —
+приложение на Terminal.Gui. Старый остался в дереве, но из сборки убран, поэтому
+будет дрейфовать против общего std; удалить, когда перестанет быть нужен как
+образец простого приложения.
 
 **Backlog (низкий приоритет, не блокирует):** переименовать проект `OS`
 → `Kernel` (или `SharpOS.Kernel`). Затрагивает `OS.csproj`,

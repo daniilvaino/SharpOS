@@ -286,6 +286,30 @@ namespace AotTests
             // Locks. Compare-and-swap has to be a real instruction, threads
             // need distinct ids, and `lock` has to keep two of them from losing
             // an update — each fails silently on its own.
+            // Dictionary enumeration follows insertion.
+            //
+            // Not a nicety: code written against the BCL relies on it without
+            // saying so, and our old storage (a chain per bucket) returned hash
+            // order. Terminal.Gui renders a tree's roots straight from a
+            // Dictionary, so a sorted list of folders came back shuffled.
+            var ordered = new Dictionary<string, int>();
+            ordered["first"] = 1;
+            ordered["second"] = 2;
+            ordered["third"] = 3;
+            ordered["fourth"] = 4;
+
+            string seen = "";
+            foreach (var pair in ordered) seen = seen + pair.Key + ",";
+            Check("dictionary keeps insertion order", seen == "first,second,third,fourth,");
+
+            ordered.Remove("second");
+            ordered["fifth"] = 5;
+            seen = "";
+            foreach (var pair in ordered) seen = seen + pair.Key + ",";
+            Check("dictionary survives remove+add", ordered.Count == 4 && seen.Length > 0);
+            Check("removed key is gone", !ordered.ContainsKey("second"));
+            Check("re-added key is found", ordered["fifth"] == 5);
+
             // ToString(). Both of these returned null until step163, and null
             // from ToString is the worst kind of wrong: it reads as a no-op at
             // the call site and faults far away, where something indexes it.

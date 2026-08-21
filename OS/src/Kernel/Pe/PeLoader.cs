@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using OS.Kernel.Elf;
 using OS.Kernel.Paging;
 using OS.Kernel.Util;
@@ -38,14 +38,15 @@ namespace OS.Kernel.Pe
             new Span<byte>(image.Pointer, fileLen).CopyTo(new Span<byte>(file));
             stage = 1;
 
-            if (!PeImageLayout.TryFlatten(file, out byte[] flat, out ulong imageBase, out ulong entryPoint, out uint sectionCount))
+            if (!PeImageLayout.TryReadLayout(file, out uint sizeOfImage32,
+                    out ulong imageBase, out ulong entryPoint, out uint sectionCount))
                 return false;
             stage = 2;
 
             if (imageBase == 0 || (imageBase & (PageSize - 1)) != 0)
                 return false; // ImageBase must be page-aligned to honor it directly
 
-            ulong sizeOfImage = (ulong)flat.Length;
+            ulong sizeOfImage = sizeOfImage32;
             uint pageCount = (uint)((sizeOfImage + PageSize - 1) / PageSize);
             if (pageCount == 0)
                 return false;
@@ -80,16 +81,23 @@ namespace OS.Kernel.Pe
             }
             stage = 5;
 
-            // Blit the flattened image into the now-mapped window. Tail of the
-            // last page (pageCount*PageSize - sizeOfImage) stays zero.
-            new Span<byte>(flat).CopyTo(new Span<byte>((void*)imageBase, flat.Length));
+            // Zero the whole window before anything is written into it. The
+            // image's BSS is defined by what nobody writes, and these pages come
+            // off the physical freelist now — they carry the last process's
+            // bytes, not zeroes, which a fresh managed buffer used to hide.
+            new Span<byte>((void*)imageBase, (int)(pageCount * PageSize)).Clear();
+
+            // Lay the image out directly in the mapped window: headers at 0,
+            // sections at their RVAs. No SizeOfImage buffer in between.
+            if (!PeImageLayout.TryPlace(file, new Span<byte>((void*)imageBase, (int)sizeOfImage)))
+                return false;
             stage = 6;
 
             // Register the app's .pdata so the managed EH walk can unwind app
             // frames (step140). Best-effort: an app with no exception directory
             // stays Tier-B (halt-on-throw). Unregistered at teardown via
             // CoffRuntimeFunctionTable.UnregisterImage in UnmapMappedRange.
-            TryRegisterExceptionTable(flat, imageBase);
+            TryRegisterExceptionTable((byte*)imageBase, (int)sizeOfImage, imageBase);
 
             loadedImage.EntryPoint = entryPoint;
             loadedImage.LowestVirtualAddress = imageBase;
@@ -106,18 +114,18 @@ namespace OS.Kernel.Pe
         // function-table registry. Records are addressed at imageBase + pdataRva
         // (the runtime VA, where the section is mapped). No-op on any parse
         // failure or an image without a .pdata section.
-        private static void TryRegisterExceptionTable(byte[] flat, ulong imageBase)
+        private static void TryRegisterExceptionTable(byte* flat, int flatLength, ulong imageBase)
         {
             const int PeSig = 0x00004550;   // "PE\0\0"
             const ushort Pe32Plus = 0x020B;
             const int ExceptionDirIndex = 3;
 
-            if (flat == null || flat.Length < 0x40) return;
+            if (flat == null || flatLength < 0x40) return;
 
-            fixed (byte* fp = flat)
             {
+                byte* fp = flat;
                 int peOff = *(int*)(fp + 0x3C);
-                if (peOff <= 0 || (long)peOff + 4 + 20 + 112 + (ExceptionDirIndex + 1) * 8 > flat.Length)
+                if (peOff <= 0 || (long)peOff + 4 + 20 + 112 + (ExceptionDirIndex + 1) * 8 > flatLength)
                     return;
                 if (*(uint*)(fp + peOff) != PeSig) return;
 

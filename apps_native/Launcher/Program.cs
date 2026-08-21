@@ -28,6 +28,14 @@ namespace Launcher
     {
         private const string BootDirectory = "\\EFI\\BOOT";
 
+        // Where the tree is rooted right now. Enter on a folder moves it; the
+        // ".." row at the top moves it back.
+        //
+        // A tree that only expands is fine for a small volume and wrong for
+        // browsing: everything stays on screen at once, indented further and
+        // further, and there is no way to leave the folder you started in.
+        private static string s_current = BootDirectory;
+
         private static TreeView<FileNode> s_tree = null!;
         private static Label s_name = null!;
         private static Label s_kind = null!;
@@ -130,6 +138,8 @@ namespace Launcher
             });
         }
 
+        private static FrameView s_volumeFrame = null!;
+
         private static View BuildBody()
         {
             var volume = new FrameView("Boot volume")
@@ -156,6 +166,7 @@ namespace Launcher
             s_tree.ObjectActivated += (ObjectActivatedEventArgs<FileNode> e) => Activate();
 
             volume.Add(s_tree);
+            s_volumeFrame = volume;
 
             var details = new FrameView("Selected")
             {
@@ -190,28 +201,53 @@ namespace Launcher
             return new StatusBar(new StatusItem[]
             {
                 new StatusItem(Key.Enter, "~Enter~ Open/Run", Activate),
+                new StatusItem(Key.Backspace, "~Backspace~ Up", GoUp),
                 new StatusItem(Key.F5, "~F5~ Refresh", LoadRoot),
                 new StatusItem(Key.Esc, "~Esc~ Quit", () => Application.RequestStop()),
                 s_status,
             });
         }
 
+        /// <summary>Reads the current folder into the tree.</summary>
         private static void LoadRoot()
         {
             s_tree.ClearObjects();
 
-            List<FileNode> roots = FileTree.Read(BootDirectory);
-            s_tree.AddObjects(roots);
+            var rows = new List<FileNode>();
 
-            // Open the first level straight away: an unopened root is a single
-            // line, and a launcher that shows one line has told the user
-            // nothing.
-            for (int i = 0; i < roots.Count; i++)
-                if (roots[i].IsDirectory) s_tree.Expand(roots[i]);
+            // The way out goes first, where a hand reaching for it expects it.
+            string? parent = FileTree.ParentOf(s_current);
+            if (parent != null)
+                rows.Add(new FileNode { Kind = NodeKind.Up, Path = parent, Name = ".." });
 
-            SetStatus(roots.Count.ToString() + " entries in " + BootDirectory);
+            List<FileNode> entries = FileTree.Read(s_current);
+            for (int i = 0; i < entries.Count; i++) rows.Add(entries[i]);
+
+            s_tree.AddObjects(rows);
+            s_volumeFrame.Title = s_current;
+
+            if (entries.Count == 0)
+            {
+                // Said out loud rather than shown as an empty box: an
+                // unreadable folder and an empty one look identical, and the
+                // difference is the whole question when browsing is new.
+                SetStatus("Nothing listed in " + s_current + " — empty, or it could not be read.");
+            }
+            else
+            {
+                SetStatus(entries.Count.ToString() + " entries in " + s_current);
+            }
+
             ShowSelection();
             s_tree.SetNeedsDisplay();
+            s_volumeFrame.SetNeedsDisplay();
+        }
+
+        /// <summary>Moves the tree to another folder.</summary>
+        private static void Navigate(string directory)
+        {
+            s_current = directory;
+            LoadRoot();
         }
 
         private static void ShowSelection()
@@ -227,7 +263,9 @@ namespace Launcher
             }
             else
             {
-                s_name.Text = node.Kind == NodeKind.More ? "(hidden entries)" : node.Name;
+                s_name.Text = node.Kind == NodeKind.More ? "(hidden entries)"
+                        : node.Kind == NodeKind.Up ? "(up one folder)"
+                        : node.Name;
                 s_kind.Text = "Kind:  " + Describe(node.Kind);
                 s_path.Text = "Path:  " + node.Path;
                 s_note.Text = NoteFor(node);
@@ -243,14 +281,17 @@ namespace Launcher
         {
             switch (node.Kind)
             {
+                case NodeKind.Up:
+                    return "Enter goes back to " + node.Path + ".";
+
                 case NodeKind.Directory:
-                    return "Enter opens and closes this folder.";
+                    return "Enter opens this folder.\nRight arrow peeks inside without leaving here.";
 
                 case NodeKind.Application:
                     return "Enter runs it. The launcher waits and\nreports the exit code.";
 
                 case NodeKind.More:
-                    return "Only " + FileTree.MaxChildrenShown.ToString()
+                    return "Only " + FileTree.PreviewChildren.ToString()
                         + " entries per folder are listed,\nso one crowded folder cannot bury\nthe rest of the tree.";
 
                 default:
@@ -262,6 +303,7 @@ namespace Launcher
         {
             switch (kind)
             {
+                case NodeKind.Up: return "parent folder";
                 case NodeKind.Directory: return "folder";
                 case NodeKind.Application: return "application";
                 case NodeKind.More: return "hidden entries";
@@ -277,10 +319,16 @@ namespace Launcher
 
             switch (node.Kind)
             {
+                case NodeKind.Up:
+                    Navigate(node.Path);
+                    return;
+
                 case NodeKind.Directory:
-                    if (s_tree.IsExpanded(node)) s_tree.Collapse(node);
-                    else s_tree.Expand(node);
-                    s_tree.SetNeedsDisplay();
+                    // Enter walks INTO the folder. Peeking without moving is
+                    // still there on the arrow keys, which the tree handles
+                    // itself — two ways to look, and only one of them changes
+                    // where you are.
+                    Navigate(node.Path);
                     return;
 
                 case NodeKind.Application:
@@ -299,11 +347,11 @@ namespace Launcher
 
         private static void Launch(FileNode node)
         {
+            // A dialog closing is the library's own business: it knows what
+            // it covered and repaints that. Only a CHILD PROCESS drawing over
+            // us needs the screen declared stale by hand.
             if (MessageBox.Query("Run", "Start " + node.Name + "?", "Run", "Cancel") != 0)
-            {
-                Repaint();
                 return;
-            }
 
             SetStatus("Running " + node.Name + " ...");
             Application.Refresh();
@@ -338,8 +386,6 @@ namespace Launcher
                 MessageBox.ErrorQuery("Cannot run",
                     node.Name + " could not be started (" + status.ToString() + ").", "OK");
             }
-
-            Repaint();
         }
 
         /// <summary>
@@ -355,6 +401,19 @@ namespace Launcher
             Application.Refresh();
         }
 
+        /// <summary>Backspace, for the motion people reach for without looking.</summary>
+        private static void GoUp()
+        {
+            string? parent = FileTree.ParentOf(s_current);
+            if (parent == null)
+            {
+                SetStatus("Already at the top of the volume.");
+                return;
+            }
+
+            Navigate(parent);
+        }
+
         private static void SetStatus(string text)
         {
             s_status.Title = text;
@@ -366,7 +425,7 @@ namespace Launcher
             MessageBox.Query("SharpOS launcher",
                 "Terminal.Gui running on SharpOS.\n\n"
                 + "A tree of the boot volume, "
-                + FileTree.MaxChildrenShown.ToString() + " entries per folder.\n"
+                + FileTree.PreviewChildren.ToString() + " entries per folder.\n"
                 + "Enter opens a folder or runs an application.", "OK");
             Repaint();
         }

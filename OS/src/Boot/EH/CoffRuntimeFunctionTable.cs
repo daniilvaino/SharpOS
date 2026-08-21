@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 
 namespace OS.Boot.EH
 {
@@ -76,6 +76,15 @@ namespace OS.Boot.EH
             public fixed ulong Bases[MaxExtraImages];
             public fixed ulong Records[MaxExtraImages];   // RuntimeFunction*
             public fixed int Counts[MaxExtraImages];
+
+            // Whether the image's pages are mapped right now.
+            //
+            // A parent process is unmapped while a nested one runs — its image
+            // and this one cannot both live at the same address — but its
+            // registration used to stay, so every stack walk read .pdata that
+            // was no longer there. The entry is kept rather than removed
+            // because it comes back unchanged when the parent resumes.
+            public fixed byte Mapped[MaxExtraImages];
         }
 
         private static ExtraImageTable s_extra;
@@ -92,15 +101,30 @@ namespace OS.Boot.EH
             s_extra.Bases[i] = (ulong)imageBase;
             s_extra.Records[i] = (ulong)records;
             s_extra.Counts[i] = count;
+            s_extra.Mapped[i] = 1;
             s_extraCount++;
             return i;
         }
 
-        // Remove a registered image by base (LIFO-friendly compaction). No-op if
-        // not found. Called when an app image is torn down.
+        /// <summary>
+        /// Removes a registered image by base. No-op if not found.
+        /// </summary>
+        /// <remarks>
+        /// Searches from the END, and that is the whole correctness of it:
+        /// every app is linked at the SAME base, so a base does not identify an
+        /// image — a parent and the child it launched are both registered at
+        /// 0x100000000. Nesting is strictly stacked, so the last entry with a
+        /// given base is the innermost image, which is the one being torn down.
+        ///
+        /// Searching from the front removed the PARENT's entry when a child
+        /// exited, leaving the child's registration behind. The dead entry then
+        /// pointed at unmapped memory, and the next stack walk — a GC in the
+        /// parent, moments later — faulted inside SearchImage with nothing to
+        /// connect it to the launch that had just finished.
+        /// </remarks>
         public static void UnregisterImage(byte* imageBase)
         {
-            for (int i = 0; i < s_extraCount; i++)
+            for (int i = s_extraCount - 1; i >= 0; i--)
             {
                 if (s_extra.Bases[i] != (ulong)imageBase) continue;
                 for (int j = i; j < s_extraCount - 1; j++)
@@ -108,8 +132,32 @@ namespace OS.Boot.EH
                     s_extra.Bases[j] = s_extra.Bases[j + 1];
                     s_extra.Records[j] = s_extra.Records[j + 1];
                     s_extra.Counts[j] = s_extra.Counts[j + 1];
+                    s_extra.Mapped[j] = s_extra.Mapped[j + 1];
                 }
                 s_extraCount--;
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Marks a registered image as mapped or not. An unmapped one is
+        /// skipped by every lookup.
+        /// </summary>
+        /// <remarks>
+        /// Called around a nested launch, where the parent's pages go away and
+        /// come back. Searching it in between is not a stale answer — it is a
+        /// read of memory that is not there, and it faults inside the GC's
+        /// stack walk, a long way from the launch that caused it.
+        /// </remarks>
+        public static void SetImageMapped(byte* imageBase, bool mapped)
+        {
+            // From the end, for the same reason as UnregisterImage: the base
+            // alone does not say which image. At suspension the innermost entry
+            // at that base IS the process being suspended.
+            for (int i = s_extraCount - 1; i >= 0; i--)
+            {
+                if (s_extra.Bases[i] != (ulong)imageBase) continue;
+                s_extra.Mapped[i] = mapped ? (byte)1 : (byte)0;
                 return;
             }
         }
@@ -136,6 +184,10 @@ namespace OS.Boot.EH
 
             for (int i = 0; i < s_extraCount; i++)
             {
+                // Skip an image whose pages are gone: reading its .pdata would
+                // fault, and the PC being looked for cannot be in it anyway.
+                if (s_extra.Mapped[i] == 0) continue;
+
                 byte* b = (byte*)s_extra.Bases[i];
                 RuntimeFunction* r = (RuntimeFunction*)s_extra.Records[i];
                 int c = s_extra.Counts[i];

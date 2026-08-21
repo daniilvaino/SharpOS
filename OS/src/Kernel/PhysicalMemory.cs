@@ -17,15 +17,31 @@
         private static ulong s_regionEnd;
         private static bool s_initialized;
 
-        // Page freelist — single-page allocations only (matches AllocPage
-        // callers: VirtualMemory.Commit and TryDemandCommit both loop one
-        // page at a time). Multi-page contiguous frees (AllocPages count>1)
-        // are NOT freed here; the caller must decompose them, otherwise the
-        // pages just leak back to the bump cursor's never-revisit zone.
+        // Page freelist. Frees always arrive one page at a time — callers
+        // decompose their runs — but requests do not: the kernel heap grows by
+        // many contiguous pages at once, and so does every image the loader
+        // maps. So a multi-page request falls back to searching the list for a
+        // run, which is what makes freeing worth anything at all: while only
+        // AllocPage consulted the list, processes could hand their pages back
+        // all day and the heap would still die of "no physical pages".
         private static ulong[]? s_freeList;
         private static int s_freeListTop;     // index of NEXT free slot (== count)
         private static ulong s_freeTotal;
         private static ulong s_reuseTotal;
+        private static ulong s_handedOut;
+
+        /// <summary>Pages ever handed to a caller, freelist reuse included.</summary>
+        public static ulong HandedOutPages => s_handedOut;
+
+        /// <summary>Pages ever pushed back, and pages ever taken back out.</summary>
+        public static ulong FreedPages => s_freeTotal;
+        public static ulong ReusedPages => s_reuseTotal;
+
+        /// <summary>Pages sitting in the freelist right now.</summary>
+        public static ulong FreeListPages => (ulong)s_freeListTop;
+
+        /// <summary>Bytes left in the region the bump cursor is currently in.</summary>
+        public static ulong CursorRemainingBytes => s_regionEnd > s_cursor ? s_regionEnd - s_cursor : 0;
 
         public static void Init(MemoryMapInfo map)
         {
@@ -78,6 +94,7 @@
             {
                 ulong pa = s_freeList[--s_freeListTop];
                 s_reuseTotal++;
+                s_handedOut++;
                 return pa;
             }
             return AllocPages(1);
@@ -105,7 +122,7 @@
                 if (s_cursor == 0 || s_cursor + bytes > s_regionEnd)
                 {
                     if (!MoveToNextUsableRegion())
-                        return 0;
+                        return TakeContiguousFromFreeList(count);
                 }
 
                 ulong address = AlignUp(s_cursor, PageSize);
@@ -117,8 +134,56 @@
                 }
 
                 s_cursor = address + bytes;
+                s_handedOut += count;
                 return address;
             }
+        }
+
+        /// <summary>
+        /// Takes <paramref name="count"/> physically contiguous pages out of the
+        /// freelist, or 0 when no such run is there.
+        /// </summary>
+        /// <remarks>
+        /// Only ever reached once the bump cursor has run out of regions, so the
+        /// sort it does is paid at the moment the alternative is failing the
+        /// allocation. The list is kept sorted afterwards, which costs the next
+        /// caller nothing and lets this one just scan.
+        /// </remarks>
+        private static ulong TakeContiguousFromFreeList(uint count)
+        {
+            if (s_freeList == null || s_freeListTop < (int)count)
+                return 0;
+
+            global::System.Array.Sort(s_freeList, 0, s_freeListTop);
+
+            int runStart = 0;
+            for (int i = 1; i <= s_freeListTop; i++)
+            {
+                bool contiguous = i < s_freeListTop
+                    && s_freeList[i] == s_freeList[i - 1] + PageSize;
+
+                if (contiguous) continue;
+
+                if (i - runStart >= (int)count)
+                {
+                    ulong address = s_freeList[runStart];
+
+                    // Remove the run by closing the gap. Order is preserved, so
+                    // the list stays sorted for whoever comes next.
+                    int removed = (int)count;
+                    for (int j = runStart; j + removed < s_freeListTop; j++)
+                        s_freeList[j] = s_freeList[j + removed];
+
+                    s_freeListTop -= removed;
+                    s_reuseTotal += (ulong)removed;
+                    s_handedOut += (ulong)removed;
+                    return address;
+                }
+
+                runStart = i;
+            }
+
+            return 0;
         }
 
         private static bool MoveToNextUsableRegion()

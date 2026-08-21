@@ -226,7 +226,24 @@ namespace OS.Kernel.Memory
             ulong regionBase = global::OS.Kernel.PhysicalMemory.AllocPages(pageCount);
             if (regionBase == 0)
             {
-                Log.Write(LogLevel.Warn, "heap grow failed: no physical pages");
+                // Numbers, not a guess: which of the three it is — the pool
+                // genuinely spent, pages returned but too scattered for a run
+                // this long, or nothing ever returned at all — is not something
+                // the bare message can tell apart.
+                Log.Begin(LogLevel.Warn);
+                Console.Write("heap grow failed: no physical pages want=");
+                Console.WriteUInt(pageCount);
+                Console.Write(" handedOut=");
+                Console.WriteUInt((uint)global::OS.Kernel.PhysicalMemory.HandedOutPages);
+                Console.Write(" freed=");
+                Console.WriteUInt((uint)global::OS.Kernel.PhysicalMemory.FreedPages);
+                Console.Write(" reused=");
+                Console.WriteUInt((uint)global::OS.Kernel.PhysicalMemory.ReusedPages);
+                Console.Write(" inFreeList=");
+                Console.WriteUInt((uint)global::OS.Kernel.PhysicalMemory.FreeListPages);
+                Console.Write(" heapPages=");
+                Console.WriteUInt((uint)s_heapPages);
+                Log.EndLine();
                 return false;
             }
 

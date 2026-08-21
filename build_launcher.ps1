@@ -1,7 +1,7 @@
-# build_launcher.ps1 -- build a freestanding win-x64 PE app, one publish.
+﻿# build_launcher.ps1 -- build a freestanding win-x64 PE app, one publish.
 #
-# Generic native-app builder (default: the HelloSharpFs launcher; -AppProject to
-# build any other). The freestanding-link recipe (/ENTRY:SharpAppBootstrap,
+# Generic native-app builder (default: the Terminal.Gui launcher; -AppProject
+# to build any other). The freestanding-link recipe (/ENTRY:SharpAppBootstrap,
 # /SUBSYSTEM, /BASE, /FIXED, /NODEFAULTLIB) + base std/sdk surface live in the
 # shared apps_native/sdk/FreestandingPe.props (win-x64 gated); __security_cookie
 # comes from CoffStub.Generator via @(NativeLibrary). So `dotnet publish -r
@@ -10,7 +10,7 @@
 # Per-app wrappers: build_fetch.ps1, build_aottests.ps1, build_doom.ps1.
 
 param(
-    [string]$AppProject = "apps_native/HelloSharpFs/HelloSharpFs.csproj",
+    [string]$AppProject = "apps_native/Launcher/Launcher.csproj",
     [string]$Configuration = "Release",
     [string]$RuntimeIdentifier = "win-x64"
 )

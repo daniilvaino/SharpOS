@@ -1592,17 +1592,38 @@ namespace OS.Kernel.Process
 
         private static void CleanupLoadedImageMappings(ref ElfLoadedImage loadedImage)
         {
-            UnmapMappedRange(loadedImage.LowestVirtualAddress, loadedImage.HighestVirtualAddressExclusive);
+            UnmapMappedRange(loadedImage.LowestVirtualAddress,
+                             loadedImage.HighestVirtualAddressExclusive,
+                             returnPhysicalPages: true);
         }
 
         private static bool CleanupProcessMappings(ref ProcessImage processImage, ref ElfLoadedImage loadedImage)
         {
-            bool imageCleanupOk = UnmapMappedRange(loadedImage.LowestVirtualAddress, loadedImage.HighestVirtualAddressExclusive);
-            bool stackCleanupOk = UnmapMappedRange(processImage.StackBase, processImage.StackMappedTop);
+            // Both ranges are ours alone — the loader allocated the image's
+            // pages and the builder the stack's — so their physical pages go
+            // back to the allocator here. Without this, every launch cost the
+            // machine its image and stack for good, and enough launches ended
+            // in "heap grow failed: no physical pages".
+            bool imageCleanupOk = UnmapMappedRange(loadedImage.LowestVirtualAddress,
+                                                   loadedImage.HighestVirtualAddressExclusive,
+                                                   returnPhysicalPages: true);
+            bool stackCleanupOk = UnmapMappedRange(processImage.StackBase,
+                                                   processImage.StackMappedTop,
+                                                   returnPhysicalPages: true);
             return imageCleanupOk && stackCleanupOk;
         }
 
-        private static bool UnmapMappedRange(ulong startInclusive, ulong endExclusive)
+        /// <summary>
+        /// Unmaps a range, optionally handing its physical pages back.
+        /// </summary>
+        /// <param name="returnPhysicalPages">
+        /// True only for memory this kernel allocated for the process. Freeing
+        /// whatever happens to be mapped would eventually hand the allocator a
+        /// device window or a piece of the kernel image — both are mapped the
+        /// same way and neither was ever ours to give away.
+        /// </param>
+        private static bool UnmapMappedRange(ulong startInclusive, ulong endExclusive,
+            bool returnPhysicalPages = false)
         {
             if (endExclusive <= startInclusive)
                 return true;
@@ -1615,8 +1636,15 @@ namespace OS.Kernel.Process
             ulong limit = AlignUp(endExclusive);
             while (current < limit)
             {
-                if (Pager.TryQuery(current, out _, out _) && !Pager.Unmap(current))
+                // The physical address has to be read BEFORE the mapping goes:
+                // afterwards there is nothing left to ask.
+                bool mapped = Pager.TryQuery(current, out ulong physical, out _);
+
+                if (mapped && !Pager.Unmap(current))
                     return false;
+
+                if (mapped && returnPhysicalPages && physical != 0)
+                    global::OS.Kernel.PhysicalMemory.FreePage(physical);
 
                 if (!TryAdvancePage(ref current))
                     return false;

@@ -1,22 +1,36 @@
-using System;
+﻿using System;
 using PeNet.FileParser;
 using PeNet.HeaderParser.Pe;
 
 namespace OS.Kernel.Pe
 {
-    // PE loader, stage 1 (step136): flatten a raw PE file into its in-memory
-    // image layout. Produces a SizeOfImage byte[] with the PE headers at 0 and
-    // every section's raw data placed at its VirtualAddress (RVA). Regions not
-    // backed by raw data -- the BSS tail where VirtualSize > SizeOfRawData, and
-    // gaps between sections -- stay zero. This is a pure buffer transform: no
-    // page tables, no execution. Base relocations (M2) and import resolution
-    // (M3) run over this buffer next; only the final map-into-pages + jump step
-    // touches the live address space.
+    // PE loader, stage 1 (step136): lay a raw PE file out in its in-memory
+    // image form -- PE headers at 0, every section's raw data at its
+    // VirtualAddress (RVA), everything else left as the caller supplied it (the
+    // BSS tail where VirtualSize > SizeOfRawData, and the gaps between
+    // sections). Still a pure transform: no page tables, no execution.
+    //
+    // Reading the layout and writing it are separate on purpose. The
+    // destination is SizeOfImage bytes, which an app carrying a 64 MiB static
+    // GC pool pushes past 64 MiB, and allocating that as a managed byte[] per
+    // launch cost the machine a 128 MiB GC segment every time -- segments are
+    // never handed back, so ten launches were more than a gigabyte gone. The
+    // caller now reads the size first, maps the pages, and has the sections
+    // written straight into that window.
     //
     // Header structures come from the vendored PeNet native-PE parser
     // (NativeStructureParsers). Section placement mirrors the Windows loader.
     internal static class PeImageLayout
     {
+        /// <summary>
+        /// Reads the layout and places it into a buffer allocated here.
+        /// </summary>
+        /// <remarks>
+        /// For small images — the probes' synthetic PEs. The launch path
+        /// deliberately does not use this: a real app's SizeOfImage runs past
+        /// 64 MiB, and one managed buffer that size per launch is what put the
+        /// machine out of physical pages.
+        /// </remarks>
         public static bool TryFlatten(
             byte[] file,
             out byte[] image,
@@ -25,6 +39,26 @@ namespace OS.Kernel.Pe
             out uint sectionCount)
         {
             image = null;
+
+            if (!TryReadLayout(file, out uint sizeOfImage, out imageBase, out entryPoint, out sectionCount))
+                return false;
+
+            image = new byte[sizeOfImage];
+            return TryPlace(file, image);
+        }
+
+        /// <summary>
+        /// Reads the header fields the caller needs before it can make room for
+        /// the image.
+        /// </summary>
+        public static bool TryReadLayout(
+            byte[] file,
+            out uint sizeOfImage,
+            out ulong imageBase,
+            out ulong entryPoint,
+            out uint sectionCount)
+        {
+            sizeOfImage = 0;
             imageBase = 0;
             entryPoint = 0;
             sectionCount = 0;
@@ -44,15 +78,39 @@ namespace OS.Kernel.Pe
             if (opt == null || secs == null)
                 return false;
 
-            uint sizeOfImage = opt.SizeOfImage;
-            uint sizeOfHeaders = opt.SizeOfHeaders;
+            sizeOfImage = opt.SizeOfImage;
             if (sizeOfImage == 0 || sizeOfImage > 0x40000000) // 1 GiB sanity cap
                 return false;
 
-            image = new byte[sizeOfImage];
             imageBase = opt.ImageBase;
             entryPoint = imageBase + opt.AddressOfEntryPoint;
             sectionCount = nt.FileHeader.NumberOfSections;
+            return true;
+        }
+
+        /// <summary>
+        /// Writes headers and section data into <paramref name="image"/>, which
+        /// must be SizeOfImage bytes and must already be zeroed: what is not
+        /// written here is the image's BSS, and the caller owns making it zero.
+        /// </summary>
+        public static bool TryPlace(byte[] file, Span<byte> image)
+        {
+            if (file == null || file.Length < 0x40)
+                return false;
+
+            var raw = new BufferFile(file);
+            var parsers = new NativeStructureParsers(raw);
+
+            var nt = parsers.ImageNtHeaders;
+            if (nt == null || nt.Signature != 0x4550)
+                return false;
+
+            var opt = nt.OptionalHeader;
+            var secs = parsers.ImageSectionHeaders;
+            if (opt == null || secs == null)
+                return false;
+
+            uint sizeOfHeaders = opt.SizeOfHeaders;
 
             // Headers: copy [0, SizeOfHeaders) from the file, clamped to both
             // the file length and the image buffer.
@@ -91,9 +149,9 @@ namespace OS.Kernel.Pe
             return true;
         }
 
-        private static void Copy(byte[] src, int srcOffset, byte[] dst, int dstOffset, int count)
+        private static void Copy(byte[] src, int srcOffset, Span<byte> dst, int dstOffset, int count)
         {
-            new Span<byte>(src, srcOffset, count).CopyTo(new Span<byte>(dst, dstOffset, count));
+            new Span<byte>(src, srcOffset, count).CopyTo(dst.Slice(dstOffset, count));
         }
     }
 }

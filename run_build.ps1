@@ -550,7 +550,6 @@ foreach ($staleElf in @("HELLO.ELF", "ABIINFO.ELF", "MARKER.ELF", "HELLOCS.ELF",
 # ServiceAbi 0 = WindowsX64); the kernel dispatches on the MZ magic to PeLoader.
 # Absent build output just skips (that app won't appear in the launcher).
 $peApps = @(
-    @{ Src = "apps_native\HelloSharpFs\bin\Release\out-win-x64\HelloSharpFs.exe"; Dest = "HELLO.EXE" },
     @{ Src = "apps_native\FetchApp\bin\Release\out-win-x64\FetchApp.exe";         Dest = "FETCH.EXE" },
     @{ Src = "apps_native\AotTests\bin\Release\out-win-x64\AotTests.exe";         Dest = "AOTTESTS.EXE" },
     @{ Src = "apps_native\GPL_AHEAD_WARNING_DOOM_managed\bin\Release\out-win-x64\DoomApp.exe"; Dest = "DOOM.EXE" },

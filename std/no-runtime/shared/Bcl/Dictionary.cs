@@ -1,6 +1,15 @@
-// System.Collections.Generic.Dictionary<TKey, TValue>
+﻿// System.Collections.Generic.Dictionary<TKey, TValue>
 //
-// Source-of-truth: dotnet/runtime's nativeaot LowLevelDictionary<TKey, TValue>
+// The surface. Storage lives in Dictionary.Storage.cs, ported from the real
+// dotnet/runtime Dictionary — buckets of indices over a dense entries array,
+// so ENUMERATION FOLLOWS INSERTION.
+//
+// It used to be dotnet/runtime's LowLevelDictionary, which chains one list per
+// bucket and therefore enumerates in hash order. Same API, different order —
+// and order is observable: Terminal.Gui renders a TreeView's roots straight
+// from a Dictionary, so a sorted list of folders came back shuffled.
+//
+// Historical source-of-truth (the surface below still follows its shape):
 //   src/coreclr/nativeaot/Common/src/System/Collections/Generic/LowLevelDictionary.cs
 //
 // Transplanted with minimal changes:
@@ -32,7 +41,7 @@
 
 namespace System.Collections.Generic
 {
-    public class Dictionary<TKey, TValue>
+    public partial class Dictionary<TKey, TValue>
         : IDictionary<TKey, TValue>,
           IReadOnlyDictionary<TKey, TValue>,
           ICollection<KeyValuePair<TKey, TValue>>
@@ -53,7 +62,8 @@ namespace System.Collections.Generic
 
         public IEqualityComparer<TKey> Comparer => _comparer;
 
-        public int Count => _numEntries;
+        /// <summary>Live entries: everything ever used, less what was freed.</summary>
+        public int Count => _count - _freeCount;
 
         public bool IsReadOnly => false;
 
@@ -61,174 +71,68 @@ namespace System.Collections.Generic
         {
             get
             {
-                if (key == null) Halt();
-                Entry entry = Find(key);
-                if (entry == null) Halt();
-                return entry.m_value;
+                int i = FindEntry(key);
+                if (i < 0) Halt();          // BCL throws KeyNotFoundException
+                return _entries![i].value;
             }
-            set
-            {
-                if (key == null) Halt();
-                _version++;
-                Entry entry = Find(key);
-                if (entry != null)
-                    entry.m_value = value;
-                else
-                    UncheckedAdd(key, value);
-            }
+            set => TryInsert(key, value, overwrite: true);
         }
 
         public bool TryGetValue(TKey key, out TValue value)
         {
-            value = default;
-            if (key == null) Halt();
-            Entry entry = Find(key);
-            if (entry != null)
+            int i = FindEntry(key);
+            if (i < 0)
             {
-                value = entry.m_value;
-                return true;
+                value = default!;
+                return false;
             }
-            return false;
+
+            value = _entries![i].value;
+            return true;
         }
 
         public void Add(TKey key, TValue value)
         {
-            if (key == null) Halt();
-            Entry entry = Find(key);
-            if (entry != null) Halt(); // duplicate key — BCL throws ArgumentException
-            _version++;
-            UncheckedAdd(key, value);
+            // BCL throws ArgumentException on a duplicate key.
+            if (!TryInsert(key, value, overwrite: false)) Halt();
         }
 
-        public bool ContainsKey(TKey key)
-        {
-            if (key == null) Halt();
-            return Find(key) != null;
-        }
+        public bool ContainsKey(TKey key) => FindEntry(key) >= 0;
 
-        // net-era surface: add if absent, false on duplicate (no throw).
-        public bool TryAdd(TKey key, TValue value)
-        {
-            if (key == null) Halt();
-            if (Find(key) != null) return false;
-            _version++;
-            UncheckedAdd(key, value);
-            return true;
-        }
+        /// <summary>Adds if absent; false on a duplicate, without throwing.</summary>
+        public bool TryAdd(TKey key, TValue value) => TryInsert(key, value, overwrite: false);
 
         public void Clear(int capacity = DefaultSize)
         {
             _version++;
-            _buckets = new Entry[capacity];
-            _numEntries = 0;
+            _buckets = null;
+            _entries = null;
+            _count = 0;
+            _freeCount = 0;
+            _freeList = -1;
+
+            if (capacity > 0) Initialize(capacity);
         }
 
         public void Clear() => Clear(DefaultSize);
 
-        public bool Remove(TKey key)
-        {
-            if (key == null) Halt();
-            int bucket = GetBucket(key);
-            Entry prev = null;
-            Entry entry = _buckets[bucket];
-            while (entry != null)
-            {
-                if (_comparer.Equals(key, entry.m_key))
-                {
-                    if (prev == null)
-                        _buckets[bucket] = entry.m_next;
-                    else
-                        prev.m_next = entry.m_next;
-                    _version++;
-                    _numEntries--;
-                    return true;
-                }
-                prev = entry;
-                entry = entry.m_next;
-            }
-            return false;
-        }
+        public bool Remove(TKey key) => RemoveEntry(key);
 
         internal TValue LookupOrAdd(TKey key, TValue value)
         {
-            Entry entry = Find(key);
-            if (entry != null) return entry.m_value;
-            UncheckedAdd(key, value);
+            int i = FindEntry(key);
+            if (i >= 0) return _entries![i].value;
+
+            TryInsert(key, value, overwrite: false);
             return value;
         }
 
-        private Entry Find(TKey key)
-        {
-            int bucket = GetBucket(key);
-            Entry entry = _buckets[bucket];
-            while (entry != null)
-            {
-                if (_comparer.Equals(key, entry.m_key))
-                    return entry;
-                entry = entry.m_next;
-            }
-            return null;
-        }
+        private static void ThrowKeyNull() => Halt();
 
-        private Entry UncheckedAdd(TKey key, TValue value)
-        {
-            Entry entry = new Entry();
-            entry.m_key = key;
-            entry.m_value = value;
-
-            int bucket = GetBucket(key);
-            entry.m_next = _buckets[bucket];
-            _buckets[bucket] = entry;
-
-            _numEntries++;
-            if (_numEntries > (_buckets.Length * 2))
-                ExpandBuckets();
-
-            return entry;
-        }
-
-        private void ExpandBuckets()
-        {
-            int newNumBuckets = _buckets.Length * 2 + 1;
-            Entry[] newBuckets = new Entry[newNumBuckets];
-            for (int i = 0; i < _buckets.Length; i++)
-            {
-                Entry entry = _buckets[i];
-                while (entry != null)
-                {
-                    Entry nextEntry = entry.m_next;
-                    int bucket = GetBucket(entry.m_key, newNumBuckets);
-                    entry.m_next = newBuckets[bucket];
-                    newBuckets[bucket] = entry;
-                    entry = nextEntry;
-                }
-            }
-            _buckets = newBuckets;
-        }
-
-        private int GetBucket(TKey key, int numBuckets = 0)
-        {
-            // Interface call through the configured comparer. For primitive
-            // TKey the default comparer routes to IEquatable<T>.GetHashCode
-            // via the primitive's own body (no boxing).
-            int h = _comparer.GetHashCode(key);
-            h &= 0x7fffffff;
-            return (h % (numBuckets == 0 ? _buckets.Length : numBuckets));
-        }
-
-        // Halt without a real exception engine. Keeps the API shape of the
-        // BCL `throw` sites but maps to a loop, same as our ThrowHelpers.
+        // Halt without a real exception engine. Keeps the shape of the BCL
+        // throw sites but maps to a loop, same as our ThrowHelpers.
         private static void Halt() { while (true) ; }
 
-        private sealed class Entry
-        {
-            public TKey m_key;
-            public TValue m_value;
-            public Entry m_next;
-        }
-
-        private Entry[] _buckets;
-        private int _numEntries;
         private int _version;
         private IEqualityComparer<TKey> _comparer;
 
@@ -258,15 +162,12 @@ namespace System.Collections.Generic
         public void CopyTo(KeyValuePair<TKey, TValue>[] array, int arrayIndex)
         {
             int j = arrayIndex;
-            for (int i = 0; i < _buckets.Length; i++)
+            for (int i = 0; i < _count; i++)
             {
-                Entry e = _buckets[i];
-                while (e != null)
-                {
-                    array[j] = new KeyValuePair<TKey, TValue>(e.m_key, e.m_value);
-                    j++;
-                    e = e.m_next;
-                }
+                if (_entries![i].next < -1) continue;   // freed slot
+
+                array[j] = new KeyValuePair<TKey, TValue>(_entries[i].key, _entries[i].value);
+                j++;
             }
         }
 
@@ -293,48 +194,47 @@ namespace System.Collections.Generic
         public sealed class Enumerator : IEnumerator<KeyValuePair<TKey, TValue>>
         {
             private readonly Dictionary<TKey, TValue> _dict;
-            private int _bucketIdx;
-            private Entry _current;
+
+            // An index into the entries array, walked in order — which is why
+            // enumeration comes out in insertion order, as the BCL's does.
+            private int _index;
+            private KeyValuePair<TKey, TValue> _current;
 
             internal Enumerator(Dictionary<TKey, TValue> dict)
             {
                 _dict = dict;
-                _bucketIdx = -1;
-                _current = null;
+                _index = 0;
+                _current = default;
             }
 
-            public KeyValuePair<TKey, TValue> Current
-                => _current == null
-                    ? default
-                    : new KeyValuePair<TKey, TValue>(_current.m_key, _current.m_value);
+            public KeyValuePair<TKey, TValue> Current => _current;
 
             object IEnumerator.Current => Current;
 
             public bool MoveNext()
             {
-                if (_current != null && _current.m_next != null)
+                while (_index < _dict._count)
                 {
-                    _current = _current.m_next;
+                    int i = _index;
+                    _index++;
+
+                    // A freed slot keeps its place so the indices the buckets
+                    // point at stay valid; it is skipped rather than compacted.
+                    if (_dict._entries![i].next < -1) continue;
+
+                    _current = new KeyValuePair<TKey, TValue>(
+                        _dict._entries[i].key, _dict._entries[i].value);
                     return true;
                 }
-                _bucketIdx++;
-                while (_bucketIdx < _dict._buckets.Length)
-                {
-                    if (_dict._buckets[_bucketIdx] != null)
-                    {
-                        _current = _dict._buckets[_bucketIdx];
-                        return true;
-                    }
-                    _bucketIdx++;
-                }
-                _current = null;
+
+                _current = default;
                 return false;
             }
 
             public void Reset()
             {
-                _bucketIdx = -1;
-                _current = null;
+                _index = 0;
+                _current = default;
             }
 
             public void Dispose() { }

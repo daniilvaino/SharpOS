@@ -1,4 +1,4 @@
-using OS.Kernel.Elf;
+﻿using OS.Kernel.Elf;
 using OS.Kernel.Paging;
 
 namespace OS.Kernel.Process
@@ -142,6 +142,13 @@ namespace OS.Kernel.Process
         private static bool TryUnmapCurrentProcessRanges()
         {
             ProcessImage processImage = s_currentContext.ProcessImage;
+
+            // Take the image out of the unwind search before its pages go: a
+            // stack walk in the child would otherwise read .pdata that is no
+            // longer mapped, and fault deep inside the GC rather than here.
+            global::OS.Boot.EH.CoffRuntimeFunctionTable.SetImageMapped(
+                (byte*)processImage.ImageStart, false);
+
             // Only unmap the image. The stack stays mapped because we are still
             // executing on it. The child uses a different stack virtual range.
             return TryUnmapRange(processImage.ImageStart, processImage.ImageEnd);
@@ -169,7 +176,17 @@ namespace OS.Kernel.Process
         private static bool TryRestoreMappings(ref MappingContext mappingContext)
         {
             // Only restore image. Stack was never unmapped (child used a different range).
-            return TryRestoreSnapshot(ref mappingContext.ImageSnapshot);
+            bool restored = TryRestoreSnapshot(ref mappingContext.ImageSnapshot);
+
+            // Searchable again, and with the same records: the entry was kept
+            // through the suspension precisely so nothing has to be recomputed.
+            if (restored && s_hasCurrentProcess)
+            {
+                global::OS.Boot.EH.CoffRuntimeFunctionTable.SetImageMapped(
+                    (byte*)s_currentContext.ProcessImage.ImageStart, true);
+            }
+
+            return restored;
         }
 
         private static bool TryRestoreSnapshot(ref MappingSnapshot snapshot)

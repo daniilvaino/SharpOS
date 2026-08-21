@@ -138,6 +138,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Comparer.cs"            Link="std\Bcl\Comparer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\List.cs"                Link="std\Bcl\List.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Dictionary.cs"          Link="std\Bcl\Dictionary.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Dictionary.Storage.cs"          Link="std\Bcl\Dictionary.Storage.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BitArray.cs"            Link="std\Bcl\BitArray.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\HashSet.cs"             Link="std\Bcl\HashSet.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Stack.cs"               Link="std\Bcl\Stack.cs" />

@@ -1,4 +1,4 @@
-using OS.Kernel.Util;
+﻿using OS.Kernel.Util;
 
 namespace OS.Kernel.Elf
 {
@@ -99,5 +99,6 @@ namespace OS.Kernel.Elf
         public ulong LoadedPages;
         public ulong LowestVirtualAddress;
         public ulong HighestVirtualAddressExclusive;
+
     }
 }

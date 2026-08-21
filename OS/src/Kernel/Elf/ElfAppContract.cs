@@ -21,6 +21,20 @@
         public const string PeHelloAppName = "HELLO.EXE";
         public const string PeHelloAppPath = "\\EFI\\BOOT\\HELLO.EXE";
 
+        // The launcher the kernel starts after boot.
+        //
+        // Was HELLO.EXE (HelloSharpFs), which drew its menu by printing lines
+        // and reading keys. This one is a Terminal.Gui application — and being
+        // started BY the kernel rather than by another launcher is the point:
+        // the process model keeps one suspended context, so anything it starts
+        // would otherwise be refused.
+        public const string PeLauncherAppName = "LAUNCHER.EXE";
+        public const string PeLauncherAppPath = "\\EFI\\BOOT\\LAUNCHER.EXE";
+
+        // It exits cleanly when the user leaves it; there is no test value to
+        // check the way HELLOCS had one.
+        public const int LauncherExitCodeExpected = 0;
+
         public const int HelloExitCodeExpected = 10;
         public const int HelloCsExitCodeExpected = 21;
         public const int AbiInfoExitCodeExpected = 11;

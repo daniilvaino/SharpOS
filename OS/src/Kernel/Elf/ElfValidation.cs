@@ -40,27 +40,32 @@ namespace OS.Kernel.Elf
             DebugLog.Write(LogLevel.Info, "fs init ok");
             FileDiagnostics.DumpDirectory(BootDirectoryPath);
 
-            // step137: the app batch is PE-only now. ELF support is gone; the
-            // only app is HelloSharpFs built as a freestanding win-x64 PE
-            // (HELLO.EXE, build_launcher.ps1). PeLoader flattens/maps/jumps
-            // it. Same code as the old HELLOCS ELF -> same expected exit code;
-            // WindowsX64 service ABI (win-x64 calling convention). (Fetch is
-            // dormant until migrated to PE.)
-            ExternalElfApp peHello = default;
-            peHello.Name = ElfAppContract.PeHelloAppName;
-            peHello.Path = ElfAppContract.PeHelloAppPath;
+            // The launcher, started directly by the kernel.
+            //
+            // step137 made the app batch PE-only; step163 replaced the app it
+            // starts. It used to be HelloSharpFs (HELLO.EXE), which drew its
+            // menu by printing lines; now it is the Terminal.Gui launcher
+            // (LAUNCHER.EXE) — and being started HERE rather than by another
+            // launcher is what makes it useful, because the process model keeps
+            // one suspended context and anything a nested launcher started
+            // would be refused.
+            //
+            // PeLoader flattens, maps and jumps it; WindowsX64 service ABI.
+            ExternalElfApp peLauncher = default;
+            peLauncher.Name = ElfAppContract.PeLauncherAppName;
+            peLauncher.Path = ElfAppContract.PeLauncherAppPath;
             // Follows CurrentAbiVersion rather than naming a number: pinned to
             // V2 it kept working after V3 landed, which hid the version
             // mismatch that broke every app launched from the launcher.
-            peHello.AppAbiVersion = ProcessStartupBlock.CurrentAbiVersion;
-            peHello.ExpectedExitCode = ElfAppContract.HelloCsExitCodeExpected;
-            peHello.ValidateMarker = false;
-            peHello.OptionalIfMissing = true;
-            peHello.ServiceAbi = AppServiceAbi.WindowsX64;
+            peLauncher.AppAbiVersion = ProcessStartupBlock.CurrentAbiVersion;
+            peLauncher.ExpectedExitCode = ElfAppContract.LauncherExitCodeExpected;
+            peLauncher.ValidateMarker = false;
+            peLauncher.OptionalIfMissing = true;
+            peLauncher.ServiceAbi = AppServiceAbi.WindowsX64;
 
             uint passed = 0;
             uint failed = 0;
-            RunAppAndAccumulate(ref peHello, ref passed, ref failed);
+            RunAppAndAccumulate(ref peLauncher, ref passed, ref failed);
 
             DebugLog.Write(LogLevel.Info, "app batch summary");
             DebugLog.Begin(LogLevel.Info);

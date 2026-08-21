@@ -426,6 +426,7 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Bcl\Comparer.cs" Link="src\Std\Bcl\Comparer.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\List.cs" Link="src\Std\Bcl\List.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Dictionary.cs" Link="src\Std\Bcl\Dictionary.cs" />
+    <Compile Include="..\std\no-runtime\shared\Bcl\Dictionary.Storage.cs" Link="src\Std\Bcl\Dictionary.Storage.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\BitArray.cs" Link="src\Std\Bcl\BitArray.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\HashSet.cs" Link="src\Std\Bcl\HashSet.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Stack.cs" Link="src\Std\Bcl\Stack.cs" />
