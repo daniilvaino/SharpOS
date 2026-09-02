@@ -1,4 +1,4 @@
-// step 119 Wave 5 — compile-time codegen migration of
+﻿// step 119 Wave 5 — compile-time codegen migration of
 // IdtTrampolines.WriteCommonStub. 1 DataSlotHole: dispatcherSlot, 8-byte
 // qword at end of stub holding the address of the managed dispatcher
 // (IdtDispatcher [UnmanagedCallersOnly]). The `mov rax, [rip + slot]`
@@ -24,6 +24,33 @@ namespace OS.Hal.Idt
     {
         [CompileTimeAsm]
         private static partial int EmitCommonStub(byte* dst, void* dispatcherSlot);
+
+        // The last two hand-written byte streams in the tree, four bytes each:
+        // `0F 01 19 C3` and `0F 01 09 C3`. They sat in Idt.Install as literal
+        // writes while the vector stubs one line above already came from here.
+        //
+        // Win64: the first argument is in rcx and points at a 10-byte
+        // IdtRegister (limit + base), which is exactly what both instructions
+        // take.
+        [CompileTimeAsm]
+        private static partial int EmitLoadIdtHelper(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitLoadIdtHelper))]
+        private static void EmitLoadIdtHelper_Body(Iced.Intel.Assembler a, BootAsm.HoleCollector h)
+        {
+            a.lidt(__[rcx]);
+            a.ret();
+        }
+
+        [CompileTimeAsm]
+        private static partial int EmitStoreIdtHelper(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitStoreIdtHelper))]
+        private static void EmitStoreIdtHelper_Body(Iced.Intel.Assembler a, BootAsm.HoleCollector h)
+        {
+            a.sidt(__[rcx]);
+            a.ret();
+        }
 
         [CompileTimeAsmBody(nameof(EmitCommonStub))]
         private static void EmitCommonStub_Body(Iced.Intel.Assembler a, BootAsm.HoleCollector h)

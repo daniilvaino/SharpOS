@@ -253,9 +253,9 @@ TIERADISP --> TAF
 TIERADISP -->|"вернулся (unhandled HW)"| HALTHW["'Dispatch returned' + while(true)"]:::halt
 
 %% ================= TIER B =================
-subgraph TIERB["Tier B: ELF-apps"]
+subgraph TIERB["Tier B: PE-приложения (step139/140)"]
   direction LR
-  TB["EH НЕТ: ThrowHelpers = while(true)<br/>(apps/sdk/MinimalRuntime.cs:264-287)"]:::halt
+  TB["EH ЕСТЬ: движок ядра через handoff —<br/>RhpThrowEx/RhpRethrow адресами из AppServiceTable,<br/>per-image .pdata в multi-image registry.<br/>(ELF-ярус с halt-on-throw удалён в step137)"]:::kern
 end
 
 %% ================= CLASSES =================
@@ -288,4 +288,4 @@ linkStyle default stroke:#64748b,stroke-width:1.2px
 | 15 | vec 6 (#UD) объявлен, но не входит в IsSupported → PanicDump | `HwFaultBridge.cs:38,60` |
 | 16 | `__GSHandlerCheck` не слинкован (0 вхождений) | — |
 | 17 | Каждый catch в hosted печатает безусловный `[CCF-resume]`-блок (~10 строк + 16-qword стек) | `exceptionhandling.cpp:3540+` |
-| 18 | Два независимых декодера UNWIND_INFO: SehUnwind (опкоды 0-5 + consume-only 6/8/9/10) и собственный applier Tier A SFI (только 0-3; SAVE_NONVOL/XMM/MACHFRAME unsupported). Сведение отложено — см. donext.md «Backlog: единый UNWIND_INFO-декодер» | `SehUnwind.cs:610`, `StackFrameIterator.cs:125-165` |
+| 18 | Два независимых декодера UNWIND_INFO: SehUnwind (опкоды 0-5 + consume-only 6/8/9/10) и applier Tier A SFI (0-5 + consume-only 8/9 c step165; MACHFRAME по-прежнему нет). Сведение отложено — см. donext.md «Backlog: единый UNWIND_INFO-декодер» | `SehUnwind.cs:610`, `StackFrameIterator.cs:125-230` |

@@ -84,7 +84,7 @@ HpetTimer.Init                         ← step 39: counter + Stopwatch
 ### Phase 5 — Apps
 
 ```
-ElfValidation.Run                      ← FS init + walk \EFI\BOOT
+ElfValidation.Run                      ← FS init + walk \apps
 DemoApp.Run                            ← Fib + heap test
 ```
 

@@ -172,7 +172,7 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 - `apps_native/` - freestanding win-x64 PE приложения (лаунчер, AotTests-батарея, DOOM) + общий `apps_native/sdk/` (ABI/SDK, FreestandingPe.props).
 - `apps_managed/` - стоковые .NET-программы для CoreCLR-hosted tier'а.
 - `std/no-runtime/` - общий слой замены стандартной библиотеки (BCL-порты + runtime-хелперы); компилится и в ядро, и в приложения.
-- `vendor/` - вендореные библиотеки (Iced, PeNet).
+- `vendor/` — вендоренные библиотеки (Iced, PeNet, Terminal.Gui, XtermSharp, TurboXml), каждая со своим `LICENSE` и `PROVENANCE.md`.
 - `done/` - хроника разработки: пошаговые разборы с архитектурой, трассами и решениями.
 
 Правило: всё, что относится к эволюции std/runtime, развивается в `std/`, а не в слоях ОС.
@@ -197,23 +197,33 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 - **[TriCNES](https://github.com/100thCoin/TriCNES)** (Chris Siebert, MIT, подмодуль) — эмулятор NES, точный: 141/141 на [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin), но для игр бывает медленноват.
 - **[Fami](https://github.com/RupertAvery/Fami)** (David Khristepher Santos, MIT, подмодуль) — эмулятор NES, играбелен, не идеален.
 
+## Вендоринг и библиотеки
+
+Чужой код, который лежит в дереве и попадает в собранный образ. Лицензии этих
+проектов обязывают нас. Копии живут в `vendor/<имя>/` со своим `LICENSE` и
+`PROVENANCE.md` — что взято и что вырезано, записано там.
+
+- **[dotnet/runtime](https://github.com/dotnet/runtime) + [runtimelab](https://github.com/dotnet/runtimelab)** (Microsoft, MIT) — toolchain NativeAOT, форк CoreCLR в `dotnet-runtime-sharpos/` и сотни BCL-портов в наш std.
+- **[Iced](https://github.com/icedland/iced)** (icedland, MIT) — кодировщик x86-64. Им пишется весь ассемблер проекта: на этапе сборки и на лету.
+- **[PeNet](https://github.com/secana/PeNet)** (Stefan Hausotte, Apache-2.0) — разбор PE в загрузчике приложений.
+- **[Terminal.Gui](https://github.com/gui-cs/Terminal.Gui)** (Miguel de Icaza и участники, MIT) — библиотека текстового интерфейса. На ней написан лаунчер.
+- **[XtermSharp](https://github.com/migueldeicaza/XtermSharp)** (Miguel de Icaza, MIT) — движок эмулятора терминала: ANSI/VT, сетка ячеек, прокрутка.
+- **[TurboXml](https://github.com/xoofx/TurboXml)** (Alexandre Mutel, BSD-2-Clause) — разбор XML без аллокаций. Читает манифест приложения из ресурсов PE.
+- **[MOOS](https://github.com/nifanfa/MOOS)** (nifanfa, Unlicense) — драйверы `AHCI`, `Disk`, `PCI(Express)` и глифы CP437. Адаптированы под наш HAL, лежат в `OS/src/`.
+- **[Font 8x8](https://github.com/dhepper/font8x8)** (Daniel Hepper, Public Domain) — глифы консоли framebuffer.
+
 ## Отдельное спасибо
 
-Проекты на плечах которых воздвинут SharpOS. Перечислены по убыванию вклада:
+Проекты, на которых SharpOS учился. Их код мы читали, но не брали, — перечислены
+по убыванию вклада.
 
-- **[zerosharp](https://github.com/MichalStrehovsky/zerosharp)** (Michal Strehovský, MIT) - стартовый baseline: UEFI hello-world на NativeAOT, с которого SharpOS стартовал.
-- **[dotnet/runtime](https://github.com/dotnet/runtime) + [runtimelab](https://github.com/dotnet/runtimelab)** (Microsoft, MIT) - NativeAOT toolchain (форк в `dotnet-runtime-sharpos/`) + сотни BCL-портов в наш std (`List<T>`, `Dictionary<K,V>`, `String.Format`, `Array.Sort`, introsort, ожидания компилятора, байтовый алайнинг, и т.д.).
-- **[Iced](https://github.com/icedland/iced)** (icedland, MIT, vendored `vendor/Iced/`) - x86/x64 encoder. Используется в двух режимах: (1) `BootAsm.Generator`-ом для compile-time codegen kernel-шеллкодов на этапе сборки, (2) baked-in в kernel image для runtime fluent-API shellcode emission после того как boot закончился.
-- **[PeNet](https://github.com/secana/PeNet)** (Stefan Hausotte, Apache-2.0, vendored `vendor/PeNet/`) - PE-парсер в лоадере приложений (`PeImageLayout`/`PeImports`/`PeRelocations`, flatten, релокации, IAT).
-- **[XtermSharp](https://github.com/migueldeicaza/XtermSharp)** (Miguel de Icaza, MIT, vendored `vendor/XtermSharp/`) - движок эмулятора терминала: разбор ANSI/VT, сетка ячеек, скролл-регионы. Работает front-end'ом консоли ядра поверх framebuffer.
-- **[MOOS](https://github.com/nifanfa/MOOS)** (nifanfa, Unlicense / public domain) - драйверы `AHCI`, `Disk`, `PCI(Express)`.
-- **[Font 8x8](https://github.com/dhepper/font8x8)** (Daniel Hepper, на основе Marcel Sondaar / IBM VGA, Public Domain) - глифы консоли framebuffer.
-- **[shitty](https://github.com/pg83/shitty)** (Anton Samokhvalov, двойная лицензия MIT + GPL-3) - тесты для эмулятора терминала.
-- **[ManagedDotnetGC](https://github.com/kevingosse/ManagedDotnetGC)** (Kevin Gosse, MIT) - mark/sweep референс для GC.
-- **[UpsilonGC](https://github.com/kkokosa/UpsilonGC)** (Konrad Kokosa, GPL-3) - референс по custom GC под .NET.
-- **[DiscUtils](https://github.com/DiscUtils/DiscUtils)** (Kenneth Bell, MIT) - структура FAT/GPT - FAT-референс.
-- **[ChaN FatFs](https://elm-chan.org/fsw/ff/)** (BSD-1-clause) - второй FAT-референс.
-- **[Cosmos](https://github.com/CosmosOS/Cosmos)** (BSD-3) - концептуальный референс managed-OS подхода (stack-only conservative scan inspiration).
+- **[zerosharp](https://github.com/MichalStrehovsky/zerosharp)** (Michal Strehovský, MIT) — стартовый baseline: UEFI hello-world на NativeAOT, с которого SharpOS начался.
+- **[ManagedDotnetGC](https://github.com/kevingosse/ManagedDotnetGC)** (Kevin Gosse, MIT) — mark/sweep референс для GC.
+- **[UpsilonGC](https://github.com/kkokosa/UpsilonGC)** (Konrad Kokosa, GPL-3) — референс по custom GC под .NET.
+- **[DiscUtils](https://github.com/DiscUtils/DiscUtils)** (Kenneth Bell, MIT) — структура FAT/GPT, FAT-референс.
+- **[ChaN FatFs](https://elm-chan.org/fsw/ff/)** (BSD-1-clause) — второй FAT-референс.
+- **[Cosmos](https://github.com/CosmosOS/Cosmos)** (BSD-3) — концептуальный референс managed-OS подхода.
+- **[shitty](https://github.com/pg83/shitty)** (Anton Samokhvalov, MIT + GPL-3) — тесты для эмулятора терминала.
 
 ## Лицензия
 

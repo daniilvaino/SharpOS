@@ -30,19 +30,25 @@ flowchart TD
     PM --> KSTK[Scheduler stacks + guard pages]
     PM --> BIG[CoreCLR BigStack<br/>16 MiB dedicated mapped buffer]
     PM --> CTX[thread context blocks<br/>FXSAVE-aligned pages]
-    PM --> APPSTK[ELF app stacks<br/>mapped at app stack VAs]
+    PM --> APPSTK[PE app stacks<br/>mapped at app stack VAs]
     PM --> EXEC[post-EBS executable pages<br/>identity-mapped RWX]
 
     BSS[static .bss in kernel image] --> BOOTSTK[BootStackPool<br/>4 MiB boot thread stack]
     UEFI --> ESTUB[EfiLoaderCode boot pools<br/>ExecStubBuffer / BigStackStubBuffer<br/>JumpStub / IDT / X64Asm]
-    APPBSS[static .bss in app image] --> APPGC[app NativeAOT GcHeap source<br/>1 MiB static pool]
+    APPBSS[static .bss in app image] --> APPGC[app NativeAOT GcHeap source<br/>64 MiB static pool]
 
     KGC --> THRSTATE[thread/PAL state<br/>HandleTable slots, Binding<br/>WaitBlock inline in Thread]
 ```
 
-Главный корень page-backed памяти после `PhysicalMemory.Init` -
-`PhysicalMemory.AllocPages`. Он не умеет освобождать или переиспользовать
-страницы, поэтому все прямые потребители `PhysicalMemory` живут до reboot.
+Главный корень page-backed памяти после `PhysicalMemory.Init` —
+`PhysicalMemory.AllocPages`.
+
+Он умеет освобождать и переиспользовать страницы (step165): `FreePage`
+складывает кадр в список свободных, `AllocPage` берёт оттуда, а
+многостраничный запрос ищет в списке непрерывный прогон, когда bump-курсор
+исчерпан. Возвращает страницы пока только завершение процесса — образ и стек
+приложения; всё остальное (DMA, стеки потоков, BigStack, exec-страницы) живёт
+до перезагрузки, потому что никто их не отдаёт.
 
 ## 2. Адресные домены
 
@@ -54,8 +60,8 @@ flowchart TD
 | Boot stack pool | kernel image `.bss`, 4 MiB | `BootStackPool` | boot thread after early switch | Не выдавать через `PhysicalMemory`; это не UEFI usable memory |
 | Hosted thread stacks | pages from `PhysicalMemory`, guard page below | `Scheduler` | CoreCLR/kernel thread stacks | Не выделять из `GcHeap` или `KernelHeap` |
 | BigStack | pages from `PhysicalMemory`, identity mapped | `BootSequence` + `BigStack` | CoreCLR session wrapper stack | Не выделять из `GcHeap`; bounds only from `BigStack.TryGetActiveBounds` |
-| ELF app stacks | `0x0000004000000000` / `0x0000008000000000` tops | `ProcessImageBuilder` | app primary/nested stacks | Не пересекать с app image mappings и VM window |
-| App static GC pool | app image `.bss`, 1 MiB | app `GcMemorySource` | NativeAOT app managed objects | Не смешивать с kernel `GcHeap` или CoreCLR GC |
+| PE app stacks | `0x0000004000000000` / `0x0000008000000000` tops | `ProcessImageBuilder` | app primary/nested stacks | Не пересекать с app image mappings и VM window |
+| App static GC pool | app image `.bss`, 64 MiB | app `GcMemorySource` | NativeAOT app managed objects | Не смешивать с kernel `GcHeap` или CoreCLR GC. Пул фиксирован: при исчерпании выделение возвращает `null`, а не бросает — см. §7 |
 
 ## 3. Две кучи и два GC
 
@@ -65,7 +71,9 @@ flowchart TD
 `PhysicalMemory.AllocPages`.
 
 Этот GC видит только свои сегменты и корни, зарегистрированные через
-`GcRoots`, плюс консервативный stack scan. Он не знает граф CoreCLR.
+`GcRoots`. Корни со стека находит точный обход по `gcInfo` (step110, по
+умолчанию); консервативный обход остался для ранней загрузки и для
+`CollectConservative`. Граф CoreCLR ему неизвестен.
 
 Сейчас в kernel `GcHeap` лежат:
 
@@ -83,11 +91,12 @@ flowchart TD
 - часть PAL/SEH временных структур, где они явно выделяются через
   `GcHeap.AllocateRaw`.
 
-Из-за CoreCLR-native allocations kernel sweep должен быть выключен перед
-`coreclr_initialize`: `GC.ReclamationDisabled = true`. Иначе kernel GC
-увидит CoreCLR-owned native pointers как мусор и может превратить live
-blocks в free markers. Это уже не просто оптимизация, а инвариант
-текущего дизайна.
+**Sweep включён** (`GC.ReclamationDisabled = false`,
+`CoreClrProbe.cs:417`). Раньше его приходилось замораживать на всё время
+hosted-сессии: CoreCLR-native блобы лежали в kernel `GcHeap`, и обход видел
+их указатели как мусор. Причина ушла в два шага — step109 вынес нативные
+блобы в `NativeArena`, step110 дал точный обход корней, — так что в куче
+ядра остались только настоящие управляемые объекты, и подметать их можно.
 
 ### CoreCLR managed GC
 
@@ -110,7 +119,7 @@ card/brick/mark tables и lazy committed pages. Kernel NativeAOT GC не име�
 | AHCI DMA | `Ahci.AllocDma` | `PhysicalMemory` | нет | нет | HBA command/FIS/PRDT/data buffers |
 | scheduler stack | `Scheduler.AllocateStack` | `PhysicalMemory` | нет | stack roots only | kernel/CoreCLR hosted threads |
 | BigStack | `BootSequence.AllocateBigStack` | `PhysicalMemory` | нет | stack roots only | boot-thread CoreCLR session |
-| app static GC | app `GcMemorySource` | app `.bss` | app mark/sweep inside static pool | да | NativeAOT ELF apps |
+| app static GC | app `GcMemorySource` | app `.bss` | app mark/sweep inside static pool | да | NativeAOT PE apps |
 
 ## 5. Stack model
 
@@ -160,8 +169,9 @@ FAT читает через DMA scratch buffers (`s_sec`, `s_bulk`, `s_fatCache`
 
 Это места, которые работают, но должны считаться техническим долгом:
 
-1. CoreCLR native CRT heap все еще идет в kernel `GcHeap`. Поэтому
-   `GC.ReclamationDisabled` обязателен на все время hosted session.
+1. CoreCLR native CRT heap всё ещё идёт в kernel `GcHeap`. Заморозка
+   sweep'а больше не нужна (step109/110 — см. §3), но владение по-прежнему
+   смешанное: чужие блобы живут в нашей куче.
 2. `SharpOSHost_FileOpen` держит весь файл в `GcHeap` и RWX-патчит страницы
    PE buffers. Один `System.Private.CoreLib.dll` сейчас имеет payload
    `0x167C000` bytes = около 22.5 MiB; из-за сегментного роста `GcHeap`
@@ -175,6 +185,14 @@ FAT читает через DMA scratch buffers (`s_sec`, `s_bulk`, `s_fatCache`
 5. `KernelHeap` не защищен lock-ом. На single CPU cooperative это допустимо,
    но preemption/SMP потребуют reentrant heap lock или отдельный IRQ-safe
    allocator.
+
+### Исчерпание пула приложения
+
+Пул фиксирован и не растёт. При исчерпании `GcHeap.AllocateRaw` возвращает
+`null`, а не бросает — то есть `new T[0]` отдаёт нулевую ссылку, и отказ
+всплывает позже разыменованием (`CR2=0x8` на первом же поле). Так упал
+лаунчер на настоящем железе. Предвыделенный `OutOfMemoryException` вместо
+`null` записан в `donext.md`.
 
 ## 8. Жесткие инварианты
 
@@ -211,11 +229,11 @@ M4. Добавить boot self-checks:
    - VM window не пересекается с app stack VAs;
    - hosted thread `RSP` всегда внутри `Thread.StackBase..StackTop` или
      активного BigStack;
-   - `GC.ReclamationDisabled == true` до первого CoreCLR allocation в
-     kernel `GcHeap`.
+   - (снято) проверка `GC.ReclamationDisabled == true` — с step110 sweep
+     работает во время hosted-сессии.
 
-M5. После M1/M2 проверить, можно ли снова включить kernel GC sweep во время
-   hosted session или хотя бы ограничить freeze окном загрузки.
+M5. Проверить, можно ли снова включить kernel GC sweep во время hosted
+   session. **Сделано:** включён с step110.
 
 ## 10. Cumulative Budget
 
@@ -236,8 +254,8 @@ M5. После M1/M2 проверить, можно ли снова включи
 | CoreCLR VM window | 4 GiB VA window | lazy | `VirtualMemory` -> `PhysicalMemory` | GC hard limit 64 MiB, region range 128 MiB, retain/decommit no-op |
 | AHCI device buffers | 34 pages = 136 KiB | yes | `Ahci.AllocDma` | command list + FIS + 32 command tables for one port |
 | FAT scratch buffers | 18 pages = 72 KiB | yes | `Ahci.AllocDma` | `s_sec` 4 KiB + `s_bulk` 64 KiB + `s_fatCache` 4 KiB |
-| ELF app stack | 8 pages = 32 KiB per image | yes | `PhysicalMemory` | mapped at app stack VA; no physical free yet |
-| App static GC pool | 1 MiB per app image | image `.bss` | app image | NativeAOT ELF app heap source |
+| PE app stack | 8 pages = 32 KiB per image | yes | `PhysicalMemory` | mapped at app stack VA; освобождается при завершении процесса (step165) |
+| App static GC pool | 64 MiB per app image | image `.bss` | app image | NativeAOT PE app heap source |
 | HandleTable | about 2 KiB object array + referenced objects | yes via `GcHeap` | kernel managed heap | 256 slots; referenced Events/Semaphores/Threads live as managed objects |
 
 ## 11. Основные точки кода

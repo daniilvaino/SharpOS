@@ -1,4 +1,4 @@
-namespace OS.Hal.Idt
+﻿namespace OS.Hal.Idt
 {
     // x64 shellcode that bridges CPU exception entry → managed dispatcher.
     //
@@ -114,6 +114,12 @@ namespace OS.Hal.Idt
         {
             length = (uint)EmitCommonStub(p, dispatcherPtr);
         }
+
+        /// <summary>Writes `lidt [rcx]; ret` — loads an IDTR from the caller's buffer.</summary>
+        public static void WriteLoadIdtHelper(byte* p) => EmitLoadIdtHelper(p);
+
+        /// <summary>Writes `sidt [rcx]; ret` — stores the current IDTR into it.</summary>
+        public static void WriteStoreIdtHelper(byte* p) => EmitStoreIdtHelper(p);
 
         // Write a per-vector entry stub. Stub jumps via rel32 to commonStub.
         // `commonStubAddr` is the absolute address of the common stub.

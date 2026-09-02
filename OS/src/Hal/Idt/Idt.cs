@@ -109,21 +109,14 @@ namespace OS.Hal.Idt
                 IdtTrampolines.WriteVectorStub(stub, vec, commonStub);
             }
 
-            // 3. LIDT/SIDT helper shellcode.
-            //    LIDT: 0F 01 19 (lidt [rcx]); SIDT: 0F 01 09 (sidt [rcx]).
-            //    Both followed by C3 (ret). Win64 first arg in rcx points to
-            //    a 10-byte IdtRegister (limit + base).
+            // 3. LIDT/SIDT helper shellcode, from the same generator as the
+            //    stubs above. Win64 first arg in rcx points to a 10-byte
+            //    IdtRegister (limit + base).
             byte* lidtHelper = buffer + LidtHelperOffset;
-            lidtHelper[0] = 0x0F;
-            lidtHelper[1] = 0x01;
-            lidtHelper[2] = 0x19;
-            lidtHelper[3] = 0xC3;
+            IdtTrampolines.WriteLoadIdtHelper(lidtHelper);
 
             byte* sidtHelper = buffer + SidtHelperOffset;
-            sidtHelper[0] = 0x0F;
-            sidtHelper[1] = 0x01;
-            sidtHelper[2] = 0x09;
-            sidtHelper[3] = 0xC3;
+            IdtTrampolines.WriteStoreIdtHelper(sidtHelper);
 
             // 4. Read UEFI's current IDTR via SIDT.
             var storeIdt = (delegate* unmanaged<IdtRegister*, void>)sidtHelper;

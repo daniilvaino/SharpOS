@@ -6,8 +6,8 @@
 
 | расширение | куда попадёт | кто читает |
 |---|---|---|
-| `*.wad` | `\EFI\BOOT\<ИМЯ>.WAD` | `DOOM.EXE` |
-| `*.nes` | `\EFI\BOOT\GAME.NES` | `TRICNES.EXE`, `FAMI.EXE` |
+| `*.wad` | `\apps\<ИМЯ>.WAD` | `DOOM.EXE` |
+| `*.nes` | `\apps\GAME.NES` | `TRICNES.EXE`, `FAMI.EXE` |
 | `pwsh\<дистрибутив>\` | `\sharpos\pwsh\` | `pwsh.dll` |
 
 PowerShell — распакованный каталог целиком, из релизов проекта; берётся тот, чьё

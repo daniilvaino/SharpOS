@@ -6,7 +6,7 @@
 steps 68–73, 98, 99). Это **третий tier** SharpOS:
 
 - ядро (`OS/`) — kernel NativeAOT+NoStdLib → [`nativeaot-nostd-kernel-limits.md`](nativeaot-nostd-kernel-limits.md);
-- ELF apps (`apps/`) — NativeAOT через AppSDK → [`nativeaot-nostd-elf-limits.md`](nativeaot-nostd-elf-limits.md);
+- PE-приложения (`apps_native/`) — NativeAOT через AppSDK, тот же std что у ядра → [`nativeaot-nostd-kernel-limits.md`](nativeaot-nostd-kernel-limits.md);
 - **этот файл** — гостевой стоковый .NET поверх нашего PAL.
 
 Общая компаративная таблица — в [`README.md`](../README.md).

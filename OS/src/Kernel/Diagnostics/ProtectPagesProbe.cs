@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 using OS.Kernel.Paging;
 
 namespace OS.Kernel.Diagnostics
@@ -22,7 +22,7 @@ namespace OS.Kernel.Diagnostics
     // export is a Panic.Fail stub. That is a legitimate failure — it names the
     // missing thing — but it does halt the boot, so the probe runs late and can
     // be switched off.
-    internal static unsafe class ProtectPagesProbe
+    internal static unsafe partial class ProtectPagesProbe
     {
         // Win32 PAGE_* values, as the PAL contract uses them.
         private const uint PAGE_READWRITE = 0x04;
@@ -51,9 +51,11 @@ namespace OS.Kernel.Diagnostics
                 return;
             }
 
+            // The payload is the subject of the test, but it is still machine
+            // code, so it comes from the generator like every other instruction
+            // in the tree rather than being spelled out in bytes here.
             byte* code = (byte*)va;
-            code[0] = 0xB8; code[1] = 0x5A; code[2] = 0x5A; code[3] = 0x00; code[4] = 0x00;  // mov eax, 0x5A5A
-            code[5] = 0xC3;                                                                   // ret
+            EmitMarkerFunction(code);
 
             if (!X64PageTable.TryGetKernelLeafPte(va, out ulong before) || (before & NxBit) == 0)
             {

@@ -85,6 +85,23 @@ namespace OS.Kernel.Exec
             s_exitCode = 0;
             s_hr = -1;
 
+            // The same quieting the boot probe applies around its own run, and
+            // for the same reason: kernel chatter between an app's prompt and
+            // its echo makes the app unusable. It was missing here, so a run
+            // started from the launcher got the interleaving the boot run does
+            // not.
+            //
+            // It silences the SERIAL LOG too — Console.Quiet is checked before
+            // anything reaches Platform.Write. A hang inside the hosted app
+            // therefore ends the log mid-line and looks like the machine died
+            // there; turn Probes.HostedAppQuietConsole off before chasing one.
+            bool wasQuiet = OS.Hal.Console.Quiet;
+            if (OS.Kernel.Diagnostics.Probes.HostedAppQuietConsole)
+                OS.Hal.Console.Quiet = true;
+
+            try
+            {
+
             if (s_bigStack != null && s_bigStackSize != 0 && BigStack.IsInitialized)
             {
                 if (!BigStack.RunOn(s_bigStack, s_bigStackSize, &ExecuteOnBigStack))
@@ -98,6 +115,12 @@ namespace OS.Kernel.Exec
                 // on.
                 Log.Write(LogLevel.Warn, "[clr] no big stack — running on the caller's");
                 ExecuteCore();
+            }
+
+            }
+            finally
+            {
+                OS.Hal.Console.Quiet = wasQuiet;
             }
 
             exitCode = s_exitCode;

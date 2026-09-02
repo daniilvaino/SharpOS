@@ -7,7 +7,7 @@
 |---|---|---|---|
 | `GC.WaitForPendingFinalizers` зависает | CoreCLR-hosted | 🔴 hang | SYM-003: finalizer-thread completion event не wired; `GC.Collect` сам работает |
 | `DateTime.Now` (local timezone) | все | 🔴 | нет tz DB; `DateTime.UtcNow` через CMOS+HPET ✅ |
-| `Process.Start` | CoreCLR-hosted | 🔴 | `SystemNative_RegisterForSigChld` отсутствует |
+| `Process.Start` | CoreCLR-hosted | 🔴 | отсутствует `CreateProcessW` (лог 2026-08-21). Ярус решает по Windows-пути; порождения процессов у нас нет вовсе |
 | `GZipStream` / `System.IO.Compression` | все | 🔴 | `libSystem.IO.Compression.Native` отсутствует |
 | Hosted GC suspend/resume cooperation | CoreCLR-hosted | ⏳ R4 | cooperative safepoints + RetainVM/decommit policy не production-complete |
 | Strong-fallback аудит `SharpOSHost_*` | Fork/PAL | ⏳ R1 / D10-D11 | fallback'и в той же TU обязаны быть `weak`, иначе Release clang-fold подменяет до линковки |
@@ -19,4 +19,8 @@
 
 **Легенда**: 🔴 - известно сломано, ⚠️ - действующий контракт/ограничение, ⏳ - отложено / в работе.
 
-**Текущий roadmap:** единый план ведётся в [`plan.md`](plan.md) и [`donext.md`](donext.md). Состояние на 2026-07-16: все три tier'а green на полной батарее (kernel-пробы, EH, threading, CoreCLR-hosted census, post-EBS substrate), а managed DOOM играбелен против собственной std - см. [`README.md`](README.md#doom).
+**Текущий roadmap:** единый план ведётся в [`plan.md`](plan.md) и [`donext.md`](donext.md).
+
+**Состояние на 2026-08-22.** Три яруса зелёные на своих батареях: ядро (~120 именованных проб), PE-приложения (`AOTTESTS.EXE`, 55 проверок), CoreCLR-hosted (ценз, OK=155). DOOM играбелен, PowerShell доходит до prompt'а. Лаунчер — приложение на Terminal.Gui, запускает и нативные PE, и управляемые сборки.
+
+**Открыто и воспроизводится:** многопоточный JIT под вытеснением роняет размещённый рантайм на настоящем железе (на эмуляторах не повторяется) — разбор в `donext.md`; второй запуск одной управляемой сборки падает на статике контекста по умолчанию; выделение при исчерпании пула приложения возвращает `null` вместо исключения.
