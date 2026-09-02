@@ -1,129 +1,200 @@
 # Boot order
 
-Текущая структура kernel boot'а. Single-source-of-truth — `OS/src/Boot/BootSequence.cs`. Этот документ — high-level разбивка по фазам с зависимостями между подсистемами; за конкретный shape вызовов ходим в код.
+Порядок загрузки ядра. Источник истины — `OS/src/Boot/BootSequence.cs`; здесь
+разбивка по фазам и зависимости между подсистемами. За точной формой вызовов
+идти в код: этот файл устаревает первым.
 
 ## Фазы
 
 ```
-Phase 0  Critical    panic mode + IDT (любой fault → читаемый PanicDump)
-Phase 1  Memory      PhysicalMemory.Init + KernelHeap.Init
-Phase 2  Runtime     exec stubs + GcHeap + NativeAotModuleInit + GC-statics
-Phase 3  Platform    Pager + ACPI + HPET + RTC
-Phase 4  Probes      smoke tests + diag (gated через Probes.*)
-Phase 5  Apps        ELF validation, launcher, DemoApp
+Phase 0  Critical    режим паники + IDT (любой отказ читаем)
+Phase 1  Memory      физические страницы, куча ядра
+Phase 2  Runtime     exec-стабы + управляемый рантайм + GC + материализация статики
+Phase 3  Platform    пейджер + ACPI + HPET + фреймбуфер
+Phase 4  Probes      самопроверки, драйверы, снятие UEFI, размещённый CoreCLR
+Phase 5  Apps        обход \apps и запуск лаунчера
 ```
 
-В коде каждая фаза имеет коммент-блок с явными `Pre:` / `Post:` условиями.
+У каждой фазы в коде комментарий с явными `Pre:` / `Post:`.
 
-## Phase-by-phase
+**Вырожденный путь.** Если прошивка не отдала карту памяти, `Run` пропускает
+фазы 1–4 и идёт сразу в Phase 5 — `DemoApp` памяти не требует.
 
-### Phase 0 — Critical
+## Phase 0 — Critical
 
 ```
-Panic.Mode = Shutdown
-Idt.Install(bootInfo)                  ← step 35: 256 IDT entries
+Panic.Mode = Halt                      ← не Shutdown: при панике память ценна,
+                                         выключение её уничтожает, а halt
+                                         оставляет QMP живым для dump_virt.ps1
+Idt.Install(bootInfo)
 SystemBanner.Print
 [gated] InputDiagnostics.Run           ← Probes.KeyboardInput
 ```
 
-**Post:** любой kernel-side fault → читаемый PanicDump с RIP/CR2/registers.
+**Post:** любой отказ ядра даёт читаемый `PanicDump` с RIP/CR2/регистрами.
 
-### Phase 1 — Memory
-
-```
-PhysicalMemory.Init                    ← page allocator из UEFI memory map
-PhysicalMemory.AllocPage × 3           ← sanity probe
-KernelHeap.Init                        ← block allocator поверх Physical
-[gated] KernelHeapSmokeTest.Run        ← Probes.KernelHeapSmoke
-```
-
-**Post:** `KernelHeap.Alloc/Free` работает. `NumberFormatting` может allocate (KernelHeap-backed string allocator).
-
-### Phase 2 — Runtime
+## Phase 1 — Memory
 
 ```
+PrintMemorySummary
+PhysicalMemory.Init                    ← постраничный аллокатор по карте UEFI
+PhysicalMemory.AllocPage × 3           ← проверка вменяемости
+KernelHeap.Init
+[gated] KernelHeapSmokeTest.Run
+[gated] SimdProbe.Run                  ← Probes.Simd: узнал ли ILC наши Vector128
+```
+
+**Post:** `KernelHeap.Alloc/Free` работает; `NumberFormatting` может выделять
+строки.
+
+## Phase 2 — Runtime
+
+```
+X64Asm.SetExecBuffer
+AtomicBackendInstaller.Install         ← как можно раньше: всё, что берёт замок,
+                                         стоит на Interlocked, а до этого он
+                                         обычное чтение-запись, которое тик делит
 X64PageTable.SetExecBuffer
-GcStackSpill.TryInitialize             ← shellcode trampoline (offset 64)
-InstallInterfaceDispatchBridge         ← shellcode (offset 128)
-InstallByRefAssignRefShellcode         ← patch own [RuntimeExport] body
-InstallPortIoShellcode                 ← step 42: patch PortIoStub.Inb/Outb
-SetJumpStubBuffer
-GcHeap.Init
-NativeAotModuleInit.TryInitialize      ← step 41: forced (вместо lazy)
-GcStaticsMaterializer.Materialize      ← step 41: canonical static readonly
+GcStackSpill.TryInitialize             ← консервативный спилл регистров
+GcContextSpill.TryInitialize           ← полный CONTEXT для точного обхода
+InstallInterfaceDispatchBridge         ← отказ = паника: без моста первая же
+                                         диспетчеризация умрёт «stub not patched»
+InstallByRefAssignRefShellcode
+InstallChkstkShellcode
+InstallPortIoShellcode
+InstallCaptureContextShellcode
+InstallThrowExShellcode
+InstallCallCatchFuncletShellcode
+InstallRethrowShellcode
+InstallCallFinallyFuncletShellcode
+InstallCallFilterFuncletShellcode
+EhProbe.InstallStep5_5TestHarness
+X64PageTable.SetJumpStubBuffer
+GcHeap.Init                            ← отказ = паника
+GC.s_collectHook → KernelGC.CollectConservative
+GcHeap.s_enterCritical/s_leaveCritical → Preemption.Suppress/Allow
+NativeAotModuleInit.TryInitialize      ← обход RTR, TypeManager
+CoffRuntimeFunctionTable.TryInitialize ← .pdata образа, RIP → метод
+GcStaticsMaterializer.Materialize
 ```
 
-**Post:** `new T()` / `new T[n]` / `new string(...)` работают. Shared-generic interface dispatch резолвит. Canonical `static readonly T x = new T()` возвращает реальные object refs. Port-I/O (`PortIo.In8/Out8`) работает.
+**Post:** работают `new T()` / `new T[n]` / `new string(...)`, диспетчеризация
+интерфейсов из shared-generic, канонический `static readonly T x = new T()`,
+port-I/O, и весь набор EH-стабов пропатчен.
 
-### Phase 3 — Platform
+Про хук сборки: `System.GC.Collect()` из std делает слепой `MarkAll` и не видит
+корней в регистрах, сохраняемых вызываемым. Хук уводит его в `KernelGC`, который
+спиллит регистры. Без этого живой локал может быть подметён.
 
-```
-Pager.Init                             ← x86_64 4-level page tables
-PagingValidation.Run
-Acpi.Init                              ← step 38: RSDP/XSDT/MADT/HPET/MCFG
-HpetTimer.Init                         ← step 39: counter + Stopwatch
-[gated] DumpRtcSnapshot                ← step 42: CMOS wall-clock dump (Probes.RtcSnapshot)
-```
-
-**Post:** Pager готов (но CR3 пока firmware). ACPI tables разобраны. HPET counter крутится, `Stopwatch.StartNew/Elapsed*` работает. Wall-clock доступен через `Rtc.TryRead`.
-
-### Phase 4 — Probes
+## Phase 3 — Platform
 
 ```
-[gated] GcHeapSmokeTest.Run            ← Probes.GcHeapSmoke
-[gated] GcStaticsMaterializer.DumpMaterializedSummary  ← Probes.GcStaticsSummary
-[gated] GcStressTest.Run               ← Probes.GcStress
-[gated] NativeAotProbe.Run             ← Probes.NativeAotFeatures
-[gated] CctorProbe.Run                 ← Probes.Cctor
-[gated] IdtProbe.TriggerNullDeref      ← Probes.IdtPanic (never returns)
-[gated] ExceptionProbe.TriggerThrow    ← Probes.ExceptionThrow (never returns)
+InitializePager                        ← свои 4-уровневые таблицы (клон)
+ActivatePagerRootAndLockCpuFeatures    ← CR3 становится наш; XCR0 запирается
+                                         на x87|SSE, если прошивка дала OSXSAVE
+DumpExecBuffers
+RunPagerValidation
+VirtualMemory.SelfTest                 ← отказ = паника: от окна зависит
+                                         размещённый CoreCLR из фазы 4
+[gated] FpFaultProbe.Run               ← переживают ли XMM отложенную страницу
+[gated] ProtectPagesProbe.Run          ← становится ли страница исполняемой
+Framebuffer.TryInit                    ← не фатально: headless идёт дальше
+InitializeAcpi                         ← RSDP/XSDT/MADT/HPET/MCFG
+InitializeHpet
+ReportCpuClock
+FbPerfProbe.Run
+[gated] DumpRtcSnapshot
 ```
 
-Все toggle'ы — `const bool` в `OS/src/Kernel/Diagnostics/Probes.cs`. Disabled probes elim'ятся ILC'ом.
+**Post:** активен наш CR3, окно виртуальной памяти проверено, таблицы ACPI
+разобраны, счётчик HPET крутится, `Stopwatch` пригоден, фреймбуфер отображён.
 
-### Phase 5 — Apps
+## Phase 4 — Probes
+
+Самая длинная фаза: здесь и самопроверки, и поднятие драйверов, и снятие UEFI,
+и размещённый рантайм. Все переключатели — `const bool` в
+`OS/src/Kernel/Diagnostics/Probes.cs` (80 флагов), выключенные пробы ILC
+выбрасывает целиком.
 
 ```
-ElfValidation.Run                      ← FS init + walk \apps
-DemoApp.Run                            ← Fib + heap test
+TerminalProbe                          ← движок XtermSharp; позже фазы 2/3,
+                                         потому что нужны материализованная
+                                         статика и отображённый фреймбуфер
+SerialProbe, FbRenderProbe, Ps2, LineEditorProbe
+PciProbe, UsbProbe                     ← xHCI, HID, накопители
+GC: GcHeapSmoke, GcStaticsSummary, GcStress, CoffGcInfoDump,
+    GcInfoResolverSmoke, GcContextSpillSmoke, KernelGcPreciseSmoke
+NativeAotProbe                         ← язык и BCL: дженерики, делегаты,
+                                         LINQ, PeNet, PE-загрузчик, перечисления
+XmlProbe                               ← TurboXml + разбор манифеста
+CctorProbe, EhProbe                    ← EH: throw/catch/finally/фильтры,
+                                         HW-fault, трассы, collided unwind
+Threading: TebFacade, Atomics, ThreadPingPong, ThreadGcRoots, Sleep,
+           Event, Semaphore, AllocStress, ProcessSpawn
+NativeAotProbe.RunLate
+HandleTable.Init, AddressWait.Init
+[gated] CoreClrProbe.Run               ← размещённый CoreCLR на 16 МиБ стеке
+[gated] ExitBootServicesProbe.Run      ← взаимоисключающи с предыдущим
+[gated] IdtPanic / ExceptionThrow      ← не возвращаются
 ```
 
-## Hard prerequisites
+**Снятие UEFI живёт внутри `ExitBootServicesProbe`**, а не отдельной фазой, и
+там же поднимается всё, что становится возможным только после него: локальный
+APIC с периодическим тиком (`LocalApic.StartPeriodic`), вытеснение
+(`Preemption.Enable`) и поток-насос ввода (`InputPump.Start`).
+
+## Phase 5 — Apps
+
+```
+ElfValidation.Run                      ← FS init + обход \apps + запуск
+                                         \apps\LAUNCHER.EXE
+DemoApp.Run
+```
+
+Имя `ElfValidation` историческое: ELF-яруса нет с step137, класс грузит PE.
+
+## Жёсткие предусловия
 
 | Что | Требует чего |
 |---|---|
-| Idt.Install | `bootInfo.IdtExecBuffer` (UEFI `EfiLoaderCode`) |
-| KernelHeap.Init | `PhysicalMemory.Init` |
-| GcStackSpill / patchers | `bootInfo.ExecStubBuffer` |
-| GcHeap.Init | KernelHeap (для backing allocations) |
-| NativeAotModuleInit | RTR section access (anchor MT pointer) |
-| GcStaticsMaterializer | NativeAotModuleInit + GcHeap |
-| Pager.Init | PhysicalMemory + KernelHeap |
-| Acpi.Init | `bootInfo.SystemTable` |
-| HpetTimer.Init | Acpi (HPET base address) |
-| Rtc.TryRead | PortIoPatcher.TryInstall (port I/O shellcode) |
+| `Idt.Install` | `bootInfo.IdtExecBuffer` (UEFI `EfiLoaderCode`) |
+| `AtomicBackendInstaller` | `bootInfo.AsmExecBuffer` |
+| `KernelHeap.Init` | `PhysicalMemory.Init` |
+| Спиллы и патчеры | `bootInfo.ExecStubBuffer` |
+| `GcHeap.Init` | `KernelHeap` |
+| `NativeAotModuleInit` | доступ к секциям RTR (якорный MT) |
+| `GcStaticsMaterializer` | `NativeAotModuleInit` + `GcHeap` |
+| `CoffRuntimeFunctionTable` | образ PE в памяти (`.pdata`) |
+| `Pager.Init` | `PhysicalMemory` + `KernelHeap` |
+| `VirtualMemory.SelfTest` | активированный корень пейджера |
+| `Acpi.Init` | `bootInfo.SystemTable` |
+| `HpetTimer.Init` | `Acpi` (адрес HPET) |
+| `Rtc.TryRead` | port-I/O шеллкод |
+| `TerminalConsole` | материализованная статика + фреймбуфер |
+| `LocalApic.StartPeriodic` | `Acpi` (MADT) + снятый UEFI |
+| Вытеснение | тик APIC + `Scheduler` |
 
-## Что использует что когда
+## Что доступно с какого момента
 
-- **`Console.Write` строковых литералов** — frozen objects, работают с самого начала boot'а.
-- **`Console.WriteUInt`** — нужен KernelHeap (для FastAllocateString). До этого фолбэчит на `*Raw` варианты (stackalloc only).
-- **`new SomeClass()`** — нужен `GcHeap.Init()`. До этого `RhpNewFast` halt'ит.
-- **`static readonly T x = new T()`** — нужен `GcStaticsMaterializer.Materialize()`. После Phase 2 доступно везде.
-- **Shared-generic interface dispatch** — нужен `InstallInterfaceDispatchBridge` + `NativeAotModuleInit`. После Phase 2.
-- **Port I/O (RTC, PIC, future drivers)** — нужен `PortIoPatcher.TryInstall`. После Phase 2.
+- **Строковые литералы в `Console.Write`** — с самого начала (frozen objects).
+- **`Console.WriteUInt`** — нужен `KernelHeap`; до него уходит в `*Raw`-варианты
+  на `stackalloc`.
+- **`new SomeClass()`** — нужен `GcHeap.Init`; до него `RhpNewFast` останавливает
+  машину.
+- **`static readonly T x = new T()`** — после `GcStaticsMaterializer`.
+- **Диспетчеризация интерфейсов из shared-generic** — после моста и
+  `NativeAotModuleInit`.
+- **`throw` / `catch`** — после патча EH-стабов (фаза 2). В фазе 1 бросок даёт
+  панику «stub not patched».
+- **Port-I/O** — после `InstallPortIoShellcode`.
+- **Вытеснение** — только после снятия UEFI, внутри пробы EBS.
 
 ## Изменение порядка
 
-При любом изменении порядка boot'а:
-
-1. **Обновить этот файл.** Primary source of truth для phase boundaries.
-2. **Прокачать через QEMU** — clean boot должен показать все probe'ы зелёными + launcher работает.
-3. Проверить что нет stale-инициализаций: code path X использует Y? Y готов когда X запускается?
-4. Особое внимание: если переносим что-то «раньше» — оно может пытаться использовать ещё-не-готовые подсистемы.
-
-## Будущие фазы (plan.md)
-
-- **Phase 1 (продолжение)** — managed try/catch/finally (`System.Exception`, personality function, stack unwinding). Самый долгий открытый пункт.
-- **Phase 3 scheduler** — добавит APIC timer + context-switch в boot (после Acpi).
-- **Phase 4 ExitBootServices** — boot pipeline разделится на pre-EBS / post-EBS. Patcher'ам потребуется alias-map путь после EBS (W^X на real HW).
-- **Phase 6 CoreCLR fork** — добавит инициализацию hosted-tier runtime отдельной фазой в конце boot'а.
+1. **Обновить этот файл** — он единственное место, где границы фаз описаны
+   словами.
+2. Прогнать батарею: `tools/probe_report.ps1` по `last_build.log`; лаунчер
+   должен стартовать, ценз дойти до конца.
+3. Проверить предусловия: путь X использует Y — готов ли Y к моменту X?
+4. Перенос «раньше» опаснее переноса «позже»: подсистема может опереться на
+   ещё не поднятую.
