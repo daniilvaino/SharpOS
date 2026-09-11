@@ -34,7 +34,7 @@ namespace SharpOS.AppSdk
             // called or failed (e.g. kernel bridge not installed). The body has
             // to be at least 12 bytes so the mov rax,imm64 + jmp rax patch fits;
             // the string load + call + halt loop is comfortably larger.
-            AppHost.WriteString("RhpInitialDynamicInterfaceDispatch: bridge not patched\r\n");
+            AppHost.WriteError("RhpInitialDynamicInterfaceDispatch: bridge not patched\r\n");
             for (; ; ) { }
         }
 

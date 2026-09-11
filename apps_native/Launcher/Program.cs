@@ -74,9 +74,9 @@ namespace Launcher
             }
             catch (Exception ex)
             {
-                AppHost.WriteString("[launcher] Init failed: ");
-                AppHost.WriteString(ex.Message);
-                AppHost.WriteString("\n");
+                AppHost.WriteError("[launcher] Init failed: ");
+                AppHost.WriteError(ex.Message);
+                AppHost.WriteError("\n");
                 return 1;
             }
 

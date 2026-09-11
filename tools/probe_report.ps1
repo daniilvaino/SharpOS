@@ -28,7 +28,12 @@ param(
     [string]$CensusRegistry = (Join-Path $PSScriptRoot 'census-registry.tsv'),
     # Куда складывать машинный срез прогона (JSON + CSV). Срез пишется всегда;
     # параметр только переносит его в другое место.
-    [string]$ReportDir = (Join-Path (Join-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'OS') '.qemu') 'reports')
+    [string]$ReportDir = (Join-Path (Join-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'OS') '.qemu') 'reports'),
+    # Program output (COM3): the census lives there since step 167. Empty =
+    # last_app.log next to -Log.
+    [string]$AppLog = '',
+    # Programs' error streams (COM4). Empty = last_err.log next to -Log.
+    [string]$ErrLog = ''
 )
 
 if (-not (Test-Path -LiteralPath $Log)) {
@@ -38,10 +43,44 @@ if (-not (Test-Path -LiteralPath $Log)) {
 
 $text = Get-Content -Raw -LiteralPath $Log
 
+# What programs print -- the census included -- goes to its own serial port
+# when the machine has one, and QEMU writes that port to last_app.log. The
+# kernel log says which way this run went; trusting it rather than the mere
+# presence of the file keeps a stale last_app.log from an earlier QEMU run
+# out of the report of a run that had no such port (VirtualBox, hardware).
+$programOnOwnPort = $text -match '\[ebs\] program output -> COM3'
+if (-not $AppLog) {
+    $AppLog = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $Log)) 'last_app.log'
+}
+$programText = $text
+if ($programOnOwnPort) {
+    if (Test-Path -LiteralPath $AppLog) {
+        $programText = Get-Content -Raw -LiteralPath $AppLog
+    } else {
+        Write-Warning "program output went to COM3, but $AppLog is missing - census will read as UNKNOWN"
+        $programText = ''
+    }
+}
+
+# Error streams: COM4 when the run had it, otherwise wherever program output went.
+$errorsOnOwnPort = $text -match '\[ebs\] program errors -> COM4'
+if (-not $ErrLog) {
+    $ErrLog = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $Log)) 'last_err.log'
+}
+$errorText = $programText
+if ($errorsOnOwnPort) {
+    if (Test-Path -LiteralPath $ErrLog) {
+        $errorText = Get-Content -Raw -LiteralPath $ErrLog
+    } else {
+        Write-Warning "program errors went to COM4, but $ErrLog is missing"
+        $errorText = ''
+    }
+}
+
 # --- helpers ---------------------------------------------------------
 
-function Find-First ([string]$pattern) {
-    $m = [regex]::Match($text, $pattern, 'Multiline')
+function Find-First ([string]$pattern, [string]$source = $text) {
+    $m = [regex]::Match($source, $pattern, 'Multiline')
     if ($m.Success) { return $m }
     return $null
 }
@@ -58,7 +97,9 @@ function Get-ProbeStatus {
         [string]$Status,
         [string]$Expect,
         [string]$ExpectRe,
-        [int]$Group = 1
+        [int]$Group = 1,
+        # Which log to search: the kernel's unless the probe is a program's.
+        [string]$In = $text
     )
     # A "batch" probe shares one begin-marker with many siblings (all the
     # Phase4 'nativeaot probe begin' tests). For those, "Detect present +
@@ -69,8 +110,8 @@ function Get-ProbeStatus {
     # false HALTs to NOTRUN. (см. user note: "HALT только последней строкой".)
     $batch = ($Detect -eq 'nativeaot probe begin')
 
-    $det = if ($Detect) { Find-First $Detect } else { $null }
-    $st  = if ($Status) { Find-First $Status } else { $null }
+    $det = if ($Detect) { Find-First $Detect $In } else { $null }
+    $st  = if ($Status) { Find-First $Status $In } else { $null }
     if (-not $det -and -not $st) {
         return [PSCustomObject]@{ Cat=$Cat; Name=$Name; Status='UNKNOWN'; Detail=''; Batch=$batch }
     }
@@ -476,7 +517,20 @@ $results += Get-ProbeStatus -Cat 'EBS' -Name 'PostEbsConsoleReroute' `
 $results += Get-ProbeStatus -Cat 'CoreCLR' -Name 'PAL/OS census' `
     -Detect 'PAL/OS census end:' `
     -Status 'PAL/OS census end:\s*(OK=\d+\s+DEG=\d+\s+FAIL=\d+)' `
-    -ExpectRe '.'
+    -ExpectRe '.' `
+    -In $programText
+
+# The census writes one marker line to stderr; it has to arrive in the error
+# stream, not in the program's ordinary output.
+$results += Get-ProbeStatus -Cat 'CoreCLR' -Name 'census stderr marker' `
+    -Detect '\[stderr\] census marker' `
+    -In $errorText
+
+# Same for a native app: AOTTESTS.EXE writes one through AppHost.WriteError.
+# Only present when the app was run from the launcher.
+$results += Get-ProbeStatus -Cat 'Launcher' -Name 'aot stderr marker' `
+    -Detect '\[stderr\] aot marker' `
+    -In $errorText
 
 # Phase E1 -- pager root activation + XCR0 lock.
 $results += Get-ProbeStatus -Cat 'Boot' -Name 'pagerRootActivated' `
@@ -617,6 +671,12 @@ $catsOrder = $catsOrder + $catsExtra
 
 Write-Host ""
 Write-Host "=== SharpOS probe report -- $Log ===" -ForegroundColor White
+if ($programOnOwnPort) {
+    Write-Host "    program output (census) -- $AppLog" -ForegroundColor White
+}
+if ($errorsOnOwnPort) {
+    Write-Host "    program errors -- $ErrLog" -ForegroundColor White
+}
 Write-Host ""
 
 foreach ($cat in $catsOrder) {
@@ -658,10 +718,10 @@ Write-Host ""
 # into named signals.
 
 $censusRows = @()
-$mCensusBegin = [regex]::Match($text, 'PAL/OS census begin')
-$mCensusEnd   = [regex]::Match($text, 'PAL/OS census end')
+$mCensusBegin = [regex]::Match($programText, 'PAL/OS census begin')
+$mCensusEnd   = [regex]::Match($programText, 'PAL/OS census end')
 if ($mCensusBegin.Success -and $mCensusEnd.Success -and $mCensusEnd.Index -gt $mCensusBegin.Index) {
-    $censusText = $text.Substring($mCensusBegin.Index, $mCensusEnd.Index - $mCensusBegin.Index)
+    $censusText = $programText.Substring($mCensusBegin.Index, $mCensusEnd.Index - $mCensusBegin.Index)
     $pending = ''
     $seen = @{}
     foreach ($line in $censusText -split "`r?`n") {

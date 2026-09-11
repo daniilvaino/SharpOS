@@ -26,7 +26,7 @@ SharpOS — **experimental unikernel целиком на C#**, собирает�
 
 - **`docs/nativeaot-nostd-kernel-limits.md`** — живой реестр известных ограничений NoStdLib среды: что работает, что нет, workarounds, причины. **Читать перед любой нетривиальной задачей.**
 - **`plan.md`** — супер-задачи проекта (SUPER-1…SUPER-12) с критериями готовности.
-- **`done/stepNN.md`** — разбор завершённых шагов с архитектурой, трассами ошибок, файлами. Последний на сегодня: `done/step165.md` (SIMD в std, манифест внутри образа, управляемые приложения из лаунчера). Базовая прошивка проекта собрана в `done/step041..step090` (EH/GC/threading/CoreCLR-host), последующие — bring-up конкретных подсистем.
+- **`done/stepNN.md`** — разбор завершённых шагов с архитектурой, трассами ошибок, файлами. Последний на сегодня: `done/step167.md` (каналы вывода: ядро в COM1, программы в COM3, их ошибки в COM4). Базовая прошивка проекта собрана в `done/step041..step090` (EH/GC/threading/CoreCLR-host), последующие — bring-up конкретных подсистем.
 - **`OS/src/Boot/BootSequence.cs`** — single source of truth для kernel boot ordering. Phase0…Phase5 с явными pre/post conditions. `Kernel.cs` — пустой shell, делегирует сюда. См. `docs/boot-order.md`.
 - **`OS/src/Kernel/Diagnostics/Probes.cs`** — central registry compile-time `const bool` toggles для всех boot-time probes/smoke-тестов. Отключённые probes elim'ятся ILC'ом.
 - **`gc-experiment/dotnet-runtime/src/coreclr/nativeaot/`** — снимок NativeAOT runtime'а для reference при порте helpers.

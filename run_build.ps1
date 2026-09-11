@@ -621,6 +621,14 @@ if ($NoRun) {
 Write-Host "Launching QEMU..."
 Write-Host "Firmware: $OvmfCode"
 Write-Host "COM1 is attached to this terminal (-serial mon:stdio)."
+# COM3 carries what programs print (the launcher, its children, PowerShell,
+# the census); COM1 keeps the kernel log. Kept in a file next to last_build.log
+# rather than on this terminal: two streams on one console are the mix this
+# split removes.
+$appLog = Join-Path $repoRoot "last_app.log"
+$errLog = Join-Path $repoRoot "last_err.log"
+Write-Host "COM3 (program output) -> $appLog"
+Write-Host "COM4 (program errors) -> $errLog"
 Write-Host "Exit QEMU: Ctrl+], then X; if hotkeys are blocked, run .\run_build.ps1 -Stop in another terminal."
 if (-not $localOvmfVars) {
     Write-Host "OVMF_VARS file was not found; booting without persistent UEFI variable store."
@@ -696,6 +704,16 @@ try {
     } else {
         $displayArgs = $vgaArgs + @("-nographic", "-serial", "mon:stdio", "-echr", "0x1d")
     }
+    # The program port is COM3 (index 2 = 0x3E8, IRQ 4), not a second -serial:
+    # that would be COM2, and the firmware mirrors its console onto COM2 —
+    # the program log would open with a copy of the whole boot.
+    # COM4 (index 3 = 0x2E8) is the programs' error stream, also off the
+    # firmware's list.
+    $displayArgs += @(
+        "-chardev", "file,id=progout,path=$appLog",
+        "-device", "isa-serial,chardev=progout,index=2",
+        "-chardev", "file,id=progerr,path=$errLog",
+        "-device", "isa-serial,chardev=progerr,index=3")
 
     # With the i8042 gone the guest has no keyboard at all unless one is
     # attached over USB — which is the point: firmware can drive it, we cannot.

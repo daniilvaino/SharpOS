@@ -79,51 +79,59 @@ namespace OS.Hal
         // Guarded per call rather than per character: an escape sequence is
         // several characters long and means nothing if another thread's output
         // lands inside it. Nesting is fine — suppression is a counter.
-        public static void WriteChar(char value)
+        /// <summary>Writes one character of the kernel's own log.</summary>
+        public static void WriteChar(char value) => WriteChar(value, OutputChannel.Kernel);
+
+        /// <summary>
+        /// Writes one character on behalf of <paramref name="channel"/>; where it
+        /// lands is <see cref="OutputRouting"/>'s decision.
+        /// </summary>
+        public static void WriteChar(char value, OutputChannel channel)
         {
             OS.Kernel.Threading.Preemption.Suppress();
-            try { WriteCharCore(value); }
+            try { WriteCharCore(value, channel); }
             finally { OS.Kernel.Threading.Preemption.Allow(); }
         }
 
-        /// <summary>
-        /// Suppresses the log mirror for the text written while it is set.
-        /// </summary>
-        /// <remarks>
-        /// For one case only: a full-screen interface. Its frames are escape
-        /// sequences by the tens of kilobytes per keystroke, and every byte of
-        /// that was going to the UART and to the disk log. On hardware where a
-        /// port write traps to a hypervisor, that alone was most of the time
-        /// the machine spent — the interface was not slow to draw, it was slow
-        /// to be copied somewhere nobody reads a screen from.
-        ///
-        /// Deliberately narrow: kernel diagnostics, warnings and panics do not
-        /// go through it, so the log keeps saying what happened even while an
-        /// application owns the screen.
-        /// </remarks>
-        public static bool SuppressLogMirror;
-
-        private static void WriteCharCore(char value)
+        private static void WriteCharCore(char value, OutputChannel channel)
         {
+            OutputSink sinks = OutputRouting.SinksFor(channel);
+
             // Mirror to the on-disk log before anything else: whatever kills
             // the machine next, this line is already on its way to the platter.
-            if (!SuppressLogMirror)
+            if ((sinks & OutputSink.DiskLog) != 0)
                 BootLog.Putc(value);
 
             if (s_ownConsole)
             {
-                // Serial stays raw and unconditional — except for a full-screen
-                // interface, which nobody reads out of a log: if the terminal
-                // engine breaks, the UART log has to survive to say so.
-                if (!SuppressLogMirror)
+                // Serial is raw: if the terminal engine breaks, the UART log has
+                // to survive to say so.
+                if ((sinks & OutputSink.Com1) != 0)
                     Serial.WriteChar(value);
 
-                if (TerminalConsole.IsReady)
-                    TerminalConsole.Putc(value);
-                else
-                    FbTty.Putc(value);
+                if ((sinks & OutputSink.Com3) != 0)
+                    Serial.WriteCharCom3(value);
+
+                if ((sinks & OutputSink.Com4) != 0)
+                    Serial.WriteCharCom4(value);
+
+                if ((sinks & OutputSink.Screen) != 0)
+                {
+                    if (TerminalConsole.IsReady)
+                        TerminalConsole.Putc(value);
+                    else
+                        FbTty.Putc(value);
+                }
                 return;
             }
+
+            // Before ExitBootServices the firmware owns the screen, and ConOut
+            // is the only way onto it. The firmware also mirrors ConOut to
+            // COM1 on its own, so here everything that reaches the screen
+            // reaches COM1 as well, whatever the channel; COM3 and COM4 are
+            // only brought up at the switch to our own console.
+            if ((sinks & OutputSink.Screen) == 0)
+                return;
 
             if (!s_initialized)
                 return;

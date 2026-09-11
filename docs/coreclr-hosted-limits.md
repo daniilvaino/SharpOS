@@ -245,6 +245,9 @@ PowerShell 7.6.5 (`net10.0`, формат 16), выкладывается из `
   `TMPF_TRUETYPE`. Запись ограничена переданным `cbSize`.
 - ✅ `SetConsoleOutputCP` / `SetConsoleCP` — успех; движок декодирует UTF-8
   независимо от кодовой страницы.
+- ✅ stdout и stderr раздельно (step 167): на экране вперемешку, в логах —
+  COM3 (`last_app.log`) и COM4 (`last_err.log`); без этих портов — туда же,
+  куда лог ядра. Проба переписи `Console.Error.WriteLine` оставляет маркер.
 - ✅ Клавиатура: буквы/цифры/пунктуация, Enter, Backspace, Escape, Tab и
   Shift+Tab, стрелки, `Delete`/`Insert`/`Home`/`End`/`PageUp`/`PageDown`.
 - 🟡 История PSReadLine читается, но не пишется — носитель read-only.

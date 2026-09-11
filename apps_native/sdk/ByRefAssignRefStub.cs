@@ -21,7 +21,7 @@ namespace SharpOS.AppSdk
         {
             // Unpatched fallback. The body must be at least 15 bytes so the patch
             // fits; the string load + call + halt loop is comfortably larger.
-            AppHost.WriteString("RhpByRefAssignRef: stub not patched\r\n");
+            AppHost.WriteError("RhpByRefAssignRef: stub not patched\r\n");
             for (; ; ) { }
         }
 

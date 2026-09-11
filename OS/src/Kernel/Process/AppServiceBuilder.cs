@@ -90,6 +90,8 @@ namespace OS.Kernel.Process
         private static ulong s_systemVCurrentThreadIdThunk;
         private static ulong s_win64SleepThunk;
         private static ulong s_systemVSleepThunk;
+        private static ulong s_win64WriteErrorThunk;
+        private static ulong s_systemVWriteErrorThunk;
 
         public static bool TryBuild(
             ulong serviceVirtual,
@@ -120,6 +122,7 @@ namespace OS.Kernel.Process
             delegate* managed<uint, void> sleepAddress = &SleepMilliseconds;
             delegate* managed<uint> currentThreadIdAddress = &CurrentThreadId;
             delegate* managed<uint> consoleSizeAddress = &ConsoleSize;
+            delegate* managed<ulong, void> writeErrorAddress = &WriteError;
 
             ulong tableWriteStringAddress = (ulong)writeStringAddress;
             ulong tableWriteUIntAddress = (ulong)writeUIntAddress;
@@ -138,6 +141,7 @@ namespace OS.Kernel.Process
             ulong tableSleepAddress = 0;
             ulong tableCurrentThreadIdAddress = 0;
             ulong tableConsoleSizeAddress = 0;
+            ulong tableWriteErrorAddress = 0;
 
             if (!EnsureServiceThunks(
                 (ulong)writeStringAddress,
@@ -156,7 +160,8 @@ namespace OS.Kernel.Process
                 (ulong)spawnThreadAddress,
                 (ulong)sleepAddress,
                 (ulong)currentThreadIdAddress,
-                (ulong)consoleSizeAddress))
+                (ulong)consoleSizeAddress,
+                (ulong)writeErrorAddress))
             {
                 return false;
             }
@@ -170,6 +175,7 @@ namespace OS.Kernel.Process
                 tableExitAddress = s_systemVExitThunk;
                 tableWriteCharAddress = s_systemVWriteCharThunk;
                 tableWriteBuildIdAddress = s_systemVWriteBuildIdThunk;
+                tableWriteErrorAddress = s_systemVWriteErrorThunk;
                 if (publishedAbiVersion >= AppServiceTable.AbiVersionV2)
                 {
                     tableFileExistsAddress = s_systemVFileExistsThunk;
@@ -196,6 +202,7 @@ namespace OS.Kernel.Process
                 tableExitAddress = s_win64ExitThunk;
                 tableWriteCharAddress = s_win64WriteCharThunk;
                 tableWriteBuildIdAddress = s_win64WriteBuildIdThunk;
+                tableWriteErrorAddress = s_win64WriteErrorThunk;
                 if (publishedAbiVersion >= AppServiceTable.AbiVersionV2)
                 {
                     tableFileExistsAddress = s_win64FileExistsThunk;
@@ -234,6 +241,7 @@ namespace OS.Kernel.Process
             table.SleepAddress = tableSleepAddress;
             table.CurrentThreadIdAddress = tableCurrentThreadIdAddress;
             table.ConsoleSizeAddress = tableConsoleSizeAddress;
+            table.WriteErrorAddress = tableWriteErrorAddress;
 
             // Hand the app the kernel's interface-dispatch bridge entry so it
             // can trampoline its RhpInitialDynamicInterfaceDispatch into our
@@ -313,7 +321,8 @@ namespace OS.Kernel.Process
             ulong spawnThreadTarget,
             ulong sleepTarget,
             ulong currentThreadIdTarget,
-            ulong consoleSizeTarget)
+            ulong consoleSizeTarget,
+            ulong writeErrorTarget)
         {
             if (s_serviceThunksInitialized)
                 return true;
@@ -509,6 +518,17 @@ namespace OS.Kernel.Process
                     return false;
                 cursor += ServiceThunkSlotSize;
 
+                // The error stream: same shape as WriteString, one address.
+                s_win64WriteErrorThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64OneArgThunk(page + cursor, writeErrorTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVWriteErrorThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVOneArgThunk(page + cursor, writeErrorTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
                 s_serviceThunkPagePhysical = thunkPagePhysical;
                 s_serviceThunkPageVirtual = thunkPageVirtual;
                 s_serviceThunksInitialized = true;
@@ -686,7 +706,26 @@ namespace OS.Kernel.Process
 
         private static void WriteString(ulong textAddress)
         {
+            WriteUtf8(textAddress, AppOutputChannel());
+            NoteAlternateScreenOwner();
+        }
+
+        // The application's error stream. Never the Ui channel, even from inside
+        // a full-screen interface: an error is a message, not part of a frame,
+        // and hiding it from the logs because the screen was busy would lose
+        // exactly the line worth keeping.
+        private static void WriteError(ulong textAddress)
+            => WriteUtf8(textAddress, OS.Hal.OutputChannel.AppErr);
+
+        private static void WriteUtf8(ulong textAddress, OS.Hal.OutputChannel channel)
+        {
             if (textAddress == 0)
+                return;
+
+            // This path used to reach the screen through UiText -> Console, and
+            // Console drops everything while Quiet is set. Kept, so moving the
+            // output onto its own channel changes nothing about when it shows.
+            if (OS.Hal.Console.Quiet)
                 return;
 
             // The bytes are UTF-8, and they have to be decoded here.
@@ -696,18 +735,6 @@ namespace OS.Kernel.Process
             // bytes and left as three separate characters, each re-encoded to
             // UTF-8 on the way to the terminal engine. The screen showed the
             // mojibake that double encoding always produces.
-            // While an application is drawing a full-screen interface, its
-            // output is frames, not messages: copying every escape byte to the
-            // UART and the disk log costs more than the drawing does, and the
-            // log is unreadable for it anyway. Decided per write from the
-            // terminal's own state rather than by asking the app, because the
-            // app already said so — it switched to the alternate screen.
-            bool restoreMirror = OS.Hal.Platform.SuppressLogMirror;
-            OS.Hal.Platform.SuppressLogMirror = OS.Hal.TerminalConsole.IsAlternateScreen;
-
-            try
-            {
-
             byte* pointer = (byte*)textAddress;
             for (int i = 0; i < MaxWriteStringBytes; )
             {
@@ -746,15 +773,15 @@ namespace OS.Kernel.Process
 
                 if (codepoint <= 0xFFFF)
                 {
-                    UiText.WriteChar((char)codepoint);
+                    OS.Hal.Platform.WriteChar((char)codepoint, channel);
                 }
                 else
                 {
                     // Past the basic plane the engine wants the surrogate pair,
                     // since it consumes chars rather than codepoints.
                     codepoint -= 0x10000;
-                    UiText.WriteChar((char)(0xD800 + (codepoint >> 10)));
-                    UiText.WriteChar((char)(0xDC00 + (codepoint & 0x3FF)));
+                    OS.Hal.Platform.WriteChar((char)(0xD800 + (codepoint >> 10)), channel);
+                    OS.Hal.Platform.WriteChar((char)(0xDC00 + (codepoint & 0x3FF)), channel);
                 }
             }
 
@@ -766,45 +793,95 @@ namespace OS.Kernel.Process
             // escape sequences were reaching the engine and changing the grid,
             // while the framebuffer kept showing the frame before.
             OS.Hal.Platform.FlushConsole();
-
-            }
-            finally
-            {
-                OS.Hal.Platform.SuppressLogMirror = restoreMirror;
-            }
         }
 
+        /// <summary>
+        /// The channel an application's output belongs on right now.
+        /// </summary>
+        /// <remarks>
+        /// While it is drawing a full-screen interface its output is frames, not
+        /// messages: copying every escape byte to the UART and the disk log cost
+        /// more than drawing did (step165), and nobody reads a screen out of a
+        /// log. Decided per write from the terminal's own state rather than by
+        /// asking the app, because the app already said so: it switched to the
+        /// alternate screen.
+        ///
+        /// Only the process that switched. The launcher hands the screen to a
+        /// child while staying in the alternate screen (leaving it would bring
+        /// the boot log back), and "the screen is alternate" alone then read
+        /// the child's ordinary lines as the launcher's frames: an AOTTESTS run
+        /// reached the display and no log at all.
+        /// </remarks>
+        private static OS.Hal.OutputChannel AppOutputChannel()
+            => OS.Hal.TerminalConsole.IsAlternateScreen && s_alternateScreenOwner == s_runExternalDepth
+                ? OS.Hal.OutputChannel.Ui
+                : OS.Hal.OutputChannel.AppOut;
+
+        // Launch depth of the process that put the terminal in the alternate
+        // screen (0 = the app the kernel started, 1 = its child); -1 while the
+        // terminal is on the main screen.
+        private static int s_alternateScreenOwner = -1;
+
+        /// <summary>
+        /// Records who switched the terminal to the alternate screen, after a
+        /// write that may have done it.
+        /// </summary>
+        /// <remarks>
+        /// Caught on the transition, so a child that enters the alternate
+        /// screen while its parent already holds it is not seen as the owner:
+        /// its frames then reach the logs as output. Noisy, never lost — and no
+        /// such child exists yet (the emulators and DOOM draw on the
+        /// framebuffer, not through the terminal).
+        /// </remarks>
+        private static void NoteAlternateScreenOwner()
+        {
+            if (!OS.Hal.TerminalConsole.IsAlternateScreen)
+                s_alternateScreenOwner = -1;
+            else if (s_alternateScreenOwner < 0)
+                s_alternateScreenOwner = s_runExternalDepth;
+        }
+
+        // The number services are an application's output like WriteString, and
+        // go where it goes. Through UiText they were the kernel's: a label
+        // written with WriteString and its value written with WriteUInt left on
+        // different channels, so the log got the digits and lost the label.
         private static void WriteUInt(uint value)
         {
-            UiText.WriteUInt(value);
+            WriteAppText(SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(value));
         }
 
         private static void WriteHex(ulong value)
         {
-            UiText.Write("0x");
-            UiText.WriteHex(value, 16);
+            WriteAppText("0x");
+            WriteAppText(SharpOS.Std.NoRuntime.NumberFormatting.ULongToHex(value, 16));
+        }
+
+        private static void WriteAppText(string text)
+        {
+            if (OS.Hal.Console.Quiet)
+                return;
+
+            OS.Hal.OutputChannel channel = AppOutputChannel();
+            for (int i = 0; i < text.Length; i++)
+                OS.Hal.Platform.WriteChar(text[i], channel);
+
+            OS.Hal.Platform.FlushConsole();
         }
 
         private static void WriteChar(uint codePoint)
         {
-            // Same rule as WriteString: a character belonging to a full-screen
-            // frame is not a log line.
-            bool restoreMirror = OS.Hal.Platform.SuppressLogMirror;
-            OS.Hal.Platform.SuppressLogMirror = OS.Hal.TerminalConsole.IsAlternateScreen;
+            // Same rules as WriteString: Quiet silences it, and a character that
+            // belongs to a full-screen frame is not a log line.
+            if (OS.Hal.Console.Quiet)
+                return;
 
-            try
-            {
-                UiText.WriteChar((char)codePoint);
-            }
-            finally
-            {
-                OS.Hal.Platform.SuppressLogMirror = restoreMirror;
-            }
+            OS.Hal.Platform.WriteChar((char)codePoint, AppOutputChannel());
+            NoteAlternateScreenOwner();
         }
 
         private static void WriteBuildId()
         {
-            UiText.Write(OS.Kernel.SystemBanner.BuildId);
+            WriteAppText(OS.Kernel.SystemBanner.BuildId);
         }
 
         private static uint GetAbiVersion()

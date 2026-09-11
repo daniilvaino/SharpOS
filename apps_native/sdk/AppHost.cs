@@ -40,7 +40,7 @@
             // at all.
             if (services->WriteStringAddress != 0)
             {
-                WriteUtf8Chunks(text);
+                WriteUtf8Chunks(text, (delegate* unmanaged<ulong, void>)services->WriteStringAddress);
                 return;
             }
 
@@ -54,11 +54,50 @@
             }
         }
 
+        /// <summary>
+        /// Writes to the application's error stream.
+        /// </summary>
+        /// <remarks>
+        /// What the process would send to stderr: the kernel keeps it apart
+        /// from ordinary output (its own port and log file where the machine
+        /// has one), so a failure can be found without reading everything
+        /// printed around it. The screen shows both, in order. On a kernel that
+        /// does not publish the service it goes out as ordinary output rather
+        /// than nowhere.
+        /// </remarks>
+        public static void WriteError(string text)
+        {
+            if (text == null || text.Length == 0)
+                return;
+
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null)
+                return;
+
+            if (services->WriteErrorAddress == 0)
+            {
+                WriteString(text);
+                return;
+            }
+
+            WriteUtf8Chunks(text, (delegate* unmanaged<ulong, void>)services->WriteErrorAddress);
+        }
+
+        /// <summary>Whether the kernel keeps an error stream apart from output.</summary>
+        public static bool HasErrorStream
+        {
+            get
+            {
+                AppServiceTable* services = AppRuntime.Services;
+                return services != null && services->WriteErrorAddress != 0;
+            }
+        }
+
         // 4 KiB at a time. The kernel's own limit is larger, but this buffer is
         // on the stack and a chunk boundary costs only an extra call.
         private const int WriteChunkBytes = 4096;
 
-        private static void WriteUtf8Chunks(string text)
+        private static void WriteUtf8Chunks(string text, delegate* unmanaged<ulong, void> write)
         {
             byte* buffer = stackalloc byte[WriteChunkBytes + 1];
             int used = 0;
@@ -73,7 +112,7 @@
                     if (used + 4 > WriteChunkBytes)
                     {
                         buffer[used] = 0;
-                        WriteString(buffer);
+                        write((ulong)buffer);
                         used = 0;
                     }
 
@@ -84,7 +123,7 @@
             if (used > 0)
             {
                 buffer[used] = 0;
-                WriteString(buffer);
+                write((ulong)buffer);
             }
         }
 

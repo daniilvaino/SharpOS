@@ -156,6 +156,13 @@
         // which is also the honest answer on a build with CoreCLR left out.
         public ulong RunManagedAppAddress;
 
+        // The application's error stream: a NUL-terminated UTF-8 string, like
+        // WriteStringAddress, but on its own channel (step 167) — COM4 and
+        // last_err.log where the machine has the port. Offered at every ABI
+        // version, as WriteString is; appended without a version bump, zero is
+        // the "not published" answer.
+        public ulong WriteErrorAddress;
+
 
     }
 

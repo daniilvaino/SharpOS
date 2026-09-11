@@ -228,6 +228,12 @@ namespace AotTests
 
             CheckThreadsAndTasks();
 
+            // The error stream (step 167). The check can only see that the
+            // kernel offers it; whether the marker reached last_err.log and not
+            // last_app.log is read from the logs.
+            Check("error stream published", AppHost.HasErrorStream);
+            AppHost.WriteError("[stderr] aot marker\n");
+
             AppHost.WriteString("==== ");
             AppHost.WriteUInt(s_pass);
             AppHost.WriteString("/");
@@ -396,6 +402,11 @@ namespace AotTests
             AppHost.WriteString(ok ? "  ok   " : "  FAIL ");
             AppHost.WriteString(name);
             AppHost.WriteString("\n");
+
+            // A failure goes to the error stream as well, so the error log is
+            // the list of what broke — while the output keeps every line in order.
+            if (!ok)
+                AppHost.WriteError("[aot] FAIL " + name + "\n");
         }
     }
 }

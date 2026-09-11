@@ -6,6 +6,10 @@
 # Расхождение — сигнал, а не шум: обновлять файл осознанно, вместе с
 # объяснением в done/stepNN.md. Повторяющиеся имена помечены ' #N'.
 # Зафиксировано на step148: OK=147 DEG=2 FAIL=18 (167 проб).
+# Обновлено на step167: OK=156 DEG=2 FAIL=18. Оставшиеся расхождения —
+# дефекты разбора имён в probe_report, а не пробы: строка, начатая скобкой
+# ([os] ..., [ModuleInitializer] ...), считается шумом, а имя с '[' внутри
+# (covariant array ... Base[] = Derived[]) режется на первой скобке.
 
 DateTime.UtcNow	OK
 DateTime.Now	OK
@@ -20,6 +24,7 @@ Env.GetEnvironmentVariable(PATH)	OK
 Env.GetEnvironmentVariables	OK
 RuntimeInformation.OSDescription	OK
 RuntimeInformation.RuntimeIdentifier	OK
+Console.Error.WriteLine	OK
 [os] RID=unknown	OK
 Registry.LocalMachine access (pwsh-style trigger) (got null)	OK
 Registry root keys exist (HKLM + HKCU)	OK
@@ -174,3 +179,12 @@ Enum.TryParse<T>	OK
 Enum.GetNames / GetValues	OK
 Enum.HasFlag on flags-enum	OK
 Process.Start(dummy)	FAIL
+OS identity dump (step 122)	OK
+VirtualProtect: page executable after write	OK
+Register stress: 4 threads pure math, 3s	OK
+JIT stress: 1 thread emit+run, 1s	OK
+JIT stress: 4 threads, retained, 3s	OK
+JIT stress: 4 threads emit+run, 3s	OK
+Vector128.IsHardwareAccelerated	OK
+Vector128 lane mask	OK
+Vector256 availability reported	OK

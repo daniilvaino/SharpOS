@@ -29,7 +29,7 @@ namespace SharpOS.AppSdk
             // Never executes once PatchToRet has run. Inflate the body so
             // there is guaranteed room for the 1-byte patch, and make the
             // unpatched case loudly fatal rather than silently corrupting.
-            AppHost.WriteString("RhpStackProbe: stub body executed — patch did not run\n");
+            AppHost.WriteError("RhpStackProbe: stub body executed — patch did not run\n");
             for (; ; ) { }
         }
 

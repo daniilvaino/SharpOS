@@ -57,6 +57,10 @@ namespace OS.PAL.SharpOSHost
                 var kind = Ps2Keyboard.Decode(sc, out char ch, out byte make);
                 if (make == 0) continue;  // ignore break events
 
+                // The echo is the program's console showing what was typed, so
+                // it goes on the program's channel, next to its prompt.
+                const OS.Hal.OutputChannel echo = OS.Hal.OutputChannel.HostedOut;
+
                 var status = LineEditor.Feed(kind, ch);
                 if (status == LineEditor.Status.Changed)
                 {
@@ -67,19 +71,19 @@ namespace OS.PAL.SharpOSHost
                         // interpret it via the standard backspace handling.
                         // Single sequence — emitting both BS and ANSI \e[D
                         // double-erases on terminals that interpret both.
-                        OS.Hal.Platform.WriteChar((char)0x08);
-                        OS.Hal.Platform.WriteChar(' ');
-                        OS.Hal.Platform.WriteChar((char)0x08);
+                        OS.Hal.Platform.WriteChar((char)0x08, echo);
+                        OS.Hal.Platform.WriteChar(' ', echo);
+                        OS.Hal.Platform.WriteChar((char)0x08, echo);
                     }
                     else
                     {
-                        OS.Hal.Platform.WriteChar(ch);
+                        OS.Hal.Platform.WriteChar(ch, echo);
                     }
                 }
                 if (status == LineEditor.Status.Submitted)
                 {
-                    OS.Hal.Platform.WriteChar('\r');
-                    OS.Hal.Platform.WriteChar('\n');
+                    OS.Hal.Platform.WriteChar('\r', echo);
+                    OS.Hal.Platform.WriteChar('\n', echo);
                     break;
                 }
             }

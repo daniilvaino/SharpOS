@@ -23,7 +23,7 @@ namespace SharpOS.AppSdk
             // Unpatched fallback. Must be at least 12 bytes so the patch fits;
             // the string load and halt loop are comfortably larger.
             _ = exceptionAsBytes;
-            AppHost.WriteString("RhpRethrow: rethrow bridge not patched\r\n");
+            AppHost.WriteError("RhpRethrow: rethrow bridge not patched\r\n");
             for (; ; ) { }
         }
 

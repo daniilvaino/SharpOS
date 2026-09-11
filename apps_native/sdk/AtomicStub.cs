@@ -26,7 +26,7 @@ namespace SharpOS.AppSdk
             // Unpatched fallback. Reached only if patching failed, and wrong in
             // exactly the way the patch exists to fix — so say so rather than
             // return a plausible answer.
-            AppHost.WriteString("AtomicStub: 32-bit CAS not patched\r\n");
+            AppHost.WriteError("AtomicStub: 32-bit CAS not patched\r\n");
             for (; ; ) { }
         }
 
@@ -36,7 +36,7 @@ namespace SharpOS.AppSdk
         //   C3                ret
         private static ulong CompareExchange64(ulong* location, ulong value, ulong comparand)
         {
-            AppHost.WriteString("AtomicStub: 64-bit CAS not patched\r\n");
+            AppHost.WriteError("AtomicStub: 64-bit CAS not patched\r\n");
             for (; ; ) { }
         }
 
@@ -44,7 +44,7 @@ namespace SharpOS.AppSdk
         //   C3          ret
         private static void Barrier()
         {
-            AppHost.WriteString("AtomicStub: barrier not patched\r\n");
+            AppHost.WriteError("AtomicStub: barrier not patched\r\n");
             for (; ; ) { }
         }
 

@@ -163,9 +163,35 @@ namespace OS.PAL.SharpOSHost
         [RuntimeExport("SharpOSHost_DebugPrint")]
         public static void DebugPrint(byte* utf8Message)
         {
-            if (!Verbose) return;
             if (utf8Message == null) return;
+            if (!Verbose)
+            {
+                SkipString(utf8Message);
+                return;
+            }
             GatedEmitString(utf8Message);
+        }
+
+        // A chunk dropped by the Verbose gate still moves the line state on.
+        //
+        // The fork builds one line from a label (DebugPrint), values
+        // (DebugPrintHex) and a "\n" (DebugPrint). Returning before the state
+        // machine left s_currentLineOn at whatever the last *printed* line set
+        // it to, so after an "[r2r] ... accepted" line every VirtualAlloc
+        // report lost its label and newline and kept its values: 1.6 KB of
+        // glued hex digits in front of "coreclr_initialize hr=0x0". A line
+        // opened by a dropped chunk is off; its values go with it.
+        private static void SkipString(byte* utf8)
+        {
+            for (byte* p = utf8; *p != 0; p++)
+            {
+                if (s_needClassify)
+                {
+                    s_needClassify = false;
+                    s_currentLineOn = false;
+                }
+                if (*p == (byte)'\n') s_needClassify = true;
+            }
         }
 
         // Always-on variant: prints UTF-8 NUL-terminated regardless of Verbose.

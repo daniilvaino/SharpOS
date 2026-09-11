@@ -93,6 +93,10 @@ Probe("Env.GetEnvironmentVariable(PATH)", () => { _ = Environment.GetEnvironment
 Probe("Env.GetEnvironmentVariables", () => { _ = Environment.GetEnvironmentVariables(); });
 Probe("RuntimeInformation.OSDescription", () => { _ = RuntimeInformation.OSDescription; });
 Probe("RuntimeInformation.RuntimeIdentifier", () => { _ = RuntimeInformation.RuntimeIdentifier; });
+// step 167 — stderr программы идёт своим портом (COM4 → last_err.log), отдельно
+// от stdout. Вердикт говорит лишь, что запись не бросила; дошёл ли маркер туда,
+// куда должен, проверяется по логам.
+Probe("Console.Error.WriteLine", () => { Console.Error.WriteLine("[stderr] census marker"); });
 // step 122 — pwsh experiment: проверяем что наш PAL surface'ит насчёт OS.
 // pwsh на стоковом Linux работает; если на нашем env IsOSPlatform.Windows
 // возвращает true, pwsh пойдёт в Win-only branch'и (Registry, env var rules

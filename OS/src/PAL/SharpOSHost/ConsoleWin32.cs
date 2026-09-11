@@ -110,6 +110,8 @@ namespace OS.PAL.SharpOSHost
             if (!IsStdHandle(hConsole)) { ApiTrace("write REJECT", hConsole, nChars); return 0; }
             ApiTrace("write", hConsole, nChars);
 
+            OS.Hal.OutputChannel channel = HostedChannel(hConsole);
+
             // The whole buffer as one unit: this is where PowerShell's escape
             // sequences arrive, and half of one is worse than none.
             OS.Kernel.Threading.Preemption.Suppress();
@@ -120,18 +122,18 @@ namespace OS.PAL.SharpOSHost
                 char c = buffer[i];
                 if (c < 0x80)
                 {
-                    OS.Hal.Platform.WriteChar((char)c);
+                    OS.Hal.Platform.WriteChar((char)c, channel);
                 }
                 else if (c < 0x800)
                 {
-                    OS.Hal.Platform.WriteChar((char)(0xC0 | (c >> 6)));
-                    OS.Hal.Platform.WriteChar((char)(0x80 | (c & 0x3F)));
+                    OS.Hal.Platform.WriteChar((char)(0xC0 | (c >> 6)), channel);
+                    OS.Hal.Platform.WriteChar((char)(0x80 | (c & 0x3F)), channel);
                 }
                 else
                 {
-                    OS.Hal.Platform.WriteChar((char)(0xE0 | (c >> 12)));
-                    OS.Hal.Platform.WriteChar((char)(0x80 | ((c >> 6) & 0x3F)));
-                    OS.Hal.Platform.WriteChar((char)(0x80 | (c & 0x3F)));
+                    OS.Hal.Platform.WriteChar((char)(0xE0 | (c >> 12)), channel);
+                    OS.Hal.Platform.WriteChar((char)(0x80 | ((c >> 6) & 0x3F)), channel);
+                    OS.Hal.Platform.WriteChar((char)(0x80 | (c & 0x3F)), channel);
                 }
             }
             OS.Kernel.Threading.Preemption.Allow();
@@ -151,11 +153,24 @@ namespace OS.PAL.SharpOSHost
             if (numBytesWritten != null) *numBytesWritten = 0;
             if (buffer == null || nBytes == 0) return 1;
             if (!IsStdHandle(hHandle)) return 0;
+            OS.Hal.OutputChannel channel = HostedChannel(hHandle);
             for (uint i = 0; i < nBytes; i++)
-                OS.Hal.Platform.WriteChar((char)buffer[i]);
+                OS.Hal.Platform.WriteChar((char)buffer[i], channel);
             if (numBytesWritten != null) *numBytesWritten = nBytes;
             return 1;
         }
+
+        /// <summary>
+        /// Standard error goes on its own channel; everything else written to a
+        /// console handle is standard output.
+        /// </summary>
+        /// <remarks>
+        /// The distinction existed here all along (the handles are different
+        /// sentinels) and was dropped one call later, where every character
+        /// became the same undifferentiated console output.
+        /// </remarks>
+        private static OS.Hal.OutputChannel HostedChannel(ulong handle)
+            => handle == HandleStdErr ? OS.Hal.OutputChannel.HostedErr : OS.Hal.OutputChannel.HostedOut;
 
         // GetConsoleMode(HANDLE, LPDWORD) — return reasonable default.
         // BCL checks for processed-output / virtual-terminal-processing
@@ -324,33 +339,35 @@ namespace OS.PAL.SharpOSHost
 
             // The engine is the one that knows where the cursor is, so move it the way
             // any other program would: CUP is 1-based. Writing through Platform keeps
-            // the UART log in sync too.
+            // the UART log in sync too — on the program's channel, since the
+            // sequence belongs between the program's own characters.
             if (OS.Hal.TerminalConsole.IsReady)
             {
-                WriteCsi();
-                WriteNumber(y + 1);
-                OS.Hal.Platform.WriteChar(';');
-                WriteNumber(x + 1);
-                OS.Hal.Platform.WriteChar('H');
+                OS.Hal.OutputChannel channel = HostedChannel(hConsole);
+                WriteCsi(channel);
+                WriteNumber(y + 1, channel);
+                OS.Hal.Platform.WriteChar(';', channel);
+                WriteNumber(x + 1, channel);
+                OS.Hal.Platform.WriteChar('H', channel);
             }
             return 1;
         }
 
-        private static void WriteCsi()
+        private static void WriteCsi(OS.Hal.OutputChannel channel)
         {
-            OS.Hal.Platform.WriteChar((char)0x1B);
-            OS.Hal.Platform.WriteChar('[');
+            OS.Hal.Platform.WriteChar((char)0x1B, channel);
+            OS.Hal.Platform.WriteChar('[', channel);
         }
 
         // Digits without allocating: this runs on the console write path.
-        private static void WriteNumber(int value)
+        private static void WriteNumber(int value, OS.Hal.OutputChannel channel)
         {
-            if (value <= 0) { OS.Hal.Platform.WriteChar('0'); return; }
+            if (value <= 0) { OS.Hal.Platform.WriteChar('0', channel); return; }
             int divisor = 1;
             while (value / divisor >= 10) divisor *= 10;
             while (divisor > 0)
             {
-                OS.Hal.Platform.WriteChar((char)('0' + (value / divisor) % 10));
+                OS.Hal.Platform.WriteChar((char)('0' + (value / divisor) % 10), channel);
                 divisor /= 10;
             }
         }

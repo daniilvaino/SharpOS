@@ -174,6 +174,10 @@ bundled firmware, so this can be skipped on a first run.
 
 This publishes the kernel with NativeAOT, stages the ESP under `OS/.qemu/esp/`,
 and launches QEMU. Output is teed to `last_build.log` (UTF-8) in the repo root.
+That is COM1, the kernel log. What programs print (the launcher, its children,
+PowerShell, the PAL/OS census) goes to COM3, which QEMU writes to `last_app.log`
+next to it, and their error streams to COM4, `last_err.log`;
+`tools/probe_report.ps1` reads all three.
 
 Flags worth knowing: `-NoRun` builds without launching, `-SkipCoreClr` builds a
 bare kernel with no hosted runtime, `-Stop` kills a running instance through QMP

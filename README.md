@@ -50,7 +50,7 @@ Expand-Archive pwsh.zip -DestinationPath payloads\pwsh\PowerShell-7.6.5-win-x64
  
 # --- Ядро + образ + запуск в QEMU ---
 $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
-& .\run_build.ps1 -SkipCoreClr 2>&1 | Tee-Object last_build.log
+& .\run_build.ps1 -SkipCoreClr 2>&1 | Tee-Object last_build.log   # лог ядра (COM1); вывод программ — last_app.log (COM3), их ошибки — last_err.log (COM4)
 ```
 
 ## Архитектурные инварианты

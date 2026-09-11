@@ -120,6 +120,11 @@
         // kernel published none — a build without CoreCLR, or an older one.
         public ulong RunManagedAppAddress;
 
+        // The error stream: NUL-terminated UTF-8, like WriteStringAddress, on
+        // its own channel. Zero on a kernel that predates it — AppHost.WriteError
+        // falls back to ordinary output. Layout must match OS/.../AppServiceTable.cs.
+        public ulong WriteErrorAddress;
+
 
     }
 

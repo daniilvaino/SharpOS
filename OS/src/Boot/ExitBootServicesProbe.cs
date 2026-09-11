@@ -42,10 +42,20 @@ namespace OS.Boot
 
             // 1. Own substrate + console reroute (still on UEFI here).
             Serial.Init();
+            bool com3 = Serial.InitCom3();
+            bool com4 = Serial.InitCom4();
             if (Framebuffer.IsAvailable)
                 FbTty.Init(0x00, 0xE6, 0x78, 0x00, 0x00, 0x28);   // green on navy
             Platform.UseOwnConsole();
             Console.WriteLine("[ebs] console rerouted to own UART+FbTty");
+            // Said once, in the kernel log, so a reader missing an
+            // application's output knows which port to look at.
+            Console.WriteLine(com3
+                ? "[ebs] program output -> COM3"
+                : "[ebs] no COM3 - program output stays on COM1");
+            Console.WriteLine(com4
+                ? "[ebs] program errors -> COM4"
+                : "[ebs] no COM4 - program errors go with program output");
 
             // 2. Size the memory map, then one (last) allocation.
             ulong mapSize = 0, mapKey = 0, descSize = 0;
