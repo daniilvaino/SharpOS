@@ -117,6 +117,12 @@ namespace OS.Hal
                 case OutputChannel.HostedErr:
                     return OutputSink.Screen | ErrorPort | OutputSink.DiskLog;
 
+                // Measurements are for the tools that compare runs, not for
+                // whoever is watching the screen — and drawing them would be one
+                // more cost inside the thing being measured.
+                case OutputChannel.Perf:
+                    return OutputSink.Com1 | OutputSink.DiskLog;
+
                 default:
                     return KernelLog;
             }

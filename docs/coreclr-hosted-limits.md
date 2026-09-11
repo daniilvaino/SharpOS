@@ -78,7 +78,7 @@ agent-memory `project_string_as_methodtable_shared_root`,
 - **Текст/числа**: полный **UTF-8/Unicode** (кириллица+эмодзи),
   `String.Normalize`, `Regex`, `Convert.ToBase64String`,
   `Random.Shared` (managed PRNG), `Stopwatch`/`Environment.TickCount64`
-  (монотонны), `Path.GetFullPath`.
+  (монотонны, по HPET — step 168), `Path.GetFullPath`.
 - **Время**: `DateTime.UtcNow` — реальное CMOS-время (step-73 мост; §1).
 - **Self-ID**: `FrameworkDescription=.NET 10.0.7-dev`,
   `Environment.Version 10.0.7`, target `.NETCoreApp v10`, assembly
@@ -99,8 +99,13 @@ agent-memory `project_string_as_methodtable_shared_root`,
   без фолта).
 - ❌ PAL-STUB `DateTime.Now` — local/timezone-конвертация (нет tz DB;
   отдельный фронт, не «быстрый»).
-- ✅ `Stopwatch.GetTimestamp`, `Environment.TickCount64` — монотонны
-  (fake-счётчики, не привязаны к wall-clock, но не кидают).
+- ✅ `Stopwatch.GetTimestamp`, `Environment.TickCount64`, QPC — монотонны и
+  точны (step 168). Все часы идут через `SharpOSHost_GetUtcFileTime`: якорь
+  «секунды RTC + HPET» берётся один раз, дальше — HPET. Было: CMOS на каждый
+  вызов (~10 мкс) плюс фаза HPET внутри секунды — откаты до секунды, бенч
+  насчитывал −442 мс на 574. Стало: <1 мкс, откатов 0, `Stopwatch` = HPET
+  ядра. Абсолютная ошибка — меньше секунды (зерно RTC). `GetSystemTime`
+  (SYSTEMTIME) по-прежнему читает CMOS напрямую.
 
 ---
 

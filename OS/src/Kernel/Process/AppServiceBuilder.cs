@@ -1179,6 +1179,7 @@ namespace OS.Kernel.Process
             Console.Write(" ----");
             DebugLog.EndLine();
 
+            OS.Kernel.Diagnostics.PerfCounters.Mark();
             bool ok = global::OS.Kernel.Exec.CoreClrHost.TryExecute(path, out int exitCode);
             request->ExitCode = exitCode;
 
@@ -1187,8 +1188,20 @@ namespace OS.Kernel.Process
             Console.WriteInt(exitCode);
             Console.Write(ok ? " ----" : " (host refused) ----");
             DebugLog.EndLine();
+            OS.Kernel.Diagnostics.PerfCounters.Report(RunScope(path));
 
             return ok ? (uint)AppServiceStatus.Ok : (uint)AppServiceStatus.DeviceError;
+        }
+
+        // "\SHARPOS\Bench.dll" -> "run.Bench": the scope a run's [perf] lines
+        // are filed under, so runs of different programs never mix.
+        private static string RunScope(string path)
+        {
+            int start = path.LastIndexOf('\\') + 1;
+            int end = path.LastIndexOf('.');
+            if (end <= start)
+                end = path.Length;
+            return "run." + path.Substring(start, end - start);
         }
 
         private static uint RunApp(ulong requestAddress)

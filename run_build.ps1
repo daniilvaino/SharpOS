@@ -462,6 +462,22 @@ if (Test-Path -LiteralPath $forkFxNames) {
         Write-Warning "PowerShellBootstrap project not found at $psBootstrapProj"
     }
 
+    # Benchmarks (step 168): a stock console app, run from the launcher when a
+    # number is wanted. Its [perf] lines and the kernel's are gathered by
+    # tools/perf_report.ps1.
+    $benchProj   = Join-Path $repoRoot "apps_managed\Bench"
+    $benchDllSrc = Join-Path $benchProj "bin\Release\net10.0\Bench.dll"
+    if (Test-Path -LiteralPath (Join-Path $benchProj "Bench.csproj")) {
+        Push-Location $benchProj; & dotnet build -c Release | Out-Null; Pop-Location
+        if (Test-Path -LiteralPath $benchDllSrc) {
+            Copy-Item -LiteralPath $benchDllSrc -Destination (Join-Path $espSharpOSDir "Bench.dll") -Force
+            $bh = (Get-FileHash -LiteralPath $benchDllSrc -Algorithm SHA256).Hash
+            Write-Host "Prepared Bench.dll sha256=$bh"
+        } else {
+            Write-Warning "Bench.dll not found at $benchDllSrc"
+        }
+    }
+
     # Generate TPA list: SPC (root) + every fx dll + every pwsh/* dll + the
     # app. Semicolon-sep, virtual-drive C:\sharpos\ paths so BCL's
     # Path.IsPathFullyQualified accepts them. SharpOSHost_FileOpen strips the
@@ -492,6 +508,7 @@ if (Test-Path -LiteralPath $forkFxNames) {
     }
     [void]$tpa.Append(';C:\sharpos\NormalHello.dll')
     [void]$tpa.Append(';C:\sharpos\PowerShellBootstrap.dll')
+    [void]$tpa.Append(';C:\sharpos\Bench.dll')
     [System.IO.File]::WriteAllText((Join-Path $espSharpOSDir "tpa.txt"), $tpa.ToString())
     Write-Host "Prepared \sharpos\tpa.txt (length=$($tpa.Length))"
 }

@@ -425,6 +425,7 @@ namespace OS.Kernel.Diagnostics
                 // through a [NoInlining] helper — the compiler can't prove the
                 // helper won't throw, so EH region survives.
                 int hr = unchecked((int)0x80004005);  // E_FAIL default
+                PerfCounters.Mark();
                 try
                 {
                     hr = InvokeCoreClrInitialize(
@@ -441,6 +442,7 @@ namespace OS.Kernel.Diagnostics
                 Console.Write("coreclr_initialize hr=0x");
                 Console.WriteHex((ulong)(uint)hr);
                 Console.WriteLine("");
+                PerfCounters.Report("init");
                 if (hr == 0)
                 {
                     Console.WriteLine("=== S_OK — CoreCLR initialized ===");
@@ -469,6 +471,7 @@ namespace OS.Kernel.Diagnostics
                     if (Probes.HostedAppQuietConsole)
                         Console.Quiet = true;
 
+                    PerfCounters.Mark();
                     int xr = coreclr_execute_assembly(
                         hostHandle, domainId,
                         argc: 0, argv: null,
@@ -479,6 +482,7 @@ namespace OS.Kernel.Diagnostics
                     Console.Write("execute_assembly hr=0x"); Console.WriteHex((ulong)(uint)xr);
                     Console.Write(" exitCode="); Console.WriteInt((int)exitCode);
                     Console.WriteLine("");
+                    PerfCounters.Report("census");
                     if (xr == 0 && exitCode == 42)
                         Console.WriteLine("=== NORMAL .NET PROGRAM EXECUTED (byte-for-byte) ===");
 

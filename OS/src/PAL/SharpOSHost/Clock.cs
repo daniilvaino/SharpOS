@@ -28,25 +28,85 @@ namespace OS.PAL.SharpOSHost
         [RuntimeExport("SharpOSHost_GetUtcFileTime")]
         public static long GetUtcFileTime()
         {
+            // Every hosted clock — QPC, TickCount64, DateTime.UtcNow — ends
+            // here, so this is where the cost of "what time is it" is counted.
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
+            long fileTime = ReadUtcFileTime();
+            OS.Kernel.Diagnostics.PerfCounters.CountClock(started);
+            return fileTime;
+        }
+
+        // The wall clock is the RTC read once, carried forward by the HPET.
+        //
+        // It used to read the CMOS on every call and add the HPET's position
+        // within its own second (counter % hz). Two faults in one line: a full
+        // CMOS read — dozens of port accesses and a wait on the update flag —
+        // is ~10 us under QEMU, and every hosted clock pays it (the census
+        // spent 1.8 s of 16 in here); and the two halves are unrelated, the
+        // RTC's second boundary falls anywhere in the HPET's, so time jumped
+        // back by up to a second each time the RTC ticked. A benchmark timed
+        // with Stopwatch came out at -442 ms for a 574 ms run.
+        //
+        // Now: one anchor (RTC seconds + the counter at that moment), and
+        // every read is anchor + elapsed counter ticks. The absolute error is
+        // what it always was — under a second, the RTC has no finer grain —
+        // but it no longer changes between reads.
+        private static long s_anchorFileTime;
+        private static ulong s_anchorCounter;
+        private static bool s_anchored;
+
+        // Largest value ever handed out; nothing below it is returned again.
+        private static long s_lastFileTime;
+
+        private static long ReadUtcFileTime()
+        {
+            ulong hz = OS.Hal.Timer.Hpet.FrequencyHz;
+            if (hz == 0)
+                return ReadRtcFileTime();
+
+            // One CPU: with preemption held, the anchor pair and the last
+            // value cannot be half-updated under a reader.
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
+            {
+                ulong now = OS.Hal.Timer.Hpet.ReadCounter();
+
+                // Re-anchor when the counter is behind the anchor: the one
+                // restart EnsureRunning may do after ExitBootServices zeroes
+                // it, or a 32-bit counter wrapping. A 32-bit counter that wraps
+                // more than once between two reads is not caught — time then
+                // lags, but the clamp below keeps it from going back.
+                if (!s_anchored || now < s_anchorCounter)
+                {
+                    long rtc = ReadRtcFileTime();
+                    s_anchorFileTime = rtc > s_lastFileTime ? rtc : s_lastFileTime;
+                    s_anchorCounter = now;
+                    s_anchored = true;
+                }
+
+                ulong elapsed = now - s_anchorCounter;
+                long fileTime = s_anchorFileTime
+                    + (long)(elapsed / hz * 10_000_000UL + elapsed % hz * 10_000_000UL / hz);
+
+                if (fileTime < s_lastFileTime)
+                    fileTime = s_lastFileTime;
+                s_lastFileTime = fileTime;
+                return fileTime;
+            }
+            finally
+            {
+                OS.Kernel.Threading.Preemption.Allow();
+            }
+        }
+
+        // Whole seconds from the CMOS; 0 if it cannot be read.
+        private static long ReadRtcFileTime()
+        {
             if (!Rtc.TryRead(out Rtc.Snapshot s))
                 return 0;
             long days = DaysSince1970(s.Year, s.Month, s.Day) + 134774;
             long secs = days * 86400L + s.Hour * 3600L + s.Minute * 60L + s.Second;
-            // Mix in HPET sub-second offset (100-ns resolution) so callers
-            // observing FILETIME at sub-second cadence still see monotonic
-            // forward progress. RTC alone is 1 Hz; QPC/Stopwatch consumers
-            // (ProcessorIdCache.ProcessorNumberSpeedCheck, SpinWait, timer
-            //  scheduling) would otherwise spin until the next RTC tick.
-            long fileTime = secs * 10_000_000L;
-            ulong hz = OS.Hal.Timer.Hpet.FrequencyHz;
-            if (hz != 0)
-            {
-                ulong c = OS.Hal.Timer.Hpet.ReadCounter();
-                // sub-second portion in 100-ns ticks
-                ulong subSec = (c % hz) * 10_000_000UL / hz;
-                fileTime += (long)subSec;
-            }
-            return fileTime;
+            return secs * 10_000_000L;
         }
 
         // Stopwatch routes: System.Native's GetTimestamp asks for monotonic
