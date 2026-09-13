@@ -186,6 +186,13 @@ namespace OS.Kernel.Diagnostics
             (byte)'S',(byte)'y',(byte)'s',(byte)'t',(byte)'e',(byte)'m',(byte)'.',
             (byte)'G',(byte)'l',(byte)'o',(byte)'b',(byte)'a',(byte)'l',(byte)'i',(byte)'z',(byte)'a',(byte)'t',(byte)'i',(byte)'o',(byte)'n',(byte)'.',
             (byte)'I',(byte)'n',(byte)'v',(byte)'a',(byte)'r',(byte)'i',(byte)'a',(byte)'n',(byte)'t',0 };
+        // Tiered compilation, see Probes.HostedTieredCompilation. Always
+        // passed; "true" is what the runtime assumes anyway.
+        private static readonly byte[] s_kTiered = new byte[] {
+            (byte)'S',(byte)'y',(byte)'s',(byte)'t',(byte)'e',(byte)'m',(byte)'.',
+            (byte)'R',(byte)'u',(byte)'n',(byte)'t',(byte)'i',(byte)'m',(byte)'e',(byte)'.',
+            (byte)'T',(byte)'i',(byte)'e',(byte)'r',(byte)'e',(byte)'d',
+            (byte)'C',(byte)'o',(byte)'m',(byte)'p',(byte)'i',(byte)'l',(byte)'a',(byte)'t',(byte)'i',(byte)'o',(byte)'n',0 };
         private static readonly byte[] s_vFalse = new byte[] { (byte)'f',(byte)'a',(byte)'l',(byte)'s',(byte)'e',0 };
         private static readonly byte[] s_vTrue  = new byte[] { (byte)'t',(byte)'r',(byte)'u',(byte)'e',0 };
         private static readonly byte[] s_v64M   = new byte[] { (byte)'0',(byte)'x',(byte)'4',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',(byte)'0',0 }; // 64 MiB
@@ -394,14 +401,16 @@ namespace OS.Kernel.Diagnostics
             fixed (byte* kGcHL  = s_kGcHardLim)  fixed (byte* kGcRR  = s_kGcRegRange)
             fixed (byte* kGcRS  = s_kGcRegSize)  fixed (byte* kGcRV  = s_kGcRetainVM)
             fixed (byte* kGInv = s_kGloblInv)
+            fixed (byte* kTier = s_kTiered)
             fixed (byte* vF = s_vFalse) fixed (byte* vT = s_vTrue)
             fixed (byte* v64 = s_v64M) fixed (byte* v128 = s_v128M) fixed (byte* v1m = s_v1M)
             {
                 byte* vTpa = tpaVal != null ? tpaVal : vTpaFallback;
-                byte** keys   = stackalloc byte*[9] {
-                    kTpa, kApp, kGcSrv, kGcCon, kGcHL, kGcRR, kGcRS, kGcRV, kGInv };
-                byte** values = stackalloc byte*[9] {
-                    vTpa, vApp, vF,     vF,     v64,   v128,  v1m,   vT,   vT };
+                byte* vTier = Probes.HostedTieredCompilation ? vT : vF;
+                byte** keys   = stackalloc byte*[10] {
+                    kTpa, kApp, kGcSrv, kGcCon, kGcHL, kGcRR, kGcRS, kGcRV, kGInv, kTier };
+                byte** values = stackalloc byte*[10] {
+                    vTpa, vApp, vF,     vF,     v64,   v128,  v1m,   vT,   vT,    vTier };
                 // Step 110 Part 9 — after NativeArena moved every native
                 // blob out of kernel GcHeap (step 109) and precise GC walker
                 // landed (step 110 Parts 1-8), the original concern that
@@ -429,7 +438,7 @@ namespace OS.Kernel.Diagnostics
                 try
                 {
                     hr = InvokeCoreClrInitialize(
-                        exePath, domainName, 9, keys, values, &hostHandle, &domainId);
+                        exePath, domainName, 10, keys, values, &hostHandle, &domainId);
                 }
                 catch (Exception ex)
                 {

@@ -28,6 +28,14 @@ Measure("jit", Jit);
 Measure("tasks", Tasks);
 Measure("output", Output);
 
+// One benchmark again, long enough for the kernel's sampling profiler to see
+// it: 100 samples a second get three or four points out of the 36 ms the
+// regular exceptions benchmark takes. Chosen by the kernel through the
+// environment (Probes.BenchProfile); unset on a desktop, so the host
+// reference never runs it.
+if (Environment.GetEnvironmentVariable("SHARPOS_BENCH_PROFILE") == "exceptions")
+    Measure("exceptions.profile", () => ThrowAndCatch(10_000));
+
 Console.WriteLine("=== bench end ===");
 return 0;
 
@@ -164,11 +172,12 @@ static long Collections()
 // Throw and catch one frame down. Every step of an unwind looks up function
 // tables, which on SharpOS is a linear walk over every loaded image (suspect
 // 23).
-static long Exceptions()
+static long Exceptions() => ThrowAndCatch(300);
+
+static long ThrowAndCatch(int count)
 {
-    const int Count = 300;
     int caught = 0;
-    for (int i = 0; i < Count; i++)
+    for (int i = 0; i < count; i++)
     {
         try { Throw(i); }
         catch (InvalidOperationException) { caught++; }

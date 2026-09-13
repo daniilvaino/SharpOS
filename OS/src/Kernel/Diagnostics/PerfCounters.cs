@@ -44,6 +44,13 @@ namespace OS.Kernel.Diagnostics
         KernelGcs,
         KernelGcTicks,
 
+        // Blocking waits for an xHCI event (disk transfers, commands; not the
+        // keyboard's non-blocking polls), their time, and the turns of the
+        // wait loop.
+        UsbWaits,
+        UsbWaitTicks,
+        UsbWaitSpins,
+
         // Exceptions: RaiseException calls, function-table lookups (and which
         // table answered), R2R tables walked past before one did, and
         // virtual unwinds.
@@ -76,10 +83,12 @@ namespace OS.Kernel.Diagnostics
     /// <see cref="Mark"/> and <see cref="Report"/>, so each run is its own
     /// measurement whatever ran before it.
     ///
-    /// A timed counter costs two HPET reads per call, and part of that is
-    /// inside the measured interval. It is the same on every run, so it does
-    /// not hide a change — but an average here is an upper bound, not the
-    /// bare cost.
+    /// Timed counters run on the timestamp counter (<see cref="Now"/>), and
+    /// only the interval's ends are read from the HPET — which then also
+    /// converts the ticks. They used to read the HPET on every call: under
+    /// QEMU that is an emulated-device access of about two microseconds, and
+    /// the exception path, timed at its seven kernel calls a throw, spent a
+    /// third of its time reading the clock that measured it (step170).
     ///
     /// A fixed buffer, not an array: an array would need a class constructor
     /// to allocate it, and those do not run here (limits §1).
@@ -95,17 +104,22 @@ namespace OS.Kernel.Diagnostics
         private static ulong s_markCounter;
         private static ulong s_markTsc;
 
-        public static ulong Now()
-            => OS.Hal.Timer.Hpet.IsInitialized ? OS.Hal.Timer.Hpet.ReadCounter() : 0;
+        /// <summary>
+        /// Start of a timed call, for the Count* methods; 0 when there is no
+        /// counter yet, and then the call is not counted.
+        /// </summary>
+        public static ulong Now() => Tsc();
 
         /// <summary>
-        /// The timestamp counter, for paths too short for <see cref="Now"/>:
-        /// an HPET read costs about a microsecond under QEMU, as much as some
-        /// of what is being timed. Its rate is not known up front; the report
+        /// The timestamp counter. Its rate is not known up front; the report
         /// converts with the HPET time of the same interval.
         /// </summary>
         public static ulong Tsc()
             => OS.Hal.X64Asm.ReadTsc(out ulong value) ? value : 0;
+
+        // The interval's ends: the HPET, whose rate is known.
+        private static ulong Wall()
+            => OS.Hal.Timer.Hpet.IsInitialized ? OS.Hal.Timer.Hpet.ReadCounter() : 0;
 
         /// <summary>
         /// Times every written character per sink (sink.* and terminal.*
@@ -168,15 +182,17 @@ namespace OS.Kernel.Diagnostics
                 for (int i = 0; i < Slots; i++)
                     m[i] = System.Threading.Interlocked.Add(ref v[i], 0);
             }
-            s_markCounter = Now();
+            s_markCounter = Wall();
             s_markTsc = Tsc();
+            Sampler.BeginWindow();
         }
 
         /// <summary>Reports what happened since <see cref="Mark"/>, under <paramref name="scope"/>.</summary>
         public static void Report(string scope)
         {
-            ulong elapsed = s_markCounter == 0 ? 0 : Now() - s_markCounter;
+            ulong elapsed = s_markCounter == 0 ? 0 : Wall() - s_markCounter;
             ulong elapsedTsc = s_markTsc == 0 ? 0 : Tsc() - s_markTsc;
+            ulong elapsedUs = TicksToNs(elapsed) / 1000;
 
             // Every delta is taken before the first line goes out: the report
             // is output too, and would otherwise count itself.
@@ -187,6 +203,9 @@ namespace OS.Kernel.Diagnostics
                 for (int i = 0; i < Slots; i++)
                     delta.V[i] = System.Threading.Interlocked.Add(ref v[i], 0) - m[i];
             }
+
+            s_reportTsc = elapsedTsc;
+            s_reportUs = elapsedUs;
 
             Line(scope, "wall_ms", TicksToNs(elapsed) / 1_000_000);
             Timed(scope, "clock", ref delta, PerfCounter.ClockCalls, PerfCounter.ClockTicks);
@@ -199,7 +218,6 @@ namespace OS.Kernel.Diagnostics
             Line(scope, "write.chars", Get(ref delta, PerfCounter.ProgramWriteChars));
             if (TimeSinks)
             {
-                ulong elapsedUs = TicksToNs(elapsed) / 1000;
                 Line(scope, "sink.disklog_ms", TscToUs(Get(ref delta, PerfCounter.SinkDiskLogTsc), elapsedTsc, elapsedUs) / 1000);
                 Line(scope, "sink.serial_ms", TscToUs(Get(ref delta, PerfCounter.SinkSerialTsc), elapsedTsc, elapsedUs) / 1000);
                 Line(scope, "sink.terminal_ms", TscToUs(Get(ref delta, PerfCounter.SinkTerminalTsc), elapsedTsc, elapsedUs) / 1000);
@@ -208,6 +226,8 @@ namespace OS.Kernel.Diagnostics
             }
             Line(scope, "terminal.drops", Get(ref delta, PerfCounter.TerminalDrops));
             Timed(scope, "kgc", ref delta, PerfCounter.KernelGcs, PerfCounter.KernelGcTicks);
+            Timed(scope, "usb.wait", ref delta, PerfCounter.UsbWaits, PerfCounter.UsbWaitTicks);
+            Line(scope, "usb.wait.spins", Get(ref delta, PerfCounter.UsbWaitSpins));
             Line(scope, "seh.raises", Get(ref delta, PerfCounter.SehRaises));
             Timed(scope, "seh.lookup", ref delta, PerfCounter.SehLookups, PerfCounter.SehLookupTicks);
             Line(scope, "seh.lookup.image", Get(ref delta, PerfCounter.SehLookupImage));
@@ -217,16 +237,24 @@ namespace OS.Kernel.Diagnostics
             Line(scope, "seh.lookup.gap", Get(ref delta, PerfCounter.SehLookupGap));
             Line(scope, "seh.r2r_tables_scanned", Get(ref delta, PerfCounter.SehR2rTablesScanned));
             Timed(scope, "seh.unwind", ref delta, PerfCounter.SehUnwinds, PerfCounter.SehUnwindTicks);
+
+            // Where the interval's time went, by address.
+            Sampler.ReportWindow(scope);
         }
 
         private static ulong Get(ref Values values, PerfCounter counter)
             => (ulong)values.V[(int)counter];
 
+        // The interval being reported: its TSC ticks and its HPET time, which
+        // together convert the timed counters.
+        private static ulong s_reportTsc;
+        private static ulong s_reportUs;
+
         // calls, total time, and time per call for one timed pair.
         private static void Timed(string scope, string name, ref Values delta, PerfCounter calls, PerfCounter ticks)
         {
             ulong n = Get(ref delta, calls);
-            ulong ns = TicksToNs(Get(ref delta, ticks));
+            ulong ns = TscToUs(Get(ref delta, ticks), s_reportTsc, s_reportUs) * 1000;
             Line(scope, name + ".calls", n);
             Line(scope, name + ".total_ms", ns / 1_000_000);
             Line(scope, name + ".avg_ns", n == 0 ? 0 : ns / n);
@@ -243,11 +271,16 @@ namespace OS.Kernel.Diagnostics
         }
 
         // TSC ticks to microseconds at the rate the interval itself showed:
-        // elapsedTsc ticks took elapsedUs. Split like TicksToNs; the second
-        // product stays in range for scopes of up to about a minute at a
-        // 4 GHz counter.
+        // elapsedTsc ticks took elapsedUs. Split like TicksToNs, and both
+        // sides of the ratio halved until the remainder product fits: an
+        // interactive session is an interval of minutes.
         private static ulong TscToUs(ulong ticks, ulong elapsedTsc, ulong elapsedUs)
         {
+            while (elapsedTsc > uint.MaxValue)
+            {
+                elapsedTsc >>= 1;
+                ticks >>= 1;
+            }
             if (elapsedTsc == 0)
                 return 0;
             return ticks / elapsedTsc * elapsedUs + ticks % elapsedTsc * elapsedUs / elapsedTsc;

@@ -72,6 +72,20 @@
         // the thread was not at a safe point.
         public const bool PreemptHostedSession = true;   // измерение пула под вытеснением
 
+        // System.Runtime.TieredCompilation for the hosted runtime. On is the
+        // .NET default. Off compiles every method optimized the first time
+        // and never recompiles it: a way to tell whether a cost is code
+        // running unoptimized (Tier0, or ReadyToRun code the runtime refused)
+        // from a cost that is not in managed code at all.
+        // Step170: off changed nothing about exceptions (120 us either way),
+        // so their cost is not unoptimized managed code.
+        public const bool HostedTieredCompilation = true;
+
+        // Which benchmark Bench.dll repeats long enough for the sampling
+        // profiler (SHARPOS_BENCH_PROFILE; the [prof] lines of run.Bench).
+        // Empty: none, and the variable is not set at all.
+        public const string BenchProfile = "exceptions";
+
         // Per-reservation and per-stub-range chatter from the JIT path
         // ([vm-reserve], [stub-reg]). Both were bring-up proofs left on; the
         // JIT emits hundreds per command. On when tracing JIT memory.

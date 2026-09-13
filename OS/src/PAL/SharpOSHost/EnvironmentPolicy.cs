@@ -95,6 +95,11 @@ namespace OS.PAL.SharpOSHost
             // honest answer here: a unikernel has no signing infrastructure and no
             // multi-user boundary for the policy to protect.
             if (NameEquals(name, nameLen, "PSExecutionPolicyPreference")) return "Bypass";
+
+            // Bench.dll's profiling phase (Probes.BenchProfile).
+            if (OS.Kernel.Diagnostics.Probes.BenchProfile.Length > 0
+                && NameEquals(name, nameLen, "SHARPOS_BENCH_PROFILE"))
+                return OS.Kernel.Diagnostics.Probes.BenchProfile;
             return null;
         }
     }

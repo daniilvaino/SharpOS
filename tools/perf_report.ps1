@@ -84,6 +84,9 @@ if ($values.Count -eq 0) {
 $config = [ordered]@{}
 $mFork = [regex]::Match($text, '\[info\] fork: (\S+)')
 $config['fork'] = if ($mFork.Success) { $mFork.Groups[1].Value } else { 'unknown' }
+# Logs from before the line existed had tiering on.
+$mTier = [regex]::Match($text, '\[info\] hosted tiering: (\S+)')
+$config['tiering'] = if ($mTier.Success) { $mTier.Groups[1].Value } else { 'on' }
 $mQemu = [regex]::Match($text, 'QEMU: [^\r\n]*')
 if ($mQemu.Success) {
     $q = $mQemu.Value
@@ -269,7 +272,7 @@ if ($Label) {
     }
     # The ratio columns compare the newest entry taken on the usual setup: an
     # experiment on another CPU model is not what the references were taken on.
-    $usual = @('fork=Release', 'cpu=qemu64,+nx', 'accel=tcg', 'disk=usb', 'fork=unknown')
+    $usual = @('fork=Release', 'tiering=on', 'cpu=qemu64,+nx', 'accel=tcg', 'disk=usb', 'fork=unknown')
     $last = $labels[$labels.Count - 1]
     for ($k = $labels.Count - 1; $k -ge 0; $k--) {
         $odd = @($meta[$labels[$k]].Config -split ' ' | Where-Object { $_ -and $_ -notin $usual })

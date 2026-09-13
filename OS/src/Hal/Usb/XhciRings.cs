@@ -284,8 +284,10 @@ namespace OS.Hal.Usb
             completionCode = 0;
             eventControl = 0;
             ulong deadline = Deadline(timeoutMs);
+            ulong started = timeoutMs != 0 ? OS.Kernel.Diagnostics.PerfCounters.Now() : 0;
+            int spins = 0;
 
-            for (int spins = 0; spins < 50_000_000; spins++)
+            for (; spins < 50_000_000; spins++)
             {
                 ulong slot = _eventRing + _eventDequeue * (ulong)TrbSize;
                 uint control = Read32(slot + 12);
@@ -312,6 +314,7 @@ namespace OS.Hal.Usb
                     {
                         completionCode = status >> 24;
                         eventControl = control;
+                        CountWait(started, spins);
                         return true;
                     }
 
@@ -323,9 +326,29 @@ namespace OS.Hal.Usb
                     continue;   // port change and friends fall through here
                 }
 
-                if (Expired(deadline)) return false;
+                // The clock every 256 turns, not every turn. The event ring is
+                // ordinary memory and cheap to look at; the HPET is a device,
+                // and under QEMU every read of one is an exit into the
+                // emulator. A wait lasts about a hundred turns (step170), so
+                // this is one or two reads instead of a hundred; the deadline
+                // is seconds away and does not need more. A non-blocking poll
+                // still reads it once, on its first turn.
+                if ((timeoutMs == 0 || (spins & 255) == 255) && Expired(deadline))
+                {
+                    CountWait(started, spins);
+                    return false;
+                }
             }
+            CountWait(started, spins);
             return false;
+        }
+
+        private static void CountWait(ulong started, int spins)
+        {
+            if (started == 0) return;
+            OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                OS.Kernel.Diagnostics.PerfCounter.UsbWaits, OS.Kernel.Diagnostics.PerfCounter.UsbWaitTicks, started);
+            OS.Kernel.Diagnostics.PerfCounters.Add(OS.Kernel.Diagnostics.PerfCounter.UsbWaitSpins, spins);
         }
 
         /// <summary>Port status word, or 0 when the port index is out of range.</summary>

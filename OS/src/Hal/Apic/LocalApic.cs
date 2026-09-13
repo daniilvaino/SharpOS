@@ -174,6 +174,19 @@ namespace OS.Hal.Apic
         /// believed. Measuring what was delivered costs one window and turns a
         /// silent five-fold error into a corrected clock.
         /// </summary>
+        /// <summary>Ticks each retune round saw in its 100 ms window, for the boot log.</summary>
+        public static RetuneRounds LastRetuneObserved;
+
+        public struct RetuneRounds
+        {
+            private fixed uint _v[4];
+            public uint this[uint i]
+            {
+                get { fixed (uint* p = _v) return i < 4 ? p[i] : 0; }
+                set { fixed (uint* p = _v) if (i < 4) p[i] = value; }
+            }
+        }
+
         public static bool RetuneToDeliveredRate(uint hz, uint rounds = 3)
         {
             if (!s_enabled || hz == 0 || s_initialCount == 0) return false;
@@ -191,10 +204,19 @@ namespace OS.Hal.Apic
                 if (expected == 0) return false;
                 if (observed == 0) return false;                // not ticking at all
 
-                // Within a tenth is as close as this needs to be; the point is
-                // to catch a clock off by a factor, not to trim percentages.
-                ulong low = expected - (expected / 10);
-                ulong high = expected + (expected / 10);
+                LastRetuneObserved[round] = (uint)observed;
+
+                // Only an error by a factor is corrected. The point is to
+                // catch a clock off like VirtualBox's (five times), not to
+                // trim percentages — and a shortfall that small is not
+                // evidence of a slow clock: under a loaded host QEMU drops
+                // periodic ticks it could not deliver in time, a third of
+                // them during this very loop. Taking that for a slow timer
+                // shortened the count by the shortfall three rounds in a
+                // row, and the machine then ran at about 350 ticks a second
+                // for the rest of the session (step170).
+                ulong low = expected / 2;
+                ulong high = expected * 2;
                 if (observed >= low && observed <= high) return true;
 
                 ulong scaled = (ulong)s_initialCount * observed / expected;

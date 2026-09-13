@@ -25,6 +25,13 @@ namespace OS.Kernel
             Console.Write(BuildInfo.ForkConfig);
             Log.EndLine();
 
+            // Same reason: tiering off changes every number the hosted tier
+            // produces (Probes.HostedTieredCompilation).
+            Log.Begin(LogLevel.Info);
+            Console.Write("hosted tiering: ");
+            Console.Write(OS.Kernel.Diagnostics.Probes.HostedTieredCompilation ? "on" : "off");
+            Log.EndLine();
+
             Log.Begin(LogLevel.Info);
             Console.Write("boot: ");
             Console.Write(BootModeName(bootInfo.BootMode));

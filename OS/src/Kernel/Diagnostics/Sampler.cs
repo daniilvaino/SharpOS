@@ -15,6 +15,13 @@ namespace OS.Kernel.Diagnostics
     // arguable. Guessing at it from the log tells you which lines print, not
     // where the seconds go.
     //
+    // Under QEMU's software CPU the samples lean towards code that touches
+    // devices. The timer is emulated under the same lock a device access
+    // takes, so the tick tends to arrive right after an MMIO or port access:
+    // the HPET read, an xHCI register write, a serial byte. An xHCI wait
+    // loop came out at 9 % of a benchmark when the counters said 1.2 %
+    // (step170). Check a device-heavy entry against a counter before acting.
+    //
     // Addresses are classified rather than named: an address inside the kernel
     // image resolves to an offset that can be looked up in the map afterwards,
     // and everything else is code the JIT produced at runtime, which no static
@@ -73,6 +80,13 @@ namespace OS.Kernel.Diagnostics
 
         public static void Start()
         {
+            Clear();
+            s_sinceReport = 0;
+            s_enabled = true;
+        }
+
+        private static void Clear()
+        {
             fixed (Table* t = &s_table)
             {
                 for (int i = 0; i < Slots; i++) { t->Rip[i] = 0; t->Hits[i] = 0; }
@@ -88,8 +102,111 @@ namespace OS.Kernel.Diagnostics
             s_total = 0;
             s_dropped = 0;
             s_evicted = 0;
-            s_sinceReport = 0;
+        }
+
+        /// <summary>
+        /// Starts a fresh profile for one measured interval
+        /// (<see cref="PerfCounters.Mark"/>); <see cref="ReportWindow"/> prints it.
+        /// </summary>
+        /// <remarks>
+        /// The periodic report answers "where is a ten-second startup going";
+        /// a benchmark needs "where did this run go", with everything before it
+        /// out of the table. Sampling pauses while the table is cleared, so a
+        /// tick cannot land in a half-cleared slot.
+        /// </remarks>
+        public static void BeginWindow()
+        {
+            if (!s_enabled) return;
+            s_enabled = false;
+            Clear();
             s_enabled = true;
+        }
+
+        // A flat profile — the exception path spreads over hundreds of
+        // CoreCLR functions — needs a long list: sixteen covered a quarter of
+        // the samples (step170).
+        private const int WindowTop = 48;
+
+        /// <summary>
+        /// Prints the hottest addresses of the interval since
+        /// <see cref="BeginWindow"/>, and their callers, as
+        /// <c>[prof] scope hot|caller Nx address</c> lines.
+        /// </summary>
+        /// <remarks>
+        /// Called from a thread, not from the tick, so it goes out on the Perf
+        /// channel with the rest of the interval's report. Kernel-image
+        /// addresses are RVAs of BOOTX64.EFI — CoreCLR included, it is linked
+        /// in — for tools/symbolize.ps1.
+        /// </remarks>
+        public static void ReportWindow(string scope)
+        {
+            if (!s_enabled) return;
+
+            PerfLine("[perf] " + scope + ".prof.samples=" + SharpOS.Std.NoRuntime.NumberFormatting.ULongToString(s_total) + "\n");
+            ReportTop(scope, "hot", ref s_table);
+            ReportTop(scope, "caller", ref s_callers);
+        }
+
+        // One pass, keeping the leaders in a small sorted array.
+        private static void ReportTop(string scope, string kind, ref Table table)
+        {
+            ulong* rips = stackalloc ulong[WindowTop];
+            uint* hits = stackalloc uint[WindowTop];
+            int n = 0;
+
+            fixed (Table* t = &table)
+            {
+                for (int i = 0; i < Slots; i++)
+                {
+                    uint h = t->Hits[i];
+                    ulong rip = t->Rip[i];
+                    if (h == 0 || rip == 0) continue;
+                    if (n == WindowTop && h <= hits[n - 1]) continue;
+
+                    int at = n < WindowTop ? n++ : WindowTop - 1;
+                    while (at > 0 && hits[at - 1] < h)
+                    {
+                        hits[at] = hits[at - 1];
+                        rips[at] = rips[at - 1];
+                        at--;
+                    }
+                    hits[at] = h;
+                    rips[at] = rip;
+                }
+            }
+
+            for (int k = 0; k < n; k++)
+            {
+                string address = TryKernelRva(rips[k], out ulong rva)
+                    ? "krnl+0x" + SharpOS.Std.NoRuntime.NumberFormatting.ULongToHex(rva, 8)
+                    : "ext@0x" + SharpOS.Std.NoRuntime.NumberFormatting.ULongToHex(rips[k], 16);
+                PerfLine("[prof] " + scope + " " + kind + " "
+                    + SharpOS.Std.NoRuntime.NumberFormatting.ULongToString(hits[k]) + "x " + address + "\n");
+            }
+        }
+
+        private static void PerfLine(string text)
+        {
+            for (int i = 0; i < text.Length; i++)
+                Platform.WriteChar(text[i], OutputChannel.Perf);
+        }
+
+        // Whether an address is inside the kernel image — CoreCLR's native
+        // code included — and its RVA there. By address range: only the
+        // kernel's own managed code has GcInfo, and classifying by that put
+        // every CoreCLR function under "JIT output".
+        private static bool TryKernelRva(ulong rip, out ulong rva)
+        {
+            rva = 0;
+            byte* image = CoffRuntimeFunctionTable.ImageBase;
+            if (image == null) return false;
+
+            int peOffset = *(int*)(image + 0x3C);
+            uint sizeOfImage = *(uint*)(image + peOffset + 24 + 0x38);
+            if (rip < (ulong)image || rip >= (ulong)image + sizeOfImage) return false;
+
+            rva = rip - (ulong)image;
+            return true;
         }
 
         public static void Stop() => s_enabled = false;
@@ -310,19 +427,18 @@ namespace OS.Kernel.Diagnostics
 
         // Kernel-image addresses are printed as an offset from the image base,
         // which is what a map file is keyed by. Anything else is printed raw
-        // and marked: it is JIT output, and no static map can name it.
+        // and marked: JIT output, stubs and applications, which no map of
+        // the kernel can name.
         private static void WriteAddress(ulong rip)
         {
-            byte* imageBase = CoffRuntimeFunctionTable.ImageBase;
-            if (imageBase != null &&
-                CoffMethodGcInfo.TryResolve((byte*)rip, out _))
+            if (TryKernelRva(rip, out ulong rva))
             {
                 Serial.WriteString("krnl+0x");
-                WriteHex(rip - (ulong)imageBase);
+                WriteHex(rva);
             }
             else
             {
-                Serial.WriteString("jit@0x");
+                Serial.WriteString("ext@0x");
                 WriteHex(rip);
             }
         }

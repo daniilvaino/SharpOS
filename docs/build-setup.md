@@ -180,6 +180,8 @@ next to it, and their error streams to COM4, `last_err.log`;
 `tools/probe_report.ps1` reads all three. `tools/perf_report.ps1` collects the
 `[perf]` lines of a run (the kernel's counters plus `\SHARPOS\Bench.dll` started
 from the launcher) and compares them with the previous run.
+`tools/prof_report.ps1` sums the sampling profiler's `[prof]` lines of an
+interval (`run.Bench` by default) per function, named from the kernel's PDB.
 
 Flags worth knowing: `-NoRun` builds without launching, `-SkipCoreClr` builds a
 bare kernel with no hosted runtime, `-Stop` kills a running instance through QMP
