@@ -690,6 +690,10 @@ namespace OS.Kernel.Diagnostics
             }
 
             Console.WriteLine("  GS_BASE = TEB via wrmsr OK; main Scheduler.Current.Teb wired");
+
+            // From here CoreCLR's thread-local lookups work, so the SEH walker
+            // may ask it for the Frame chain.
+            OS.PAL.SharpOSHost.SehDispatch.FrameChainAvailable = true;
         }
 
         // Local Iced CodeWriter for the wrmsr GS_BASE stub. Same shape as

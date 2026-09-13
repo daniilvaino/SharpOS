@@ -100,27 +100,43 @@ namespace OS.Hal
             // Mirror to the on-disk log before anything else: whatever kills
             // the machine next, this line is already on its way to the platter.
             if ((sinks & OutputSink.DiskLog) != 0)
+            {
+                ulong started = OS.Kernel.Diagnostics.PerfCounters.SinkClock();
                 BootLog.Putc(value);
+                OS.Kernel.Diagnostics.PerfCounters.CountTsc(OS.Kernel.Diagnostics.PerfCounter.SinkDiskLogTsc, started);
+            }
 
             if (s_ownConsole)
             {
                 // Serial is raw: if the terminal engine breaks, the UART log has
                 // to survive to say so.
-                if ((sinks & OutputSink.Com1) != 0)
-                    Serial.WriteChar(value);
+                const OutputSink AnyPort = OutputSink.Com1 | OutputSink.Com3 | OutputSink.Com4;
+                if ((sinks & AnyPort) != 0)
+                {
+                    ulong started = OS.Kernel.Diagnostics.PerfCounters.SinkClock();
 
-                if ((sinks & OutputSink.Com3) != 0)
-                    Serial.WriteCharCom3(value);
+                    if ((sinks & OutputSink.Com1) != 0)
+                        Serial.WriteChar(value);
 
-                if ((sinks & OutputSink.Com4) != 0)
-                    Serial.WriteCharCom4(value);
+                    if ((sinks & OutputSink.Com3) != 0)
+                        Serial.WriteCharCom3(value);
+
+                    if ((sinks & OutputSink.Com4) != 0)
+                        Serial.WriteCharCom4(value);
+
+                    OS.Kernel.Diagnostics.PerfCounters.CountTsc(OS.Kernel.Diagnostics.PerfCounter.SinkSerialTsc, started);
+                }
 
                 if ((sinks & OutputSink.Screen) != 0)
                 {
+                    ulong started = OS.Kernel.Diagnostics.PerfCounters.SinkClock();
+
                     if (TerminalConsole.IsReady)
                         TerminalConsole.Putc(value);
                     else
                         FbTty.Putc(value);
+
+                    OS.Kernel.Diagnostics.PerfCounters.CountTsc(OS.Kernel.Diagnostics.PerfCounter.SinkTerminalTsc, started);
                 }
                 return;
             }
@@ -177,6 +193,13 @@ namespace OS.Hal
         /// previous frame.
         /// </remarks>
         public static void FlushConsole() => TerminalConsole.Flush();
+
+        /// <summary>
+        /// <see cref="FlushConsole"/>, unless the screen was painted moments ago
+        /// and the input pump will paint what is pending; see
+        /// <see cref="TerminalConsole.FlushWhenDue"/>.
+        /// </summary>
+        public static void FlushConsoleWhenDue() => TerminalConsole.FlushWhenDue();
 
         public static void WriteLine(string text)
         {

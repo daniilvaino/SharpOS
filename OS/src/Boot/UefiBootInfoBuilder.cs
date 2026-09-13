@@ -102,8 +102,11 @@ namespace OS.Boot
                 // X64Asm exec buffer — STI/CLI/HLT stubs (offsets 0/16/32 ×
                 // ~2 bytes), CoreClrProbe wrmsr GS_BASE shellcode (offset
                 // 64, 18 bytes), SehDispatch capture/restore shellcode
-                // (offsets 0x80 + 0x100, ~130 bytes each). Total need ≈ 1 KiB.
-                const uint AsmBufferSize = 1024;
+                // (offsets 0x80 + 0x200, ~140 bytes each), and the X64Asm
+                // stubs mapped in X64Asm.cs. 2 KiB since step169: the MSR,
+                // MXCSR and rdtsc stubs had been placed on top of SehDispatch's
+                // restore code at 0x200 for want of room.
+                const uint AsmBufferSize = 2048;
                 void* asmBufferRaw = null;
                 ulong asmStatus = systemTable->BootServices->AllocatePool(
                     EFI_MEMORY_TYPE.EfiLoaderCode, AsmBufferSize, &asmBufferRaw);

@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>BenchAot</IlcSystemModule>
+  </PropertyGroup>
+
+  <!-- Shared freestanding win-x64 PE recipe + base app SDK/std surface
+       (collections, StringBuilder, exceptions, threads and tasks). -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>

@@ -2,11 +2,12 @@
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     # step113-followup: which CoreCLR fork build the kernel links + ships.
-    # Debug = _DEBUG asserts + unoptimized (what we stabilized on).
-    # Release = no asserts, optimized, closer to shipping .NET. Must have
-    # been built first: .\dotnet-runtime-sharpos\build_clr_sharpos.ps1 -Configuration Release
+    # Release (default since step169) = no asserts, optimized — what runs and
+    # what gets measured. Debug = _DEBUG asserts + unoptimized; needs the
+    # Debug fork AND its System.Private.CoreLib built first, which a normal
+    # setup does not have. Build: .\dotnet-runtime-sharpos\build_clr_sharpos.ps1 -Configuration <cfg>
     [ValidateSet("Debug", "Release")]
-    [string]$ForkConfig = "Debug",
+    [string]$ForkConfig = "Release",
     # Kernel-only build: skip CoreCLR linking + CoreClrProbe compilation.
     # Resulting BOOTX64.EFI hosts no managed app — used for measuring the
     # bare kernel image size.
@@ -34,6 +35,11 @@
     [switch]$UsbOnly,
     # Framebuffer mode to ask the firmware for, e.g. "3840x2160".
     [string]$Resolution,
+    # QEMU CPU model. qemu64 is x86-64-v1: no SSE4/AVX, so CoreLib's
+    # precompiled methods that depend on them are rejected and JIT-compiled
+    # instead (perf suspect 20). "max" offers everything TCG can emulate —
+    # comparing the two tells how much of a benchmark that costs.
+    [string]$Cpu = "qemu64,+nx",
     # ESP staged as a real FAT32 image; 253 MB of payload today, so 512 leaves headroom.
     [int]$EspImageSizeMb = 512,
     [string]$QemuExe,
@@ -537,6 +543,7 @@ foreach ($staleElf in @("HELLO.ELF", "ABIINFO.ELF", "MARKER.ELF", "HELLOCS.ELF",
 $peApps = @(
     @{ Src = "apps_native\FetchApp\bin\Release\out-win-x64\FetchApp.exe";         Dest = "FETCH.EXE" },
     @{ Src = "apps_native\AotTests\bin\Release\out-win-x64\AotTests.exe";         Dest = "AOTTESTS.EXE" },
+    @{ Src = "apps_native\BenchAot\bin\Release\out-win-x64\BenchAot.exe";         Dest = "BENCHAOT.EXE" },
     @{ Src = "apps_native\GPL_AHEAD_WARNING_DOOM_managed\bin\Release\out-win-x64\DoomApp.exe"; Dest = "DOOM.EXE" },
     @{ Src = "apps_native\TriCNES\bin\Release\out-win-x64\TriCNESApp.exe";        Dest = "TRICNES.EXE" },
     @{ Src = "apps_native\Fami\bin\Release\out-win-x64\FamiApp.exe";              Dest = "FAMI.EXE" },
@@ -674,8 +681,10 @@ try {
     } else {
         @("-machine", "q35,accel=tcg")
     }
-    # +nx: expose the NX/XD bit to firmware and OS (required for NX memory protection policy)
-    $cpuArgs = @("-cpu", "qemu64,+nx")
+    # +nx: expose the NX/XD bit to firmware and OS (required for NX memory
+    # protection policy). "max" has it already; anything else passed via -Cpu
+    # has to include it.
+    $cpuArgs = @("-cpu", $Cpu)
 
     # GUI-режим по $env:SHARPOS_GUI=1: окно (GOP framebuffer) + serial в
     # ЭТОТ терминал (PowerShell) одновременно. OVMF ConSplitter веером

@@ -123,7 +123,7 @@ a real bug.
 
 ### Application build scripts
 
-`build_doom.ps1`, `build_fetch.ps1`, `build_aottests.ps1`, `build_launcher_gui.ps1`,
+`build_doom.ps1`, `build_fetch.ps1`, `build_aottests.ps1`, `build_benchaot.ps1`, `build_launcher_gui.ps1`,
 `build_launcher.ps1`
 build the freestanding PE apps under `apps_native/`. They need only the .NET
 SDK — no WSL, no separate cross-toolchain — and `run_build.ps1` stages their
@@ -183,7 +183,8 @@ from the launcher) and compares them with the previous run.
 
 Flags worth knowing: `-NoRun` builds without launching, `-SkipCoreClr` builds a
 bare kernel with no hosted runtime, `-Stop` kills a running instance through QMP
-on port 4444, `-ForkConfig Debug|Release` selects which fork build to link.
+on port 4444, `-ForkConfig Debug|Release` selects which fork build to link
+(Release by default; Debug needs the Debug fork and its CoreLib built first).
 
 ## MSB4062: `BootAsm.EmitCoffStubsTask` could not be loaded
 

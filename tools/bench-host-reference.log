@@ -1,0 +1,14 @@
+# dotnet Bench.dll on the host PC (Windows, native .NET 10), 2026-09-11, second of two runs
+[perf] bench.clock.self_timed_ms=8
+[perf] bench.alloc.short.ns_per_op=17
+[perf] bench.alloc.short.gc0=0
+[perf] bench.alloc.retained.ns_per_op=41
+[perf] bench.alloc.retained.gc0=0
+[perf] bench.strings.ns_per_op=95
+[perf] bench.strings.gc0=0
+[perf] bench.collections.ns_per_op=43
+[perf] bench.collections.gc0=1
+[perf] bench.exceptions.ns_per_op=1685
+[perf] bench.jit.ns_per_op=26923
+[perf] bench.tasks.ns_per_op=5152
+[perf] bench.output.ns_per_op=12202

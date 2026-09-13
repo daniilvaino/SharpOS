@@ -34,24 +34,29 @@ namespace OS.Kernel.Memory
         public static void Collect()
         {
             Collections++;
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
 
             if (KernelGcPreciseWalk.IsAvailable)
             {
                 CollectPrecise();
-                return;
-            }
-
-            GcMark.Begin();
-            if (GcStackSpill.IsInitialized)
-            {
-                delegate* unmanaged<void> markFn = &GcRoots.MarkAllUnmanaged;
-                GcStackSpill.Invoke(markFn);
             }
             else
             {
-                GcRoots.MarkAll();
+                GcMark.Begin();
+                if (GcStackSpill.IsInitialized)
+                {
+                    delegate* unmanaged<void> markFn = &GcRoots.MarkAllUnmanaged;
+                    GcStackSpill.Invoke(markFn);
+                }
+                else
+                {
+                    GcRoots.MarkAll();
+                }
+                GcSweep.Run();
             }
-            GcSweep.Run();
+
+            OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                OS.Kernel.Diagnostics.PerfCounter.KernelGcs, OS.Kernel.Diagnostics.PerfCounter.KernelGcTicks, started);
         }
 
         // Step 110 Part 8 — precise alternative to Collect(). Replaces the
@@ -100,7 +105,7 @@ namespace OS.Kernel.Memory
             GcMark.Begin();
             GcRoots.MarkStaticRootsOnly();
             KernelGcPreciseWalk.RunFromCurrentFrame();
-            MarkOtherThreadStacks();
+            MarkOtherThreadStacks(null);
             GcSweep.Run();
         }
 
@@ -118,7 +123,11 @@ namespace OS.Kernel.Memory
         // parked: their saved context is stable until they are switched back
         // in, which cannot happen from inside a collection on this CPU.
         // Preemption changes that, and this is the piece it will need.
-        private static void MarkOtherThreadStacks()
+        //
+        // markRoot: null marks into the kernel's heap; an app's collector
+        // passes its own callback (AppGcService), which drops whatever does
+        // not point into its heap.
+        internal static void MarkOtherThreadStacks(delegate* unmanaged<nuint, void> markRoot)
         {
             if (!KernelGcPreciseWalk.IsAvailable) return;
 
@@ -131,13 +140,13 @@ namespace OS.Kernel.Memory
                     t.State != OS.Kernel.Threading.ThreadState.Exited &&
                     t.ContextBlock != null)
                 {
-                    KernelGcPreciseWalk.RunFromParkedThread(t.ContextBlock, null);
+                    KernelGcPreciseWalk.RunFromParkedThread(t.ContextBlock, markRoot);
 
                     // A preempted thread is parked inside the interrupt
                     // handler, and the walk above stops at the entry stub.
                     // Continue on the far side of it.
                     if (t.PreemptedFrame != null)
-                        KernelGcPreciseWalk.RunFromInterruptFrame(t.PreemptedFrame, null);
+                        KernelGcPreciseWalk.RunFromInterruptFrame(t.PreemptedFrame, markRoot);
                 }
 
                 t = t.AllNext;
@@ -155,6 +164,8 @@ namespace OS.Kernel.Memory
         // bug. Routed here via GC.s_collectHook (installed in BootSequence).
         public static void CollectConservative()
         {
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
+
             GcMark.Begin();
             if (GcStackSpill.IsInitialized)
             {
@@ -166,6 +177,9 @@ namespace OS.Kernel.Memory
                 GcRoots.MarkAll();
             }
             GcSweep.Run();
+
+            OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                OS.Kernel.Diagnostics.PerfCounter.KernelGcs, OS.Kernel.Diagnostics.PerfCounter.KernelGcTicks, started);
         }
     }
 }

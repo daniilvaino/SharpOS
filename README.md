@@ -45,8 +45,8 @@ curl.exe -L -o payloads\DOOM1.WAD https://raw.githubusercontent.com/nifanfa/MOOS
 curl.exe -L -o pwsh.zip https://github.com/PowerShell/PowerShell/releases/download/v7.6.5/PowerShell-7.6.5-win-x64.zip
 Expand-Archive pwsh.zip -DestinationPath payloads\pwsh\PowerShell-7.6.5-win-x64
  
-# --- Приложения (лаунчер, FetchApp, AotTests, DOOM, TriCNES, Fami):
-& .\build_launcher.ps1; & .\build_fetch.ps1; & .\build_aottests.ps1; & .\build_doom.ps1; & .\build_tricnes.ps1; & .\build_fami.ps1
+# --- Приложения (лаунчер, FetchApp, AotTests, BenchAot, DOOM, TriCNES, Fami):
+& .\build_launcher.ps1; & .\build_fetch.ps1; & .\build_aottests.ps1; & .\build_benchaot.ps1; & .\build_doom.ps1; & .\build_tricnes.ps1; & .\build_fami.ps1
  
 # --- Ядро + образ + запуск в QEMU ---
 $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
@@ -117,7 +117,7 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | Generic sharing (USG - `__Canon`) | ✅ | ✅ | ✅ |  |
 | Virtual dispatch / interface dispatch (полный резолвер) | ✅ | ✅ | ✅ ||
 | Write barrier (`RhpAssignRef`, `RhpStelemRef`) | ✅ (∅) | ✅ (∅) | ✅ | non-generational mark-sweep в AOT → barrier seman'тически no-op; контракт ILC соблюдён.  |
-| `GC.Collect` / explicit collection | ✅ | ✅ | ✅ | full mark-sweep cycle; `GC.WaitForPendingFinalizers` зависает в hosted runtime (SYM-003 - finalizer thread не online) |
+| `GC.Collect` / explicit collection | ✅ | ✅ | ✅ | full mark-sweep cycle; в приложениях корни со стеков всех потоков (step169); `GC.WaitForPendingFinalizers` зависает в hosted runtime (SYM-003 - finalizer thread не online) |
 | Array.Copy overlap (memmove semantics) | ✅ | ✅ | ✅ | left + right shift с overlapping src/dst в одном массиве (`List<T>.RemoveAt`/`Insert` path) |
 | `SortedDictionary` | 🟡 | 🟡 | ✅ | поведение BCL-совместимо, внутри сортированный массив вместо дерева: вставка линейна, поиск логарифмичен |
 | `System.Collections.Concurrent.*`, `System.Collections.Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`| 🔴 | 🔴 | ✅ | еще не реализовано, при этом известных блокеров - нет |

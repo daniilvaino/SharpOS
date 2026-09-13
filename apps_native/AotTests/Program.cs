@@ -350,6 +350,52 @@ namespace AotTests
             h1.Wait();
             h2.Wait();
             Check("lock keeps updates", s_guarded == HammerIterations * 2);
+
+            // A collection has to see every thread's stack, not only the
+            // collecting one's. The holder keeps an array in a local and
+            // nowhere else, then sleeps; this thread collects and allocates
+            // arrays of the same size with a different pattern, which lands
+            // them on whatever the collection freed. A missed root shows up as
+            // the holder's pattern overwritten.
+            s_holderState = 0;
+            s_holderVerdict = 0;
+            var holder = System.Threading.Tasks.Task.Run(HoldOnStack);
+            for (int waited = 0; waited < 500 && s_holderState == 0; waited++)
+                AppThreads.Sleep(1);
+
+            GC.Collect();
+
+            int reused = 0;
+            for (int i = 0; i < 256; i++)
+            {
+                byte[] other = new byte[HeldBytes];
+                for (int k = 0; k < other.Length; k++) other[k] = 0xA5;
+                if (other[HeldBytes - 1] == 0xA5) reused++;
+            }
+
+            s_holderState = 2;
+            holder.Wait();
+            Check("holder thread parked and reported", s_holderVerdict != 0 && reused == 256);
+            Check("other thread's stack roots survive collect", s_holderVerdict == 1);
+        }
+
+        private const int HeldBytes = 64;
+        private static volatile int s_holderState;
+        private static volatile int s_holderVerdict;
+
+        private static void HoldOnStack()
+        {
+            byte[] mine = new byte[HeldBytes];
+            for (int i = 0; i < mine.Length; i++) mine[i] = 0x5A;
+
+            s_holderState = 1;
+            for (int waited = 0; waited < 2000 && s_holderState == 1; waited++)
+                AppThreads.Sleep(1);
+
+            bool intact = mine.Length == HeldBytes;
+            for (int i = 0; i < HeldBytes && intact; i++)
+                intact = mine[i] == 0x5A;
+            s_holderVerdict = intact ? 1 : 2;
         }
 
         private const int HammerIterations = 5000;

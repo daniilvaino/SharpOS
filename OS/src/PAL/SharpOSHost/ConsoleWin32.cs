@@ -111,6 +111,7 @@ namespace OS.PAL.SharpOSHost
             ApiTrace("write", hConsole, nChars);
 
             OS.Hal.OutputChannel channel = HostedChannel(hConsole);
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
 
             // The whole buffer as one unit: this is where PowerShell's escape
             // sequences arrive, and half of one is worse than none.
@@ -137,6 +138,7 @@ namespace OS.PAL.SharpOSHost
                 }
             }
             OS.Kernel.Threading.Preemption.Allow();
+            OS.Kernel.Diagnostics.PerfCounters.CountProgramWrite(started, nChars);
 
             if (numCharsWritten != null) *numCharsWritten = nChars;
             return 1;
@@ -154,8 +156,10 @@ namespace OS.PAL.SharpOSHost
             if (buffer == null || nBytes == 0) return 1;
             if (!IsStdHandle(hHandle)) return 0;
             OS.Hal.OutputChannel channel = HostedChannel(hHandle);
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
             for (uint i = 0; i < nBytes; i++)
                 OS.Hal.Platform.WriteChar((char)buffer[i], channel);
+            OS.Kernel.Diagnostics.PerfCounters.CountProgramWrite(started, nBytes);
             if (numBytesWritten != null) *numBytesWritten = nBytes;
             return 1;
         }

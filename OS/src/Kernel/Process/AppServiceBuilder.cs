@@ -622,6 +622,47 @@ namespace OS.Kernel.Process
         private static bool s_win64GateLogged;
         private static bool s_sysVGateLogged;
 
+        /// <summary>
+        /// Steps a stack walk over a service thunk: true, with the caller's
+        /// <paramref name="rip"/> and <paramref name="rsp"/>, when
+        /// <paramref name="rip"/> is inside one.
+        /// </summary>
+        /// <remarks>
+        /// Every service an app calls goes through a thunk on the thunk page,
+        /// and the thunks have no unwind data, so a walk up from inside a
+        /// service stopped there. For the app's collector that meant every
+        /// thread parked in a service — a thread asleep is parked in Sleep —
+        /// kept its app frames out of the walk, and what only they held was
+        /// freed (step169). The shape is ours and fixed, so no table is
+        /// needed: both ABIs are "sub rsp,28h / call rax / add rsp,28h / ret",
+        /// the SysV one behind a 3-byte "mov rcx,rdi". A thunk holds no roots.
+        /// </remarks>
+        internal static bool TryUnwindServiceThunk(ref ulong rip, ref ulong rsp)
+        {
+            ulong pageVirtual = s_serviceThunkPageVirtual;
+            if (pageVirtual == 0 || rip < pageVirtual || rip >= pageVirtual + ServiceThunkPageSize)
+                return false;
+
+            ulong offsetInPage = rip - pageVirtual;
+            ulong slotOffset = offsetInPage - offsetInPage % ServiceThunkSlotSize;
+            uint offset = (uint)(offsetInPage - slotOffset);
+
+            // Read through the physical mapping the thunks were written through.
+            byte* slot = (byte*)(s_serviceThunkPagePhysical + slotOffset);
+            bool systemV = slot[0] == 0x48 && slot[1] == 0x89 && slot[2] == 0xF9;   // mov rcx, rdi
+
+            // "sub rsp,28h" starts here; the frame exists from its end up to
+            // the start of "add rsp,28h" — which is also where "call rax"
+            // returns to.
+            uint sub = systemV ? 13u : 10u;
+            if (offset >= sub + 4 && offset <= sub + 6)
+                rsp += 0x28;
+
+            rip = *(ulong*)rsp;
+            rsp += 8;
+            return true;
+        }
+
         // ---- Legacy byte-stream emitters (return length for compare). ----
 
         private static int EmitWin64OneArgThunkLegacy(byte* destination, ulong target)
@@ -728,6 +769,10 @@ namespace OS.Kernel.Process
             if (OS.Hal.Console.Quiet)
                 return;
 
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
+            int characters = 0;
+            uint last = 0;
+
             // The bytes are UTF-8, and they have to be decoded here.
             //
             // This used to cast each byte to a char, which is Latin-1 by
@@ -770,6 +815,8 @@ namespace OS.Kernel.Process
 
                 if (truncated) { i++; continue; }
                 i += length;
+                characters++;
+                last = codepoint;
 
                 if (codepoint <= 0xFFFF)
                 {
@@ -792,7 +839,24 @@ namespace OS.Kernel.Process
             // paints on a line break, and a text UI never writes one. Its
             // escape sequences were reaching the engine and changing the grid,
             // while the framebuffer kept showing the frame before.
-            OS.Hal.Platform.FlushConsole();
+            //
+            //
+            // Except after a write that ends a line: that is a program printing
+            // lines, and a paint per write made it pay one full-screen move per
+            // line (step169). Its line break already painted if one was due;
+            // the rest waits for the pump, the next write or a key read.
+            //
+            // Not "paint when due" for everything. A text UI sends a frame in
+            // several writes and redraws it whole even when nothing changed;
+            // painted at the end of every write, identical frames are
+            // invisible. Deferring all but the first write of a burst put the
+            // first piece of each new frame on screen alone — the launcher
+            // flickered, and came up half-drawn until a key was pressed.
+            if (last == '\n')
+                OS.Hal.Platform.FlushConsoleWhenDue();
+            else
+                OS.Hal.Platform.FlushConsole();
+            OS.Kernel.Diagnostics.PerfCounters.CountProgramWrite(started, characters);
         }
 
         /// <summary>
@@ -861,11 +925,13 @@ namespace OS.Kernel.Process
             if (OS.Hal.Console.Quiet)
                 return;
 
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
             OS.Hal.OutputChannel channel = AppOutputChannel();
             for (int i = 0; i < text.Length; i++)
                 OS.Hal.Platform.WriteChar(text[i], channel);
 
             OS.Hal.Platform.FlushConsole();
+            OS.Kernel.Diagnostics.PerfCounters.CountProgramWrite(started, text.Length);
         }
 
         private static void WriteChar(uint codePoint)
@@ -1118,6 +1184,12 @@ namespace OS.Kernel.Process
             if (requestAddress == 0)
                 return (uint)AppServiceStatus.InvalidParameter;
 
+            // Asking for a key means the output before it has to be on screen.
+            // Lines may still be waiting (see WriteUtf8), and while an app
+            // polls instead of sleeping the input pump never gets to run.
+            if (OS.Hal.TerminalConsole.HasPendingOutput)
+                OS.Hal.Platform.FlushConsole();
+
             AppReadKeyRequest* request = (AppReadKeyRequest*)requestAddress;
             request->UnicodeChar = 0;
             request->ScanCode = 0;
@@ -1239,10 +1311,15 @@ namespace OS.Kernel.Process
             s_exitRequested = 0;
             s_exitCode = 0;
 
+            // The same [perf] scope a managed run gets: the NativeAOT benchmark
+            // (BENCHAOT.EXE) is a PE child, and its output and clock costs are
+            // the kernel's to count.
+            OS.Kernel.Diagnostics.PerfCounters.Mark();
             AppServiceStatus runStatus = RunExternalApp(pathBuffer, appAbiVersion, serviceAbi,
                 abiFromRequest: abiSource == AbiResolveSource.Request,
                 out int childExitCode);
             request->ExitCode = childExitCode;
+            OS.Kernel.Diagnostics.PerfCounters.Report(RunScope(string.FromUtf16Z(pathBuffer, (int)MaxPathChars)));
 
             s_exitRequested = savedExitRequested;
             s_exitCode = savedExitCode;

@@ -2,69 +2,234 @@ using OS.Hal;
 
 namespace OS.Kernel.Diagnostics
 {
+    /// <summary>What <see cref="PerfCounters"/> counts.</summary>
+    internal enum PerfCounter
+    {
+        // SharpOSHost_GetUtcFileTime: every hosted clock reads through it.
+        ClockCalls,
+        ClockTicks,
+
+        // Output: disk-log sector writes and their time, characters per
+        // serial port, terminal repaints (scrolling included) and their time.
+        DiskLogWrites,
+        DiskLogTicks,
+        Com1Chars,
+        Com3Chars,
+        Com4Chars,
+        ScreenPaints,
+        ScreenTicks,
+
+        // A program's writes as the kernel serves them, whichever tier made
+        // them: the NativeAOT services and the hosted console handles. Time
+        // includes everything below — disk log, ports, screen.
+        ProgramWrites,
+        ProgramWriteTicks,
+        ProgramWriteChars,
+
+        // Where every written character's time goes, per sink, in TSC ticks
+        // (see Tsc): disk log, serial ports, terminal engine. The terminal's
+        // includes the paints a line break triggers.
+        SinkDiskLogTsc,
+        SinkSerialTsc,
+        SinkTerminalTsc,
+
+        // Inside the terminal sink: waiting for the engine lock, feeding the
+        // engine (TSC ticks), and characters dropped because the lock never
+        // came free.
+        TerminalLockTsc,
+        TerminalFeedTsc,
+        TerminalDrops,
+
+        // Collections of the kernel's own heap, and their time.
+        KernelGcs,
+        KernelGcTicks,
+
+        // Exceptions: RaiseException calls, function-table lookups (and which
+        // table answered), R2R tables walked past before one did, and
+        // virtual unwinds.
+        SehRaises,
+        SehLookups,
+        SehLookupTicks,
+        SehLookupImage,
+        SehLookupJit,
+        SehLookupR2r,
+        SehLookupStub,
+        SehLookupGap,
+        SehR2rTablesScanned,
+        SehUnwinds,
+        SehUnwindTicks,
+
+        Count,
+    }
+
     /// <summary>
     /// Counters on the kernel paths the hosted runtime leans on, and the
     /// <c>[perf] scope.name=value</c> lines that report them.
     /// </summary>
     /// <remarks>
     /// Measured by the kernel, with the HPET, on purpose. The hosted runtime's
-    /// own clocks — Stopwatch, QueryPerformanceCounter, TickCount64 — all end in
-    /// the wall clock counted here, which is itself suspect: a program timing
-    /// its own loops with it would be measuring with the instrument under
-    /// test. These numbers do not depend on it.
+    /// own clocks all end in the wall clock counted here; numbers that do not
+    /// depend on them stay honest whatever state that clock is in.
     ///
     /// Updated with Interlocked: the runtime calls in from many threads, and
     /// preemption lands between a read and a write. Reported as deltas between
     /// <see cref="Mark"/> and <see cref="Report"/>, so each run is its own
     /// measurement whatever ran before it.
     ///
-    /// The counting costs two HPET reads per counted call, and part of that is
+    /// A timed counter costs two HPET reads per call, and part of that is
     /// inside the measured interval. It is the same on every run, so it does
     /// not hide a change — but an average here is an upper bound, not the
     /// bare cost.
+    ///
+    /// A fixed buffer, not an array: an array would need a class constructor
+    /// to allocate it, and those do not run here (limits §1).
     /// </remarks>
-    internal static class PerfCounters
+    internal static unsafe class PerfCounters
     {
-        // SharpOSHost_GetUtcFileTime: every hosted clock reads through it.
-        public static long ClockCalls;
-        public static long ClockTicks;
+        private const int Slots = (int)PerfCounter.Count;
 
-        private static long s_clockCallsMark;
-        private static long s_clockTicksMark;
+        private struct Values { public fixed long V[Slots]; }
+
+        private static Values s_values;
+        private static Values s_mark;
         private static ulong s_markCounter;
+        private static ulong s_markTsc;
 
         public static ulong Now()
             => OS.Hal.Timer.Hpet.IsInitialized ? OS.Hal.Timer.Hpet.ReadCounter() : 0;
 
-        /// <summary>Counts one wall-clock read that started at <paramref name="started"/>.</summary>
-        public static void CountClock(ulong started)
+        /// <summary>
+        /// The timestamp counter, for paths too short for <see cref="Now"/>:
+        /// an HPET read costs about a microsecond under QEMU, as much as some
+        /// of what is being timed. Its rate is not known up front; the report
+        /// converts with the HPET time of the same interval.
+        /// </summary>
+        public static ulong Tsc()
+            => OS.Hal.X64Asm.ReadTsc(out ulong value) ? value : 0;
+
+        /// <summary>
+        /// Times every written character per sink (sink.* and terminal.*
+        /// lines). Off: two counter reads per sink per character cost a
+        /// quarter to a third of what output itself costs (step169). Turn on
+        /// to find where output time goes; off, the calls fold away.
+        /// </summary>
+        public const bool TimeSinks = false;
+
+        /// <summary><see cref="Tsc"/> when <see cref="TimeSinks"/> is on, 0 otherwise.</summary>
+        public static ulong SinkClock() => TimeSinks ? Tsc() : 0;
+
+        public static void CountTsc(PerfCounter ticks, ulong started)
+        {
+            if (started == 0)
+                return;
+            Add(ticks, (long)(Tsc() - started));
+        }
+
+        public static void Add(PerfCounter counter, long amount)
+        {
+            fixed (long* v = s_values.V)
+                System.Threading.Interlocked.Add(ref v[(int)counter], amount);
+        }
+
+        public static void Increment(PerfCounter counter) => Add(counter, 1);
+
+        /// <summary>Counts one call of a timed pair that started at <paramref name="started"/>.</summary>
+        public static void CountTimed(PerfCounter calls, PerfCounter ticks, ulong started)
         {
             if (started == 0)
                 return;
 
-            System.Threading.Interlocked.Increment(ref ClockCalls);
-            System.Threading.Interlocked.Add(ref ClockTicks, (long)(Now() - started));
+            Add(calls, 1);
+            Add(ticks, (long)(Now() - started));
+        }
+
+        public static void CountClock(ulong started) => CountTimed(PerfCounter.ClockCalls, PerfCounter.ClockTicks, started);
+
+        public static void CountDiskLog(ulong started) => CountTimed(PerfCounter.DiskLogWrites, PerfCounter.DiskLogTicks, started);
+
+        public static void CountScreen(ulong started) => CountTimed(PerfCounter.ScreenPaints, PerfCounter.ScreenTicks, started);
+
+        /// <summary>Counts one program write of <paramref name="characters"/> characters.</summary>
+        public static void CountProgramWrite(ulong started, long characters)
+        {
+            if (started == 0)
+                return;
+
+            CountTimed(PerfCounter.ProgramWrites, PerfCounter.ProgramWriteTicks, started);
+            Add(PerfCounter.ProgramWriteChars, characters);
         }
 
         /// <summary>Starts a measured interval.</summary>
         public static void Mark()
         {
-            s_clockCallsMark = System.Threading.Interlocked.Add(ref ClockCalls, 0);
-            s_clockTicksMark = System.Threading.Interlocked.Add(ref ClockTicks, 0);
+            fixed (long* v = s_values.V)
+            fixed (long* m = s_mark.V)
+            {
+                for (int i = 0; i < Slots; i++)
+                    m[i] = System.Threading.Interlocked.Add(ref v[i], 0);
+            }
             s_markCounter = Now();
+            s_markTsc = Tsc();
         }
 
         /// <summary>Reports what happened since <see cref="Mark"/>, under <paramref name="scope"/>.</summary>
         public static void Report(string scope)
         {
             ulong elapsed = s_markCounter == 0 ? 0 : Now() - s_markCounter;
-            ulong calls = (ulong)(System.Threading.Interlocked.Add(ref ClockCalls, 0) - s_clockCallsMark);
-            ulong ticks = (ulong)(System.Threading.Interlocked.Add(ref ClockTicks, 0) - s_clockTicksMark);
+            ulong elapsedTsc = s_markTsc == 0 ? 0 : Tsc() - s_markTsc;
+
+            // Every delta is taken before the first line goes out: the report
+            // is output too, and would otherwise count itself.
+            Values delta = default;
+            fixed (long* v = s_values.V)
+            fixed (long* m = s_mark.V)
+            {
+                for (int i = 0; i < Slots; i++)
+                    delta.V[i] = System.Threading.Interlocked.Add(ref v[i], 0) - m[i];
+            }
 
             Line(scope, "wall_ms", TicksToNs(elapsed) / 1_000_000);
-            Line(scope, "clock.calls", calls);
-            Line(scope, "clock.total_ms", TicksToNs(ticks) / 1_000_000);
-            Line(scope, "clock.avg_ns", calls == 0 ? 0 : TicksToNs(ticks) / calls);
+            Timed(scope, "clock", ref delta, PerfCounter.ClockCalls, PerfCounter.ClockTicks);
+            Timed(scope, "disklog", ref delta, PerfCounter.DiskLogWrites, PerfCounter.DiskLogTicks);
+            Line(scope, "com1.chars", Get(ref delta, PerfCounter.Com1Chars));
+            Line(scope, "com3.chars", Get(ref delta, PerfCounter.Com3Chars));
+            Line(scope, "com4.chars", Get(ref delta, PerfCounter.Com4Chars));
+            Timed(scope, "screen", ref delta, PerfCounter.ScreenPaints, PerfCounter.ScreenTicks);
+            Timed(scope, "write", ref delta, PerfCounter.ProgramWrites, PerfCounter.ProgramWriteTicks);
+            Line(scope, "write.chars", Get(ref delta, PerfCounter.ProgramWriteChars));
+            if (TimeSinks)
+            {
+                ulong elapsedUs = TicksToNs(elapsed) / 1000;
+                Line(scope, "sink.disklog_ms", TscToUs(Get(ref delta, PerfCounter.SinkDiskLogTsc), elapsedTsc, elapsedUs) / 1000);
+                Line(scope, "sink.serial_ms", TscToUs(Get(ref delta, PerfCounter.SinkSerialTsc), elapsedTsc, elapsedUs) / 1000);
+                Line(scope, "sink.terminal_ms", TscToUs(Get(ref delta, PerfCounter.SinkTerminalTsc), elapsedTsc, elapsedUs) / 1000);
+                Line(scope, "terminal.lock_ms", TscToUs(Get(ref delta, PerfCounter.TerminalLockTsc), elapsedTsc, elapsedUs) / 1000);
+                Line(scope, "terminal.feed_ms", TscToUs(Get(ref delta, PerfCounter.TerminalFeedTsc), elapsedTsc, elapsedUs) / 1000);
+            }
+            Line(scope, "terminal.drops", Get(ref delta, PerfCounter.TerminalDrops));
+            Timed(scope, "kgc", ref delta, PerfCounter.KernelGcs, PerfCounter.KernelGcTicks);
+            Line(scope, "seh.raises", Get(ref delta, PerfCounter.SehRaises));
+            Timed(scope, "seh.lookup", ref delta, PerfCounter.SehLookups, PerfCounter.SehLookupTicks);
+            Line(scope, "seh.lookup.image", Get(ref delta, PerfCounter.SehLookupImage));
+            Line(scope, "seh.lookup.jit", Get(ref delta, PerfCounter.SehLookupJit));
+            Line(scope, "seh.lookup.r2r", Get(ref delta, PerfCounter.SehLookupR2r));
+            Line(scope, "seh.lookup.stub", Get(ref delta, PerfCounter.SehLookupStub));
+            Line(scope, "seh.lookup.gap", Get(ref delta, PerfCounter.SehLookupGap));
+            Line(scope, "seh.r2r_tables_scanned", Get(ref delta, PerfCounter.SehR2rTablesScanned));
+            Timed(scope, "seh.unwind", ref delta, PerfCounter.SehUnwinds, PerfCounter.SehUnwindTicks);
+        }
+
+        private static ulong Get(ref Values values, PerfCounter counter)
+            => (ulong)values.V[(int)counter];
+
+        // calls, total time, and time per call for one timed pair.
+        private static void Timed(string scope, string name, ref Values delta, PerfCounter calls, PerfCounter ticks)
+        {
+            ulong n = Get(ref delta, calls);
+            ulong ns = TicksToNs(Get(ref delta, ticks));
+            Line(scope, name + ".calls", n);
+            Line(scope, name + ".total_ms", ns / 1_000_000);
+            Line(scope, name + ".avg_ns", n == 0 ? 0 : ns / n);
         }
 
         // Split so that neither product can overflow: a naive ticks * 1e9
@@ -75,6 +240,17 @@ namespace OS.Kernel.Diagnostics
             if (hz == 0)
                 return 0;
             return ticks / hz * 1_000_000_000UL + ticks % hz * 1_000_000_000UL / hz;
+        }
+
+        // TSC ticks to microseconds at the rate the interval itself showed:
+        // elapsedTsc ticks took elapsedUs. Split like TicksToNs; the second
+        // product stays in range for scopes of up to about a minute at a
+        // 4 GHz counter.
+        private static ulong TscToUs(ulong ticks, ulong elapsedTsc, ulong elapsedUs)
+        {
+            if (elapsedTsc == 0)
+                return 0;
+            return ticks / elapsedTsc * elapsedUs + ticks % elapsedTsc * elapsedUs / elapsedTsc;
         }
 
         private static void Line(string scope, string name, ulong value)

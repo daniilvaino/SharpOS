@@ -52,6 +52,10 @@ namespace OS.Kernel.Input
                 Scheduler.SpawnHosted(&CtrlDeliveryEntry, null, 64 * 1024);
                 Scheduler.Spawn(&PumpEntry, 64 * 1024);
             }
+
+            // From here on the pump flushes the screen every interval, so line
+            // breaks no longer have to paint one by one.
+            TerminalConsole.CoalescePaints();
         }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
@@ -108,6 +112,12 @@ namespace OS.Kernel.Input
                     if (DetectBreak(sc)) s_breaks++;
                     ScancodeSource.Push(sc);
                 }
+
+                // Paints the lines TerminalConsole deferred (CoalescePaints):
+                // the last line of a burst of output is on screen within one
+                // interval even when nothing else flushes.
+                if (TerminalConsole.HasPendingOutput)
+                    TerminalConsole.Flush();
 
                 Scheduler.Sleep(PollIntervalMs);
             }

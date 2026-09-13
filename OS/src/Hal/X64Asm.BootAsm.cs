@@ -125,6 +125,27 @@ namespace OS.Hal
             a.ret();
         }
 
+        // cpuid. Win64: RCX = leaf, RDX = subleaf, R8 = uint[4] receiving EAX,
+        // EBX, ECX, EDX. RBX is callee-saved in the Win64 ABI and cpuid
+        // overwrites it, hence the push/pop.
+        [CompileTimeAsm]
+        private static partial int EmitCpuidBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitCpuidBootAsm))]
+        private static void EmitCpuidBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.push(rbx);
+            a.mov(eax, ecx);
+            a.mov(ecx, edx);
+            a.cpuid();
+            a.mov(__dword_ptr[r8], eax);
+            a.mov(__dword_ptr[r8 + 4], ebx);
+            a.mov(__dword_ptr[r8 + 8], ecx);
+            a.mov(__dword_ptr[r8 + 12], edx);
+            a.pop(rbx);
+            a.ret();
+        }
+
         // Write an arbitrary MSR. Win64: RCX = index, RDX = value. wrmsr wants
         // the value split across EDX:EAX, so the low half moves to EAX first —
         // doing it the other way round would clobber the source.

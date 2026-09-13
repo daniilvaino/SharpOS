@@ -172,12 +172,12 @@
        Initial integration attempt — expect massive unresolved cascade.
        Each error class will need targeted handling per L1-L5 strategy. -->
   <PropertyGroup>
-    <!-- step113-followup: fork build config (Debug or Release). Default Debug.
-         Override from run_build.ps1 via -p:CoreClrForkConfig=Release to link
-         a Release CoreCLR (no _DEBUG asserts, builtin sqrt inlined, thinner
-         frames, closer to real shipping .NET). SPC in run_build.ps1 must
-         match this config. -->
-    <CoreClrForkConfig Condition="'$(CoreClrForkConfig)' == ''">Debug</CoreClrForkConfig>
+    <!-- step113-followup: fork build config (Debug or Release). Default
+         Release since step169: it is what runs and what gets measured, and
+         the Debug artifacts (CoreCLR and System.Private.CoreLib alike) are
+         not built by default. Override via -p:CoreClrForkConfig=Debug. SPC
+         in run_build.ps1 must match this config. -->
+    <CoreClrForkConfig Condition="'$(CoreClrForkConfig)' == ''">Release</CoreClrForkConfig>
     <CoreClrForkObj>$(MSBuildThisFileDirectory)..\dotnet-runtime-sharpos\artifacts\obj\coreclr\windows.x64.$(CoreClrForkConfig)</CoreClrForkObj>
   </PropertyGroup>
   <!-- Kernel-only build toggle: -p:SkipCoreClr=true disables CoreCLR link
@@ -287,7 +287,11 @@ detach vdisk
   <Target Name="GenerateBuildInfo" BeforeTargets="BeforeCompile">
     <PropertyGroup>
       <BuildInfoGeneratedFile>$(IntermediateOutputPath)BuildInfo.g.cs</BuildInfoGeneratedFile>
-      <BuildInfoFileContents>namespace OS.Kernel%0A{%0A    internal static class BuildInfo%0A    {%0A        internal const string Id = "$(BuildId)"%3B%0A    }%0A}%0A</BuildInfoFileContents>
+      <!-- Which CoreCLR fork build is linked: a number measured on a Debug fork
+           is not comparable with one on Release, and the log has to say which. -->
+      <BuildInfoForkConfig>$(CoreClrForkConfig)</BuildInfoForkConfig>
+      <BuildInfoForkConfig Condition="'$(SkipCoreClr)' == 'true'">none</BuildInfoForkConfig>
+      <BuildInfoFileContents>namespace OS.Kernel%0A{%0A    internal static class BuildInfo%0A    {%0A        internal const string Id = "$(BuildId)"%3B%0A        internal const string ForkConfig = "$(BuildInfoForkConfig)"%3B%0A    }%0A}%0A</BuildInfoFileContents>
     </PropertyGroup>
     <WriteLinesToFile File="$(BuildInfoGeneratedFile)" Lines="$(BuildInfoFileContents)" Overwrite="true" WriteOnlyWhenDifferent="true" />
     <ItemGroup>

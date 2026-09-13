@@ -135,6 +135,7 @@ namespace OS.Hal
         {
             if (!s_ready) return;
             PutChar(Com1, c, ref s_com1AfterCr);
+            OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.Com1Chars);
         }
 
         /// <summary>Writes one character to COM3; nothing if there is none.</summary>
@@ -142,6 +143,7 @@ namespace OS.Hal
         {
             if (!s_com3Present) return;
             PutChar(Com3, c, ref s_com3AfterCr);
+            OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.Com3Chars);
         }
 
         /// <summary>Writes one character to COM4; nothing if there is none.</summary>
@@ -149,6 +151,7 @@ namespace OS.Hal
         {
             if (!s_com4Present) return;
             PutChar(Com4, c, ref s_com4AfterCr);
+            OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.Com4Chars);
         }
 
         // '\n' -> CRLF so terminals / captured logs render correctly

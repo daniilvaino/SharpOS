@@ -50,6 +50,17 @@ namespace OS.Hal
         private static Terminal s_terminal;
         private static bool s_ready;
         private static bool s_rendering;              // re-entrancy guard
+        // Set while a character is being fed to the engine. The engine
+        // allocates as it scrolls, an allocation can grow the kernel heap, and
+        // growing the heap logs a line — which came back into Putc on the same
+        // thread, found the engine lock taken by itself and spun out its whole
+        // bound before dropping each character. Four such lines cost a
+        // NativeAOT app printing 400 lines 108 spins and about a third of its
+        // output time (step169). A line written from inside the engine still
+        // reaches every other sink; it cannot reach this one either way.
+        // Global rather than per thread: Putc runs with preemption suppressed
+        // (Platform.WriteChar), so while one thread feeds no other can get here.
+        private static bool s_feeding;
         // Feeding and painting both mutate engine state that is shared across
         // threads — the parser's ReadingBuffer holds a raw pointer that only
         // stays valid for the duration of one Feed. Two writers at once made it
@@ -134,23 +145,97 @@ namespace OS.Hal
         /// <summary>Feeds one character; nothing is drawn until Flush.</summary>
         public static void Putc(char ch)
         {
-            if (!s_ready || s_rendering) return;
+            if (!s_ready || s_rendering || s_feeding) return;
             // Text must not be dropped: a lost character desynchronises whatever
             // wrote it from what it later reads back, and PSReadLine answers that
             // by redrawing forever. Painting may be skipped, feeding may not.
-            if (!Enter()) return;
+            ulong waitStarted = OS.Kernel.Diagnostics.PerfCounters.SinkClock();
+            if (!Enter())
+            {
+                OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.TerminalDrops);
+                return;
+            }
+            OS.Kernel.Diagnostics.PerfCounters.CountTsc(OS.Kernel.Diagnostics.PerfCounter.TerminalLockTsc, waitStarted);
 
             int length = EncodeUtf8(ch, s_encode);
+            ulong feedStarted = OS.Kernel.Diagnostics.PerfCounters.SinkClock();
+            s_feeding = true;
             s_terminal.Feed(s_encode, length);
+            s_feeding = false;
+            OS.Kernel.Diagnostics.PerfCounters.CountTsc(OS.Kernel.Diagnostics.PerfCounter.TerminalFeedTsc, feedStarted);
             s_dirty = true;
 
             // Callers that go through Platform.WriteChar one character at a time (Log's
             // Begin/EndLine pair, for instance) never reach Platform.Write's flush, so a
-            // line break paints what is pending.
-            if (ch == '\n')
+            // line break paints what is pending — unless a paint went out moments ago;
+            // see CoalescePaints.
+            if (ch == '\n' && PaintDue())
                 Paint();
 
             Exit();
+        }
+
+        // Paints at most this often from line breaks while a pump is there to
+        // finish the job. Faster than a screen refreshes; slow enough that a
+        // program printing lines scrolls once per batch, not once per line.
+        private const ulong LineBreakPaintsPerSecond = 60;
+
+        private static bool s_coalesce;
+        private static ulong s_lastPaint;
+
+        /// <summary>
+        /// Lets line breaks skip painting when the screen was painted less than a
+        /// frame ago; the caller promises to call <see cref="Flush"/> regularly.
+        /// </summary>
+        /// <remarks>
+        /// Every line break used to paint, and a paint that follows new lines at
+        /// the bottom moves the whole screen up. A program printing 200 lines
+        /// paid for 200 full-screen moves — half a millisecond each under QEMU,
+        /// two thirds of what its output cost (step169). Batched, ten lines are
+        /// one move of ten rows, which costs the same as a move of one.
+        ///
+        /// Only line breaks and the end of an application's write that ends a
+        /// line (<see cref="FlushWhenDue"/>) are deferred. An explicit Flush —
+        /// the end of a kernel string or of any other application write, a
+        /// wait for input — still paints at once, so a panic, a frame or an
+        /// echoed key is never late. Until someone promises to
+        /// flush, nothing changes: early boot has no pump, and a deferred line
+        /// there would sit unpainted.
+        /// </remarks>
+        public static void CoalescePaints() => s_coalesce = true;
+
+        /// <summary>
+        /// Paints now, unless the screen was painted less than a frame ago and
+        /// a pump will get to it within one interval.
+        /// </summary>
+        /// <remarks>
+        /// For the end of an application's write that ends a line. A paint at
+        /// the end of every write turned each line a NativeAOT app printed into
+        /// its own full-screen move: BenchAot's 200 lines cost 283 paints and
+        /// 1.4 ms a line, against 21 paints for the same work on the hosted
+        /// runtime, whose writes never forced a paint (step169).
+        ///
+        /// Lines only. A full-screen interface's writes keep painting at once:
+        /// deferring them showed the first piece of each redrawn frame alone,
+        /// and a launcher that redraws unchanged frames flickered.
+        /// </remarks>
+        public static void FlushWhenDue()
+        {
+            if (!PaintDue())
+                return;
+            Flush();
+        }
+
+        private static bool PaintDue()
+        {
+            if (!s_coalesce)
+                return true;
+
+            ulong hz = OS.Hal.Timer.Hpet.FrequencyHz;
+            if (hz == 0)
+                return true;
+
+            return OS.Hal.Timer.Hpet.ReadCounter() - s_lastPaint >= hz / LineBreakPaintsPerSecond;
         }
 
         private static bool TryEnter()
@@ -206,6 +291,7 @@ namespace OS.Hal
         {
             if (s_rendering) return;
 
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
             s_rendering = true;
             s_dirty = false;
 
@@ -228,6 +314,8 @@ namespace OS.Hal
             DrawCursor(buffer);
 
             s_rendering = false;
+            s_lastPaint = OS.Hal.Timer.Hpet.ReadCounter();
+            OS.Kernel.Diagnostics.PerfCounters.CountScreen(started);
         }
 
         /// <summary>Repaints every row — after a resize or a mode switch.</summary>

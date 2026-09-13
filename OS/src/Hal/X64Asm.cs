@@ -45,18 +45,29 @@
         //   0x1A0: CmpXchg64(loc, value, comparand) → old value
         //   0x1C0: Xchg64(loc, value)              → old value
         //   0x1E0: MemoryBarrier()                 → void (mfence)
-        // Generic MSR access, in the gap between the atomics and Fxsave.
-        //   0x200: ReadMsr(index)         → value
-        //   0x220: WriteMsr(index, value) → void
-        private const uint ReadMsrOffset      = 0x200;
-        private const uint WriteMsrOffset     = 0x220;
-        private const uint ReadMxcsrOffset    = 0x240;
-        private const uint WriteMxcsrOffset   = 0x260;
-        // 0x280..0x28C is the last gap before Fxsave; the rdtsc stub is 10
-        // bytes and fits exactly. Anything larger needs a bigger buffer
-        // (UefiBootInfoBuilder.AsmBufferSize), not a smaller gap.
-        private const uint ReadTscOffset      = 0x280;
-        private const uint MsrStubsMinBuffer  = 0x28C;
+        //
+        // Generic MSR access, MXCSR, rdtsc and cpuid — past the original
+        // 1 KiB, which is why the buffer is 2 KiB (UefiBootInfoBuilder).
+        //   0x400: ReadMsr(index)         → value
+        //   0x420: WriteMsr(index, value) → void
+        //   0x440/0x460: Read/WriteMxcsr
+        //   0x480: ReadTsc()              → value (10 bytes)
+        //   0x4A0: Cpuid(leaf, sub, regs) → void (~25 bytes)
+        //
+        // These used to sit at 0x200..0x28C, which was not the gap it looked
+        // like: SehDispatch lays its context-restore shellcode down at 0x200
+        // on the first exception. Whichever was emitted second overwrote the
+        // other, and it only held because every MSR/TSC/MXCSR call happened
+        // during boot, before the first exception — a ReadTsc after one would
+        // have jumped into the middle of the restore code.
+        private const uint ReadMsrOffset      = 0x400;
+        private const uint WriteMsrOffset     = 0x420;
+        private const uint ReadMxcsrOffset    = 0x440;
+        private const uint WriteMxcsrOffset   = 0x460;
+        private const uint ReadTscOffset      = 0x480;
+        private const uint MsrStubsMinBuffer  = 0x490;
+        private const uint CpuidOffset        = 0x4A0;
+        private const uint CpuidMinBuffer     = 0x4C0;
 
         private const uint CmpXchg64Offset       = 0x1A0;
         private const uint Xchg64Offset          = 0x1C0;
@@ -289,6 +300,28 @@
                 s_writeMsrReady = true;
             }
             s_writeMsr(index, value);
+            return true;
+        }
+
+        private static bool s_cpuidReady;
+        private static delegate* unmanaged<uint, uint, uint*, void> s_cpuid;
+
+        /// <summary>
+        /// Executes CPUID for <paramref name="leaf"/>/<paramref name="subleaf"/>;
+        /// <paramref name="regs"/> receives EAX, EBX, ECX, EDX.
+        /// </summary>
+        public static bool Cpuid(uint leaf, uint subleaf, uint* regs)
+        {
+            if (regs == null || s_execBuffer == null || s_execBufferSize < CpuidMinBuffer)
+                return false;
+            if (!s_cpuidReady)
+            {
+                byte* p = (byte*)s_execBuffer + CpuidOffset;
+                EmitCpuidBootAsm(p);
+                s_cpuid = (delegate* unmanaged<uint, uint, uint*, void>)p;
+                s_cpuidReady = true;
+            }
+            s_cpuid(leaf, subleaf, regs);
             return true;
         }
 

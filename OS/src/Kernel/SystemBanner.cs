@@ -18,6 +18,13 @@ namespace OS.Kernel
             Console.Write(BuildId);
             Log.EndLine();
 
+            // Numbers taken on a Debug fork and on a Release one are not
+            // comparable; the log says which one this is.
+            Log.Begin(LogLevel.Info);
+            Console.Write("fork: ");
+            Console.Write(BuildInfo.ForkConfig);
+            Log.EndLine();
+
             Log.Begin(LogLevel.Info);
             Console.Write("boot: ");
             Console.Write(BootModeName(bootInfo.BootMode));

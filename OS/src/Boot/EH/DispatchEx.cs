@@ -21,6 +21,13 @@ namespace OS.Boot.EH
     //   gc-experiment/dotnet-runtime/src/coreclr/nativeaot/Runtime.Base/src/System/Runtime/ExceptionHandling.cs:738-817
     internal static unsafe class DispatchEx
     {
+        // Per-throw trace of the dispatch: frames walked, clauses seen, the
+        // handler found. Six lines or more per exception, printed on the kernel
+        // log — which made every throw in an application cost ~25 ms of serial
+        // output under QEMU (BENCHAOT, step169). ILC drops the blocks while this
+        // is false; flip it to follow a dispatch that goes wrong.
+        private const bool Trace = false;
+
         public struct FirstPassResult
         {
             public bool Found;
@@ -67,19 +74,22 @@ namespace OS.Boot.EH
                     out CoffEhDecoder.EHEnum enumState,
                     out byte* methodStart);
 
-                OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
-                OS.Hal.Console.Write("    fp[");
-                OS.Hal.Console.WriteUIntRaw((uint)result.FramesWalked);
-                OS.Hal.Console.Write("]: PC=0x");
-                OS.Hal.Console.WriteHexRaw(iter->ControlPC, 16);
-                OS.Hal.Console.Write(" ehInit=");
-                OS.Hal.Console.Write(ehOk ? "Y" : "N");
-                if (ehOk)
+                if (Trace)
                 {
-                    OS.Hal.Console.Write(" methodStart=0x");
-                    OS.Hal.Console.WriteHexRaw((ulong)(nuint)methodStart, 16);
+                    OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                    OS.Hal.Console.Write("    fp[");
+                    OS.Hal.Console.WriteUIntRaw((uint)result.FramesWalked);
+                    OS.Hal.Console.Write("]: PC=0x");
+                    OS.Hal.Console.WriteHexRaw(iter->ControlPC, 16);
+                    OS.Hal.Console.Write(" ehInit=");
+                    OS.Hal.Console.Write(ehOk ? "Y" : "N");
+                    if (ehOk)
+                    {
+                        OS.Hal.Console.Write(" methodStart=0x");
+                        OS.Hal.Console.WriteHexRaw((ulong)(nuint)methodStart, 16);
+                    }
+                    OS.Hal.Log.EndLine();
                 }
-                OS.Hal.Log.EndLine();
 
                 if (ehOk)
                 {
@@ -88,12 +98,15 @@ namespace OS.Boot.EH
                         (byte*)iter->ControlPC, out uint synthOffset, out _, out uint funcIdx))
                     {
                         codeOffset = synthOffset;
-                        OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
-                        OS.Hal.Console.Write("      funclet-aware: synth codeOffset=0x");
-                        OS.Hal.Console.WriteHexRaw(codeOffset, 8);
-                        OS.Hal.Console.Write(" funcletClauseIdx=");
-                        OS.Hal.Console.WriteUIntRaw(funcIdx);
-                        OS.Hal.Log.EndLine();
+                        if (Trace)
+                        {
+                            OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                            OS.Hal.Console.Write("      funclet-aware: synth codeOffset=0x");
+                            OS.Hal.Console.WriteHexRaw(codeOffset, 8);
+                            OS.Hal.Console.Write(" funcletClauseIdx=");
+                            OS.Hal.Console.WriteUIntRaw(funcIdx);
+                            OS.Hal.Log.EndLine();
+                        }
                     }
                     else
                     {
@@ -104,20 +117,23 @@ namespace OS.Boot.EH
                     while (CoffEhDecoder.EhEnumNext(ref enumState,
                         out CoffEhDecoder.RhEHClause clause))
                     {
-                        OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
-                        OS.Hal.Console.Write("      clause[");
-                        OS.Hal.Console.WriteUIntRaw(clauseIdx);
-                        OS.Hal.Console.Write("] kind=");
-                        OS.Hal.Console.WriteUIntRaw((uint)clause.Kind);
-                        OS.Hal.Console.Write(" try=[0x");
-                        OS.Hal.Console.WriteHexRaw(clause.TryStartOffset, 8);
-                        OS.Hal.Console.Write("..0x");
-                        OS.Hal.Console.WriteHexRaw(clause.TryEndOffset, 8);
-                        OS.Hal.Console.Write(") off=0x");
-                        OS.Hal.Console.WriteHexRaw(codeOffset, 8);
-                        OS.Hal.Console.Write(" type=0x");
-                        OS.Hal.Console.WriteHexRaw((ulong)(nuint)clause.TargetTypeRaw, 16);
-                        OS.Hal.Log.EndLine();
+                        if (Trace)
+                        {
+                            OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                            OS.Hal.Console.Write("      clause[");
+                            OS.Hal.Console.WriteUIntRaw(clauseIdx);
+                            OS.Hal.Console.Write("] kind=");
+                            OS.Hal.Console.WriteUIntRaw((uint)clause.Kind);
+                            OS.Hal.Console.Write(" try=[0x");
+                            OS.Hal.Console.WriteHexRaw(clause.TryStartOffset, 8);
+                            OS.Hal.Console.Write("..0x");
+                            OS.Hal.Console.WriteHexRaw(clause.TryEndOffset, 8);
+                            OS.Hal.Console.Write(") off=0x");
+                            OS.Hal.Console.WriteHexRaw(codeOffset, 8);
+                            OS.Hal.Console.Write(" type=0x");
+                            OS.Hal.Console.WriteHexRaw((ulong)(nuint)clause.TargetTypeRaw, 16);
+                            OS.Hal.Log.EndLine();
+                        }
 
                         // Rethrow skip: на first frame skip clauses
                         // up to и включая startIdx. Subsequent frames
@@ -142,12 +158,15 @@ namespace OS.Boot.EH
                                 clause.FilterAddress,
                                 (RegDisplay*)iter);
 
-                            OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
-                            OS.Hal.Console.Write("      filter[");
-                            OS.Hal.Console.WriteUIntRaw(clauseIdx);
-                            OS.Hal.Console.Write("] result=");
-                            OS.Hal.Console.WriteUIntRaw((uint)filterResult);
-                            OS.Hal.Log.EndLine();
+                            if (Trace)
+                            {
+                                OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                                OS.Hal.Console.Write("      filter[");
+                                OS.Hal.Console.WriteUIntRaw(clauseIdx);
+                                OS.Hal.Console.Write("] result=");
+                                OS.Hal.Console.WriteUIntRaw((uint)filterResult);
+                                OS.Hal.Log.EndLine();
+                            }
 
                             if (filterResult != 0)
                             {
@@ -228,14 +247,17 @@ namespace OS.Boot.EH
             bool isRethrow = (exInfo->Kind & ExInfo.KindRethrow) != 0;
             bool reusedIter = false;
 
-            OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
-            OS.Hal.Console.Write("Dispatch: kind=0x");
-            OS.Hal.Console.WriteHexRaw(exInfo->Kind, 2);
-            OS.Hal.Console.Write(" exInfo=0x");
-            OS.Hal.Console.WriteHexRaw((ulong)(nuint)exInfo, 16);
-            OS.Hal.Console.Write(" prevExInfo=0x");
-            OS.Hal.Console.WriteHexRaw((ulong)(nuint)exInfo->PrevExInfo, 16);
-            OS.Hal.Log.EndLine();
+            if (Trace)
+            {
+                OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                OS.Hal.Console.Write("Dispatch: kind=0x");
+                OS.Hal.Console.WriteHexRaw(exInfo->Kind, 2);
+                OS.Hal.Console.Write(" exInfo=0x");
+                OS.Hal.Console.WriteHexRaw((ulong)(nuint)exInfo, 16);
+                OS.Hal.Console.Write(" prevExInfo=0x");
+                OS.Hal.Console.WriteHexRaw((ulong)(nuint)exInfo->PrevExInfo, 16);
+                OS.Hal.Log.EndLine();
+            }
 
             if (isRethrow)
             {
@@ -250,16 +272,19 @@ namespace OS.Boot.EH
                     // to deref a non-canonical MT and #GP.
                     exceptionPtr = (byte*)(nuint)prev->Exception;
 
-                    OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
-                    OS.Hal.Console.Write("  rethrow: prev->IdxCurClause=");
-                    OS.Hal.Console.WriteUIntRaw(prev->IdxCurClause);
-                    OS.Hal.Console.Write(" prev->Exception=0x");
-                    OS.Hal.Console.WriteHexRaw((ulong)(nuint)exceptionPtr, 16);
-                    OS.Hal.Console.Write(" prev->FrameIter.ControlPC=0x");
-                    OS.Hal.Console.WriteHexRaw(prev->FrameIter.ControlPC, 16);
-                    OS.Hal.Console.Write(" prev->FrameIter.SP=0x");
-                    OS.Hal.Console.WriteHexRaw(prev->FrameIter.RegDisplay.SP, 16);
-                    OS.Hal.Log.EndLine();
+                    if (Trace)
+                    {
+                        OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                        OS.Hal.Console.Write("  rethrow: prev->IdxCurClause=");
+                        OS.Hal.Console.WriteUIntRaw(prev->IdxCurClause);
+                        OS.Hal.Console.Write(" prev->Exception=0x");
+                        OS.Hal.Console.WriteHexRaw((ulong)(nuint)exceptionPtr, 16);
+                        OS.Hal.Console.Write(" prev->FrameIter.ControlPC=0x");
+                        OS.Hal.Console.WriteHexRaw(prev->FrameIter.ControlPC, 16);
+                        OS.Hal.Console.Write(" prev->FrameIter.SP=0x");
+                        OS.Hal.Console.WriteHexRaw(prev->FrameIter.RegDisplay.SP, 16);
+                        OS.Hal.Log.EndLine();
+                    }
 
                     exInfo->FrameIter = prev->FrameIter;
                     startIdx = prev->IdxCurClause;
@@ -292,24 +317,30 @@ namespace OS.Boot.EH
                     exInfo->FrameIter = exInfo->PrevExInfo->FrameIter;
                     exInfo->FrameIter.ControlPC = funcletBodyPC;
 
-                    OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
-                    OS.Hal.Console.Write("  collided-unwind: adopted prev iter SP=0x");
-                    OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
-                    OS.Hal.Console.Write(" kept ControlPC=0x");
-                    OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.ControlPC, 16);
-                    OS.Hal.Log.EndLine();
+                    if (Trace)
+                    {
+                        OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                        OS.Hal.Console.Write("  collided-unwind: adopted prev iter SP=0x");
+                        OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
+                        OS.Hal.Console.Write(" kept ControlPC=0x");
+                        OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.ControlPC, 16);
+                        OS.Hal.Log.EndLine();
+                    }
                 }
             }
 
-            OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
-            OS.Hal.Console.Write("  iter ready: ControlPC=0x");
-            OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.ControlPC, 16);
-            OS.Hal.Console.Write(" SP=0x");
-            OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
-            OS.Hal.Console.Write(" startIdx=0x");
-            OS.Hal.Console.WriteHexRaw(startIdx, 8);
-            OS.Hal.Console.Write(reusedIter ? " (reused prev iter)" : " (init from ExContext)");
-            OS.Hal.Log.EndLine();
+            if (Trace)
+            {
+                OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                OS.Hal.Console.Write("  iter ready: ControlPC=0x");
+                OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.ControlPC, 16);
+                OS.Hal.Console.Write(" SP=0x");
+                OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
+                OS.Hal.Console.Write(" startIdx=0x");
+                OS.Hal.Console.WriteHexRaw(startIdx, 8);
+                OS.Hal.Console.Write(reusedIter ? " (reused prev iter)" : " (init from ExContext)");
+                OS.Hal.Log.EndLine();
+            }
 
             // Resolve exception type from object header (first 8 bytes).
             GcMethodTable* exType = null;
@@ -332,16 +363,19 @@ namespace OS.Boot.EH
             // one's IP к stack trace as it goes (multi-frame trace).
             FirstPassResult fp = FindFirstPassHandler(exceptionPtr, exType, &exInfo->FrameIter, startIdx, exObjForTrace);
 
-            OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
-            OS.Hal.Console.Write("  fp.Found=");
-            OS.Hal.Console.Write(fp.Found ? "Y" : "N");
-            OS.Hal.Console.Write(" handler=0x");
-            OS.Hal.Console.WriteHexRaw((ulong)(nuint)fp.HandlerAddress, 16);
-            OS.Hal.Console.Write(" idxCurClause=");
-            OS.Hal.Console.WriteUIntRaw(fp.IdxCurClause);
-            OS.Hal.Console.Write(" framesWalked=");
-            OS.Hal.Console.WriteUIntRaw((uint)fp.FramesWalked);
-            OS.Hal.Log.EndLine();
+            if (Trace)
+            {
+                OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                OS.Hal.Console.Write("  fp.Found=");
+                OS.Hal.Console.Write(fp.Found ? "Y" : "N");
+                OS.Hal.Console.Write(" handler=0x");
+                OS.Hal.Console.WriteHexRaw((ulong)(nuint)fp.HandlerAddress, 16);
+                OS.Hal.Console.Write(" idxCurClause=");
+                OS.Hal.Console.WriteUIntRaw(fp.IdxCurClause);
+                OS.Hal.Console.Write(" framesWalked=");
+                OS.Hal.Console.WriteUIntRaw((uint)fp.FramesWalked);
+                OS.Hal.Log.EndLine();
+            }
             if (!fp.Found)
             {
                 // Unhandled — notify hook then FailFast.
@@ -487,14 +521,17 @@ namespace OS.Boot.EH
                     && codeOffset >= clause.TryStartOffset
                     && codeOffset < clause.TryEndOffset)
                 {
-                    OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
-                    OS.Hal.Console.Write("    finally[");
-                    OS.Hal.Console.WriteUIntRaw(clauseIdx);
-                    OS.Hal.Console.Write("]: handler=0x");
-                    OS.Hal.Console.WriteHexRaw((ulong)(nuint)clause.HandlerAddress, 16);
-                    OS.Hal.Console.Write(" frameSP=0x");
-                    OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
-                    OS.Hal.Log.EndLine();
+                    if (Trace)
+                    {
+                        OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
+                        OS.Hal.Console.Write("    finally[");
+                        OS.Hal.Console.WriteUIntRaw(clauseIdx);
+                        OS.Hal.Console.Write("]: handler=0x");
+                        OS.Hal.Console.WriteHexRaw((ulong)(nuint)clause.HandlerAddress, 16);
+                        OS.Hal.Console.Write(" frameSP=0x");
+                        OS.Hal.Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
+                        OS.Hal.Log.EndLine();
+                    }
 
                     exInfo->IdxCurClause = clauseIdx;
                     delegate* unmanaged<byte*, RegDisplay*, void> finallyFn =

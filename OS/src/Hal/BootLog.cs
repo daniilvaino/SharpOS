@@ -180,10 +180,12 @@ namespace OS.Hal
             for (int i = s_used; i < SectorSize; i++) s_line[i] = (byte)' ';
 
             bool ok;
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
             fixed (byte* p = s_line)
             {
                 ok = Fat32.WriteSectorAt(s_startLba + s_sector, p);
             }
+            OS.Kernel.Diagnostics.PerfCounters.CountDiskLog(started);
 
             if (!ok)
             {

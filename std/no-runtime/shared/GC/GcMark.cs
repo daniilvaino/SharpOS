@@ -35,6 +35,14 @@ namespace SharpOS.Std.NoRuntime
 
         public static uint LastMarkedCount => s_markedCount;
 
+        // Where MethodTables live, [low, high). Every object on a heap this
+        // collector manages has its type in one image — the kernel's for the
+        // kernel heap — so the host can say so, and conservative candidates
+        // whose "MethodTable" falls elsewhere are rejected. Left at zero (apps
+        // do) it adds no check.
+        public static nint MethodTableLow;
+        public static nint MethodTableHigh;
+
         // Start a fresh mark pass. Caller should call this before pushing the
         // first root; it resets the mark stack and the per-pass counter.
         public static void Begin()
@@ -93,6 +101,17 @@ namespace SharpOS.Std.NoRuntime
                 if (!IsCanonicalLowHalf(mtAddr))
                     continue;
                 if (GcHeap.FindSegmentContaining(mtAddr) != null)
+                    continue;
+
+                // The two checks above let through any canonical address, and
+                // payload bytes are often one: a dead stack slot pointed into
+                // the middle of an object whose first word read
+                // 0x0000020000020100, and the marker followed it into unmapped
+                // memory (step169, after an unrelated change moved the heap).
+                // Where the host knows where its types live, a candidate whose
+                // MethodTable is not there is not an object.
+                if (MethodTableHigh != 0 &&
+                    ((ulong)mtAddr < (ulong)MethodTableLow || (ulong)mtAddr >= (ulong)MethodTableHigh))
                     continue;
 
                 if (obj->IsMarked())

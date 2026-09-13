@@ -573,6 +573,8 @@ Milestone-1 срез [PeNet](https://github.com/secana/PeNet) (Apache-2.0, `vend
 | `new object/int[]/string(char[])`, string concat/eq/PadRight, `List<T>` add/index/count/ToArray, `Dictionary` add/count/missing-key | ✅ | Прямые вызовы + GC |
 | `List<T>.Contains`, `Dictionary.TryGetValue`, `EqualityComparer<int>.Default.Equals` | ✅ (step139) | `DefaultComparer.Equals` → `x is IEquatable<T>` (isinst) + `eq.Equals(y)` (dispatch) через shared kernel-мост |
 | `throw`/`catch`, `try/finally`, finally-on-unwind, catch-by-base, `e.Message`, multi-catch | ✅ (step140) | app `throw` → kernel `RhpThrowEx` (handoff) → `DispatchEx` идёт по кадрам аппы через её `.pdata` (multi-image function-table) → апп catch/finally funclet |
+| `GC.Collect` при нескольких потоках | ✅ (step169) | `AppGC` берёт у ядра обход корней: стек собирающего потока, стеки остальных (`KernelGC.MarkOtherThreadStacks`) и сквозь переходники служб (`TryUnwindServiceThunk`) — спящий поток стоит внутри `Sleep`. До step169 объект, живой только у другого потока, освобождался. AotTests «other thread's stack roots survive collect» |
+| Вывод строками | ✅ (step169) | запись, кончающаяся `\n`, не рисует экран сама (перевод строки рисует не чаще 60/с, остальное — помпа или `TryReadKey`); прочие записи (кадры интерфейса) рисуют сразу. 0.43 мс на строку под QEMU, как у hosted |
 | Поток ошибок (stderr) | ✅ (step167) | `AppHost.WriteError(string)` → служба `WriteErrorAddress` → канал `AppErr` (COM4 / `last_err.log`); без службы — обычный вывод. `System.Console.Error` нет: в std нет `TextWriter` |
 
 **Interface dispatch в аппах — как закрыто (step139, handoff, НЕ export-table):** разведка показала, что kernel-resolver (`InterfaceDispatchResolver`) **пурный на major-9** — резолвит целиком из MT+cell, работает на foreign app-MT (тот же ILC8/major-9 layout в shared-адресном). Плюс апп исполняется **внутри адресного пространства ядра**. Поэтому НЕ портируем машинерию и НЕ строим export table: ядро **отдаёт адрес** уже построенного bridge-шеллкода (`InterfaceDispatchBridge.ShellcodeStart`) через `AppServiceTable.InterfaceDispatchBridgeAddress`, а апп патчит свой `[RuntimeExport("RhpInitialDynamicInterfaceDispatch")]` стаб абсолютным `mov rax,<addr>; jmp rax` (`InterfaceDispatchTrampoline`, вызывается в `AppRuntime.Initialize`). Kernel-шеллкод читает cell аппы → зовёт kernel-resolver → ходит по MT аппы → tail-jmp в метод аппы. **Второй корень:** примитивы app-std были голые (`struct Int32 { }`) → int не IEquatable<int> → `x is IEquatable<T>` = false → dispatch не звался; исправлено — примитивы аппы реализуют `IEquatable<T>`/`IComparable<T>` (зеркало `OS/src/Boot/MinimalRuntime.cs`).
@@ -649,24 +651,23 @@ Pipeline:
 ExecStubBuffer ещё не сконфигурирован) — fallback на conservative
 ScanStack (только smoke-test-callers через `CaptureStackTop` discipline).
 
-### Известный остаток: multi-thread enumeration
+### ✅ Остальные потоки (закрыто; приложения — step169)
 
-Precise walker сейчас обходит **только текущий поток**. Если есть
-другие threads (scheduler workers, hosted CoreCLR threads) с managed
-refs на их стеках — те refs **не enumerate'ятся**. Sweep с включённым
-`ReclamationDisabled = false` мог бы освободить такие thread-local
-managed objects.
+`KernelGC.MarkOtherThreadStacks` обходит каждый припаркованный поток от
+контекста, оставленного переключением (`RunFromParkedThread`), а
+вытесненный — дальше, через кадр прерывания (`RunFromInterruptFrame`).
+С step169 тот же обход получает колбэк и отдаётся сборщику приложений
+(`AppGcService.WalkRoots`).
 
-Поэтому `GC.ReclamationDisabled = true` остаётся включённым в
-`CoreClrProbe.cs:370` — sweep no-op. Mark phase теперь precise и
-безопасный, но **реальная reclamation отложена** до multi-thread
-walker'а.
+Граница «приложение → ядро»: службы вызываются через переходники без
+`.pdata` и GcInfo, и обход останавливался на первом из них — кадры
+приложения у потока, спящего в `Sleep`, не обходились.
+`AppServiceBuilder.TryUnwindServiceThunk` переступает переходник по его
+форме. Любой новый обход, пересекающий эту границу (EH сквозь службу,
+профайлер), должен делать то же.
 
-**Долгосрочный фикс:** enumerate каждый Thread в `Scheduler.Threads` +
-hosted-CoreCLR thread list, для каждого: capture его CONTEXT (или
-прочитать сохранённый CONTEXT из его `ThreadContext` блока) → walk
-frame chain → mark roots. Тогда snять `ReclamationDisabled` будет
-безопасно и kernel GC начнёт реально освобождать память.
+Остаток: куча ядра на практике не собирается — растёт (`kgc.calls=0` во всех
+прогонах step169).
 
 ---
 

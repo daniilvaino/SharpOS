@@ -78,6 +78,24 @@ namespace OS.PAL.SharpOSHost
         public static RuntimeFunction* LookupFunctionEntry(
             ulong controlPc, ulong* pImageBase)
         {
+            // Every step of every unwind comes through here; its cost, and
+            // which table answered, are what the exceptions benchmark needs to
+            // explain itself.
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
+            RuntimeFunction* found = LookupFunctionEntryCore(controlPc, pImageBase);
+            OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                OS.Kernel.Diagnostics.PerfCounter.SehLookups,
+                OS.Kernel.Diagnostics.PerfCounter.SehLookupTicks,
+                started);
+            return found;
+        }
+
+        private static void CountLookup(OS.Kernel.Diagnostics.PerfCounter table)
+            => OS.Kernel.Diagnostics.PerfCounters.Increment(table);
+
+        private static RuntimeFunction* LookupFunctionEntryCore(
+            ulong controlPc, ulong* pImageBase)
+        {
             if (!CoffRuntimeFunctionTable.IsInitialized)
                 return null;
 
@@ -93,12 +111,12 @@ namespace OS.PAL.SharpOSHost
             {
                 // 1) JIT code-heap callback range (RtlInstallFunctionTableCallback)
                 RuntimeFunction* dyn = DynamicLookup(controlPc, pImageBase);
-                if (dyn != null) return dyn;
+                if (dyn != null) { CountLookup(OS.Kernel.Diagnostics.PerfCounter.SehLookupJit); return dyn; }
                 // 2) R2R image static .pdata (RtlAddFunctionTable) — e.g.
                 //    System.Private.CoreLib precompiled code mapped into the
                 //    VM window. peimagelayout.cpp registers it under SHARPOS.
                 RuntimeFunction* stat = StaticTableLookup(controlPc, pImageBase);
-                if (stat != null) return stat;
+                if (stat != null) { CountLookup(OS.Kernel.Diagnostics.PerfCounter.SehLookupR2r); return stat; }
                 // 3) Stub heap (Phase E10 Path B): LoaderAllocator's precode /
                 //    call-counting / VSD / dynamic-helper heaps. CoreCLR
                 //    doesn't emit .pdata for these — they're leaf-style
@@ -106,7 +124,7 @@ namespace OS.PAL.SharpOSHost
                 //    RUNTIME_FUNCTION so the unwinder pops [rsp] and steps
                 //    past the thunk to the caller (JIT method).
                 RuntimeFunction* stub = StubRangeLookup(controlPc, pImageBase);
-                if (stub != null) return stub;
+                if (stub != null) { CountLookup(OS.Kernel.Diagnostics.PerfCounter.SehLookupStub); return stub; }
                 // 4) Image-text leaf thunk: linker emits frameless trampolines
                 //    (typically `mov rcx, [rcx]; jmp [slot]` import/delay-load
                 //    helpers, 10 bytes) between real functions WITHOUT .pdata
@@ -116,8 +134,12 @@ namespace OS.PAL.SharpOSHost
                 //    synthesize the same leaf RUNTIME_FUNCTION as StubRange.
                 //    Surfaced by `[ivip]` diagnostic in step 123 census on
                 //    Release fork (Debug had different code shape due to ICF).
-                return ImageTextGapLookup(controlPc, pImageBase);
+                RuntimeFunction* gap = ImageTextGapLookup(controlPc, pImageBase);
+                if (gap != null) CountLookup(OS.Kernel.Diagnostics.PerfCounter.SehLookupGap);
+                return gap;
             }
+
+            CountLookup(OS.Kernel.Diagnostics.PerfCounter.SehLookupImage);
 
             // The base of the image the method was found in, not the global
             // one. Everything the caller computes from the returned entry —
@@ -515,13 +537,20 @@ namespace OS.PAL.SharpOSHost
                         else
                         {
                             if (pImageBase != null) *pImageBase = b;
+                            CountScanned(i + 1);
                             return &f[mid];
                         }
                     }
                 }
             }
+            CountScanned(n);
             return null;
         }
+
+        // How many registered R2R tables a lookup walked before it answered —
+        // the linear part of this search (perf suspect 23).
+        private static void CountScanned(int tables)
+            => OS.Kernel.Diagnostics.PerfCounters.Add(OS.Kernel.Diagnostics.PerfCounter.SehR2rTablesScanned, tables);
 
         // RtlVirtualUnwind — applies one function's unwind codes to a
         // CONTEXT. After return:
@@ -564,6 +593,26 @@ namespace OS.PAL.SharpOSHost
             void** handlerData,
             ulong* establisherFrame,
             void* contextPointers = null)
+        {
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
+            void* handler = VirtualUnwindCore(handlerType, imageBase, controlPc, functionEntry,
+                                              context, handlerData, establisherFrame, contextPointers);
+            OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                OS.Kernel.Diagnostics.PerfCounter.SehUnwinds,
+                OS.Kernel.Diagnostics.PerfCounter.SehUnwindTicks,
+                started);
+            return handler;
+        }
+
+        private static void* VirtualUnwindCore(
+            uint handlerType,
+            ulong imageBase,
+            ulong controlPc,
+            RuntimeFunction* functionEntry,
+            Context* context,
+            void** handlerData,
+            ulong* establisherFrame,
+            void* contextPointers)
         {
             if (functionEntry == null || context == null) return null;
 

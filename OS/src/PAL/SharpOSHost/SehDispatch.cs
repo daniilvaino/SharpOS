@@ -44,7 +44,12 @@ namespace OS.PAL.SharpOSHost
         // current context, drives the unwind loop.
         [RuntimeExport("RaiseException")]
         public static void RaiseException(uint code, uint flags, uint nParams, ulong* args)
-            => RaiseExceptionImpl(code, flags, nParams, args);
+        {
+            // Whether the hosted runtime's throws come through here at all is
+            // the first question the exceptions benchmark asks.
+            OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.SehRaises);
+            RaiseExceptionImpl(code, flags, nParams, args);
+        }
 
         private static void RaiseExceptionImpl(uint code, uint flags, uint nParams, ulong* args)
         {
@@ -1355,11 +1360,25 @@ namespace OS.PAL.SharpOSHost
             return false;
         }
 
+        /// <summary>
+        /// Set once the hosted runtime can answer "what is this thread's Frame
+        /// chain" — after CoreClrProbe points GS at a TEB.
+        /// </summary>
+        /// <remarks>
+        /// Before that, asking walks into CoreCLR's GetThreadNULLOk, which reads
+        /// its thread-local block through GS and faults on whatever GS holds.
+        /// A kernel fault during boot then took a second fault in its own
+        /// dispatch, and the log showed that one instead of the cause (step169).
+        /// </remarks>
+        internal static bool FrameChainAvailable;
+
         private static bool TryActivateFrameChain(Context* ctx, ref ulong frameCursor)
         {
             ulong fp = frameCursor;
             if (fp == 0)
             {
+                if (!FrameChainAvailable)
+                    return false;
                 fp = (ulong)SharpOSHost_GetCurrentFrame();
             }
             // Empty chain or FRAME_TOP sentinel — nothing to do.

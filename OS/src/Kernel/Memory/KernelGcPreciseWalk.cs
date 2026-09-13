@@ -178,6 +178,12 @@ namespace OS.Kernel.Memory
                 byte* rip = (byte*)ctx->Rip;
                 if (!CoffMethodGcInfo.TryResolve(rip, out CoffMethodGcInfo.Result r))
                 {
+                    // An app's call into a kernel service: no GcInfo, no
+                    // unwind data, no roots — but the app's frames, which do
+                    // hold roots, are on the other side of it.
+                    if (OS.Kernel.Process.AppServiceBuilder.TryUnwindServiceThunk(ref ctx->Rip, ref ctx->Rsp))
+                        continue;
+
                     LastFramesUnresolved++;
                     return;
                 }

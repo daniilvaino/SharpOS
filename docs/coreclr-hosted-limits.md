@@ -109,6 +109,25 @@ agent-memory `project_string_as_methodtable_shared_root`,
 
 ---
 
+## 1b. Производительность (steps 168–169)
+
+Числа и их история — [`docs/perf-progress.md`](perf-progress.md); эталон —
+тот же `Bench.dll` на Debian в том же QEMU.
+
+- ✅ Бюджет gen0 по размеру кешей: `GetLogicalProcessorInformation` отдаёт
+  кеши из CPUID ядра (`SharpOSHost_GetCacheDescriptors`). Было: пусто, gen0 по
+  умолчанию, 78 сборок на бенче выделений; стало 2, как у Linux.
+- ✅ Быстрые аллокаторы (`JIT_NewS`, `FastAllocateString`) включены: символы
+  `AllocFast.asm` переименованы под `TARGET_SHARPOS` (коллизия с ядерными
+  `RhpNewFast`/`RhNewString`).
+- ✅ Вывод: ~0.4 мс на строку под QEMU (экран, COM3, дисковый лог), перерисовки
+  не чаще 60 раз в секунду. ×1.7 к Linux, у которого в эталоне нет фреймбуфера.
+- 🟡 Исключения: ~120 мкс на бросок, ×3 к Linux в том же QEMU. Ядро — около
+  15 % (поиск в таблицах функций, размотка), остальное внутри CoreCLR; не
+  разобрано.
+
+---
+
 ## 2. Файловая система (System.IO)
 
 Managed-слой **сбриджен** (отдаёт чистые BCL-исключения, не trap).

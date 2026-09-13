@@ -19,14 +19,25 @@ namespace OS.Kernel.Memory
     // through the boundary into app code. That also fixes the boundary — a
     // collection can only happen while the app is inside a call to us, which is
     // precisely the safepoint discipline a preemptive scheduler will need.
+    //
+    // Every other thread's stack too, not only the caller's. An app has
+    // threads of its own (Terminal.Gui keeps input and resize loops on them),
+    // and an object only one of those holds is as live as any other; walking
+    // just the caller frees it while its thread still uses it, and the
+    // freed block ends up in the free list under a live writer (step169,
+    // AotTests "other thread's stack roots survive collect"). The kernel's
+    // own collector has walked parked threads since the scheduler existed.
+    // Threads of other programs and of the kernel are walked as well — their
+    // roots point outside this app's heap, and the app's marker drops those.
     internal static unsafe class AppGcService
     {
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         public static void WalkRoots(nuint markCallback)
         {
             if (markCallback == 0) return;
-            KernelGcPreciseWalk.RunFromCurrentFrame(
-                (delegate* unmanaged<nuint, void>)markCallback);
+            var markRoot = (delegate* unmanaged<nuint, void>)markCallback;
+            KernelGcPreciseWalk.RunFromCurrentFrame(markRoot);
+            KernelGC.MarkOtherThreadStacks(markRoot);
         }
     }
 }

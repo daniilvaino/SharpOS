@@ -245,6 +245,8 @@ namespace OS.Boot
             // step 3 EH info decoder.
             if (!OS.Boot.EH.CoffRuntimeFunctionTable.TryInitialize((byte*)anchor))
                 Log.Write(LogLevel.Warn, "coff method table init failed");
+            else
+                BoundMethodTablesToImage(OS.Boot.EH.CoffRuntimeFunctionTable.ImageBase);
 
             // GC statics materialization. After this, canonical
             // `static readonly T x = new T()` works for any code that
@@ -260,6 +262,26 @@ namespace OS.Boot
         //   Post: Pager (4-level page tables), ACPI tables parsed, HPET
         //         counter running, Stopwatch usable.
         // ─────────────────────────────────────────────────────────────────
+        // Tells the conservative collector where the kernel's MethodTables are:
+        // every object on the kernel heap has its type in this image, so a
+        // stack word whose supposed type points anywhere else is not an object.
+        private static void BoundMethodTablesToImage(byte* image)
+        {
+            if (image == null)
+                return;
+
+            // PE32+: e_lfanew at 0x3C; SizeOfImage at +0x38 in the optional
+            // header, which starts after the 4-byte signature and the 20-byte
+            // file header.
+            int peOffset = *(int*)(image + 0x3C);
+            uint sizeOfImage = *(uint*)(image + peOffset + 24 + 0x38);
+            if (sizeOfImage == 0)
+                return;
+
+            SharpOS.Std.NoRuntime.GcMark.MethodTableLow = (nint)image;
+            SharpOS.Std.NoRuntime.GcMark.MethodTableHigh = (nint)(image + sizeOfImage);
+        }
+
         private static void Phase3_Platform(BootInfo bootInfo)
         {
             InitializePager();

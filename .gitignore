@@ -109,6 +109,7 @@ hello/
 last_build.log
 last_app.log
 last_err.log
+last_linux_ref.log
 *.lscache
 
 # Payload staging source: IWADs for DOOM.EXE, cartridges for the emulators
