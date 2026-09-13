@@ -44,6 +44,8 @@ namespace OS.PAL.SharpOSHost
             {
                 if (!ScancodeSource.TryReadScancode(out byte sc))
                 {
+                    OS.Kernel.Diagnostics.PerfCounters.NoteInputWait();
+
                     // Nothing typed yet: paint whatever is pending before blocking.
                     // The terminal front-end batches drawing until a newline, and a
                     // prompt has none -- without this the prompt (and every echoed
@@ -98,6 +100,7 @@ namespace OS.PAL.SharpOSHost
             if (written < nCharsToRead) lpBuffer[written++] = '\n';
 
             if (lpNumberOfCharsRead != null) *lpNumberOfCharsRead = written;
+            OS.Kernel.Diagnostics.PerfCounters.NoteKeyDelivered(0x0D);   // the line ends with Enter
             return 1;
         }
     }

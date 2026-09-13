@@ -50,8 +50,8 @@ namespace OS.Hal
         public static void UseOwnConsole() => s_ownConsole = true;
 
         // Repoint the BootInfo file/dir delegates at the FAT bridge so
-        // every raw bootInfo.* caller (app-service ABI, guest launcher,
-        // ELF loader) reads our FAT, not dead UEFI. Called once by
+        // every raw bootInfo.* caller (app-service ABI, launcher, PE
+        // loader) reads our FAT, not dead UEFI. Called once by
         // Vfs.Mount after a volume comes up.
         public static void UseFatBootDelegates()
         {

@@ -1,5 +1,4 @@
-﻿using OS.Kernel.Elf;
-using OS.Kernel.Paging;
+﻿using OS.Kernel.Paging;
 
 namespace OS.Kernel.Process
 {
@@ -15,7 +14,7 @@ namespace OS.Kernel.Process
 
         public static bool IsNestedRunActive => s_nestedRunActive;
 
-        public static void SetCurrent(ref ProcessImage processImage, ref ElfLoadedImage loadedImage)
+        public static void SetCurrent(ref ProcessImage processImage, ref LoadedImage loadedImage)
         {
             s_currentContext = default;
             s_currentContext.State = ProcessState.Running;

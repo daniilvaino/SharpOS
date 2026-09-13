@@ -1,14 +1,23 @@
-﻿using OS.Boot;
+using OS.Boot;
 using OS.Hal;
 using OS.Kernel.Exec;
 using OS.Kernel.File;
 using OS.Kernel.Paging;
-using OS.Kernel.Process;
 using OS.Kernel.Util;
 
-namespace OS.Kernel.Elf
+namespace OS.Kernel.Process
 {
-    internal static unsafe class ElfValidation
+    /// <summary>
+    /// The end of boot: mount the file system and start the launcher, a
+    /// freestanding PE the kernel loads, maps and jumps into.
+    /// </summary>
+    /// <remarks>
+    /// Was ElfValidation, from when this phase ran a batch of ELF test apps
+    /// and checked their exit codes and a marker each wrote. ELF went in
+    /// step137 and the batch shrank to the launcher; the name, the marker
+    /// check and an ELF segment validator stayed until step171.
+    /// </remarks>
+    internal static unsafe class LauncherBoot
     {
         private const ulong PageSize = X64PageTable.PageSize;
         // Where applications live. \EFI\BOOT holds the firmware entry point and
@@ -17,20 +26,27 @@ namespace OS.Kernel.Elf
         private const ulong KernelLowSyncStart = 0x00100000UL;
         private const ulong KernelLowSyncEndExclusive = 0x20000000UL;
 
-        private struct ExternalElfApp
+        // The launcher the kernel starts after boot: a Terminal.Gui
+        // application (step163). Being started BY the kernel rather than by
+        // another launcher is the point — the process model keeps one
+        // suspended context, so anything it starts would otherwise be refused.
+        private const string LauncherPath = "\\apps\\LAUNCHER.EXE";
+
+        // It exits cleanly when the user leaves it.
+        private const int LauncherExitCodeExpected = 0;
+
+        private struct BootApp
         {
-            public string Name;
             public string Path;
             public uint AppAbiVersion;
             public int ExpectedExitCode;
-            public bool ValidateMarker;
             public bool OptionalIfMissing;
             public AppServiceAbi ServiceAbi;
         }
 
         public static void Run(BootInfo bootInfo)
         {
-            DebugLog.Write(LogLevel.Info, "elf validation start");
+            DebugLog.Write(LogLevel.Info, "pe launcher start");
 
             // Panic rather than shut down. On a real machine a quiet
             // Shutdown() here is indistinguishable from a clean finish: the
@@ -42,32 +58,20 @@ namespace OS.Kernel.Elf
             DebugLog.Write(LogLevel.Info, "fs init ok");
             FileDiagnostics.DumpDirectory(AppDirectoryPath);
 
-            // The launcher, started directly by the kernel.
-            //
-            // step137 made the app batch PE-only; step163 replaced the app it
-            // starts. It used to be HelloSharpFs (HELLO.EXE), which drew its
-            // menu by printing lines; now it is the Terminal.Gui launcher
-            // (LAUNCHER.EXE) — and being started HERE rather than by another
-            // launcher is what makes it useful, because the process model keeps
-            // one suspended context and anything a nested launcher started
-            // would be refused.
-            //
             // PeLoader flattens, maps and jumps it; WindowsX64 service ABI.
-            ExternalElfApp peLauncher = default;
-            peLauncher.Name = ElfAppContract.PeLauncherAppName;
-            peLauncher.Path = ElfAppContract.PeLauncherAppPath;
+            BootApp launcher = default;
+            launcher.Path = LauncherPath;
             // Follows CurrentAbiVersion rather than naming a number: pinned to
             // V2 it kept working after V3 landed, which hid the version
             // mismatch that broke every app launched from the launcher.
-            peLauncher.AppAbiVersion = ProcessStartupBlock.CurrentAbiVersion;
-            peLauncher.ExpectedExitCode = ElfAppContract.LauncherExitCodeExpected;
-            peLauncher.ValidateMarker = false;
-            peLauncher.OptionalIfMissing = true;
-            peLauncher.ServiceAbi = AppServiceAbi.WindowsX64;
+            launcher.AppAbiVersion = ProcessStartupBlock.CurrentAbiVersion;
+            launcher.ExpectedExitCode = LauncherExitCodeExpected;
+            launcher.OptionalIfMissing = true;
+            launcher.ServiceAbi = AppServiceAbi.WindowsX64;
 
             uint passed = 0;
             uint failed = 0;
-            RunAppAndAccumulate(ref peLauncher, ref passed, ref failed);
+            RunAppAndAccumulate(ref launcher, ref passed, ref failed);
 
             DebugLog.Write(LogLevel.Info, "app batch summary");
             DebugLog.Begin(LogLevel.Info);
@@ -85,12 +89,12 @@ namespace OS.Kernel.Elf
             if (passed == 0 && failed == 0)
                 OS.Kernel.Panic.Fail("app batch ran nothing — no app image on disk");
 
-            DebugLog.Write(LogLevel.Info, "elf validation done");
+            DebugLog.Write(LogLevel.Info, "pe launcher done");
             Platform.Shutdown();
             Platform.Halt();
         }
 
-        private static void RunAppAndAccumulate(ref ExternalElfApp app, ref uint passed, ref uint failed)
+        private static void RunAppAndAccumulate(ref BootApp app, ref uint passed, ref uint failed)
         {
             if (app.OptionalIfMissing && !FileSystem.Exists(app.Path))
             {
@@ -125,7 +129,7 @@ namespace OS.Kernel.Elf
             DebugLog.EndLine();
         }
 
-        private static AppRunResult RunApp(ref ExternalElfApp app)
+        private static AppRunResult RunApp(ref BootApp app)
         {
             DebugLog.Begin(LogLevel.Info);
             UiText.Write("app run start: ");
@@ -145,24 +149,22 @@ namespace OS.Kernel.Elf
             UiText.WriteUInt(fileBuffer.Length);
             DebugLog.EndLine();
 
-            // PE-only loader (step137). ELF support is removed; apps are
-            // freestanding win-x64 PEs (see build_launcher.ps1). PeLoader
-            // flattens + maps the image at its ImageBase and yields the same
-            // ElfLoadedImage the ProcessImageBuilder pipeline below consumes.
-            if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out ElfLoadedImage loadedImage, out int peStage))
+            // Apps are freestanding win-x64 PEs (see build_launcher.ps1).
+            // PeLoader flattens + maps the image at its ImageBase and yields
+            // the LoadedImage the ProcessImageBuilder pipeline below consumes.
+            if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out LoadedImage loadedImage, out int peStage))
             {
                 DebugLog.Begin(LogLevel.Warn);
                 UiText.Write("pe load failed at stage = ");
                 UiText.WriteInt(peStage);
                 DebugLog.EndLine();
-                return AppRunResult.ElfLoadFailed;
+                return AppRunResult.ImageLoadFailed;
             }
 
             DebugLog.Write(LogLevel.Info, "process build start");
-            ulong markerVirtualAddress = app.ValidateMarker ? ElfAppContract.MarkerVirtualAddress : 0;
             if (!ProcessImageBuilder.TryBuild(
                 ref loadedImage,
-                markerVirtualAddress,
+                0,
                 app.ServiceAbi,
                 app.AppAbiVersion,
                 ProcessImageBuilder.DefaultStackMappedTop,
@@ -258,62 +260,10 @@ namespace OS.Kernel.Elf
                 return AppRunResult.ExitCodeMismatch;
             }
 
-            if (app.ValidateMarker && !TryVerifyMarker())
-            {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
-                return AppRunResult.MarkerMismatch;
-            }
-
             if (!CleanupProcessMappings(ref processImage, ref loadedImage))
                 return AppRunResult.MappingCleanupFailed;
 
             return AppRunResult.Success;
-        }
-
-        private static bool TryValidateSegments(ref ElfParseResult result)
-        {
-            if (result.Header.Type != ElfType.Executable)
-            {
-                DebugLog.Write(LogLevel.Warn, "unsupported ELF type: only ET_EXEC is supported");
-                return false;
-            }
-
-            uint loadSegments = 0;
-
-            for (ushort i = 0; i < result.Header.ProgramHeaderCount; i++)
-            {
-                if (!ElfParser.TryGetProgramHeader(ref result, i, out Elf64ProgramHeader header))
-                    return false;
-
-                if (header.Type == ElfProgramType.Interpreter)
-                {
-                    DebugLog.Write(LogLevel.Warn, "unsupported ELF program header: PT_INTERP");
-                    return false;
-                }
-
-                if (header.Type == ElfProgramType.Dynamic)
-                {
-                    DebugLog.Write(LogLevel.Warn, "unsupported ELF program header: PT_DYNAMIC");
-                    return false;
-                }
-
-                if (header.Type != ElfProgramType.Load)
-                    continue;
-
-                if (header.FileSize > header.MemorySize)
-                    return false;
-
-                if (header.Align != 0)
-                {
-                    ulong mask = header.Align - 1;
-                    if ((header.Align & mask) != 0)
-                        return false;
-                }
-
-                loadSegments++;
-            }
-
-            return loadSegments != 0;
         }
 
         private static bool TryValidateProcess(ref ProcessImage processImage, uint expectedAbiVersion)
@@ -359,7 +309,6 @@ namespace OS.Kernel.Elf
                     continue;
 
                 ulong kernelPagePhysical = kernelPhysical & ~(PageSize - 1);
-                PageFlags normalizedKernelFlags = PageFlagOps.NormalizeForMap(kernelFlags);
 
                 // Skip pages already mapped in pager — they were set up intentionally
                 // (e.g. JumpStub maps its shellcode page executable; overwriting with kernel
@@ -450,40 +399,12 @@ namespace OS.Kernel.Elf
             return address >= startInclusive && address < endExclusive;
         }
 
-        private static bool TryVerifyMarker()
-        {
-            if (!TryReadMappedUInt32(ElfAppContract.MarkerVirtualAddress, out uint markerValue))
-                return false;
-
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write("process wrote marker = 0x");
-            UiText.WriteHex(markerValue, 8);
-            DebugLog.EndLine();
-
-            return markerValue == ElfAppContract.MarkerExpectedValue;
-        }
-
-        private static bool TryReadMappedUInt32(ulong virtualAddress, out uint value)
-        {
-            value = 0;
-
-            for (uint i = 0; i < 4; i++)
-            {
-                if (!Pager.TryQuery(virtualAddress + i, out ulong physicalAddress, out _))
-                    return false;
-
-                value |= ((uint)(*((byte*)physicalAddress)) << (int)(i * 8));
-            }
-
-            return true;
-        }
-
-        private static void CleanupLoadedImageMappings(ref ElfLoadedImage loadedImage)
+        private static void CleanupLoadedImageMappings(ref LoadedImage loadedImage)
         {
             UnmapMappedRange(loadedImage.LowestVirtualAddress, loadedImage.HighestVirtualAddressExclusive);
         }
 
-        private static bool CleanupProcessMappings(ref ProcessImage processImage, ref ElfLoadedImage loadedImage)
+        private static bool CleanupProcessMappings(ref ProcessImage processImage, ref LoadedImage loadedImage)
         {
             bool imageCleanupOk = UnmapMappedRange(loadedImage.LowestVirtualAddress, loadedImage.HighestVirtualAddressExclusive);
             bool stackCleanupOk = UnmapMappedRange(processImage.StackBase, processImage.StackMappedTop);
@@ -501,7 +422,7 @@ namespace OS.Kernel.Elf
 
             // Drop any managed-EH .pdata registration for this base (step140).
             // No-op unless startInclusive is a registered app image base (i.e.
-            // not for stack ranges or ELF images).
+            // not for stack ranges).
             global::OS.Boot.EH.CoffRuntimeFunctionTable.UnregisterImage((byte*)startInclusive);
 
             ulong current = AlignDown(startInclusive);
@@ -548,17 +469,14 @@ namespace OS.Kernel.Elf
                 case AppRunResult.Success: return "Success";
                 case AppRunResult.FileNotFound: return "FileNotFound";
                 case AppRunResult.ReadFailed: return "ReadFailed";
-                case AppRunResult.ElfParseFailed: return "ElfParseFailed";
-                case AppRunResult.ElfLoadFailed: return "ElfLoadFailed";
+                case AppRunResult.ImageLoadFailed: return "ImageLoadFailed";
                 case AppRunResult.ProcessBuildFailed: return "ProcessBuildFailed";
                 case AppRunResult.ProcessValidationFailed: return "ProcessValidationFailed";
                 case AppRunResult.JumpFailed: return "JumpFailed";
                 case AppRunResult.ExitCodeMismatch: return "ExitCodeMismatch";
-                case AppRunResult.MarkerMismatch: return "MarkerMismatch";
                 case AppRunResult.MappingCleanupFailed: return "MappingCleanupFailed";
                 default: return "Unknown";
             }
         }
     }
 }
-

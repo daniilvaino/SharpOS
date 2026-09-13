@@ -127,6 +127,10 @@ agent-memory `project_string_as_methodtable_shared_root`,
   `memcpy`/`memset` (копии `CONTEXT` на каждом кадре), вычисление аргументов
   выключенной трассы EH в форке. Остаток — собственная работа CoreCLR
   (`StackFrameIterator`, GcInfo, размотка), без явных лишних трат.
+- ✅ PowerShell интерактивно — как Debian в том же QEMU (step171): приглашение
+  6.1–6.5 с (Debian 5.8), `ls` 0.95 с (0.76), автодополнение Tab 0.6 с (0.9).
+  Замер — `run.<app>.first_input_ms` и `key.*` ядра, сверен с видео по кадрам;
+  таблица в [`docs/perf-progress.md`](perf-progress.md).
 
 ---
 

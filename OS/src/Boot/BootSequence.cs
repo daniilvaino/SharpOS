@@ -3,7 +3,7 @@ using OS.Hal.Acpi;
 using OS.Hal.Idt;
 using OS.Kernel;
 using OS.Kernel.Diagnostics;
-using OS.Kernel.Elf;
+using OS.Kernel.Process;
 using OS.Kernel.Input;
 using OS.Kernel.Memory;
 using OS.Kernel.Paging;
@@ -29,7 +29,7 @@ namespace OS.Boot
     //   Phase2_Runtime     exec stubs + managed runtime + GC + cctor materialization
     //   Phase3_Platform    pager + ACPI + HPET (hardware abstractions)
     //   Phase4_Probes      smoke tests + diagnostics + verification
-    //   Phase5_Apps        ELF validation, launcher
+    //   Phase5_Apps        the launcher (a PE app)
     internal static unsafe class BootSequence
     {
         public static void Run(BootInfo bootInfo)
@@ -64,7 +64,7 @@ namespace OS.Boot
         // means the scan would walk popped frames' garbage; pointer-
         // shaped qwords there can trip the conservative MT walker into
         // wild reads / bit-flips on arbitrary memory. Observed: RIP
-        // corruption (0xD0…001CA1CB) on Phase5 ELF launcher after Phase4
+        // corruption (0xD0…001CA1CB) on the Phase5 launcher after Phase4
         // PhaseReport called Collect. See docs/nativeaot-nostd-kernel-
         // limits.md "Kernel GC sweep".
         private static ulong s_prevKheapUsed;
@@ -406,7 +406,7 @@ namespace OS.Boot
                 UsbProbe.Run();
             // NOTE: AHCI/FAT bring-up is POST-EBS only — issuing AHCI
             // commands reprograms the HBA the live UEFI firmware still
-            // owns (it loads CoreCLR assemblies + ELF apps via UEFI FS),
+            // owns (it loads CoreCLR assemblies and apps via UEFI FS),
             // which corrupts every later UEFI-FS read. Verified after
             // ExitBootServices instead (ExitBootServicesProbe). PCI
             // config-space scan above is read-only → safe pre-EBS.
@@ -611,7 +611,7 @@ namespace OS.Boot
         {
             if ((bootInfo.Capabilities & PlatformCapabilities.MemoryMap) == PlatformCapabilities.MemoryMap)
             {
-                ElfValidation.Run(bootInfo);
+                LauncherBoot.Run(bootInfo);
             }
             DemoApp.Run();
         }

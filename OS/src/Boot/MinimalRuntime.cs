@@ -12,7 +12,7 @@ namespace System.Runtime.CompilerServices
     // Helper class for unsafe pinning / raw-address access to the payload
     // of an arbitrary boxed object. ILC's GenericUnboxingThunk.EmitIL()
     // looks up this exact type + the `Data` field by name in SystemModule
-    // (= OS for kernel, the app assembly for ELF apps) via
+    // (= OS for kernel, the app assembly for PE apps) via
     // `Context.SystemModule.GetKnownType("System.Runtime.CompilerServices",
     //  "RawData").GetField("Data")` (BoxedTypes.cs:451/544). Layout:
     // a single byte field places `Data` immediately after the inherited

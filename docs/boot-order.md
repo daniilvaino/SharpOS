@@ -146,12 +146,12 @@ APIC с периодическим тиком (`LocalApic.StartPeriodic`), вы�
 ## Phase 5 — Apps
 
 ```
-ElfValidation.Run                      ← FS init + обход \apps + запуск
+LauncherBoot.Run                       ← FS init + обход \apps + запуск
                                          \apps\LAUNCHER.EXE
 DemoApp.Run
 ```
 
-Имя `ElfValidation` историческое: ELF-яруса нет с step137, класс грузит PE.
+До step171 класс назывался `ElfValidation` — с тех пор, когда эта фаза гоняла ELF-приложения.
 
 ## Жёсткие предусловия
 

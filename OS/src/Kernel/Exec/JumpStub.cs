@@ -36,7 +36,7 @@ namespace OS.Kernel.Exec
             // Post-E1 kernel CR3 == pager root by design; the EfiLoaderCode
             // buffer is still mapped executable in the clone (deep-copied
             // from firmware), so TryAllocFromExecBuffer still succeeds. The
-            // guard would now block every ELF launch — removed.
+            // guard would now block every app launch — removed.
             return TryInitialize();
         }
 

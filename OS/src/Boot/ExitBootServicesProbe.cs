@@ -317,11 +317,11 @@ namespace OS.Boot
             // Headless has no keys so it idles at the prompt, exactly
             // like a real OS waiting for input (all oracles/census are
             // already on the log above).
-            // Return into the normal boot: Phase 5 (the ELF launcher
-            // + app-batch tests) now runs POST-EBS, reading every
-            // \EFI\BOOT\*.ELF from our own FAT (TryReadFile +
-            // DirectoryReadEntry are bridged to Fs.Current). No halt,
-            // no UEFI — the boot just continues firmware-free.
+            // Return into the normal boot: Phase 5 (the launcher,
+            // \apps\LAUNCHER.EXE) runs POST-EBS, read from our own FAT
+            // (TryReadFile + DirectoryReadEntry are bridged to
+            // Fs.Current). No halt, no UEFI — the boot just continues
+            // firmware-free.
 
             Console.WriteLine("[ebs] post-EBS — continuing into launcher via own FAT");
         }

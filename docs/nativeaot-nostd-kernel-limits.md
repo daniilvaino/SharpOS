@@ -558,7 +558,7 @@ Milestone-1 срез [PeNet](https://github.com/secana/PeNet) (Apache-2.0, `vend
 
 ### ✅ PE-loader execute + freestanding PE build (step137) — лаунчер РАБОТАЕТ
 
-**Kernel execute-side:** `PeLoader.TryLoad(MemoryBlock)` — flatten → map contiguous phys→VA@ImageBase (RWX) → blit → `ElfLoadedImage` → тот же `ProcessImageBuilder`+`JumpStub`. Magic-dispatch (`MZ`→PeLoader) в `ElfValidation.RunApp` (boot-batch, теперь PE-only) + `AppServiceBuilder`. **JumpStub entry-ABI**: startup block кладётся в **RCX** (Win64 arg0), не RDI (SysV-legacy от ELF) — иначе win64 PE-апп читает адрес entry как startup → #GP.
+**Kernel execute-side:** `PeLoader.TryLoad(MemoryBlock)` — flatten → map contiguous phys→VA@ImageBase (RWX) → blit → `LoadedImage` → тот же `ProcessImageBuilder`+`JumpStub`. Проверка `MZ` в `AppServiceBuilder` (не PE — `Unsupported`); лаунчер при загрузке грузит `LauncherBoot` (до step171 — `ElfValidation`). **JumpStub entry-ABI**: startup block кладётся в **RCX** (Win64 arg0), не RDI (SysV-legacy от ELF) — иначе win64 PE-апп читает адрес entry как startup → #GP.
 
 **Build-side (без WSL):** freestanding win-x64 PE через `dotnet publish -r win-x64` (рецепт в app-csproj, gated win-x64): `/ENTRY:SharpAppBootstrap /SUBSYSTEM:NATIVE /BASE:0x400000 /FIXED /NODEFAULTLIB` + снятие SDK-рантайма (`ExcludeNativeAotRuntime`: `Runtime.WorkstationGC`/`VxsortEnabled`/`bootstrapper.obj`) + `DebuggerSupport=false` + `IlcDehydrate=false` + `__security_cookie` через CoffStub.Generator + `__managed__Startup` no-op стаб. Апп на net8.0. HelloSharpFs исполнен на bare metal, TUI-файлпикер видит `.EXE`, self-launch с nested-лимитом. ELF выпилен из app-batch (kernel ELF-файлы — Stage B, пока живут unused).
 

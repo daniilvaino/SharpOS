@@ -10,7 +10,7 @@ namespace OS.Kernel.Diagnostics
     // Level 1 (Probes.EhTryFinallyNoThrow):
     //   try { x++; } finally { y++; }
     //   No throw, no catch. ILC emits EH info, runtime never invokes
-    //   RhpCallFinallyFunclet. Same shape as ElfValidation's existing
+    //   RhpCallFinallyFunclet. Same shape as LauncherBoot's existing
     //   try/finally — known good.
     //
     // Level 2 (Probes.EhTryCatchNoThrow):

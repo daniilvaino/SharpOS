@@ -56,3 +56,24 @@
 | AOT screen repaints, ms/run |  |  |  |  |  |  |  |  |  |  |  | 33 | 27 | 26 | 27 |  |  | 31 | 28 |  |  |
 | AOT writes served by kernel, ms/run |  |  |  |  |  |  |  |  |  |  |  |  | 190 | 181 | 194 |  |  | 199 | 194 |  |  |
 <!-- perf-table:end -->
+
+## PowerShell интерактивно (step171)
+
+PowerShell 7.6.5, одинаковый сценарий руками на SharpOS и стендом на Debian в
+том же QEMU (`run_linux_ref.ps1 -PowerShell`, `tools/pwsh-qemu-linux-reference.log`):
+приглашение, `ls`, `echo $PSV` + Tab, Enter. SharpOS — счётчики ядра
+`run.PowerShellBootstrap.first_input_ms` и `key.*` (от выдачи клавиши до
+следующего ожидания ввода), сверены с видеозаписью по кадрам: расхождение
+1–2 кадра.
+
+| | SharpOS | Debian в QEMU, тёплый / первый |
+|---|---:|---:|
+| до приглашения | 6.1–6.5 с | 5.8 / 8.1 с |
+| `ls` + Enter → приглашение | 0.93–0.96 с | 0.76 / 0.93 с |
+| Tab: `$PSV` → `$PSVersionTable` | 0.57–0.62 с | 0.91 / 1.04 с |
+| Enter на `echo $PSVersionTable` → таблица | 0.40 с | не сравнимо: стенд досчитал приглашения раньше Enter |
+
+У SharpOS рантайм к старту pwsh уже поднят и прогрет переписью, на Debian каждый
+запуск — новый процесс; зато SharpOS грузит профиль (~0.8 с), Debian нет.
+Debian без ответов на запрос позиции курсора (`ESC[6n`) ждал бы 16 с — стенд
+отвечает, как терминал.

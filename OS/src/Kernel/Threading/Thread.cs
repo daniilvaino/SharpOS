@@ -68,7 +68,7 @@
     internal enum ThreadKind : byte
     {
         Kernel  = 0,    // Scheduler.Spawn directly (kernel C# code)
-        AotApp  = 1,    // ELF-app thread (Phase E8 -- deferred)
+        AotApp  = 1,    // PE app thread (Phase E8 -- deferred; app threads are Kernel today)
         CoreClr = 2,    // SpawnHosted (CoreCLR CreateThread -> SharpOSHost_*)
     }
 

@@ -1,5 +1,5 @@
 ﻿using System;
-using OS.Kernel.Elf;
+using OS.Kernel.Process;
 using OS.Kernel.Paging;
 using OS.Kernel.Util;
 
@@ -7,15 +7,15 @@ namespace OS.Kernel.Pe
 {
     // PE loader, execute path (step137): take a raw PE file image, flatten it
     // (PeImageLayout), map it into the address space at its preferred ImageBase,
-    // and return an ElfLoadedImage so the existing ProcessImageBuilder + JumpStub
+    // and return a LoadedImage so the existing ProcessImageBuilder + JumpStub
     // pipeline (format-agnostic: it only needs EntryPoint + the mapped VA range)
     // runs unchanged.
     //
     // v1 scope: honor ImageBase (the launcher is linked with /BASE matching the
     // app VA window, so no relocation needed); map every page RWX (Present|
-    // Writable|User, executable) -- per-section NX/RO protection, base
-    // relocations for off-base loads, and per-image .pdata/EH registration are
-    // deferred. EH is Tier-B (halt-on-throw), same as the ELF apps today.
+    // Writable|User, executable) -- per-section NX/RO protection and base
+    // relocations for off-base loads are deferred. The image's .pdata is
+    // registered for managed EH (step140).
     internal static unsafe class PeLoader
     {
         private const ulong PageSize = X64PageTable.PageSize;
@@ -23,7 +23,7 @@ namespace OS.Kernel.Pe
         // PE\0\0 -> "MZ" DOS magic at offset 0.
         public const ushort DosMagicMZ = 0x5A4D;
 
-        public static bool TryLoad(MemoryBlock image, out ElfLoadedImage loadedImage, out int stage)
+        public static bool TryLoad(MemoryBlock image, out LoadedImage loadedImage, out int stage)
         {
             loadedImage = default;
             stage = 0;
@@ -105,7 +105,7 @@ namespace OS.Kernel.Pe
             loadedImage.LowestVirtualAddress = imageBase;
             loadedImage.HighestVirtualAddressExclusive = imageBase + (ulong)pageCount * PageSize;
             loadedImage.LoadedPages = pageCount;
-            loadedImage.LoadedSegmentCount = sectionCount;
+            loadedImage.SectionCount = sectionCount;
             stage = 7;
             return true;
         }
@@ -120,7 +120,7 @@ namespace OS.Kernel.Pe
         /// not parse is a different thing, and the caller is the one that
         /// decides what to do about it.
         /// </remarks>
-        private static void TryReadManifest(byte* imageBase, uint imageSize, ref ElfLoadedImage loadedImage)
+        private static void TryReadManifest(byte* imageBase, uint imageSize, ref LoadedImage loadedImage)
         {
             if (!global::OS.Kernel.Pe.PeResources.TryFind(
                     imageBase, imageSize, PeResources.TypeManifest, out byte* data, out uint size))

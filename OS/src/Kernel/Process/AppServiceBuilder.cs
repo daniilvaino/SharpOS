@@ -1,6 +1,5 @@
 ﻿using OS.Boot;
 using OS.Hal;
-using OS.Kernel.Elf;
 using OS.Kernel.Exec;
 using OS.Kernel.Input;
 using OS.Kernel.Paging;
@@ -1490,7 +1489,7 @@ namespace OS.Kernel.Process
             return AppServiceStatus.DeviceError;
         }
 
-        private static void LogImageManifest(ref ElfLoadedImage loadedImage,
+        private static void LogImageManifest(ref LoadedImage loadedImage,
             uint appAbiVersion, AppServiceAbi serviceAbi)
         {
             DebugLog.Begin(LogLevel.Info);
@@ -1534,7 +1533,7 @@ namespace OS.Kernel.Process
                 DebugLog.Write(LogLevel.Info, "---- child start ----");
 
             AppServiceStatus result = AppServiceStatus.DeviceError;
-            ElfLoadedImage loadedImage = default;
+            LoadedImage loadedImage = default;
             ProcessImage processImage = default;
             bool imageLoaded = false;
             bool processBuilt = false;
@@ -1560,37 +1559,19 @@ namespace OS.Kernel.Process
                         break;
                     }
 
-                    // Dispatch by image magic: "MZ" -> PE loader (step137),
-                    // otherwise the ELF path. Lets PE and ELF apps coexist
-                    // during the ELF->PE bring-up.
+                    // PE only (step137): anything without the "MZ" magic is
+                    // not an application this kernel can run.
                     image.TryReadUInt16(0, out ushort imageMagic);
-                    if (imageMagic == global::OS.Kernel.Pe.PeLoader.DosMagicMZ)
+                    if (imageMagic != global::OS.Kernel.Pe.PeLoader.DosMagicMZ)
                     {
-                        if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out loadedImage, out _))
-                        {
-                            result = FailedAtStep(2);
-                            break;
-                        }
+                        result = AppServiceStatus.Unsupported;
+                        break;
                     }
-                    else
+
+                    if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out loadedImage, out _))
                     {
-                        if (!ElfParser.TryParse(image, out ElfParseResult parseResult, out _))
-                        {
-                            result = AppServiceStatus.Unsupported;
-                            break;
-                        }
-
-                        if (!TryValidateSegments(ref parseResult))
-                        {
-                            result = AppServiceStatus.Unsupported;
-                            break;
-                        }
-
-                        if (!ElfLoader.TryLoad(ref parseResult, out loadedImage, out _))
-                        {
-                            result = FailedAtStep(3);
-                            break;
-                        }
+                        result = FailedAtStep(2);
+                        break;
                     }
 
                     imageLoaded = true;
@@ -1734,39 +1715,6 @@ namespace OS.Kernel.Process
             finally { s_runExternalDepth--; }
         }
 
-        private static bool TryValidateSegments(ref ElfParseResult result)
-        {
-            if (result.Header.Type != ElfType.Executable)
-                return false;
-
-            uint loadSegments = 0;
-            for (ushort i = 0; i < result.Header.ProgramHeaderCount; i++)
-            {
-                if (!ElfParser.TryGetProgramHeader(ref result, i, out Elf64ProgramHeader header))
-                    return false;
-
-                if (header.Type == ElfProgramType.Interpreter || header.Type == ElfProgramType.Dynamic)
-                    return false;
-
-                if (header.Type != ElfProgramType.Load)
-                    continue;
-
-                if (header.FileSize > header.MemorySize)
-                    return false;
-
-                if (header.Align != 0)
-                {
-                    ulong mask = header.Align - 1;
-                    if ((header.Align & mask) != 0)
-                        return false;
-                }
-
-                loadSegments++;
-            }
-
-            return loadSegments != 0;
-        }
-
         private static bool TryValidateProcess(ref ProcessImage processImage, uint expectedAbiVersion)
         {
             if (processImage.AbiVersion != expectedAbiVersion)
@@ -1794,14 +1742,14 @@ namespace OS.Kernel.Process
             return true;
         }
 
-        private static void CleanupLoadedImageMappings(ref ElfLoadedImage loadedImage)
+        private static void CleanupLoadedImageMappings(ref LoadedImage loadedImage)
         {
             UnmapMappedRange(loadedImage.LowestVirtualAddress,
                              loadedImage.HighestVirtualAddressExclusive,
                              returnPhysicalPages: true);
         }
 
-        private static bool CleanupProcessMappings(ref ProcessImage processImage, ref ElfLoadedImage loadedImage)
+        private static bool CleanupProcessMappings(ref ProcessImage processImage, ref LoadedImage loadedImage)
         {
             // Both ranges are ours alone — the loader allocated the image's
             // pages and the builder the stack's — so their physical pages go

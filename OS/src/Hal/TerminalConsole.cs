@@ -296,12 +296,18 @@ namespace OS.Hal
             s_dirty = false;
 
             var buffer = s_terminal.Buffer;
+
+            // The cursor is pixels, not a cell: erase it while it is still
+            // where it was drawn. A scroll moves those pixels with the text,
+            // and the shadow says the cell under them holds whatever it held
+            // — so no row redraw ever replaces them. Erased after the scroll,
+            // a stale block rode up the screen at the end (or the start) of
+            // the line it had been parked on.
+            EraseCursor(buffer);
             ApplyScroll(buffer);
 
             s_terminal.GetUpdateRange(out int startY, out int endY);
             s_terminal.ClearUpdateRange();
-
-            EraseCursor(buffer);
 
             if (startY <= endY)
             {
@@ -359,8 +365,8 @@ namespace OS.Hal
             s_lastYBase = buffer.YBase;
 
             if (delta <= 0) return;
-            // Pixels move, so a cursor painted before the scroll is now somewhere else;
-            // forget it rather than erasing at a stale position.
+            // Paint erased the cursor before calling here; nothing drawn over
+            // the grid is left to move with the pixels.
             s_cursorSlot = -1;
 
             if (delta >= s_rows || ReadingScreenIsTooSlow())
@@ -416,10 +422,16 @@ namespace OS.Hal
 
             int y = s_cursorSlot / s_cols;
             int x = s_cursorSlot % s_cols;
+            // A cell the shadow does not know was blank when the cursor went
+            // on it (DrawCursor paints a space there); put the blank back
+            // rather than leave the block for a redraw that may never come.
             if (s_shadowValid[s_cursorSlot])
                 FbConsole.DrawCellFast(Margin + x * CellW, Margin + y * CellH,
                     GlyphOf(s_shadowChar[s_cursorSlot]),
                     s_shadowFg[s_cursorSlot], s_shadowBg[s_cursorSlot]);
+            else
+                FbConsole.DrawCellFast(Margin + x * CellW, Margin + y * CellH, ' ',
+                    FbConsole.Pack(200, 200, 200), FbConsole.Pack(s_bgR, s_bgG, s_bgB));
             s_cursorSlot = -1;
         }
 

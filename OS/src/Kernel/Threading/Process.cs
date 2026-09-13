@@ -2,7 +2,7 @@ namespace OS.Kernel.Threading
 {
     // ProcessLifecycle — logical state per docs/threading-architecture.md
     // sec10 (Active / Exiting / Zombie). The pre-E7 OS.Kernel.Process.
-    // ProcessState enum (None/Ready/Running/Exited/Failed) is ELF-launcher
+    // ProcessState enum (None/Ready/Running/Exited/Failed) is launcher
     // bookkeeping; keep both untangled until the launcher refactor.
     internal enum ProcessLifecycle : byte
     {
@@ -21,8 +21,8 @@ namespace OS.Kernel.Threading
     //   4. Future home for the handle table (events / files / etc.).
     //
     // Real concurrent execution at the SAME virtual address (e.g., two
-    // ELF apps both linked at 0x400000) requires per-process CR3 -- not
-    // landed in E7. For now Process is the abstraction; ELFs at the
+    // apps linked at the same image base) requires per-process CR3 -- not
+    // landed in E7. For now Process is the abstraction; apps at the
     // same VA still serialise at the launcher level.
     internal unsafe class Process
     {

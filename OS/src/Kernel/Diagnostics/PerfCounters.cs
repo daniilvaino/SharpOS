@@ -173,9 +173,76 @@ namespace OS.Kernel.Diagnostics
             Add(PerfCounter.ProgramWriteChars, characters);
         }
 
+        // When the program being measured first sat waiting for a key.
+        private static ulong s_firstInputTsc;
+
+        /// <summary>
+        /// Called by the console reads each time a program waits for a key
+        /// that is not there; the first one of an interval is its time to
+        /// prompt (<c>first_input_ms</c>).
+        /// </summary>
+        /// <remarks>
+        /// A shell's startup ends where it asks for input, not where it exits:
+        /// an interactive session's wall time is mostly the person at the
+        /// keyboard. The same point is what a Linux reference can see from
+        /// outside — the prompt on the terminal.
+        /// </remarks>
+        public static void NoteInputWait()
+        {
+            if (s_markTsc == 0)
+                return;
+
+            if (s_firstInputTsc == 0)
+                s_firstInputTsc = Tsc();
+
+            // The key handed over last is now dealt with: the program is back
+            // asking for the next one.
+            if (s_keyPending)
+            {
+                s_keyPending = false;
+                if (s_keyCount < MaxKeys)
+                {
+                    fixed (ulong* t = s_keyTicks.V) t[s_keyCount] = Tsc() - s_keyTsc;
+                    fixed (ushort* k = s_keyVk.V) k[s_keyCount] = s_keyLastVk;
+                    s_keyCount++;
+                }
+            }
+        }
+
+        // How long a program was busy with each key: from the console read
+        // that delivered it to the next time the program waited for input.
+        // For a shell, Enter is the command and its next prompt, Tab is the
+        // completion. Keys typed ahead merge into the next wait's episode.
+        private const int MaxKeys = 64;
+        private struct KeyTicks { public fixed ulong V[MaxKeys]; }
+        private struct KeyVks { public fixed ushort V[MaxKeys]; }
+        private static KeyTicks s_keyTicks;
+        private static KeyVks s_keyVk;
+        private static int s_keyCount;
+        private static bool s_keyPending;
+        private static ulong s_keyTsc;
+        private static ushort s_keyLastVk;
+
+        /// <summary>
+        /// Called by the console reads when they hand a key to the program;
+        /// <paramref name="virtualKey"/> is its Windows virtual-key code.
+        /// </summary>
+        public static void NoteKeyDelivered(ushort virtualKey)
+        {
+            if (s_markTsc == 0)
+                return;
+
+            s_keyTsc = Tsc();
+            s_keyLastVk = virtualKey;
+            s_keyPending = true;
+        }
+
         /// <summary>Starts a measured interval.</summary>
         public static void Mark()
         {
+            s_firstInputTsc = 0;
+            s_keyCount = 0;
+            s_keyPending = false;
             fixed (long* v = s_values.V)
             fixed (long* m = s_mark.V)
             {
@@ -208,6 +275,29 @@ namespace OS.Kernel.Diagnostics
             s_reportUs = elapsedUs;
 
             Line(scope, "wall_ms", TicksToNs(elapsed) / 1_000_000);
+            ulong firstInput = s_firstInputTsc;
+            Line(scope, "first_input_ms", firstInput == 0 ? 0
+                : TscToUs(firstInput - s_markTsc, elapsedTsc, elapsedUs) / 1000);
+
+            // Keys the program took at least 20 ms over, in the order pressed:
+            // key.<nn>.<enter|tab|key>_ms. A typed letter that echoes at once
+            // is not worth a line; a command or a completion is.
+            int keys = s_keyCount;
+            for (int i = 0; i < keys; i++)
+            {
+                ulong ticks, ms;
+                ushort vk;
+                fixed (ulong* t = s_keyTicks.V) ticks = t[i];
+                fixed (ushort* k = s_keyVk.V) vk = k[i];
+                ms = TscToUs(ticks, elapsedTsc, elapsedUs) / 1000;
+                if (ms < 20)
+                    continue;
+
+                string number = SharpOS.Std.NoRuntime.NumberFormatting.ULongToString((ulong)i);
+                string index = i < 10 ? "0" + number : number;
+                string kind = vk == 0x0D ? "enter" : vk == 0x09 ? "tab" : "key";
+                Line(scope, "key." + index + "." + kind + "_ms", ms);
+            }
             Timed(scope, "clock", ref delta, PerfCounter.ClockCalls, PerfCounter.ClockTicks);
             Timed(scope, "disklog", ref delta, PerfCounter.DiskLogWrites, PerfCounter.DiskLogTicks);
             Line(scope, "com1.chars", Get(ref delta, PerfCounter.Com1Chars));

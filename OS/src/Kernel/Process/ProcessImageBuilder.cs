@@ -1,5 +1,4 @@
-﻿using OS.Kernel.Elf;
-using OS.Kernel.Paging;
+﻿using OS.Kernel.Paging;
 using OS.Kernel.Util;
 using OS.Hal;
 
@@ -13,7 +12,7 @@ namespace OS.Kernel.Process
         public const ulong NestedStackMappedTop  = 0x0000008000000000UL;
 
         public static bool TryBuild(
-            ref ElfLoadedImage loadedImage,
+            ref LoadedImage loadedImage,
             ulong markerVirtualAddress,
             AppServiceAbi serviceAbi,
             uint requestedAbiVersion,

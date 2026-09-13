@@ -725,8 +725,8 @@ migration), it must explicitly take the preamble above.
 
 **Caller audit:**
 
-- `Pager.Map` (invisible writes): `JumpStub`, `ElfLoader`,
-  `ElfValidation`, `ProcessImageBuilder`, `ProcessManager`,
+- `Pager.Map` (invisible writes): `JumpStub`, `PeLoader`,
+  `LauncherBoot`, `ProcessImageBuilder`, `ProcessManager`,
   `AppServiceBuilder`, `PagingValidation`
 - `MapKernel` (visible writes): `VirtualMemory.MapFixed` only,
   used by `Framebuffer`, `Pci`, `Ahci`, `SharpOSHost.Memory`

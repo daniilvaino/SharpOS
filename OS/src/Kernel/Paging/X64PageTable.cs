@@ -769,7 +769,7 @@
             // Newly-mapped leaves (post-split) get caller-provided flags
             // unrestricted. Matches GetOrCreateNextTable's fresh-allocation
             // path semantics — split should produce the same shape that
-            // a fresh allocation would, otherwise post-Phase-E1 ELF code
+            // a fresh allocation would, otherwise post-Phase-E1 app code
             // pages re-mapped over a formerly-NX large region get blocked
             // at the directory level (instruction-fetch #PF with P=1, I=1
             // on the leaf even though leaf NX=0 — observed empirically).
@@ -869,7 +869,7 @@
                 // descendants — if firmware happened to set NX=1 (or W=0,
                 // U=0) on a parent, every leaf underneath is forced to
                 // inherit the restriction. After Phase E1 the clone is the
-                // live CR3, and ELF code pages re-mapped into a formerly-
+                // live CR3, and app code pages re-mapped into a formerly-
                 // NX directory get instruction-fetch #PF even with leaf
                 // NX=0 (observed empirically). Leaves keep their original
                 // NX/W/U bits — directory-level permissive simply means

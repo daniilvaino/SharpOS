@@ -1,0 +1,16 @@
+# PowerShell 7.6.5 (linux-x64) startup on Debian under QEMU TCG (-cpu qemu64,+nx, 1 CPU, 2048 MiB), 2026-09-13
+# runtime 10.0.11, kernel 6.12.107+deb13-amd64; median of warm runs out of 3. Written by run_linux_ref.ps1.
+[perf] pwsh.prompt_ms.first=8061
+[perf] pwsh.prompt_ms=5807
+[perf] pwsh.ls_ms.first=928
+[perf] pwsh.ls_ms=763
+[perf] pwsh.tab_ms.first=1042
+[perf] pwsh.tab_ms=908
+[perf] pwsh.echo_ms.first=75
+[perf] pwsh.echo_ms=72
+[perf] pwsh.cursor_queries.first=6
+[perf] pwsh.cursor_queries=6
+[perf] pwsh.psreadline_exit_ms.first=3262
+[perf] pwsh.psreadline_exit_ms=3162
+[perf] pwsh.command_exit_ms.first=2402
+[perf] pwsh.command_exit_ms=2402

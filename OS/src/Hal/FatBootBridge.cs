@@ -7,8 +7,8 @@ namespace OS.Hal
     // Post-mount, Platform repoints BootInfo.{FileExists,FileReadAll,
     // FileReadIntoBuffer,DirectoryReadEntry} at these, so EVERY raw
     // bootInfo.* caller (the app-service ABI in AppServiceBuilder, the
-    // guest launcher that lists \EFI\BOOT through it, the kernel ELF
-    // loader) transparently reads our FAT instead of dead UEFI — one
+    // launcher that lists \apps through it, the kernel's PE loader)
+    // transparently reads our FAT instead of dead UEFI — one
     // seam, no per-call-site edits. char* path is null-terminated
     // UTF-16; string.FromUtf16Z bridges it to the Fs API.
     internal static unsafe class FatBootBridge
