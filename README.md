@@ -117,7 +117,7 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | Generic sharing (USG - `__Canon`) | ✅ | ✅ | ✅ |  |
 | Virtual dispatch / interface dispatch (полный резолвер) | ✅ | ✅ | ✅ ||
 | Write barrier (`RhpAssignRef`, `RhpStelemRef`) | ✅ (∅) | ✅ (∅) | ✅ | non-generational mark-sweep в AOT → barrier seman'тически no-op; контракт ILC соблюдён.  |
-| `GC.Collect` / explicit collection | ✅ | ✅ | ✅ | full mark-sweep cycle; в приложениях корни со стеков всех потоков (step169); `GC.WaitForPendingFinalizers` зависает в hosted runtime (SYM-003 - finalizer thread не online) |
+| `GC.Collect` / explicit collection | ✅ | ✅ | ✅ | full mark-sweep cycle; в приложениях корни со стеков всех потоков (step169); финализаторы в hosted runtime отрабатывают (проба 1000/1000, step172); `GC.WaitForPendingFinalizers` считается зависающим (SYM-003, не перепроверялось) |
 | Array.Copy overlap (memmove semantics) | ✅ | ✅ | ✅ | left + right shift с overlapping src/dst в одном массиве (`List<T>.RemoveAt`/`Insert` path) |
 | `SortedDictionary` | 🟡 | 🟡 | ✅ | поведение BCL-совместимо, внутри сортированный массив вместо дерева: вставка линейна, поиск логарифмичен |
 | `System.Collections.Concurrent.*`, `System.Collections.Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`| 🔴 | 🔴 | ✅ | еще не реализовано, при этом известных блокеров - нет |
@@ -143,7 +143,7 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | **`AssemblyLoadContext` (multiple ALCs)** | 🚫 | 🚫 | ⏳ | требует JIT |
 | File I/O (read) | ✅ | ✅ | ✅ | hosted-tier читает DLL/файлы с собственного FAT (в т.ч. post-EBS) |
 | File I/O (write) | 🟡 | 🔴 | 🔴 | FAT32: перезапись на месте + создание файла (8.3, зеркалит все FAT). Нет: удаление, рост файла/каталога, LFN |
-| USB (xHCI) | 🟡 | 🚫 | 🚫 | свой стек: несколько контроллеров, HID boot-протокол (клавиатура = системный ввод), BOT+SCSI (флешка как `Disk`). Проверено на железе: клавиатура + флешка + запись + DOOM. Опрос без прерываний, без хабов, мышь не подключена |
+| USB (xHCI) | 🟡 | 🚫 | 🚫 | свой стек: несколько контроллеров, HID boot-протокол (клавиатура = системный ввод), BOT+SCSI (флешка как `Disk`). Проверено на железе (ноутбук, ПК): клавиатура + флешка + запись + DOOM + полная батарея. Опрос без прерываний, без хабов (флешка за хабом не видна — остановка с сообщением о диске), мышь не подключена |
 | Network I/O | 🔴 | 🔴 | 🔴 | нет NIC driver |
 | Console keyboard input | ✅ | ✅ | ⏳ | |
 | **Direct hardware (CR3 / PCI / MMIO / IDT)** | ✅ | 🚫 | 🚫 | guest tiers - design boundary |

@@ -98,6 +98,14 @@ namespace OS.PAL.SharpOSHost
                                          out uint matchedCatchableIdx)
         {
             matchedCatchableIdx = 0xFFFFFFFFu;
+
+            // catch (...): matches everything, and has no type to read.
+            if (handler->pType == 0)
+            {
+                matchedCatchableIdx = 0;
+                return true;
+            }
+
             if (catchableArrayRva == 0) return false;
 
             byte* handlerTypeDesc = image + handler->pType;
@@ -119,32 +127,142 @@ namespace OS.PAL.SharpOSHost
                     return true;
                 }
             }
-            // Special case: catch (...) — handler->pType == 0 RVA matches everything.
-            if (handler->pType == 0)
-            {
-                matchedCatchableIdx = 0;
-                return true;
-            }
             return false;
         }
 
-        // Find the active "state" given current IP (RVA from function start)
-        // by walking IpToStateMap. Map is sorted by ip ascending; we want the
-        // largest ip <= currentRva → state at that entry.
-        private static int FindCurrentState(byte* image, FuncInfo* fi, uint funcStartRva, uint currentRva)
+        private const uint HT_IsReference = 0x08;
+        private const uint CT_IsSimpleType = 0x01;
+
+        /// <summary>
+        /// Writes the thrown object into the catch clause's variable at
+        /// <paramref name="slot"/>, as the MSVC runtime's BuildCatchObject
+        /// does: a reference gets the object's address, a simple type (a
+        /// pointer included) is copied — a pointer adjusted to the caught
+        /// base — and a class is copy-constructed. CoreCLR's EX_CATCH is
+        /// <c>catch (Exception*)</c>: without this its handler reads its
+        /// exception pointer from an unwritten slot.
+        /// </summary>
+        internal static void BuildCatchObject(ulong thrown, ulong imageBase, ulong slot,
+                                              uint adjectives, uint catchableTypeRva)
+        {
+            if (slot == 0 || catchableTypeRva == 0 || thrown == 0)
+                return;
+
+            CatchableType* ct = (CatchableType*)(imageBase + catchableTypeRva);
+
+            if ((adjectives & HT_IsReference) != 0)
+            {
+                *(ulong*)slot = AdjustPointer(thrown, ct);
+                return;
+            }
+
+            if ((ct->properties & CT_IsSimpleType) != 0)
+            {
+                byte* dst = (byte*)slot;
+                byte* src = (byte*)thrown;
+                for (int i = 0; i < ct->sizeOrOffset; i++) dst[i] = src[i];
+                if (ct->sizeOrOffset == sizeof(ulong) && *(ulong*)slot != 0)
+                    *(ulong*)slot = AdjustPointer(*(ulong*)slot, ct);
+                return;
+            }
+
+            if (ct->copyFunction != 0)
+            {
+                var copy = (delegate* unmanaged<void*, void*, void>)(imageBase + ct->copyFunction);
+                copy((void*)slot, (void*)AdjustPointer(thrown, ct));
+                return;
+            }
+
+            byte* d = (byte*)slot;
+            byte* s = (byte*)AdjustPointer(thrown, ct);
+            for (int i = 0; i < ct->sizeOrOffset; i++) d[i] = s[i];
+        }
+
+        /// <summary>
+        /// Copies the thrown object into <paramref name="copy"/> and returns
+        /// the copy's address, or the original's when it does not fit. The
+        /// original lives in the throwing frame, below the catching one: dead
+        /// once the catch funclet's calls grow over it, while a reference to
+        /// it, or a rethrow, still reads it. Size is the most-derived type's,
+        /// the first entry of the throw's catchable types.
+        /// </summary>
+        internal static ulong KeepThrownObject(ulong thrown, ulong throwInfo, ulong imageBase,
+                                               byte* copy, int capacity)
+        {
+            if (thrown == 0 || throwInfo == 0 || imageBase == 0)
+                return thrown;
+
+            uint catchableArrayRva = *(uint*)(throwInfo + 0x0C);
+            if (catchableArrayRva == 0)
+                return thrown;
+            uint* catchables = (uint*)(imageBase + catchableArrayRva);
+            if (catchables[0] == 0)
+                return thrown;
+
+            CatchableType* mostDerived = (CatchableType*)(imageBase + catchables[1]);
+            int size = mostDerived->sizeOrOffset;
+            if (size <= 0 || size > capacity)
+                return thrown;
+
+            byte* src = (byte*)thrown;
+            for (int i = 0; i < size; i++) copy[i] = src[i];
+            return (ulong)copy;
+        }
+
+        // From a derived object to the base the catch names (the catchable
+        // type's pointer-to-member displacement, virtual base included).
+        private static ulong AdjustPointer(ulong p, CatchableType* ct)
+        {
+            ulong adjusted = p + (ulong)(long)ct->pmdMemberDisp;
+            if (ct->pmdVBaseDisp >= 0)
+            {
+                byte* vbTable = *(byte**)(p + (ulong)ct->pmdVBaseDisp);
+                adjusted += (ulong)(long)(*(int*)(vbTable + ct->pmdVDispOff)) + (ulong)ct->pmdVBaseDisp;
+            }
+            return adjusted;
+        }
+
+        // The active state at an IP, from the IP-to-state map: the entry with
+        // the largest ip <= the IP. On x64 the entries (like dispOfHandler and
+        // the unwind actions) are IMAGE-relative RVAs — the first entry is the
+        // function start itself. Compared against a function-relative offset,
+        // as this did until step172, every entry was "past" the IP, the state
+        // was always -1, and no C++ catch in the image ever matched: CoreCLR's
+        // own EX_CATCH never ran, and its exceptions escaped instead.
+        private static int FindCurrentState(byte* image, FuncInfo* fi, uint controlRva)
         {
             uint mapRva = fi->pIPtoStateMap;
             if (mapRva == 0) return -1;
 
             IpToStateMapEntry* map = (IpToStateMapEntry*)(image + mapRva);
-            uint relIp = currentRva - funcStartRva;
             int state = -1;
             for (uint i = 0; i < fi->nIPMap; i++)
             {
-                if (map[i].ip > relIp) break;
+                if (map[i].ip > controlRva) break;
                 state = map[i].state;
             }
             return state;
+        }
+
+        // The try block that catches in this frame, for the unwind that stops
+        // here: the state goes back to its tryLow — objects built inside the
+        // try are destroyed, the ones built before it stay alive for the code
+        // after the catch. Same search as the first pass, same answer.
+        private static int CatchingTryLow(byte* image, FuncInfo* fi, int curState, uint catchableArrayRva)
+        {
+            TryBlockMapEntry* tbm = (TryBlockMapEntry*)(image + fi->pTryBlockMap);
+            for (uint t = 0; t < fi->nTryBlocks; t++)
+            {
+                TryBlockMapEntry* tb = &tbm[t];
+                if (curState < tb->tryLow || curState > tb->tryHigh) continue;
+                HandlerType* handlers = (HandlerType*)(image + tb->pHandlerArray);
+                for (int h = 0; h < tb->nCatches; h++)
+                {
+                    if (MatchHandler(image, &handlers[h], catchableArrayRva, out _))
+                        return tb->tryLow;
+                }
+            }
+            return -1;
         }
 
         // Personality routine entry point.
@@ -197,7 +315,7 @@ namespace OS.PAL.SharpOSHost
             uint funcStartRva = pDispatcherContext->FunctionEntry->BeginAddress;
             uint controlRva = (uint)(pDispatcherContext->ControlPc - pDispatcherContext->ImageBase);
             uint relIp = controlRva - funcStartRva;
-            int curState = FindCurrentState(image, fi, funcStartRva, controlRva);
+            int curState = FindCurrentState(image, fi, controlRva);
             if (Trace) {
             Console.Write("  funcStart=0x"); Console.WriteHex(funcStartRva);
             Console.Write(" relIp=0x"); Console.WriteHex(relIp);
@@ -222,24 +340,34 @@ namespace OS.PAL.SharpOSHost
             if (curState < 0)
                 return (int)ExceptionDisposition.ExceptionContinueSearch;
 
-            ulong throwInfoVa = pExceptionRecord->ExceptionInformation[2];
-            ulong objectVa    = pExceptionRecord->ExceptionInformation[1];
+            bool cxxThrow = pExceptionRecord->ExceptionCode == ExceptionRecord.EH_EXCEPTION_NUMBER
+                            && pExceptionRecord->NumberParameters >= 3;
+            ulong throwInfoVa = cxxThrow ? pExceptionRecord->ExceptionInformation[2] : 0;
+            ulong objectVa    = cxxThrow ? pExceptionRecord->ExceptionInformation[1] : 0;
+            uint catchableArrayRva = throwInfoVa != 0 ? ((ThrowInfo*)throwInfoVa)->pCatchableTypeArray : 0;
+
+            if (unwinding)
+            {
+                // Unwind pass, for any exception — a C++ throw, a managed one
+                // coming through RtlUnwind, a hardware fault: run the
+                // destructor funclets from the current state down. To -1 in a
+                // frame the exception passes through; to the catching try's
+                // tryLow in the frame that catches a C++ throw; not at all in
+                // a target frame that is resumed for anything else, whose
+                // objects stay alive. Until step172 this sat behind the "not
+                // a C++ throw" check below and ran for C++ throws only.
+                int targetState = -1;
+                if ((pExceptionRecord->ExceptionFlags & ExceptionRecord.EXCEPTION_TARGET_UNWIND) != 0)
+                    targetState = catchableArrayRva != 0
+                        ? CatchingTryLow(image, fi, curState, catchableArrayRva)
+                        : curState;
+                UnwindToState(image, fi, curState, targetState, pEstablisherFrame);
+                return (int)ExceptionDisposition.ExceptionContinueSearch;
+            }
 
             if (throwInfoVa == 0 || objectVa == 0)
             {
                 Console.WriteLine("  no throwInfo/obj");
-                return (int)ExceptionDisposition.ExceptionContinueSearch;
-            }
-
-            ThrowInfo* ti = (ThrowInfo*)throwInfoVa;
-            uint catchableArrayRva = ti->pCatchableTypeArray;
-
-            if (unwinding)
-            {
-                // Unwind pass: run destructor funclets между current state и
-                // target state (-1). Each UnwindMapEntry has a toState и
-                // actionRva (destructor funclet — RVA of code to call).
-                UnwindToState(image, fi, curState, -1, pEstablisherFrame);
                 return (int)ExceptionDisposition.ExceptionContinueSearch;
             }
 
@@ -276,10 +404,29 @@ namespace OS.PAL.SharpOSHost
                     if (!MatchHandler(image, hd, catchableArrayRva, out uint ctIdx))
                         continue;
 
-                    // Found match — record dispatcher state, return EXECUTE.
-                    // Dispatcher will second-pass unwind to this frame, then
-                    // jump to handler->dispOfHandler within the function.
-                    pDispatcherContext->TargetIp = (ulong)(image + funcStartRva + hd->dispOfHandler);
+                    // Found match. dispOfHandler is the RVA of the catch
+                    // funclet (image-relative on x64, like the IP map). The
+                    // dispatcher unwinds to this frame, builds the catch
+                    // object and enters the funclet; the funclet returns the
+                    // continuation in RAX.
+                    pDispatcherContext->TargetIp = (ulong)(image + hd->dispOfHandler);
+                    CxxFrameHandler4.CatchTransfer* transfer =
+                        (CxxFrameHandler4.CatchTransfer*)pDispatcherContext->HistoryTable;
+                    if (transfer != null)
+                    {
+                        uint* catchables = (uint*)(image + catchableArrayRva);
+                        *transfer = new CxxFrameHandler4.CatchTransfer
+                        {
+                            Fh3 = true,
+                            Adjectives = hd->adjectives,
+                            DispType = (int)hd->pType,
+                            DispCatchObj = (uint)hd->dispCatchObj,
+                            DispOfHandler = (int)hd->dispOfHandler,
+                            MatchedCatchableIdx = ctIdx,
+                            CatchableTypeRva = hd->pType != 0 && catchableArrayRva != 0
+                                ? catchables[1 + ctIdx] : 0,
+                        };
+                    }
                     pDispatcherContext->HandlerData = hd;
                     if (Trace) {
                     Console.Write("[__CxxFrameHandler3] caught at func+0x");
@@ -307,9 +454,12 @@ namespace OS.PAL.SharpOSHost
                 UnwindMapEntry* u = &umap[s];
                 if (u->actionRva != 0)
                 {
-                    // Invoke destructor funclet. Funclet ABI: RCX = frame pointer.
-                    delegate* unmanaged<void*, void> action =
-                        (delegate* unmanaged<void*, void>)(image + u->actionRva);
+                    // Invoke the destructor funclet the way the MSVC runtime
+                    // does (_CallSettingFrame): the parent's establisher frame
+                    // in RDX, which the funclet prologue takes as its frame
+                    // pointer. RCX gets it too.
+                    delegate* unmanaged<void*, void*, void> action =
+                        (delegate* unmanaged<void*, void*, void>)(image + u->actionRva);
                     if (Trace) {
                     Console.Write("[__CxxFrameHandler3] unwind state ");
                     Console.WriteInt(s);
@@ -319,7 +469,7 @@ namespace OS.PAL.SharpOSHost
                     Console.WriteHex(u->actionRva);
                     Console.WriteLine("");
                     }
-                    action(establisherFrame);
+                    action(establisherFrame, establisherFrame);
                 }
                 s = u->toState;
                 if (s == currentState) break;     // safety: never make progress

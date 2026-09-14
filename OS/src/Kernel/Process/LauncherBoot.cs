@@ -53,7 +53,8 @@ namespace OS.Kernel.Process
             // box powers off having run nothing, and the reason is gone with
             // it. A panic keeps the screen up long enough to read.
             if (!FileSystem.Init())
-                OS.Kernel.Panic.Fail("fs init failed — no filesystem, nothing to run");
+                OS.Kernel.Panic.Fail("no boot disk: " + OS.Hal.BootDisk.MissingReason
+                                     + " — the launcher and every app load from it; nothing to run");
 
             DebugLog.Write(LogLevel.Info, "fs init ok");
             FileDiagnostics.DumpDirectory(AppDirectoryPath);

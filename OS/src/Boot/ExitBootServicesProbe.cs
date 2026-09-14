@@ -268,7 +268,17 @@ namespace OS.Boot
             // [host] FileOpen -> Platform.TryReadFile loads every
             // \sharpos\* assembly from our own FAT/AHCI, no UEFI. The
             // §1 milestone if census comes up green without firmware.
-            if (OS.Kernel.Diagnostics.Probes.CoreClrInit)
+            //
+            // Without a boot disk it cannot start, and started anyway it only
+            // fails deep in coreclr_initialize, far from the reason: say the
+            // reason here instead.
+            if (OS.Kernel.Diagnostics.Probes.CoreClrInit && OS.Hal.Fs.Current == null)
+            {
+                Console.Write("[boot] no boot disk: ");
+                Console.WriteLine(OS.Hal.BootDisk.MissingReason);
+                Console.WriteLine("[boot] the hosted runtime (CoreCLR, PowerShell) loads \\sharpos\\ from it: not started");
+            }
+            else if (OS.Kernel.Diagnostics.Probes.CoreClrInit)
             {
                 // Preemption for the hosted session.
                 //

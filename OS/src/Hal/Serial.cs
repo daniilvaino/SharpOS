@@ -120,7 +120,7 @@ namespace OS.Hal
         // is empty, then push the byte. No interrupts, no buffering.
         public static void WriteByte(byte b)
         {
-            if (!s_ready) return;
+            if (!s_ready || !s_present) return;
             PutByte(Com1, b);
         }
 
@@ -131,9 +131,14 @@ namespace OS.Hal
             PortIo.Out8((ushort)(port + Data), b);
         }
 
+        // Like COM3 and COM4: nothing is written to a COM1 that failed its
+        // loopback test. Each byte costs a status read and a write on the
+        // port, and with no chip behind it the chipset answers slowly — a
+        // desktop (AM5, no COM1) spent 99 µs a character on it, three
+        // seconds of a BenchAot run, where a laptop spent 16.
         public static void WriteChar(char c)
         {
-            if (!s_ready) return;
+            if (!s_ready || !s_present) return;
             PutChar(Com1, c, ref s_com1AfterCr);
             OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.Com1Chars);
         }

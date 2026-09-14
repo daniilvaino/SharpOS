@@ -131,6 +131,13 @@ agent-memory `project_string_as_methodtable_shared_root`,
   6.1–6.5 с (Debian 5.8), `ls` 0.95 с (0.76), автодополнение Tab 0.6 с (0.9).
   Замер — `run.<app>.first_input_ms` и `key.*` ядра, сверен с видео по кадрам;
   таблица в [`docs/perf-progress.md`](perf-progress.md).
+- 🟡 На железе (step172, ноутбук и ПК против Windows на них же, тёплое к
+  тёплому): выделение без сборки, строки, коллекции, JIT — вровень или
+  быстрее; исключения ×1.2–1.9; `tasks` ~15 мкс на задачу против 0.2–1.3 мкс
+  и не ускоряется с процессором; сборка gen0 стоит 11–27 мс; PowerShell
+  упирается в чтение с флешки. Таблица — `done/step172.md` §8–9.
+- ✅ Лимит кучи GC — половина usable-памяти, 64 МиБ…1 ГиБ (step172; был
+  фиксированный 64 МиБ, JIT-стресс на VirtualBox упирался в OOM).
 
 ---
 
@@ -562,6 +569,14 @@ Workaround: catch по конкретному типу — работает.
 `donext.md`) — связаны общим SehUnwind / FrameChain walker'ом. Скорее
 всего после P0-1 / P0-2 фиксов LIMIT-12.1 / 12.2 закроются попутно.
 
+**step172:** до него наш `__CxxFrameHandler3` не ловил ни одного
+C++-исключения в образе (IP-to-state map сравнивалась со смещением в функции
+вместо RVA) — все `EX_TRY/EX_CATCH` CoreCLR были мертвы, деструкторы при
+размотке не звались. Починено вместе с catch-фанклетами, `throw;` и
+исключениями из catch (`done/step172.md` §6). Вероятный общий корень
+LIMIT-12.1–12.3; **не перепроверено** — Sec 9 `absurd-size alloc` всё ещё
+`Skip()`, rethrow-пробы не проверяют содержимое `StackTrace`.
+
 ---
 
 ## 13. CONTEXT: не объявлять флаги для областей, которые не заполняем (step 152)
@@ -613,6 +628,7 @@ PowerShell 7.5.5 с USB-клавиатурой. Тир по-прежнему IL-
 | 109 | 42 | 2 | 7 | 0 | NativeArena: 14 GcHeap.AllocateRaw call-sites переехали (CRT malloc, TEB/TLS, SEH structs, Sha256State, TPA buf, PE file buffers). M1-M4 из memory-ownership §9 закрыты. PhaseReport capacity baseline. |
 | **110** | **42** | **2** | **7** | **0** | Precise GC walker: PE .pdata→UNWIND_INFO→gcInfo decoder (header + slot table + transitions + per-PC live state). GcContextSpill shellcode + SehUnwind frame iteration + slot address resolver. KernelGC.Collect использует precise по дефолту, GC.ReclamationDisabled = false (sweep реально освобождает). M5 закрыт. Pioneered BinaryPrimitives full surface в std. |
 | **119** | **113** | **2** | **8** | **0** | Comprehensive runtime mechanics probe battery: Sec 8 RUNTIME MECHANICS (27 sub-probes: boxing × 6, array covariance × 4, interface dispatch × 4, virtual × 3, generic sharing × 4, cctor × 4, module init × 1, write barrier × 3), Sec 9 ADVANCED (11: GC roots through EH, finally ordering nested, exception filter, throw/throw ex rethrow, GC+Span, Array.Copy overlap, thread handoff+GC, XMM6+ across throw, OOM, nested PAL), Sec 10 STRING.FORMAT (8), Sec 11 REGEX LADDER (9: L0-L8 + Compiled). +59 проб vs step 114. Открыты §12 limit'ы: StackTrace empty for EE-internal, EE exceptions bypass inner catches, cctor exception not wrapped in TIE. |
+| **172** | **157** | **2** | **18** | **0** | +проба финализаторов (1000/1000 отработали). Одинаково на QEMU, VirtualBox, ноутбуке и ПК; C++ catch в CoreCLR заработал (§12). |
 
 Оставшиеся FAIL после step 100:
 - `Socket ctor (TCP)` — нужна winsock-поверхность (ws2_32).

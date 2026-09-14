@@ -9,6 +9,7 @@ namespace OS.Kernel.Memory
         private const uint InitialPages = 4;
         private const uint DefaultGrowPages = 4;
         private const uint AllocationAlignment = 16;
+        private const uint MaxRequestSize = 0x7FFF0000;
 
         private static HeapBlock* s_head;
         private static HeapBlock* s_tail;
@@ -68,6 +69,11 @@ namespace OS.Kernel.Memory
         {
 
             uint requestedSize = AlignRequest(size);
+            if (requestedSize == 0)
+            {
+                s_allocFailures++;
+                return null;
+            }
 
             while (true)
             {
@@ -171,6 +177,10 @@ namespace OS.Kernel.Memory
 
         private static uint AlignRequest(uint size)
         {
+            // Sizes near 4 GiB would align up past zero into a tiny block.
+            if (size > MaxRequestSize)
+                return 0;
+
             uint aligned = BitOps.AlignUp(size, AllocationAlignment);
             if (aligned < HeapBlockOps.MinimumSplitPayload)
                 aligned = HeapBlockOps.MinimumSplitPayload;
@@ -229,20 +239,22 @@ namespace OS.Kernel.Memory
                 // Numbers, not a guess: which of the three it is — the pool
                 // genuinely spent, pages returned but too scattered for a run
                 // this long, or nothing ever returned at all — is not something
-                // the bare message can tell apart.
+                // the bare message can tell apart. Printed without allocating:
+                // the heap that just failed to grow is the one a formatted
+                // number would come from, and its failure would log again.
                 Log.Begin(LogLevel.Warn);
                 Console.Write("heap grow failed: no physical pages want=");
-                Console.WriteUInt(pageCount);
+                Console.WriteUIntRaw(pageCount);
                 Console.Write(" handedOut=");
-                Console.WriteUInt((uint)global::OS.Kernel.PhysicalMemory.HandedOutPages);
+                Console.WriteUIntRaw((uint)global::OS.Kernel.PhysicalMemory.HandedOutPages);
                 Console.Write(" freed=");
-                Console.WriteUInt((uint)global::OS.Kernel.PhysicalMemory.FreedPages);
+                Console.WriteUIntRaw((uint)global::OS.Kernel.PhysicalMemory.FreedPages);
                 Console.Write(" reused=");
-                Console.WriteUInt((uint)global::OS.Kernel.PhysicalMemory.ReusedPages);
+                Console.WriteUIntRaw((uint)global::OS.Kernel.PhysicalMemory.ReusedPages);
                 Console.Write(" inFreeList=");
-                Console.WriteUInt((uint)global::OS.Kernel.PhysicalMemory.FreeListPages);
+                Console.WriteUIntRaw((uint)global::OS.Kernel.PhysicalMemory.FreeListPages);
                 Console.Write(" heapPages=");
-                Console.WriteUInt((uint)s_heapPages);
+                Console.WriteUIntRaw((uint)s_heapPages);
                 Log.EndLine();
                 return false;
             }

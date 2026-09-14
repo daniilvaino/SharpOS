@@ -239,6 +239,19 @@ namespace OS.PAL.SharpOSHost
             args[2] = (ulong)pThrowInfo;
             args[3] = (ulong)CoffRuntimeFunctionTable.ImageBase;
 
+            // `throw;` — rethrow the exception being handled: MSVC emits
+            // _CxxThrowException(NULL, NULL), and the object and its type are
+            // those of the innermost catch this thread is in.
+            if (pObject == null && pThrowInfo == null)
+            {
+                CxxActiveCatch.Entry* active = CxxActiveCatch.Peek();
+                if (active == null)
+                    Panic.Fail("throw; outside of any catch");
+                args[1] = active->Object;
+                args[2] = active->ThrowInfo;
+                args[3] = active->ImageBase;
+            }
+
             RaiseExceptionImpl(ExceptionRecord.EH_EXCEPTION_NUMBER,
                                ExceptionRecord.EXCEPTION_NONCONTINUABLE,
                                4, args);
@@ -486,6 +499,13 @@ namespace OS.PAL.SharpOSHost
             int frameLimit = 64;
             bool isThrowSite = true;
             ulong searchFrameCursor = 0;
+
+            // Catch funclets in the walk (CxxActiveCatch): the stub they
+            // return to marks their frames. Each one crossed is the next
+            // catch outward on this thread.
+            ulong catchStub = OS.Hal.X64Asm.CatchReturnStubAddress;
+            int searchCatchLevel = 0;
+            bool skipSearchPersonality = false;
             while (frameLimit-- > 0)
             {
                 ulong rawRip = searchCtx->Rip;
@@ -540,6 +560,22 @@ namespace OS.PAL.SharpOSHost
                     UnwindFlags.UNW_FLAG_EHANDLER,
                     ib, rawRip, rf, searchCtx,
                     &handlerData, &newFrame);
+
+                // A catch funclet's frame: it runs on behalf of its parent,
+                // so its handler is asked with the parent's establisher
+                // frame — that way it sees the parent's catch state, and the
+                // try that already caught this exception does not catch it
+                // again. The parent itself comes next, as it was at catch
+                // entry, and is walked past without asking its handler twice.
+                CxxActiveCatch.Entry* searchFunclet = null;
+                if (catchStub != 0 && searchCtx->Rip == catchStub)
+                    searchFunclet = CxxActiveCatch.Peek(searchCatchLevel++);
+                ulong searchEstablisher = searchFunclet != null ? searchFunclet->ParentFrame : newFrame;
+                if (skipSearchPersonality)
+                {
+                    personality = null;
+                    skipSearchPersonality = false;
+                }
                 Console.Write("[seh-step] pc=0x");       Console.WriteHex(controlPc);
                 Console.Write(" raw=0x");                Console.WriteHex(rawRip);
                 Console.Write(" ib=0x");                 Console.WriteHex(ib);
@@ -574,7 +610,7 @@ namespace OS.PAL.SharpOSHost
                     dc->ControlPc = controlPc;
                     dc->ImageBase = ib;
                     dc->FunctionEntry = rf;
-                    dc->EstablisherFrame = newFrame;
+                    dc->EstablisherFrame = searchEstablisher;
                     dc->TargetIp = 0;
                     dc->ContextRecord = searchCtx;
                     dc->LanguageHandler = personality;
@@ -587,7 +623,7 @@ namespace OS.PAL.SharpOSHost
                     matchedFh4 = default;
                     dc->HistoryTable = &matchedFh4;
                     ulong preRip = searchCtx->Rip, preRsp = searchCtx->Rsp, preRbp = searchCtx->Rbp;
-                    int disp = fn(rec, (void*)newFrame, searchCtx, dc);
+                    int disp = fn(rec, (void*)searchEstablisher, searchCtx, dc);
                     dc->HistoryTable = null;
                     Console.Write("[seh-pers] pc=0x"); Console.WriteHex(controlPc);
                     Console.Write(" pers=0x"); Console.WriteHex((ulong)personality);
@@ -612,7 +648,7 @@ namespace OS.PAL.SharpOSHost
                         matchedHandler = personality;
                         matchedClause = (HandlerType*)dc->HandlerData;
                         matchedTargetIp = dc->TargetIp;
-                        matchedFrame = newFrame;
+                        matchedFrame = searchEstablisher;
                         matchedHasFh4 = matchedFh4.DispOfHandler != 0;
                         matchedImageBase = ib;
                         if (Trace) {
@@ -625,6 +661,12 @@ namespace OS.PAL.SharpOSHost
                         break;
                     }
                     if (Trace) { Console.Write("[seh]   disp="); Console.WriteInt(disp); Console.WriteLine(""); }
+                }
+
+                if (searchFunclet != null)
+                {
+                    CopyContext(searchCtx, &searchFunclet->ParentContext);
+                    skipSearchPersonality = true;
                 }
 
                 if (newFrame == 0 || newFrame == establisherFrame)
@@ -647,8 +689,17 @@ namespace OS.PAL.SharpOSHost
             {
                 // Diagnostic: dump exception code + (if C++ throw) type chain
                 // so we can see WHY no handler matched. Permanent — fires once
-                // per uncaught throw, no Trace gate.
-                Console.Write("[seh] uncaught code=0x"); Console.WriteHex(rec->ExceptionCode);
+                // per unhandled exception, no Trace gate.
+                //
+                // Only a C++ throw is really uncaught here. A hardware fault
+                // goes back to HwFaultBridge and on to managed dispatch, which
+                // usually catches it (the kernel's own eh L13 probe does so
+                // every boot) — "uncaught" read as a failure it was not.
+                if (rec->ExceptionCode == ExceptionRecord.EH_EXCEPTION_NUMBER)
+                    Console.Write("[seh] uncaught code=0x");
+                else
+                    Console.Write("[seh] no native handler, handing to managed dispatch: code=0x");
+                Console.WriteHex(rec->ExceptionCode);
                 Console.Write(" nParams=");             Console.WriteInt((int)rec->NumberParameters);
                 Console.WriteLine("");
                 if (rec->ExceptionCode == ExceptionRecord.EH_EXCEPTION_NUMBER &&
@@ -684,79 +735,41 @@ namespace OS.PAL.SharpOSHost
                     }
                 }
 
-                // No C++/SEH handler caught the throw. For C++ HRException
-                // throws CoreCLR expects the host to translate to HRESULT
-                // return. Our caller is C# (CoreClrProbe.Run). Walk again
-                // from startCtx and stop at the FIRST managed-section
-                // frame (= our C# code right after coreclr_initialize
-                // returned). Resume there with RAX = m_hr.
+                // Nothing catches it. A C++ throw no frame catches has nowhere
+                // to go on to: say what it was and where, and stop. Anything
+                // else (a hardware fault) returns to the caller, which hands
+                // it to managed dispatch.
                 //
-                // ONLY for HRException — non-HRException C++ throws
-                // (EETypeLoadException, std::bad_alloc, BadImageFormat, etc.)
-                // don't have m_hr at offset 0x14 и read garbage. For those
-                // we panic — instrumentation at the throw site (e.g.
-                // ThrowTypeLoadException) should surface the payload before
-                // it reaches us.
-                if (rec->ExceptionCode == ExceptionRecord.EH_EXCEPTION_NUMBER &&
-                    rec->NumberParameters >= 4 &&
-                    IsHRExceptionThrow(rec))
+                // Until step172 an uncaught HRException was instead resumed
+                // at "the first managed frame", found by a hard-coded RVA
+                // range long since stale: the walk ran off the stack and the
+                // resume landed at Rip=0 — a desktop with no boot disk died
+                // there with no word about a missing CoreLib. CoreCLR catches
+                // its own HRExceptions now that C++ catch works, so one that
+                // arrives here is a real failure.
+                if (rec->ExceptionCode == ExceptionRecord.EH_EXCEPTION_NUMBER)
                 {
-                    ulong objVa = GetCxxThrownObject(rec);
-                    if (objVa != 0)
+                    ulong kernelBase = (ulong)CoffRuntimeFunctionTable.ImageBase;
+                    Console.Write("[seh] unhandled C++ exception, raised from rip=0x");
+                    Console.WriteHex(startCtx->Rip);
+                    if (kernelBase != 0 && startCtx->Rip > kernelBase)
                     {
-                        uint hr = *(uint*)(objVa + 0x14);
-
-                        Context* resumeCtx = (Context*)NativeArena.Allocate((ulong)sizeof(Context));
-                        if (resumeCtx == null) return;
-                        byte* rdst = (byte*)resumeCtx;
-                        byte* rsrc = (byte*)startCtx;
-                        for (int i = 0; i < sizeof(Context); i++) rdst[i] = rsrc[i];
-
-                        // .managed section RVA range (NativeAOT-emitted C#
-                        // methods). When walker enters this range we're in
-                        // the host caller's frame — resume here.
-                        const uint MANAGED_RVA_MIN = 0xCB5000;
-                        const uint MANAGED_RVA_MAX = 0xCDE000;
-                        bool firstWalk = true;
-                        int limit = 64;
-                        while (limit-- > 0)
-                        {
-                            ulong rip = resumeCtx->Rip;
-                            ulong rva = rip - (ulong)CoffRuntimeFunctionTable.ImageBase;
-                            if (!firstWalk && rva >= MANAGED_RVA_MIN && rva < MANAGED_RVA_MAX)
-                                break;   // first managed frame — stop here
-                            firstWalk = false;
-                            ulong adjPc = rip - 1;
-                            if (!IsValidIp(adjPc)) break;
-                            ulong ib2;
-                            RuntimeFunction* rf2 = SehUnwind.LookupFunctionEntry(adjPc, &ib2);
-                            if (rf2 == null) break;
-                            void* hd2 = null;
-                            ulong ef2 = 0;
-                            SehUnwind.VirtualUnwind(0, ib2, rip, rf2, resumeCtx, &hd2, &ef2);
-                        }
-
-                        if (Trace) {
-                        Console.Write("[seh] uncaught HRException → resume managed Rip=0x");
-                        Console.WriteHex(resumeCtx->Rip);
-                        Console.Write(" Rsp=0x"); Console.WriteHex(resumeCtx->Rsp);
-                        Console.Write(" hr=0x"); Console.WriteHex(hr);
-                        Console.WriteLine("");
-                        Console.Write("  Rbp=0x"); Console.WriteHex(resumeCtx->Rbp);
-                        Console.Write(" Rbx=0x"); Console.WriteHex(resumeCtx->Rbx);
-                        Console.Write(" Rsi=0x"); Console.WriteHex(resumeCtx->Rsi);
-                        Console.Write(" Rdi=0x"); Console.WriteHex(resumeCtx->Rdi);
-                        Console.WriteLine("");
-                        Console.Write("  R12=0x"); Console.WriteHex(resumeCtx->R12);
-                        Console.Write(" R13=0x"); Console.WriteHex(resumeCtx->R13);
-                        Console.Write(" R14=0x"); Console.WriteHex(resumeCtx->R14);
-                        Console.Write(" R15=0x"); Console.WriteHex(resumeCtx->R15);
-                        Console.WriteLine("");
-                        }
-                        resumeCtx->Rax = hr;
-                        RestoreContextAsm(resumeCtx);
-                        return;  // unreachable
+                        Console.Write(" (krnl+0x");
+                        Console.WriteHex(startCtx->Rip - kernelBase);
+                        Console.Write(")");
                     }
+                    if (IsHRExceptionThrow(rec))
+                    {
+                        // HRException: vtable, m_innerException, then m_hr.
+                        ulong thrown = GetCxxThrownObject(rec);
+                        if (thrown != 0)
+                        {
+                            Console.Write(" hr=0x");
+                            Console.WriteHex(*(uint*)(thrown + 0x10));
+                        }
+                    }
+                    Console.WriteLine("");
+                    Panic.Fail("unhandled C++ exception (see [seh] lines above)");
                 }
                 return;
             }
@@ -765,10 +778,22 @@ namespace OS.PAL.SharpOSHost
             byte* udst = (byte*)unwindCtx;
             byte* ssrc = (byte*)startCtx;
             for (int i = 0; i < sizeof(Context); i++) udst[i] = ssrc[i];
+
+            // The frame's own context, taken before each unwind step: the
+            // handler is entered in the catching frame as it was at its call
+            // site — its registers, its body RSP — not as its caller left it.
+            Context* frameCtx = (Context*)NativeArena.Allocate((ulong)sizeof(Context));
+            if (frameCtx == null)
+            {
+                Console.WriteLine("[seh] no memory for the unwind frame context");
+                return;
+            }
+
             establisherFrame = 0;
             int unwindLimit = 64;
             bool isUnwindThrowSite = true;
             ulong unwindFrameCursor = 0;
+            bool skipUnwindPersonality = false;
             while (unwindLimit-- > 0)
             {
                 ulong rawRipU = unwindCtx->Rip;
@@ -793,24 +818,38 @@ namespace OS.PAL.SharpOSHost
                     break;
                 }
 
+                CopyContext(frameCtx, unwindCtx);
+
                 void* handlerData = null;
                 ulong newFrame = 0;
-                ulong preUnwindRsp = unwindCtx->Rsp;
                 void* personality = SehUnwind.VirtualUnwind(
                     UnwindFlags.UNW_FLAG_UHANDLER,
                     ib, rawRipU, rf, unwindCtx,
                     &handlerData, &newFrame);
 
+                // A catch funclet's frame (see the search pass): handled with
+                // the parent's frame, and the catch it belongs to is over —
+                // the exception leaves it.
+                CxxActiveCatch.Entry* unwindFunclet = null;
+                if (catchStub != 0 && unwindCtx->Rip == catchStub)
+                    unwindFunclet = CxxActiveCatch.Peek();
+                ulong unwindEstablisher = unwindFunclet != null ? unwindFunclet->ParentFrame : newFrame;
+                if (skipUnwindPersonality)
+                {
+                    personality = null;
+                    skipUnwindPersonality = false;
+                }
+
                 if (personality != null)
                 {
                     rec->ExceptionFlags |= ExceptionRecord.EXCEPTION_UNWINDING;
-                    if (newFrame == matchedFrame)
+                    if (unwindEstablisher == matchedFrame)
                         rec->ExceptionFlags |= ExceptionRecord.EXCEPTION_TARGET_UNWIND;
 
                     dc->ControlPc = controlPc;
                     dc->ImageBase = ib;
                     dc->FunctionEntry = rf;
-                    dc->EstablisherFrame = newFrame;
+                    dc->EstablisherFrame = unwindEstablisher;
                     dc->TargetIp = matchedTargetIp;
                     dc->ContextRecord = unwindCtx;
                     dc->LanguageHandler = personality;
@@ -818,31 +857,19 @@ namespace OS.PAL.SharpOSHost
 
                     delegate* unmanaged<ExceptionRecord*, void*, Context*, DispatcherContext*, int> fn =
                         (delegate* unmanaged<ExceptionRecord*, void*, Context*, DispatcherContext*, int>)personality;
-                    fn(rec, (void*)newFrame, unwindCtx, dc);
+                    fn(rec, (void*)unwindEstablisher, unwindCtx, dc);
                 }
 
-                if (newFrame == matchedFrame)
+                if (unwindFunclet != null)
                 {
-                    if (matchedHasFh4 && matchedFh4.Continuation0 != 0)
-                    {
-                        // FH4 catch handlers are funclets, not plain resume
-                        // targets. Enter them as if the parent frame had
-                        // called the funclet: [RSP] is the catch continuation,
-                        // shadow space starts at the parent's body RSP, and
-                        // RDX carries the parent frame pointer used by MSVC's
-                        // `mov rbp, rdx` prologue.
-                        ulong catchEntryRsp = preUnwindRsp - 8UL;
-                        *(ulong*)catchEntryRsp = matchedImageBase + matchedFh4.Continuation0;
-                        unwindCtx->Rsp = catchEntryRsp;
-                        unwindCtx->Rdx = preUnwindRsp;
-                        if (rec->NumberParameters >= 2)
-                            unwindCtx->Rcx = GetCxxThrownObject(rec);
-                    }
-
-                    // Reached catching frame — set RIP к handler entry и resume.
-                    unwindCtx->Rip = matchedTargetIp;
-                    // Restore via asm helper. Never returns.
-                    RestoreContextAsm(unwindCtx);
+                    CopyContext(unwindCtx, &unwindFunclet->ParentContext);
+                    CxxActiveCatch.Pop();
+                    skipUnwindPersonality = true;
+                }
+                else if (newFrame == matchedFrame)
+                {
+                    EnterHandler(rec, frameCtx, matchedFrame, matchedTargetIp,
+                                 matchedHasFh4, &matchedFh4, matchedImageBase, catchStub);
                     return;  // unreachable
                 }
 
@@ -850,6 +877,80 @@ namespace OS.PAL.SharpOSHost
                 establisherFrame = newFrame;
                 if (unwindCtx->Rip == 0) break;
             }
+        }
+
+        // Resumes in the catching frame, `ctx` being that frame at its call
+        // site. Never returns.
+        //
+        //  - __CxxFrameHandler3: the catch block is a funclet, entered as if
+        //    the frame had called it. The catch variable gets the thrown
+        //    object; RDX carries the frame's establisher frame, which the
+        //    funclet prologue takes as its frame pointer; its return address
+        //    is the catch-return stub, since an FH3 funclet returns its
+        //    continuation in RAX rather than naming it anywhere. The ret leaves
+        //    RSP at the frame's body RSP, where the continuation expects it.
+        //    The catch is recorded (CxxActiveCatch) for `throw;` and for an
+        //    exception leaving the funclet.
+        //  - __CxxFrameHandler4: the same, with the continuation named in the
+        //    handler record and pushed directly.
+        //  - otherwise (__except): the handler is code in the frame's body;
+        //    RAX carries the exception code, as RtlUnwindEx leaves it.
+        private static void EnterHandler(ExceptionRecord* rec, Context* ctx, ulong frame, ulong targetIp,
+                                         bool hasTransfer, CxxFrameHandler4.CatchTransfer* transfer,
+                                         ulong imageBase, ulong catchStub)
+        {
+            if (hasTransfer && transfer->Fh3)
+            {
+                if (catchStub == 0)
+                    catchStub = OS.Hal.X64Asm.CatchReturnStub((ulong)(delegate* unmanaged<void>)&CxxActiveCatch.Popped);
+                if (catchStub == 0)
+                    Panic.Fail("C++ catch: no exec buffer for the catch-return stub");
+
+                ulong thrown = rec->NumberParameters >= 2 ? rec->ExceptionInformation[1] : 0;
+                CxxActiveCatch.Entry* active = CxxActiveCatch.Push();
+                if (active == null)
+                    Panic.Fail("C++ catch: nested deeper than CxxActiveCatch.Capacity");
+                active->ParentFrame = frame;
+                active->ThrowInfo = rec->NumberParameters >= 3 ? rec->ExceptionInformation[2] : 0;
+                active->ImageBase = rec->NumberParameters >= 4 ? rec->ExceptionInformation[3] : imageBase;
+                active->Object = CxxFrameHandler.KeepThrownObject(thrown, active->ThrowInfo, active->ImageBase,
+                                                                  active->ObjectCopy, CxxActiveCatch.ObjectCapacity);
+                CopyContext(&active->ParentContext, ctx);
+
+                if (transfer->DispCatchObj != 0 && transfer->DispType != 0)
+                    CxxFrameHandler.BuildCatchObject(active->Object, imageBase,
+                        frame + transfer->DispCatchObj, transfer->Adjectives, transfer->CatchableTypeRva);
+
+                ulong entryRsp = ctx->Rsp - 8UL;
+                *(ulong*)entryRsp = catchStub;
+                ctx->Rsp = entryRsp;
+                ctx->Rdx = frame;
+                ctx->Rcx = frame;
+            }
+            else if (hasTransfer && transfer->Continuation0 != 0)
+            {
+                ulong bodyRsp = ctx->Rsp;
+                ulong entryRsp = bodyRsp - 8UL;
+                *(ulong*)entryRsp = imageBase + transfer->Continuation0;
+                ctx->Rsp = entryRsp;
+                ctx->Rdx = bodyRsp;
+                if (rec->NumberParameters >= 2)
+                    ctx->Rcx = GetCxxThrownObject(rec);
+            }
+            else
+            {
+                ctx->Rax = rec->ExceptionCode;
+            }
+
+            ctx->Rip = targetIp;
+            RestoreContextAsm(ctx);
+        }
+
+        private static void CopyContext(Context* dst, Context* src)
+        {
+            byte* d = (byte*)dst;
+            byte* s = (byte*)src;
+            for (int i = 0; i < sizeof(Context); i++) d[i] = s[i];
         }
 
         // Advance a freshly-captured context one frame so its Rip/Rsp
@@ -898,6 +999,8 @@ namespace OS.PAL.SharpOSHost
             ulong establisher = 0;
             int limit = 64;
             ulong rtlUnwindFrameCursor = 0;
+            ulong catchStub = OS.Hal.X64Asm.CatchReturnStubAddress;
+            bool skipPersonality = false;
             while (limit-- > 0)
             {
                 ulong rawRip = uc->Rip;
@@ -935,24 +1038,44 @@ namespace OS.PAL.SharpOSHost
                     UnwindFlags.UNW_FLAG_UHANDLER, ib, rawRip, rf, uc,
                     &handlerData, &newFrame);
 
+                // A C++ catch funclet on the way (DispatchException's second
+                // pass does the same): unwound with its parent's frame, the
+                // catch is over, and the parent comes next as it was at catch
+                // entry, without its handler asked a second time.
+                CxxActiveCatch.Entry* funclet = null;
+                if (catchStub != 0 && uc->Rip == catchStub)
+                    funclet = CxxActiveCatch.Peek();
+                ulong handlerFrame = funclet != null ? funclet->ParentFrame : newFrame;
+                if (skipPersonality)
+                {
+                    personality = null;
+                    skipPersonality = false;
+                }
+
                 if (personality != null)
                 {
-                    if (newFrame == target)
+                    if (handlerFrame == target)
                         rec->ExceptionFlags |= ExceptionRecord.EXCEPTION_TARGET_UNWIND;
                     dc->ControlPc = controlPc;
                     dc->ImageBase = ib;
                     dc->FunctionEntry = rf;
-                    dc->EstablisherFrame = newFrame;
+                    dc->EstablisherFrame = handlerFrame;
                     dc->TargetIp = (ulong)targetIp;
                     dc->ContextRecord = uc;
                     dc->LanguageHandler = personality;
                     dc->HandlerData = handlerData;
                     delegate* unmanaged<ExceptionRecord*, void*, Context*, DispatcherContext*, int> fn =
                         (delegate* unmanaged<ExceptionRecord*, void*, Context*, DispatcherContext*, int>)personality;
-                    fn(rec, (void*)newFrame, uc, dc);
+                    fn(rec, (void*)handlerFrame, uc, dc);
                 }
 
-                if (newFrame == target)
+                if (funclet != null)
+                {
+                    CopyContext(uc, &funclet->ParentContext);
+                    CxxActiveCatch.Pop();
+                    skipPersonality = true;
+                }
+                else if (newFrame == target)
                 {
                     uc->Rip = (ulong)targetIp;
                     uc->Rsp = target;

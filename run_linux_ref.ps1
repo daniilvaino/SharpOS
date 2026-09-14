@@ -52,6 +52,10 @@ param(
     [switch]$Refresh,
     # Measure PowerShell startup instead of running Bench.
     [switch]$PowerShell,
+    # Each Bench run in its own process, as before BenchHost. By default the
+    # runs share one process (BenchHost), the way SharpOS runs Bench from the
+    # launcher inside one CoreCLR session.
+    [switch]$SeparateProcesses,
     [string]$PowerShellVersion = "7.6.5"
 )
 
@@ -61,6 +65,7 @@ $ProgressPreference = "SilentlyContinue"   # Invoke-WebRequest is ~10x slower wi
 $repoRoot = Split-Path -Parent $PSCommandPath
 $cache = Join-Path $repoRoot "OS\.qemu\linux-ref"
 $benchBin = Join-Path $repoRoot "apps_managed\Bench\bin\Release\net10.0"
+$benchHostBin = Join-Path $repoRoot "apps_managed\BenchHost\bin\Release\net10.0"
 $serialLog = Join-Path $repoRoot "last_linux_ref.log"      # ttyS1: the benchmark's output only
 $bootLog = Join-Path $cache "boot.log"                        # ttyS0: kernel console, getty
 $reference = Join-Path $repoRoot "tools\bench-qemu-linux-reference.log"
@@ -79,6 +84,10 @@ if (-not $mformat -or -not $mcopy) { throw "mtools (mformat/mcopy) not found - i
 
 if (-not (Test-Path -LiteralPath (Join-Path $benchBin "Bench.dll"))) {
     throw "Bench.dll not found in $benchBin - run run_build.ps1 once (it builds apps_managed\Bench)"
+}
+if (-not $PowerShell -and -not $SeparateProcesses -and
+    -not (Test-Path -LiteralPath (Join-Path $benchHostBin "BenchHost.dll"))) {
+    throw "BenchHost.dll not found in $benchHostBin - dotnet build apps_managed\BenchHost -c Release (or pass -SeparateProcesses)"
 }
 
 New-Item -ItemType Directory -Force -Path $cache | Out-Null
@@ -129,6 +138,9 @@ if (Test-Path -LiteralPath $payloadDir) { Remove-Item -LiteralPath $payloadDir -
 New-Item -ItemType Directory -Force -Path (Join-Path $payloadDir "bench") | Out-Null
 Copy-Item -LiteralPath $dotnet -Destination (Join-Path $payloadDir "dotnet-runtime.tar.gz")
 Copy-Item -Path (Join-Path $benchBin "Bench.*") -Destination (Join-Path $payloadDir "bench")
+if (-not $PowerShell -and -not $SeparateProcesses) {
+    Copy-Item -Path (Join-Path $benchHostBin "BenchHost.*") -Destination (Join-Path $payloadDir "bench")
+}
 
 if ($PowerShell) {
     Copy-Item -LiteralPath $pwshTar -Destination (Join-Path $payloadDir "powershell.tar.gz")
@@ -218,7 +230,13 @@ Write-Lf (Join-Path $payloadDir "run.sh") @(
     'if ! ldconfig -p | grep -q "libstdc++.so.6"; then apt-get update && apt-get install -y libstdc++6; fi',
     '/opt/dotnet/dotnet --list-runtimes',
     'sleep 5',
-    ('for i in $(seq 1 ' + $Runs + '); do echo "=== linux-ref run $i ==="; /opt/dotnet/dotnet /mnt/payload/bench/Bench.dll; done'),
+    $(if ($SeparateProcesses) {
+        ('for i in $(seq 1 ' + $Runs + '); do echo "=== linux-ref run $i ==="; /opt/dotnet/dotnet /mnt/payload/bench/Bench.dll; done')
+    } else {
+        # One process, $Runs runs of Bench inside it, with SharpOS's runtime
+        # settings (BenchHost.runtimeconfig.json).
+        ('/opt/dotnet/dotnet /mnt/payload/bench/BenchHost.dll /mnt/payload/bench/Bench.dll ' + $Runs)
+    }),
     'echo "=== linux-ref end ==="'
 )
 }
@@ -298,7 +316,9 @@ function Get-Warm([long[]]$list) {
 
 $runtime = [regex]::Match($text, '(?:Microsoft\.NETCore\.App |\.NET )(\d+\.\S+)')
 $kernel = [regex]::Match($text, '(?m)^(\d+\.\d+\.\S+)\s*$')
-$what = if ($PowerShell) { "PowerShell $PowerShellVersion (linux-x64) startup" } else { "Bench.dll" }
+$what = if ($PowerShell) { "PowerShell $PowerShellVersion (linux-x64) startup" }
+        elseif ($SeparateProcesses) { "Bench.dll, one process per run" }
+        else { "Bench.dll, $Runs runs in one process (BenchHost)" }
 $lines = @(
     ("# $what on Debian under QEMU TCG (-cpu $Cpu, 1 CPU, $MemoryMb MiB), " + (Get-Date -Format 'yyyy-MM-dd')),
     ("# runtime " + $(if ($runtime.Success) { $runtime.Groups[1].Value } else { '?' }) +

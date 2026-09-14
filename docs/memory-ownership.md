@@ -61,7 +61,7 @@ flowchart TD
 | Hosted thread stacks | pages from `PhysicalMemory`, guard page below | `Scheduler` | CoreCLR/kernel thread stacks | Не выделять из `GcHeap` или `KernelHeap` |
 | BigStack | pages from `PhysicalMemory`, identity mapped | `BootSequence` + `BigStack` | CoreCLR session wrapper stack | Не выделять из `GcHeap`; bounds only from `BigStack.TryGetActiveBounds` |
 | PE app stacks | `0x0000004000000000` / `0x0000008000000000` tops | `ProcessImageBuilder` | app primary/nested stacks | Не пересекать с app image mappings и VM window |
-| App static GC pool | app image `.bss`, 64 MiB | app `GcMemorySource` | NativeAOT app managed objects | Не смешивать с kernel `GcHeap` или CoreCLR GC. Пул фиксирован: при исчерпании выделение возвращает `null`, а не бросает — см. §7 |
+| App static GC pool | app image `.bss`, 64 MiB | app `GcMemorySource` | NativeAOT app managed objects | Не смешивать с kernel `GcHeap` или CoreCLR GC. Пул фиксирован: при исчерпании выделение бросает предвыделенный `OutOfMemoryException` — см. §7 |
 
 ## 3. Две кучи и два GC
 
@@ -188,11 +188,18 @@ FAT читает через DMA scratch buffers (`s_sec`, `s_bulk`, `s_fatCache`
 
 ### Исчерпание пула приложения
 
-Пул фиксирован и не растёт. При исчерпании `GcHeap.AllocateRaw` возвращает
-`null`, а не бросает — то есть `new T[0]` отдаёт нулевую ссылку, и отказ
-всплывает позже разыменованием (`CR2=0x8` на первом же поле). Так упал
-лаунчер на настоящем железе. Предвыделенный `OutOfMemoryException` вместо
-`null` записан в `donext.md`.
+Пул фиксирован и не растёт. `GcHeap.AllocateRaw` при исчерпании (и для
+размера больше `GcHeap.MaxAllocationSize`) возвращает `null`, но помощники
+выделения (`RhpNewFast`, `RhpNewArray`, `RhNewString`, `RhBox`, `RhNewObject`)
+его дальше не отдают: бросают `OutOfMemoryException` (`GcHeap.OutOfMemory`).
+Как в NativeAOT: свежее, если на него ещё есть место, иначе — созданное сразу
+после `GcHeap.Init` (`GcHeap.PrepareOutOfMemory`, аналог
+`PreallocatedOutOfMemoryException.Initialize` в библиотечном инициализаторе
+CoreLib). Раньше `null` уходил в скомпилированный код, и отказ всплывал
+разыменованием у чужого кадра (`CR2=0x8`) — так падал лаунчер на железе.
+Отказ до `GcHeap.Init` или до `PrepareOutOfMemory` идёт в `GcHeap.s_fatal`:
+ядро — `Panic.Fail`, приложение — выход с кодом 134 и причиной в поток ошибок
+(step172).
 
 ## 8. Жесткие инварианты
 

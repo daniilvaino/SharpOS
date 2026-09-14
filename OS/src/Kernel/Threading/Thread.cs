@@ -193,6 +193,11 @@
         // (no gs base swap yet); E5+ wires per-thread TEBs.
         public byte* Teb;
 
+        // The C++ catch blocks this thread is inside of, innermost last
+        // (OS.PAL.SharpOSHost.CxxActiveCatch). Allocated on the thread's
+        // first catch; null until then.
+        public byte* ActiveCatches;
+
         // Entry function for spawned kernel threads. Null for the
         // boot-thread wrapper and for hosted threads (those use
         // Binding.HostedEntry via HostedTrampoline).

@@ -14,11 +14,10 @@ namespace OS.Hal
         // в таких контекстах создаст новый блок в том же list и приведёт к
         // бесконечной итерации.
         //
-        // ВАЖНО: без Runtime.WorkstationGC.lib (step 28 phase 3.1) frozen-string
-        // literals (включая string.Empty) не инициализируются на старте. Поэтому
-        // CAN'T безопасно проверять s.Length на возврат из NumberFormatting —
-        // если heap не готов, FastAllocateString вернёт невалидный string.Empty
-        // и s.Length крашит на чтении [s+8]. Проверяем готовность heap ЯВНО.
+        // ВАЖНО: до KernelHeap.Init строку выделить негде — FastAllocateString
+        // паникует (раньше отдавал общий string.Empty, и цифры писались прямо
+        // в образ поверх соседних литералов). Поэтому готовность heap
+        // проверяем ЯВНО и до неё идём по *Raw.
 
         // Diagnostic gate. Set to true to mute every Console.Write* call
         // (kernel diag noise: [seh-*], [host], [stub-reg], [PCRE], [SFI], ...).

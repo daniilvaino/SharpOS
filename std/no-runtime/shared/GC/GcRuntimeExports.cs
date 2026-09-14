@@ -22,6 +22,10 @@ namespace SharpOS.Std.NoRuntime
 {
     internal static unsafe partial class GcRuntimeExports
     {
+        // The allocation helpers throw on failure, as the real runtime's do.
+        // The code ILC generates around them never checks for null: a null
+        // returned here became a constructor storing fields at null+8,
+        // silently into physical page 0 until the pager unmaps it.
         [RuntimeExport("RhpNewFast")]
         private static void* RhpNewFast(GcMethodTable* mt)
         {
@@ -31,7 +35,7 @@ namespace SharpOS.Std.NoRuntime
             uint size = mt->BaseSize;
             void* obj = GcHeap.AllocateRaw(size);
             if (obj == null)
-                return null;
+                throw GcHeap.OutOfMemory();
 
             *(GcMethodTable**)obj = mt;
             return obj;
@@ -40,18 +44,20 @@ namespace SharpOS.Std.NoRuntime
         [RuntimeExport("RhpNewArray")]
         private static void* RhpNewArray(GcMethodTable* mt, int numElements)
         {
-            if (mt == null || numElements < 0)
+            if (mt == null)
                 return null;
+            if (numElements < 0)
+                throw new OverflowException();
 
             // size = BaseSize + numElements * ComponentSize, pointer-aligned
             ulong size64 = (ulong)mt->BaseSize + ((ulong)(uint)numElements * (ulong)mt->ComponentSize);
             size64 = (size64 + 7UL) & ~7UL;
-            if (size64 > 0xFFFFFFFFUL)
-                return null;
+            if (size64 > GcHeap.MaxAllocationSize)
+                throw GcHeap.OutOfMemory();
 
             void* obj = GcHeap.AllocateRaw((uint)size64);
             if (obj == null)
-                return null;
+                throw GcHeap.OutOfMemory();
 
             *(GcMethodTable**)obj = mt;
             // Length field lives at offset 8 (sizeof(MethodTable*) on x64).
@@ -109,7 +115,8 @@ namespace SharpOS.Std.NoRuntime
             // cast via nint/pointer-reinterpret to read BaseSize.
             GcMethodTable* gcMt = (GcMethodTable*)mt;
             void* obj = GcHeap.AllocateRaw(gcMt->BaseSize);
-            if (obj == null) return null;
+            if (obj == null)
+                throw GcHeap.OutOfMemory();
 
             *(Internal.Runtime.MethodTable**)obj = mt;
 

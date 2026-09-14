@@ -74,6 +74,12 @@ namespace OS.PAL.SharpOSHost
             public ulong Continuation0;     // RVA, 0 if absent
             public ulong Continuation1;     // RVA, 0 if absent
             public uint MatchedCatchableIdx;
+
+            // Set by __CxxFrameHandler3: its funclets return the continuation
+            // in RAX instead of naming it in the handler record, and the
+            // dispatcher builds the catch object itself.
+            public bool Fh3;
+            public uint CatchableTypeRva;   // the thrown type's matching CatchableType
         }
 
         // ----------------------------------------------------------------

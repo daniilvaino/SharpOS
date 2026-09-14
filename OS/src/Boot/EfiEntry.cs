@@ -27,6 +27,11 @@ namespace OS.Boot
             BootInfo bootInfo = UefiBootInfoBuilder.Build(context);
             Platform.Init(bootInfo);
 
+            // The first line of our own before the banner: on a machine that
+            // stops early it tells the stack switch (and the patcher behind
+            // it) apart from what comes after.
+            Log.Write(LogLevel.Info, "boot info ready, switching to the kernel stack");
+
             // step104: switch off the UEFI-provided boot stack onto our
             // own .bss-resident BootStackPool BEFORE anything allocates
             // physical pages. Otherwise PhysicalMemory.Init would mark

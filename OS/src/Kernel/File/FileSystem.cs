@@ -13,6 +13,11 @@ namespace OS.Kernel.File
 
         public static bool Init()
         {
+            // After ExitBootServices the firmware's file access is gone and
+            // only a mounted boot disk serves files; the capability recorded
+            // at boot says nothing about that.
+            if (Platform.BootServicesGone)
+                return Fs.Current != null;
             return Platform.HasCapability(PlatformCapabilities.ExternalElf);
         }
 

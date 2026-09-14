@@ -12,7 +12,8 @@
 //    low-RAM (<4G), zero-filled. ABAR is MMIO above RAM ->
 //    identity-mapped like ECAM/framebuffer.
 //  - Native.Stosb -> inline zero loop. BitHelpers -> inline bit ops.
-//  - List<SATADevice> -> first usable SATA port only (the boot disk);
+//  - List<SATADevice> -> one SATA port: the boot disk the firmware's boot
+//    path names, else the first usable one;
 //    Console.ToString/Panic.Error dropped. Write kept but unused (the
 //    FAT layer is read-only).
 //
@@ -175,10 +176,28 @@ namespace OS.Hal
             if (!ok) s_readFailures++;
         }
 
-        public static bool Initialize()
+        /// <summary>Where <see cref="Device"/> is: PCI device, function, HBA port.</summary>
+        public static int DeviceSlot = -1, DeviceFunction = -1, DevicePort = -1;
+
+        /// <summary>The first AHCI controller, and its first port with a disk.</summary>
+        public static bool Initialize() => Initialize(-1, -1, -1);
+
+        /// <summary>
+        /// A specific disk: the AHCI controller at PCI device.function
+        /// <paramref name="slot"/>.<paramref name="function"/> and HBA port
+        /// <paramref name="portNumber"/>, as the firmware's boot path names
+        /// them. Negative values mean "the first one". Refuses rather than
+        /// falls back: on a machine with several disks, the first one that
+        /// answers is not the one we booted from.
+        /// </summary>
+        public static bool Initialize(int slot, int function, int portNumber)
         {
-            if (Device != null) return true;          // idempotent
-            if (!Pci.TryFind(0x01, 0x06, out Pci.PciDev dev)) return false;
+            // Idempotent for the same disk. Asked for a specific one while
+            // another is up (a probe took the first port), it moves over.
+            if (Device != null && (slot < 0
+                || (DeviceSlot == slot && DeviceFunction == function && DevicePort == portNumber)))
+                return true;
+            if (!TryFindController(slot, function, out Pci.PciDev dev)) return false;
 
             // Enable memory space + bus master in the PCI command reg
             // (ECAM offset 0x04). ECAM window already identity-mapped by
@@ -197,6 +216,7 @@ namespace OS.Hal
             for (int k = 0; k < 32; k++)
             {
                 if ((Controller->PortsImplemented & (1u << k)) == 0) continue;
+                if (portNumber >= 0 && k != portNumber) continue;
                 HBAPort* port = &(&Controller->Ports)[k];
                 DisableInterrupts(Controller, port);
                 SATAPortType type = CheckPortType(port);
@@ -206,9 +226,35 @@ namespace OS.Hal
                 sata.PortType = type;
                 sata.Port = port;
                 if (!sata.Configure()) return false;
-                Device = sata;            // base ctor also set Disk.Instance
+                Device = sata;
+                DeviceSlot = dev.Slot;
+                DeviceFunction = dev.Func;
+                DevicePort = k;
                 return true;
             }
+            return false;
+        }
+
+        // The device path gives device.function per node but not the bus, so
+        // two controllers can share a number; the first AHCI one that matches
+        // is taken, as the xHCI registry does for its controllers.
+        private static bool TryFindController(int slot, int function, out Pci.PciDev dev)
+        {
+            if (slot < 0)
+                return Pci.TryFind(0x01, 0x06, out dev);
+
+            for (int i = 0; i < Pci.Count; i++)
+            {
+                Pci.PciDev candidate = Pci.Get(i);
+                if (candidate.ClassID == 0x01 && candidate.SubClassID == 0x06
+                    && candidate.Slot == slot && candidate.Func == function)
+                {
+                    dev = candidate;
+                    return true;
+                }
+            }
+
+            dev = default;
             return false;
         }
 

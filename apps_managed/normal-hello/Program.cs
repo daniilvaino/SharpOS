@@ -28,6 +28,19 @@ using System.Threading.Tasks;
 
 int ok = 0, deg = 0, bad = 0;
 
+// Which thread, and everything the exception knows, before the runtime's own
+// report. On VirtualBox an unhandled SEHException printed one line and no
+// stack: the thread it died on is the first thing to know.
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    var t = Thread.CurrentThread;
+    Console.WriteLine($"[unhandled] thread id={t.ManagedThreadId} name='{t.Name}' background={t.IsBackground} pool={t.IsThreadPoolThread} terminating={e.IsTerminating}");
+    try { Console.WriteLine($"[unhandled] {e.ExceptionObject}"); }
+    catch (Exception inner) { Console.WriteLine($"[unhandled] (ToString threw {inner.GetType().Name})"); }
+    if (e.ExceptionObject is SEHException seh)
+        Console.WriteLine($"[unhandled] SEH HResult=0x{seh.HResult:X8} canResume={seh.CanResume()}");
+};
+
 void Probe(string name, Action body)
 {
     Console.Write($"   {name,-46} ");
@@ -1496,6 +1509,38 @@ Probe("Register stress: 4 threads pure math, 3s", () =>
     if (bad != 0) throw new Exception($"{bad} corrupted results");
 });
 
+// Does the finalizer thread run at all? SYM-003 found WaitForPendingFinalizers
+// hanging and was never followed up; the JIT stress below produces tens of
+// thousands of finalizable DynamicMethod resolvers a run on a fast machine,
+// and on VirtualBox it ended in an OutOfMemoryException from the GC. Counted
+// by the finalizers themselves, with a deadline — not by WaitForPendingFinalizers,
+// which is the call that hangs.
+Probe("Finalizers run (1000 objects, 3s)", () =>
+{
+    int before = FinalizeCounter.Finalized;
+    new Action(() => { for (int i = 0; i < 1000; i++) _ = new FinalizeCounter(); })();
+    GC.Collect();
+    var deadline = DateTime.UtcNow.AddSeconds(3);
+    while (FinalizeCounter.Finalized - before < 1000 && DateTime.UtcNow < deadline)
+        Thread.Sleep(10);
+    int done = FinalizeCounter.Finalized - before;
+    Console.Write($"[{done}/1000 finalized, pending={GC.GetGCMemoryInfo().FinalizationPendingCount}] ");
+    if (done == 0) throw new Exception("no finalizer ran");
+    if (done < 1000) throw new InvalidOperationException($"only {done} finalized");
+});
+
+void ReportGcState(string after)
+{
+    try
+    {
+        var info = GC.GetGCMemoryInfo();
+        Console.WriteLine($"   GC after {after,-38} heap={info.HeapSizeBytes >> 20} MiB committed={info.TotalCommittedBytes >> 20} MiB " +
+                          $"limit={info.TotalAvailableMemoryBytes >> 20} MiB pendingFinalizers={info.FinalizationPendingCount} " +
+                          $"gen0/1/2={GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}");
+    }
+    catch (Exception e) { Console.WriteLine($"   GC after {after}: {e.GetType().Name}"); }
+}
+
 Probe("JIT stress: 1 thread emit+run, 1s", () =>
 {
     var deadline = DateTime.UtcNow.AddSeconds(1);
@@ -1515,6 +1560,7 @@ Probe("JIT stress: 1 thread emit+run, 1s", () =>
     if (n < 50) throw new Exception($"only {n} methods compiled");
     Console.Write($"[{n} methods] ");
 });
+ReportGcState("JIT stress: 1 thread");
 
 // Same 4-thread JIT load, but with collection held off. Everything measured
 // so far points at the collector rather than at page protection: register
@@ -1561,6 +1607,7 @@ Probe("JIT stress: 4 threads, retained, 3s", () =>
     }
     finally { }
 });
+ReportGcState("JIT stress: 4 threads, retained");
 
 Probe("JIT stress: 4 threads emit+run, 3s", () =>
 {
@@ -1613,6 +1660,7 @@ Probe("JIT stress: 4 threads emit+run, 3s", () =>
 
     Console.Write($"[{Interlocked.Read(ref compiled)} methods] ");
 });
+ReportGcState("JIT stress: 4 threads emit+run");
 
 // -- SIMD -------------------------------------------------------------
 //
@@ -1730,4 +1778,12 @@ internal static class NativeMem
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool VirtualProtect(IntPtr address, UIntPtr size, uint newProtect, out uint oldProtect);
+}
+
+// Counts its own finalizations, for the probe that asks whether the
+// finalizer thread runs at all (SYM-003).
+public sealed class FinalizeCounter
+{
+    public static int Finalized;
+    ~FinalizeCounter() { System.Threading.Interlocked.Increment(ref Finalized); }
 }

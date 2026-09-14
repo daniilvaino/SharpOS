@@ -264,7 +264,9 @@ namespace OS.Boot
             switch (id)
             {
                 case System.Runtime.ExceptionIDs.OutOfMemory:
-                    return new OutOfMemoryException();
+                    // Not `new`: this is asked for when memory has run out.
+                    // Fresh if there is room, the preallocated one if not.
+                    return SharpOS.Std.NoRuntime.GcHeap.OutOfMemory();
                 case System.Runtime.ExceptionIDs.Arithmetic:
                     return new ArithmeticException();
                 case System.Runtime.ExceptionIDs.ArrayTypeMismatch:

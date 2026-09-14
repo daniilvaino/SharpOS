@@ -68,6 +68,8 @@
         private const uint MsrStubsMinBuffer  = 0x490;
         private const uint CpuidOffset        = 0x4A0;
         private const uint CpuidMinBuffer     = 0x4C0;
+        private const uint CatchReturnOffset    = 0x4C0;
+        private const uint CatchReturnMinBuffer = 0x4E0;
 
         private const uint CmpXchg64Offset       = 0x1A0;
         private const uint Xchg64Offset          = 0x1C0;
@@ -302,6 +304,45 @@
             s_writeMsr(index, value);
             return true;
         }
+
+        private static ulong s_catchReturnCallback;
+
+        /// <summary>
+        /// Address of the return address for C++ catch funclets, or 0 without
+        /// the exec buffer. An MSVC catch funclet returns the address to
+        /// continue at in RAX; its <c>ret</c> lands here, which calls
+        /// <paramref name="callback"/> (the catch is over) and goes on to it:
+        /// <code>
+        /// push rax; sub rsp,28h; mov rax,callback; call rax;
+        /// add rsp,28h; pop rax; jmp rax
+        /// </code>
+        /// Entered at the parent's body RSP (16-aligned at a call site), so
+        /// the push and 28h leave the call aligned. Volatile registers are
+        /// dead at a catch continuation, as after any unwind.
+        /// </summary>
+        public static ulong CatchReturnStub(ulong callback)
+        {
+            if (s_execBuffer == null || s_execBufferSize < CatchReturnMinBuffer || callback == 0)
+                return 0;
+            byte* p = (byte*)s_execBuffer + CatchReturnOffset;
+            if (s_catchReturnCallback != callback)
+            {
+                p[0] = 0x50;                                        // push rax
+                p[1] = 0x48; p[2] = 0x83; p[3] = 0xEC; p[4] = 0x28; // sub rsp, 28h
+                p[5] = 0x48; p[6] = 0xB8;                           // mov rax, imm64
+                *(ulong*)(p + 7) = callback;
+                p[15] = 0xFF; p[16] = 0xD0;                         // call rax
+                p[17] = 0x48; p[18] = 0x83; p[19] = 0xC4; p[20] = 0x28; // add rsp, 28h
+                p[21] = 0x58;                                       // pop rax
+                p[22] = 0xFF; p[23] = 0xE0;                         // jmp rax
+                s_catchReturnCallback = callback;
+            }
+            return (ulong)p;
+        }
+
+        /// <summary>The stub's address once emitted, else 0 (for the unwinder to recognise it).</summary>
+        public static ulong CatchReturnStubAddress
+            => s_catchReturnCallback == 0 ? 0 : (ulong)((byte*)s_execBuffer + CatchReturnOffset);
 
         private static bool s_cpuidReady;
         private static delegate* unmanaged<uint, uint, uint*, void> s_cpuid;

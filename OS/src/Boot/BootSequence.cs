@@ -124,6 +124,11 @@ namespace OS.Boot
             // that led to the panic. Costs a manual `run_build.ps1 -Stop`.
             Panic.Mode = PanicMode.Halt;
 
+            // An allocation failure std cannot turn into an exception ends
+            // here, with its reason printed, rather than in a silent loop.
+            SharpOS.Std.NoRuntime.GcHeap.s_fatal = &Panic.Fail;
+
+            Log.Write(LogLevel.Info, "on the kernel stack, installing the IDT");
             bool idtOk = Idt.Install(bootInfo);
 
             SystemBanner.Print(bootInfo);
@@ -218,6 +223,11 @@ namespace OS.Boot
             if (!GcHeap.Init())
                 Panic.Fail("gc heap init failed");
 
+            // First thing on the new heap: the OutOfMemoryException that
+            // allocation failures throw. When one is needed there is no room
+            // left to make it.
+            GcHeap.PrepareOutOfMemory();
+
             // Route System.GC.Collect() (std, plain conservative MarkAll — blind
             // to roots living in callee-saved registers) to KernelGC.Collect,
             // which spills registers via GcStackSpill / uses the precise walker.
@@ -251,8 +261,11 @@ namespace OS.Boot
             // GC statics materialization. After this, canonical
             // `static readonly T x = new T()` works for any code that
             // runs in subsequent phases.
+            // Fatal, not a warning: a static left unmaterialized keeps ILC's
+            // tagged placeholder, and every later access reads that as the
+            // address of the statics — a wild pointer, not an error.
             if (!GcStaticsMaterializer.Materialize())
-                Log.Write(LogLevel.Warn, "gc statics materialization failed");
+                Panic.Fail("gc statics materialization failed");
         }
 
         // ─────────────────────────────────────────────────────────────────

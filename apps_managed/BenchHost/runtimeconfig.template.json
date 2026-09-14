@@ -1,0 +1,7 @@
+{
+  "configProperties": {
+    "System.GC.HeapHardLimit": 1073741824,
+    "System.GC.RegionRange": 2147483648,
+    "System.GC.RegionSize": 1048576
+  }
+}

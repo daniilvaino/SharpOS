@@ -62,7 +62,16 @@
             // Bring up the managed GC heap before any `new string` or `new object()`
             // hits its RhNewString / RhpNewFast export. GcMemorySource backing is
             // GcAppPool (64 MB in .bss), provided via GcMemorySource.AppStatic.cs.
-            SharpOS.Std.NoRuntime.GcHeap.Init();
+            // Without it every allocation fails, so the app stops here with the
+            // reason instead of running on into its first `new`.
+            SharpOS.Std.NoRuntime.GcHeap.s_fatal = &Fatal;
+            if (!SharpOS.Std.NoRuntime.GcHeap.Init())
+                Fatal("app GC heap init failed");
+
+            // First thing on the new heap: the OutOfMemoryException that
+            // allocation failures throw. When one is needed there is no room
+            // left to make it.
+            SharpOS.Std.NoRuntime.GcHeap.PrepareOutOfMemory();
 
             // Wire the HPET time source into Stopwatch (step143). Raw data
             // from the table — safe before the heap is up.
@@ -77,17 +86,36 @@
             // objects) and pairs with the DropResilient target in
             // FreestandingPe.props; without both, the first static touch #GPs
             // on the ILC sentinel. See std GcStaticsInit + limits doc §1.
+            // A failure is fatal: a static left unmaterialized keeps the ILC
+            // placeholder, which every later access reads as the address of
+            // the statics.
             if (!SharpOS.Std.NoRuntime.GcStaticsInit.Materialize())
             {
                 AppHost.WriteString("gcstatics: init FAILED code=");
                 AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcStaticsInit.FailedCount);
                 AppHost.WriteChar('\n');
+                Fatal("app GC statics not materialized");
             }
 
             // Route GC.Collect() to our own collector. Last, because it marks
             // from the static roots the step above just materialised — before
             // that there is nothing to keep alive and nothing to sweep.
             AppGC.Install();
+        }
+
+        // Exit code of an app stopped by a failure it cannot survive, the
+        // number an aborted process gets on Unix.
+        private const int FatalExitCode = 134;
+
+        // Ends the app with its reason on the error stream. Allocates nothing:
+        // it is where allocation failures end up.
+        private static void Fatal(string message)
+        {
+            AppHost.WriteError("[fatal] ");
+            AppHost.WriteError(message);
+            AppHost.WriteError("\n");
+            AppHost.Exit(FatalExitCode);
+            while (true) { }
         }
 
         public static AppStartupBlock* Startup => s_startup;

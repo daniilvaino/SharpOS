@@ -24,7 +24,7 @@ namespace System.Runtime
             GcMethodTable* gcMt = (GcMethodTable*)mt;
             void* obj = GcHeap.AllocateRaw(gcMt->BaseSize);
             if (obj == null)
-                return null;
+                throw GcHeap.OutOfMemory();
 
             *(GcMethodTable**)obj = gcMt;
 

@@ -59,22 +59,19 @@ namespace OS.Kernel
             }
         }
 
+        // Character by character from the firmware's buffer: the banner runs
+        // before the kernel heap, and there is nothing to allocate a string in.
         private static void WriteFirmwareVendor(ref BootInfo bootInfo)
         {
-            if (bootInfo.FirmwareVendor == null)
+            char* vendor = bootInfo.FirmwareVendor;
+            if (vendor == null || vendor[0] == '\0')
             {
                 Console.Write("unknown");
                 return;
             }
 
-            string vendor = string.FromUtf16Z(bootInfo.FirmwareVendor, 63);
-            if (vendor.Length == 0)
-            {
-                Console.Write("unknown");
-                return;
-            }
-
-            Console.Write(vendor);
+            for (int i = 0; i < 63 && vendor[i] != '\0'; i++)
+                Console.WriteChar(vendor[i]);
         }
 
         private static void WriteCapabilities(PlatformCapabilities capabilities)

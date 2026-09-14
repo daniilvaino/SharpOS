@@ -1478,12 +1478,10 @@ namespace OS.Kernel.Diagnostics
         }
 
         // --- OOM deterministic behavior ---
-        // Best-effort. Our RhpNewArray returns null on size_t overflow
-        // (size64 > 0xFFFFFFFF). ILC-generated callsite typically reacts
-        // by throwing OOM via RhExceptionHandling. We try `new int[N]`
-        // where N is large enough to overflow and check what actually
-        // happens — green if any managed exception is caught, red if
-        // silent (we ran past with no exception means null deref or UB).
+        // RhpNewArray throws OutOfMemoryException for a size past
+        // GcHeap.MaxAllocationSize (GcHeap.OutOfMemory). Green only for
+        // that exception: before it the helper returned null and the probe
+        // passed on the NullReferenceException that followed (val=3).
         private static void Probe_OomDeterministic()
         {
             bool caught = false;
@@ -1503,7 +1501,7 @@ namespace OS.Kernel.Diagnostics
             catch (Exception) { caught = true; exType = "other"; }
 
             uint sig = exType == "OOM" ? 1u : exType == "Overflow" ? 2u : caught ? 3u : 0u;
-            ReportProbe("OOM/huge-alloc -> deterministic exception", caught, sig);
+            ReportProbe("OOM/huge-alloc -> deterministic exception", sig == 1u, sig);
         }
 
         // mini-LINQ (System.Linq.Enumerable, step134) smoke test. Source is a

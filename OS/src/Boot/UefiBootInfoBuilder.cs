@@ -8,6 +8,11 @@ namespace OS.Boot
             UefiPlatformBridge.Initialize(context);
             UefiConsole.TryMaximizeTextMode(systemTable);
 
+            // Before the first patcher (BootStackSwitch, in Boot.Entry) writes
+            // into the image: firmware that protects loaded images faults on
+            // that write with nothing on the screen.
+            UefiImageProtection.MakeImageWritable(context);
+
             BootInfo info = default;
             info.BootMode = BootMode.Uefi;
             info.FirmwareRevision = systemTable->FirmwareRevision;

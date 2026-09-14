@@ -24,7 +24,7 @@ namespace System
             if (str0 == null) str0 = "";
             if (str1 == null) str1 = "";
             if (str2 == null) str2 = "";
-            int totalLength = str0.Length + str1.Length + str2.Length;
+            int totalLength = CheckedLength((long)str0.Length + str1.Length + str2.Length);
             if (totalLength == 0) return "";
 
             string result = FastAllocateString(totalLength);
@@ -44,7 +44,7 @@ namespace System
             if (str1 == null) str1 = "";
             if (str2 == null) str2 = "";
             if (str3 == null) str3 = "";
-            int totalLength = str0.Length + str1.Length + str2.Length + str3.Length;
+            int totalLength = CheckedLength((long)str0.Length + str1.Length + str2.Length + str3.Length);
             if (totalLength == 0) return "";
 
             string result = FastAllocateString(totalLength);
@@ -63,9 +63,10 @@ namespace System
         {
             if (values == null || values.Length == 0) return "";
 
-            int totalLength = 0;
+            long sum = 0;
             for (int i = 0; i < values.Length; i++)
-                if (values[i] != null) totalLength += values[i].Length;
+                if (values[i] != null) sum += values[i].Length;
+            int totalLength = CheckedLength(sum);
             if (totalLength == 0) return "";
 
             string result = FastAllocateString(totalLength);
@@ -130,11 +131,12 @@ namespace System
             if (separator == null) separator = "";
 
             int sepLen = separator.Length;
-            int totalLength = 0;
+            long sum = 0;
             for (int i = startIndex; i < startIndex + count; i++)
-                if (value[i] != null) totalLength += value[i].Length;
-            totalLength += sepLen * (count - 1);
-            if (totalLength <= 0) return "";
+                if (value[i] != null) sum += value[i].Length;
+            sum += (long)sepLen * (count - 1);
+            int totalLength = CheckedLength(sum);
+            if (totalLength == 0) return "";
 
             string result = FastAllocateString(totalLength);
             fixed (char* dest = result)
@@ -164,11 +166,12 @@ namespace System
             if (startIndex < 0 || count < 0 || startIndex > value.Length - count) { Halt(); return null; }
             if (count == 0) return "";
 
-            int totalLength = 0;
+            long sum = 0;
             for (int i = startIndex; i < startIndex + count; i++)
-                if (value[i] != null) totalLength += value[i].Length;
-            totalLength += (count - 1);
-            if (totalLength <= 0) return "";
+                if (value[i] != null) sum += value[i].Length;
+            sum += count - 1;
+            int totalLength = CheckedLength(sum);
+            if (totalLength == 0) return "";
 
             string result = FastAllocateString(totalLength);
             fixed (char* dest = result)
@@ -400,6 +403,17 @@ namespace System
                 if (this[pos + i] != needle[i]) return false;
             }
             return true;
+        }
+
+        // A concatenation's length, summed in long. Summed in int, enough
+        // large parts went negative (FastAllocateString then handed back
+        // string.Empty to fill) or wrapped to a small positive length that
+        // the copy overran. The BCL throws OutOfMemoryException here too.
+        private static int CheckedLength(long total)
+        {
+            if (total > int.MaxValue)
+                throw new OutOfMemoryException();
+            return (int)total;
         }
 
         private static void Halt() { while (true) ; }

@@ -254,6 +254,15 @@
 
         public const bool HostedAppQuietConsole = true;
 
+        // The hosted runtime is told System.Private.CoreLib.dll does not
+        // exist. coreclr_initialize must then return an error code — the
+        // runtime throws a C++ HRException inside and catches it itself —
+        // not crash. The PC boot that found no disk crashed there at Rip=0:
+        // no C++ catch in the image ever matched (CxxFrameHandler, step172).
+        // Turn on to walk that path in QEMU; the rest of the boot goes on
+        // without the hosted runtime.
+        public const bool HostedHideCoreLib = false;
+
         // Phase E2 — TEB facade swap. Allocates a fresh TebFacade, swaps
         // gs base to it (under CLI), reads gs:[Self] and gs:[StackLimit]
         // back, restores original gs base. Proves the per-switch primitive

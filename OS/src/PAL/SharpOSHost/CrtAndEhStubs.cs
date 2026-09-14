@@ -473,6 +473,9 @@ namespace OS.PAL.SharpOSHost
         [RuntimeExport("_calloc_dbg")]
         public static void* CallocDbg(ulong num, ulong size, int blockType, byte* filename, int line)
         {
+            // A product that wraps would hand back a block smaller than the
+            // num * size bytes the caller then writes.
+            if (size != 0 && num > ulong.MaxValue / size) return null;
             ulong total = num * size;
             if (total == 0) return null;
             // NativeArena.Allocate already zero-fills.

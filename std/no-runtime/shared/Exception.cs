@@ -121,17 +121,35 @@ namespace System
         // _corDbgStackTrace и increments index. _stackTraceString is also
         // updated к non-null marker so StackTrace getter returns non-null
         // (proper formatting deferred).
+        private const int StackTraceCapacity = 16;
+
         internal void AppendStackFrame(System.IntPtr ip)
         {
-            const int Capacity = 16;
             if (_corDbgStackTrace == null)
-                _corDbgStackTrace = new System.IntPtr[Capacity];
+                _corDbgStackTrace = new System.IntPtr[StackTraceCapacity];
             if (_idxFirstFreeStackTraceEntry < _corDbgStackTrace.Length)
             {
                 _corDbgStackTrace[_idxFirstFreeStackTraceEntry] = ip;
                 _idxFirstFreeStackTraceEntry++;
                 _stackTraceString = "[trace]";   // marker — non-null indicates trace populated
             }
+        }
+
+        // For an exception made ahead of time and thrown when memory has run
+        // out (GcHeap.OutOfMemory): the buffer AppendStackFrame would
+        // allocate at the throw is allocated now, while there is room.
+        internal void ReserveStackTrace()
+        {
+            if (_corDbgStackTrace == null)
+                _corDbgStackTrace = new System.IntPtr[StackTraceCapacity];
+        }
+
+        // The same preallocated instance is thrown again and again; each
+        // throw starts its trace from empty instead of appending to the last.
+        internal void ResetStackTrace()
+        {
+            _idxFirstFreeStackTraceEntry = 0;
+            _stackTraceString = null;
         }
 
         public override string ToString()

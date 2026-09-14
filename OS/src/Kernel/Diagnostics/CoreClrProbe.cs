@@ -152,10 +152,57 @@ namespace OS.Kernel.Diagnostics
             (byte)'\\', (byte)'f', (byte)'x', (byte)';',
             (byte)'C', (byte)':', (byte)'\\', (byte)'s', (byte)'h', (byte)'a', (byte)'r', (byte)'p', (byte)'o', (byte)'s', 0 };
 
+        /// <summary>
+        /// The hosted GC's hard heap limit: half the machine's usable memory,
+        /// between 64 MiB and 1 GiB, in whole MiB.
+        /// </summary>
+        /// <remarks>
+        /// Was a fixed 64 MiB (step068), picked when QEMU was given 256-512
+        /// MiB. Work that scales with the CPU outgrew it on faster machines:
+        /// the census JIT stress kept 56 thousand dynamic methods alive on
+        /// VirtualBox (five thousand under QEMU), the heap reached 63 MiB of
+        /// 64, and the next allocation failed with OutOfMemory (step171).
+        /// Stock .NET outside a container has no hard limit at all. The cap
+        /// keeps the region range (twice the limit) inside the 4 GiB window
+        /// the runtime's reservations share; pages are committed on use, so
+        /// a high limit costs nothing until the heap is really that large.
+        /// </remarks>
+        private static ulong HostedHeapLimit(out ulong usableBytes)
+        {
+            usableBytes = MemoryDiagnostics.CountUsablePages(Platform.GetBootInfo().MemoryMap) * 4096UL;
+
+            const ulong Min = 64UL << 20;
+            const ulong Max = 1UL << 30;
+            ulong limit = usableBytes / 2;
+            if (limit < Min) limit = Min;
+            if (limit > Max) limit = Max;
+            return limit & ~((1UL << 20) - 1);   // regions are 1 MiB
+        }
+
+        // "0x" and sixteen hex digits, NUL-terminated, in native memory: the
+        // form the GC's INT config knobs parse.
+        private static byte* HexValue(ulong value)
+        {
+            byte* text = (byte*)NativeArena.Allocate(19);
+            if (text == null)
+                return null;
+
+            text[0] = (byte)'0';
+            text[1] = (byte)'x';
+            for (int i = 0; i < 16; i++)
+            {
+                int nibble = (int)((value >> ((15 - i) * 4)) & 0xF);
+                text[2 + i] = (byte)(nibble < 10 ? '0' + nibble : 'A' + nibble - 10);
+            }
+            text[18] = 0;
+            return text;
+        }
+
         // --- GC bound config (Phase 6.2 GC-arena step 1) ---
         // Workstation, non-concurrent (single-thread, no background-GC), hard
-        // 64 MiB heap, 128 MiB region range, 1 MiB region, RetainVM (Decommit
-        // → standby, no VA churn — matches our demand-mapped VM manager).
+        // heap limit and region range from HostedHeapLimit (were 64/128 MiB),
+        // 1 MiB region, RetainVM (Decommit → standby, no VA churn — matches our
+        // demand-mapped VM manager).
         // Public knob names from gc/gcconfig.h; INT values accept 0x hex.
         // Explicit const-element byte[] literals only — ILC freezes these as
         // RVA blobs (no cctor); a helper/method initializer would force a
@@ -407,10 +454,26 @@ namespace OS.Kernel.Diagnostics
             {
                 byte* vTpa = tpaVal != null ? tpaVal : vTpaFallback;
                 byte* vTier = Probes.HostedTieredCompilation ? vT : vF;
+
+                ulong heapLimit = HostedHeapLimit(out ulong usableBytes);
+                byte* vHeapLimit = HexValue(heapLimit);
+                byte* vRegionRange = HexValue(heapLimit * 2);
+                if (vHeapLimit == null || vRegionRange == null)
+                {
+                    heapLimit = 64UL << 20;
+                    vHeapLimit = v64;
+                    vRegionRange = v128;
+                }
+                Console.Write("[host] GC heap limit ");
+                Console.WriteULong(heapLimit >> 20);
+                Console.Write(" MiB of ");
+                Console.WriteULong(usableBytes >> 20);
+                Console.WriteLine(" MiB usable");
+
                 byte** keys   = stackalloc byte*[10] {
-                    kTpa, kApp, kGcSrv, kGcCon, kGcHL, kGcRR, kGcRS, kGcRV, kGInv, kTier };
+                    kTpa, kApp, kGcSrv, kGcCon, kGcHL,      kGcRR,        kGcRS, kGcRV, kGInv, kTier };
                 byte** values = stackalloc byte*[10] {
-                    vTpa, vApp, vF,     vF,     v64,   v128,  v1m,   vT,   vT,    vTier };
+                    vTpa, vApp, vF,     vF,     vHeapLimit, vRegionRange, v1m,   vT,    vT,    vTier };
                 // Step 110 Part 9 — after NativeArena moved every native
                 // blob out of kernel GcHeap (step 109) and precise GC walker
                 // landed (step 110 Parts 1-8), the original concern that

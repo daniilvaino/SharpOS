@@ -204,6 +204,12 @@ namespace OS.PAL.SharpOSHost
             for (int i = 0; i < pLen; i++) Console.WriteChar(p[i]);
             Console.Write("\" ");
 
+            if (OS.Kernel.Diagnostics.Probes.HostedHideCoreLib && path.EndsWith("System.Private.CoreLib.dll"))
+            {
+                Console.WriteLine("→ hidden (Probes.HostedHideCoreLib)");
+                return null;
+            }
+
             ulong readStart = NowTicks();
             if (!Platform.TryReadFile(path, out void* buf, out uint size))
             {

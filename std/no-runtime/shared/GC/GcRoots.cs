@@ -76,7 +76,7 @@ namespace SharpOS.Std.NoRuntime
         public static void Register(ref object field)
         {
             if (s_count >= Capacity)
-                return; // silently drop (shouldn't happen with reasonable Capacity)
+                GcHeap.Fatal("GC root table full");
 
             fixed (object* fieldPtr = &field)
             fixed (GcRootsStorage* basePtr = &s_slots)
@@ -93,7 +93,12 @@ namespace SharpOS.Std.NoRuntime
         // GC must walk so the materialized object isn't swept).
         public static void RegisterRawSlot(nint* slotAddr)
         {
-            if (slotAddr == null || s_count >= Capacity) return;
+            if (slotAddr == null) return;
+
+            // Loud, not dropped: a root left out is an object the next
+            // collection frees while it is still in use.
+            if (s_count >= Capacity)
+                GcHeap.Fatal("GC root table full");
 
             fixed (GcRootsStorage* basePtr = &s_slots)
             {

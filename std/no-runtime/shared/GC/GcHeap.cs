@@ -88,11 +88,104 @@ namespace SharpOS.Std.NoRuntime
         public static delegate*<void> s_enterCritical;
         public static delegate*<void> s_leaveCritical;
 
+        // Largest single allocation. Above it the size arithmetic below wraps
+        // in uint: 0xFFFFFFF8 aligned up to a 0-byte slot, a few bytes less
+        // to a segment far smaller than the zero-fill that followed, and past
+        // 2 GiB the segment-size doubling reached 0 and spun forever with
+        // preemption suppressed.
+        public const uint MaxAllocationSize = 0x7FFF0000;
+
+        // The fallback OutOfMemoryException (see OutOfMemory). Made by
+        // PrepareOutOfMemory as soon as the heap can hold it: by the time it
+        // is needed there may be no room left to make one. Kept as a raw
+        // address in a registered root slot rather than a reference static,
+        // so it exists before the image's GC statics do.
+        private static nint s_outOfMemory;
+        private static bool s_allocatingOutOfMemory;
+
+        // Where an allocation failure goes when throwing cannot help: an
+        // allocation before the heap exists, or before PrepareOutOfMemory has
+        // run. The kernel points it at Panic.Fail, apps at an exit; left null,
+        // the machine stops here.
+        public static delegate*<string, void> s_fatal;
+
+        /// <summary>
+        /// Makes the <see cref="OutOfMemoryException"/> thrown when there is
+        /// no room for a fresh one, together with its stack-trace buffer.
+        /// Call right after <see cref="Init"/>. NativeAOT does the same first
+        /// thing in CoreLib's library initializer
+        /// (PreallocatedOutOfMemoryException.Initialize).
+        /// </summary>
+        public static void PrepareOutOfMemory()
+        {
+            if (s_outOfMemory != 0)
+                return;
+
+            var exception = new System.OutOfMemoryException();
+            exception.ReserveStackTrace();
+            s_outOfMemory = *(nint*)&exception;
+
+            fixed (nint* slot = &s_outOfMemory)
+                GcRoots.RegisterRawSlot(slot);
+        }
+
+        /// <summary>
+        /// The exception to throw for an allocation that cannot be satisfied:
+        /// <c>throw GcHeap.OutOfMemory();</c>. Does not return when there is
+        /// nothing that can be thrown.
+        /// </summary>
+        /// <remarks>
+        /// As NativeAOT's GetRuntimeException: a fresh exception while there
+        /// is still room for one — a failed 2 GiB array leaves plenty — and
+        /// the preallocated one when there is not. The flag keeps the attempt
+        /// from recursing: its own failure comes back here and takes the
+        /// preallocated one, which the catch below then drops.
+        /// </remarks>
+        public static System.OutOfMemoryException OutOfMemory()
+        {
+            if (!s_initialized)
+                Fatal("object allocated before the GC heap exists");
+            if (s_outOfMemory == 0)
+                Fatal("out of memory before the OutOfMemoryException was made");
+
+            if (!s_allocatingOutOfMemory)
+            {
+                s_allocatingOutOfMemory = true;
+                System.OutOfMemoryException fresh = null;
+                try
+                {
+                    fresh = new System.OutOfMemoryException();
+                    // Its trace buffer now, not in the middle of the throw.
+                    fresh.ReserveStackTrace();
+                }
+                catch
+                {
+                    fresh = null;
+                }
+                s_allocatingOutOfMemory = false;
+
+                if (fresh != null)
+                    return fresh;
+            }
+
+            System.OutOfMemoryException preallocated = null;
+            *(nint*)&preallocated = s_outOfMemory;
+            preallocated.ResetStackTrace();
+            return preallocated;
+        }
+
+        internal static void Fatal(string message)
+        {
+            if (s_fatal != null)
+                s_fatal(message);
+            while (true) { }
+        }
+
         public static void* AllocateRaw(uint size)
         {
             if (!s_initialized)
                 return null;
-            if (size == 0)
+            if (size == 0 || size > MaxAllocationSize)
                 return null;
 
             if (s_enterCritical != null) s_enterCritical();

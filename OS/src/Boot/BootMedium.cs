@@ -15,6 +15,9 @@ namespace OS.Boot
         private static bool s_captured;
         private static bool s_valid;
         private static bool s_isUsb;
+        private static bool s_isSata;
+        private static bool s_isNvme;
+        private static ushort s_sataPort;
         private static byte s_pciDevice, s_pciFunction;
         private static byte s_usbPort, s_usbInterface;
         private static int s_pciNodes;
@@ -42,6 +45,12 @@ namespace OS.Boot
         public static bool Valid => s_valid;
         /// <summary>True when the firmware booted us off a USB device.</summary>
         public static bool IsUsb => s_isUsb;
+        /// <summary>True when the firmware booted us off a SATA disk.</summary>
+        public static bool IsSata => s_isSata;
+        /// <summary>True when the firmware booted us off an NVMe disk.</summary>
+        public static bool IsNvme => s_isNvme;
+        /// <summary>The AHCI port (HBA port number) of the SATA boot disk.</summary>
+        public static ushort SataPort => s_sataPort;
         public static byte PciDevice => s_pciDevice;
         public static byte PciFunction => s_pciFunction;
         public static byte UsbPort => s_usbPort;
@@ -117,6 +126,16 @@ namespace OS.Boot
                     s_usbInterface = node[5];
                     s_isUsb = true;
                 }
+                else if (type == 0x03 && subType == 0x12 && length >= 6)
+                {
+                    // Messaging/SATA: HBA port, port-multiplier port, LUN.
+                    s_sataPort = (ushort)(node[4] | (node[5] << 8));
+                    s_isSata = true;
+                }
+                else if (type == 0x03 && subType == 0x17)
+                {
+                    s_isNvme = true;                    // Messaging/NVMe namespace
+                }
 
                 node += length;
             }
@@ -131,7 +150,7 @@ namespace OS.Boot
             }
 
             OS.Hal.Console.Write("[bootmedium] ");
-            OS.Hal.Console.Write(s_isUsb ? "usb" : "not-usb");
+            OS.Hal.Console.Write(s_isUsb ? "usb" : s_isSata ? "sata" : s_isNvme ? "nvme" : "not-usb");
             OS.Hal.Console.Write(" pci=");
             OS.Hal.Console.WriteUInt(s_pciDevice);
             OS.Hal.Console.Write(".");
@@ -139,6 +158,11 @@ namespace OS.Boot
             OS.Hal.Console.Write(" (nodes=");
             OS.Hal.Console.WriteUInt((uint)s_pciNodes);
             OS.Hal.Console.Write(")");
+            if (s_isSata)
+            {
+                OS.Hal.Console.Write(" sata-port=");
+                OS.Hal.Console.WriteUInt(s_sataPort);
+            }
             if (s_isUsb)
             {
                 OS.Hal.Console.Write(" port=");

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SharpOS.BenchHost</RootNamespace>
+    <AssemblyName>BenchHost</AssemblyName>
+
+    <!-- The runtime SharpOS gives a hosted program: the properties
+         CoreClrProbe passes to coreclr_initialize. The heap limit and region
+         range are the laptop's (usable memory / 2, clamped to 1 GiB) and
+         live in runtimeconfig.template.json. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <RetainVMGarbageCollection>true</RetainVMGarbageCollection>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TieredCompilation>true</TieredCompilation>
+  </PropertyGroup>
+</Project>
