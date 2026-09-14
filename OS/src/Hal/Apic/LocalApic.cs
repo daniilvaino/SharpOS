@@ -40,7 +40,7 @@ namespace OS.Hal.Apic
         private const uint LvtPeriodic = 1u << 17;
 
         // Divide configuration 0b1010 = divide by 128. The coarsest setting
-        // available, chosen so the initial count for a 100 Hz tick stays well
+        // available, chosen so the initial count for a slow tick stays well
         // inside 32 bits on fast cores.
         private const uint DivideBy128 = 0xA;
 

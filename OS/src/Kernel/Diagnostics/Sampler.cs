@@ -7,8 +7,8 @@ namespace OS.Kernel.Diagnostics
     //
     // Every tick already knows where the CPU was: the interrupt frame carries
     // the RIP of whatever it stopped. Counting those addresses is a profile —
-    // 100 samples a second, which over a ten-second startup is a thousand
-    // points, plenty to find a loop that is burning time.
+    // Probes.TimerHz samples a second, which over a ten-second startup is
+    // thousands of points, plenty to find a loop that is burning time.
     //
     // Exists because "startup is slow and I think something is spinning" is a
     // claim about where the CPU is, and that is measurable rather than
@@ -71,9 +71,9 @@ namespace OS.Kernel.Diagnostics
         private static uint s_sinceReport;
         private static ulong s_haltsAtLastReport;
 
-        // Ticks between reports. At 100 Hz this is every ten seconds — often
-        // enough to watch a startup unfold, rare enough not to drown the log.
-        private const uint ReportEvery = 1000;
+        // Ticks between reports: every ten seconds — often enough to watch a
+        // startup unfold, rare enough not to drown the log.
+        private const uint ReportEvery = 10 * Probes.TimerHz;
 
         public static bool IsEnabled => s_enabled;
         public static ulong Total => s_total;

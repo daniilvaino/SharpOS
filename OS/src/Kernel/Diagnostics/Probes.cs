@@ -138,6 +138,18 @@
         // the serial port every ten seconds.
         public const bool SampleProfiler = true;
 
+        // Rate of the local APIC tick. Everything that waits for "the next
+        // tick" waits up to 1/TimerHz: the preemption quantum, a thread woken
+        // by a release (it runs when the waker blocks or the tick arrives),
+        // an idle CPU halted with a sleeper due, and the activation that stops
+        // a thread in managed code for a collection. Also the profiler's
+        // sampling rate.
+        //
+        // Was 100. At 10 ms a tick, 500 thread-pool tasks cost ~7.5 ms on the
+        // laptop, on the desktop and under QEMU alike, and a gen0 collection
+        // on the laptop cost 10 ms each (step172).
+        public const uint TimerHz = 1000;
+
         // Isolated check of SharpOSHost_ProtectPages, called directly from the
         // kernel. OFF: it halts the boot (the export is a Panic.Fail stub) and
         // it is the weaker of the two tests — it proves the function works in
@@ -229,6 +241,16 @@
         // to TPA; the toggle only chooses which one execute_assembly aims
         // at. Const bool so ILC folds the unused branch to nothing.
         public const bool LaunchNormalHelloCensus = true;
+
+        // Whether that assembly runs at all. Off, the session comes up empty
+        // and the first managed program is whatever the launcher starts —
+        // for measuring a program on a clean heap. The census leaves ~100 MiB
+        // of heap and ~140 thousand objects waiting for finalization on the
+        // laptop, and every later collection works through them: a gen0
+        // collection in Bench cost 10 ms after the census, next to nothing
+        // without it (step173). Benchmarks against Windows and Linux are
+        // taken with this off; the regression battery needs it on.
+        public const bool HostedRunAtBoot = true;
 
         // Mute kernel diagnostics while the hosted app owns the screen.
         //

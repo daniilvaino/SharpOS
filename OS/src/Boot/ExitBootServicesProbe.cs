@@ -27,7 +27,7 @@ namespace OS.Boot
     // regression battery.
     internal static unsafe class ExitBootServicesProbe
     {
-        private const uint TimerHz = 100;
+        private const uint TimerHz = OS.Kernel.Diagnostics.Probes.TimerHz;
 
         public static void Run()
         {

@@ -13,8 +13,9 @@
 # kernel-image addresses with tools/symbolize.ps1 (CoreCLR is linked into the
 # kernel, so its functions resolve too) and sums them per function.
 #
-# The sample rate is the timer's, 100 a second: an interval of a second gives
-# about a hundred points, and a function below a few percent is noise.
+# The sample rate is the timer's (Probes.TimerHz, 1000 a second since step173;
+# 100 before): shares are what matter, and a function below a few percent of a
+# short interval is noise.
 #
 # Under QEMU TCG the profile leans towards code that touches devices (HPET
 # reads, xHCI and serial registers): the emulated timer fires under the same

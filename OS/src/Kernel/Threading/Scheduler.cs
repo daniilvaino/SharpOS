@@ -536,7 +536,7 @@ namespace OS.Kernel.Threading
         /// Only halts when something can wake us. With the legacy PIC masked
         /// and no APIC timer armed, HLT sleeps until the end of the world.
         ///
-        /// Costs up to one tick (10 ms) of latency before the next poll, which
+        /// Costs up to one tick (1/Probes.TimerHz) of latency before the next poll, which
         /// is below what anyone notices while typing and is repaid many times
         /// over by the CPU that other threads get.
         /// </remarks>

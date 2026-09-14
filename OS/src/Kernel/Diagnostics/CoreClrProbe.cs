@@ -524,6 +524,12 @@ namespace OS.Kernel.Diagnostics
                     // the one chosen at build time.
                     global::OS.Kernel.Exec.CoreClrHost.Publish(hostHandle, domainId);
 
+                    if (!Probes.HostedRunAtBoot)
+                    {
+                        Console.WriteLine("--- no assembly at boot (Probes.HostedRunAtBoot): the session waits for the launcher ---");
+                        return;
+                    }
+
                     // Stage A — host a byte-for-byte stock `dotnet build` app
                     // via the normal-program entry point (runs its Main).
                     Console.WriteLine("--- coreclr_execute_assembly(\\\\sharpos\\pwsh\\pwsh.dll) ---");
