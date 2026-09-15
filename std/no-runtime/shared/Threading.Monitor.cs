@@ -34,6 +34,10 @@ namespace System.Threading
         private static int[] s_holders = null!;
         private static int[] s_recursion = null!;
 
+        // Threads blocked on the slot's owner word, so Exit knows whether a
+        // wake is worth the call.
+        private static int[] s_waiters = null!;
+
         // Zero means "nobody", so thread ids start at one.
         private const int Unowned = 0;
 
@@ -60,9 +64,19 @@ namespace System.Threading
                     return;
                 }
 
-                // Held elsewhere. Yield rather than spin: on one core, spinning
-                // means the holder cannot run, so the wait would never end.
-                ThreadBackend.Sleep(1);
+                // Held elsewhere. Block on the owner word until it changes:
+                // spinning on one core means the holder cannot run. This used
+                // to poll with Sleep(1), a whole timer tick per contended lock.
+                //
+                // Counted before the owner is read: an Exit that releases
+                // after this either sees the count and wakes, or released
+                // before the read, and then the word already differs and the
+                // wait returns at once.
+                Interlocked.Increment(ref s_waiters[slot]);
+                int holder = Interlocked.Read(ref s_holders[slot]);
+                if (holder != Unowned && holder != self)
+                    ThreadBackend.WaitWhile(ref s_holders[slot], holder, ThreadBackend.Infinite);
+                Interlocked.Decrement(ref s_waiters[slot]);
             }
         }
 
@@ -88,6 +102,8 @@ namespace System.Threading
             // Release last, and through the same door it was taken: the waiter
             // is looking at exactly this word.
             Interlocked.Exchange(ref s_holders[slot], Unowned);
+            if (Interlocked.Read(ref s_waiters[slot]) != 0)
+                ThreadBackend.WakeAll(ref s_holders[slot]);
         }
 
         public static bool TryEnter(object obj)
@@ -114,10 +130,17 @@ namespace System.Threading
 
         public static bool TryEnter(object obj, int millisecondsTimeout)
         {
+            // A millisecond at a time, but each wait ends as soon as the owner
+            // word changes rather than at the next tick.
+            int slot = SlotFor(obj);
             for (int waited = 0; waited < millisecondsTimeout; waited++)
             {
                 if (TryEnter(obj)) return true;
-                ThreadBackend.Sleep(1);
+                int holder = Interlocked.Read(ref s_holders[slot]);
+                Interlocked.Increment(ref s_waiters[slot]);
+                if (holder != Unowned)
+                    ThreadBackend.WaitWhile(ref s_holders[slot], holder, 1);
+                Interlocked.Decrement(ref s_waiters[slot]);
             }
             return TryEnter(obj);
         }
@@ -145,6 +168,7 @@ namespace System.Threading
                 s_owners = new object?[Capacity];
                 s_holders = new int[Capacity];
                 s_recursion = new int[Capacity];
+                s_waiters = new int[Capacity];
             }
 
             int start = (int)((uint)obj.GetHashCode() % Capacity);

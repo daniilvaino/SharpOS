@@ -187,47 +187,91 @@ namespace OS.Hal.Apic
             }
         }
 
+        // Measures first, corrects at most once, and checks the correction.
+        //
+        // Only an error by a factor is corrected. The point is to catch a
+        // clock off like VirtualBox's (five times), not to trim percentages —
+        // and a shortfall is not by itself evidence of a slow clock: under a
+        // loaded host QEMU drops periodic ticks it could not deliver in time.
+        // Taking that for a slow timer shortened the count round after round:
+        // at 100 Hz the machine ended at about 350 ticks a second (step170);
+        // at 1000 Hz a first window of 8 ticks out of 100 set off a spiral —
+        // each shorter count asked for more ticks than QEMU could deliver, so
+        // it delivered a smaller share still — that ended at 47 thousand
+        // interrupts a second and a machine that did nothing else (step173).
+        //
+        // What tells the two apart is steadiness. A mis-armed clock is off by
+        // the same factor in every window; lost ticks come and go. So all
+        // rounds are measured with the count untouched, a correction is made
+        // only when they agree, and it is kept only if the window after it is
+        // in range.
         public static bool RetuneToDeliveredRate(uint hz, uint rounds = 3)
         {
             if (!s_enabled || hz == 0 || s_initialCount == 0) return false;
             if (!Hpet.IsInitialized || Hpet.FrequencyHz == 0) return false;
+            if (rounds == 0 || rounds > 3) rounds = 3;
+
+            ulong expected = hz / 10;                            // per 100 ms
+            if (expected == 0) return false;
+
+            ulong low = expected / 2;
+            ulong high = expected * 2;
+            ulong fewest = ulong.MaxValue;
+            ulong most = 0;
+            ulong sum = 0;
+            bool allInRange = true;
 
             for (uint round = 0; round < rounds; round++)
             {
-                ulong before = s_timerTicks;
-                ulong hpetStart = Hpet.ReadCounter();
-                ulong window = Hpet.FrequencyHz / 10;           // 100 ms
-                while (Hpet.ReadCounter() - hpetStart < window) { }
-
-                ulong observed = s_timerTicks - before;
-                ulong expected = hz / 10;
-                if (expected == 0) return false;
+                ulong observed = TicksInWindow();
+                LastRetuneObserved[round] = (uint)observed;
                 if (observed == 0) return false;                // not ticking at all
 
-                LastRetuneObserved[round] = (uint)observed;
-
-                // Only an error by a factor is corrected. The point is to
-                // catch a clock off like VirtualBox's (five times), not to
-                // trim percentages — and a shortfall that small is not
-                // evidence of a slow clock: under a loaded host QEMU drops
-                // periodic ticks it could not deliver in time, a third of
-                // them during this very loop. Taking that for a slow timer
-                // shortened the count by the shortfall three rounds in a
-                // row, and the machine then ran at about 350 ticks a second
-                // for the rest of the session (step170).
-                ulong low = expected / 2;
-                ulong high = expected * 2;
-                if (observed >= low && observed <= high) return true;
-
-                ulong scaled = (ulong)s_initialCount * observed / expected;
-                if (scaled == 0) scaled = 1;
-                if (scaled > 0xFFFFFFFFUL) scaled = 0xFFFFFFFFUL;
-
-                s_initialCount = (uint)scaled;
-                Write(RegTimerInitCount, s_initialCount);
+                if (observed < low || observed > high) allInRange = false;
+                if (observed < fewest) fewest = observed;
+                if (observed > most) most = observed;
+                sum += observed;
             }
 
+            if (allInRange) return true;
+
+            // Rounds that disagree by more than a quarter are lost ticks, not
+            // a clock off by a factor: leave the count as calibrated.
+            if (most * 4 > fewest * 5) return false;
+
+            ulong average = sum / rounds;
+            ulong scaled = (ulong)s_initialCount * average / expected;
+
+            // VirtualBox needed five times; anything beyond eight is not a
+            // clock this is meant to fix.
+            ulong floor = s_initialCount / 8;
+            ulong ceiling = (ulong)s_initialCount * 8;
+            if (scaled < floor) scaled = floor;
+            if (scaled > ceiling) scaled = ceiling;
+            if (scaled == 0) scaled = 1;
+            if (scaled > 0xFFFFFFFFUL) scaled = 0xFFFFFFFFUL;
+
+            uint calibrated = s_initialCount;
+            s_initialCount = (uint)scaled;
+            Write(RegTimerInitCount, s_initialCount);
+
+            ulong check = TicksInWindow();
+            LastRetuneObserved[3] = (uint)check;
+            if (check >= low && check <= high) return true;
+
+            s_initialCount = calibrated;
+            Write(RegTimerInitCount, s_initialCount);
             return false;
+        }
+
+        // Timer interrupts delivered during 100 ms of HPET time.
+        private static ulong TicksInWindow()
+        {
+            ulong before = s_timerTicks;
+            ulong hpetStart = Hpet.ReadCounter();
+            ulong window = Hpet.FrequencyHz / 10;
+            while (Hpet.ReadCounter() - hpetStart < window) { }
+            return s_timerTicks - before;
         }
 
         public static void StopTimer()

@@ -125,7 +125,14 @@
         // falls back to ordinary output. Layout must match OS/.../AppServiceTable.cs.
         public ulong WriteErrorAddress;
 
-
+        // Block until the value at an address differs from the one given
+        // (uint Wait(void* address, void* compare, uint size, uint timeoutMs),
+        // 1 = woken or already different, 0 = timed out; timeout 0xFFFFFFFF
+        // is infinite), and wake everyone blocked on an address. Win32
+        // WaitOnAddress / WakeByAddressAll. Called directly, Win64 ABI; zero
+        // on a kernel without them — std then waits by polling.
+        public ulong WaitOnAddressAddress;
+        public ulong WakeByAddressAllAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

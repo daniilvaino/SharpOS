@@ -66,6 +66,20 @@ namespace OS.Kernel.Diagnostics
         SehUnwinds,
         SehUnwindTicks,
 
+        // Scheduling: thread switches; halts of a CPU with nothing to run and
+        // their time (each lasts until the next interrupt); sleeps; waits on an
+        // address that parked the thread and the time parked; wakes by
+        // address; threads started and the time it took.
+        SchedSwitches,
+        IdleHalts,
+        IdleHaltTicks,
+        Sleeps,
+        AddressWaits,
+        AddressWaitTicks,
+        AddressWakes,
+        ThreadSpawns,
+        ThreadSpawnTicks,
+
         Count,
     }
 
@@ -327,6 +341,12 @@ namespace OS.Kernel.Diagnostics
             Line(scope, "seh.lookup.gap", Get(ref delta, PerfCounter.SehLookupGap));
             Line(scope, "seh.r2r_tables_scanned", Get(ref delta, PerfCounter.SehR2rTablesScanned));
             Timed(scope, "seh.unwind", ref delta, PerfCounter.SehUnwinds, PerfCounter.SehUnwindTicks);
+            Line(scope, "sched.switches", Get(ref delta, PerfCounter.SchedSwitches));
+            Timed(scope, "sched.halt", ref delta, PerfCounter.IdleHalts, PerfCounter.IdleHaltTicks);
+            Line(scope, "sched.sleeps", Get(ref delta, PerfCounter.Sleeps));
+            Timed(scope, "sched.spawn", ref delta, PerfCounter.ThreadSpawns, PerfCounter.ThreadSpawnTicks);
+            Timed(scope, "wait.address", ref delta, PerfCounter.AddressWaits, PerfCounter.AddressWaitTicks);
+            Line(scope, "wait.wakes", Get(ref delta, PerfCounter.AddressWakes));
 
             // Where the interval's time went, by address.
             Sampler.ReportWindow(scope);

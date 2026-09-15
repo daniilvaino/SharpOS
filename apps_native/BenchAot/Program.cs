@@ -15,8 +15,8 @@ namespace BenchAot
     //
     // Differences from Bench, forced by the tier: no JIT benchmark (nothing is
     // compiled at run time), an array sort instead of List<T>.Sort (not in the
-    // app std), 48 tasks in batches of 16 instead of 500 (a task is a thread
-    // here, there is no pool), and one collection count instead of three
+    // app std), 48 tasks in batches of 16 instead of 500 (kept from when a task
+    // was a thread of its own), and one collection count instead of three
     // (AppGC has no generations). Timed with the HPET the kernel hands over.
     internal static unsafe class AppEntry
     {
@@ -63,7 +63,13 @@ namespace BenchAot
             Measure("collections", Collections);
             Measure("exceptions", Exceptions);
             if (AppThreads.IsAvailable && TaskBackendInstaller.Install())
+            {
                 Measure("tasks", Tasks);
+
+                // Again, on the pool threads the first run started: the two
+                // apart are what starting those threads cost.
+                Measure("tasks.warm", Tasks);
+            }
             Measure("output", Output);
 
             AppHost.WriteString("=== benchaot end ===\n");
@@ -162,9 +168,10 @@ namespace BenchAot
 
         private static void Throw(int i) => throw new InvalidOperationException(i.ToString());
 
-        // In batches: the kernel queues at most 32 app threads that have not
-        // started yet (AppServiceBuilder.PendingAppEntries), and 50 at once ran
-        // past it — the spawn failed, the task faulted and Wait threw.
+        // In batches of 16, from when a task was a thread of its own and the
+        // kernel queued at most 32 not yet started (50 at once faulted). Since
+        // step174 tasks run on a pool and the limit is gone; the shape stays so
+        // the numbers compare with earlier runs.
         private static long Tasks()
         {
             const int Batches = 3;

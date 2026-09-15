@@ -330,8 +330,9 @@ ThreadPool/Task/Timer на E10-E11.
      (раньше no-op `return 0` = WAIT_OBJECT_0 → MRES.Wait busy-spin).
   3. `WaitForSingleObject` finite timeout (Event/Semaphore/Mutex/
      Thread): HPET-deadline yield-poll вместо degrade в `Wait()` (inf).
-  4. `AddressWait.WaitOnAddress` finite timeout: same HPET-deadline
-     pattern (без bucket park; WakeByAddress не cancel'ит timer).
+  4. `AddressWait.WaitOnAddress` finite timeout: с step174 — сон на
+     бакете и таймере сразу (как `Semaphore.WaitUntil`), не опрос с `Yield`;
+     проверка и постановка — под `Suppress`.
 - ✅ `Task.Delay(3s).Wait(1s)` — Wait timeout honoured **+** long-task
   shutdown safety: `GetThreadIOPendingFlag` stub (step112) даёт
   `PortableThreadPool.WorkerThread.IsIOPending` чисто завершиться;

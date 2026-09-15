@@ -163,7 +163,13 @@
         // the "not published" answer.
         public ulong WriteErrorAddress;
 
-
+        // Win32 WaitOnAddress / WakeByAddressAll for app threads (step174):
+        // what Task.Wait and ManualResetEventSlim block on instead of polling
+        // with Sleep(1). Published directly as [UnmanagedCallersOnly] kernel
+        // functions, no thunk — same as GcWalkRootsAddress — and only to Win64
+        // apps; zero is the "not published" answer.
+        public ulong WaitOnAddressAddress;
+        public ulong WakeByAddressAllAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

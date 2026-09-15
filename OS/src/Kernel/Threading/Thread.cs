@@ -203,6 +203,16 @@
         // Binding.HostedEntry via HostedTrampoline).
         public delegate* unmanaged<void> Entry;
 
+        // Threads a NativeAOT app starts (the SpawnThread service): where the
+        // thread enters the app, and which run of which app it belongs to.
+        // The generation is the one of the thread that asked for it — the
+        // app's main thread is given one when the app starts (see
+        // Scheduler.EnterApp) — and when that run ends, every thread still
+        // carrying it is taken off the machine (Scheduler.LeaveApp): its code
+        // and data are about to be unmapped. Zero for everything else.
+        public ulong AppEntry;
+        public uint AppGeneration;
+
         // Phase E5 / E9.c step 102 -- wait state grouped under WaitBlock
         // per docs/threading-architecture.md §3. Currently inline by
         // value (one struct slot on Thread). At E13 SMP this is the

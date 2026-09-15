@@ -289,6 +289,15 @@ namespace OS.Kernel.Process
                 table.GcWalkRootsAddress = (ulong)(nint)(delegate* unmanaged<nuint, void>)
                     &OS.Kernel.Memory.AppGcService.WalkRoots;
 
+            // Blocking waits for app threads. Win64 callers only: the wait
+            // takes four arguments in rcx/rdx/r8/r9, where a SysV caller would
+            // not put them, and there is no thunk to move them.
+            if (serviceAbi != AppServiceAbi.SystemV && publishedAbiVersion >= AppServiceTable.AbiVersionV3)
+            {
+                table.WaitOnAddressAddress = (ulong)(nint)(delegate* unmanaged<void*, void*, uint, uint, uint>)&AppWaitOnAddress;
+                table.WakeByAddressAllAddress = (ulong)(nint)(delegate* unmanaged<void*, void>)&AppWakeByAddressAll;
+            }
+
             AppServiceTable* serviceTablePointer = Pager.IsPagerRootActive()
                 ? (AppServiceTable*)serviceVirtual
                 : (AppServiceTable*)servicePhysical;
@@ -1076,10 +1085,6 @@ namespace OS.Kernel.Process
         // itself — Scheduler.Exit is kernel-side — and without it the first app
         // thread to finish left the machine in a state where the thread waiting
         // on it never came back.
-        private const int PendingAppEntries = 32;
-        private static ulong[] s_appEntries = null!;
-        private static int s_appEntryHead;
-        private static int s_appEntryTail;
 
         // Why a child could not be started, named at the point it happened.
         //
@@ -1104,42 +1109,43 @@ namespace OS.Kernel.Process
 
             const uint AppThreadStackBytes = 64 * 1024;
 
-            global::OS.Kernel.Threading.Preemption.Suppress();
-            if (s_appEntries == null) s_appEntries = new ulong[PendingAppEntries];
-            int next = (s_appEntryTail + 1) % PendingAppEntries;
-            bool full = next == s_appEntryHead;
-            if (!full)
-            {
-                s_appEntries[s_appEntryTail] = entryAddress;
-                s_appEntryTail = next;
-            }
-            global::OS.Kernel.Threading.Preemption.Allow();
-
-            if (full)
+            // Created suspended so that where it enters the app and which run
+            // it belongs to are on the thread before it can run. The entry used
+            // to wait in a 32-slot ring for whichever thread started first,
+            // which capped the threads not yet started at 32 and could not
+            // survive threads being taken away when an app ends.
+            var t = global::OS.Kernel.Threading.Scheduler.Spawn(&AppThreadThunk, AppThreadStackBytes, startRunnable: false);
+            if (t == null)
                 return (uint)AppServiceStatus.DeviceError;
 
-            if (global::OS.Kernel.Threading.Scheduler.Spawn(&AppThreadThunk, AppThreadStackBytes) != null)
-                return (uint)AppServiceStatus.Ok;
-
             global::OS.Kernel.Threading.Preemption.Suppress();
-            s_appEntryTail = (s_appEntryTail - 1 + PendingAppEntries) % PendingAppEntries;
-            s_appEntries[s_appEntryTail] = 0;
+            t.AppEntry = entryAddress;
+            global::OS.Kernel.Threading.Thread? spawner = global::OS.Kernel.Threading.Scheduler.Current;
+            t.AppGeneration = spawner == null ? 0u : spawner.AppGeneration;
+            global::OS.Kernel.Threading.Scheduler.MakeRunnable(t);
             global::OS.Kernel.Threading.Preemption.Allow();
-            return (uint)AppServiceStatus.DeviceError;
+            return (uint)AppServiceStatus.Ok;
+        }
+
+        /// <summary>
+        /// After an app returns and before its pages go: its threads go
+        /// (Scheduler.LeaveApp), and the log says how many were still there.
+        /// </summary>
+        internal static void EndAppRun(uint generation, uint previousGeneration)
+        {
+            uint ended = global::OS.Kernel.Threading.Scheduler.LeaveApp(generation, previousGeneration);
+            if (ended == 0) return;
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("app threads ended with the app: ");
+            UiText.WriteInt((int)ended);
+            DebugLog.EndLine();
         }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void AppThreadThunk()
         {
-            global::OS.Kernel.Threading.Preemption.Suppress();
-            ulong entryAddress = 0;
-            if (s_appEntryHead != s_appEntryTail)
-            {
-                entryAddress = s_appEntries[s_appEntryHead];
-                s_appEntries[s_appEntryHead] = 0;
-                s_appEntryHead = (s_appEntryHead + 1) % PendingAppEntries;
-            }
-            global::OS.Kernel.Threading.Preemption.Allow();
+            global::OS.Kernel.Threading.Thread? self = global::OS.Kernel.Threading.Scheduler.Current;
+            ulong entryAddress = self == null ? 0 : self.AppEntry;
 
             if (entryAddress != 0)
                 ((delegate* unmanaged<void>)entryAddress)();
@@ -1177,6 +1183,16 @@ namespace OS.Kernel.Process
 
         private static void SleepMilliseconds(uint milliseconds)
             => global::OS.Kernel.Threading.Scheduler.Sleep(milliseconds);
+
+        // The app's addresses are valid here: apps run in the kernel's address
+        // space (JumpStub loads the pager root the kernel itself runs on).
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static uint AppWaitOnAddress(void* address, void* compare, uint size, uint timeoutMs)
+            => global::OS.Kernel.Threading.AddressWait.WaitOnAddress(address, compare, size, timeoutMs) ? 1u : 0u;
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void AppWakeByAddressAll(void* address)
+            => global::OS.Kernel.Threading.AddressWait.WakeByAddressAll(address);
 
         private static uint TryReadKey(ulong requestAddress)
         {
@@ -1644,12 +1660,23 @@ namespace OS.Kernel.Process
                     }
 
                     int returnExitCode = 0;
-                    if (!JumpStub.Run(
-                        processImage.EntryPoint,
-                        processImage.StackTop,
-                        processImage.StartupBlockVirtual,
-                        pagerCr3,
-                        out returnExitCode))
+                    bool jumped;
+                    uint previousGeneration = OS.Kernel.Threading.Scheduler.EnterApp(out uint appGeneration);
+                    try
+                    {
+                        jumped = JumpStub.Run(
+                            processImage.EntryPoint,
+                            processImage.StackTop,
+                            processImage.StartupBlockVirtual,
+                            pagerCr3,
+                            out returnExitCode);
+                    }
+                    finally
+                    {
+                        EndAppRun(appGeneration, previousGeneration);
+                    }
+
+                    if (!jumped)
                     {
                         result = FailedAtStep(10);
                         break;

@@ -39,6 +39,11 @@ namespace OS.Kernel.Threading
             if (s_queue == null) s_queue = new ThreadBackend.ThreadEntry?[Capacity];
             ThreadBackend.Install(Spawn, Sleep);
 
+            // Blocking waits. Init first: without the buckets WaitOnAddress
+            // returns at once, and every wait in std would become a spin.
+            if (AddressWait.Init())
+                ThreadBackend.InstallWaits(&AddressWait.WaitOnAddress, &AddressWait.WakeByAddressAll);
+
             // Thread identity, which Monitor needs and thread-statics cannot
             // give us here: the scheduler owns the threads, so it is the one
             // that can name the running one.

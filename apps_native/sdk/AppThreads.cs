@@ -73,5 +73,35 @@
             var sleep = (delegate* unmanaged<uint, void>)AppRuntime.Services->SleepAddress;
             sleep(milliseconds);
         }
+
+        /// <summary>True when the kernel published WaitOnAddress / WakeByAddressAll.</summary>
+        public static bool CanWaitOnAddress
+        {
+            get
+            {
+                var services = AppRuntime.Services;
+                return services != null
+                    && services->WaitOnAddressAddress != 0
+                    && services->WakeByAddressAllAddress != 0;
+            }
+        }
+
+        /// <summary>
+        /// Blocks while the <paramref name="size"/> bytes at
+        /// <paramref name="address"/> equal those at <paramref name="compare"/>;
+        /// false on timeout (0xFFFFFFFF waits forever).
+        /// </summary>
+        public static bool WaitOnAddress(void* address, void* compare, uint size, uint timeoutMs)
+        {
+            var wait = (delegate* unmanaged<void*, void*, uint, uint, uint>)AppRuntime.Services->WaitOnAddressAddress;
+            return wait(address, compare, size, timeoutMs) != 0;
+        }
+
+        /// <summary>Wakes every thread blocked on <paramref name="address"/>.</summary>
+        public static void WakeByAddressAll(void* address)
+        {
+            var wake = (delegate* unmanaged<void*, void>)AppRuntime.Services->WakeByAddressAllAddress;
+            wake(address);
+        }
     }
 }

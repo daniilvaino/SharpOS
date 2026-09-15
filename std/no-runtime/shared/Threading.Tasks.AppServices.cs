@@ -36,6 +36,10 @@ namespace SharpOS.AppSdk
             if (s_queue == null) s_queue = new ThreadBackend.ThreadEntry?[Capacity];
             ThreadBackend.Install(Spawn, AppThreads.Sleep);
 
+            // Blocking waits, when the kernel offers them; without, std polls.
+            if (AppThreads.CanWaitOnAddress)
+                ThreadBackend.InstallWaits(&AppThreads.WaitOnAddress, &AppThreads.WakeByAddressAll);
+
             // Thread identity, which Monitor needs. Only from V4 up; below that
             // the service returns zero and std keeps its single-thread answer,
             // which ManagedThreadIds.IsPerThread reports honestly.

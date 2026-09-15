@@ -351,6 +351,34 @@ namespace AotTests
             h2.Wait();
             Check("lock keeps updates", s_guarded == HammerIterations * 2);
 
+            // Blocking waits (step174). Each of these used to poll with
+            // Sleep(1); now the waiter sleeps in the kernel until the word it
+            // waits on changes. An event set from another thread has to wake
+            // its waiter, a timed wait has to give up, and more tasks than the
+            // kernel once had room to queue (32) all have to run.
+            Check("waits block in the kernel", AppThreads.CanWaitOnAddress);
+
+            var ready = new System.Threading.ManualResetEventSlim();
+            var setter = System.Threading.Tasks.Task.Run(() =>
+            {
+                AppThreads.Sleep(5);
+                ready.Set();
+            });
+            ready.Wait();
+            setter.Wait();
+            Check("event set on another thread wakes its waiter", ready.IsSet);
+
+            var never = new System.Threading.ManualResetEventSlim();
+            Check("event timed wait times out", !never.Wait(20));
+
+            s_counted = 0;
+            var many = new System.Threading.Tasks.Task[100];
+            for (int i = 0; i < many.Length; i++)
+                many[i] = System.Threading.Tasks.Task.Run(() => System.Threading.Interlocked.Increment(ref s_counted));
+            for (int i = 0; i < many.Length; i++)
+                many[i].Wait();
+            Check("100 tasks at once all run", s_counted == 100);
+
             // A collection has to see every thread's stack, not only the
             // collecting one's. The holder keeps an array in a local and
             // nowhere else, then sleeps; this thread collects and allocates
@@ -397,6 +425,8 @@ namespace AotTests
                 intact = mine[i] == 0x5A;
             s_holderVerdict = intact ? 1 : 2;
         }
+
+        private static int s_counted;
 
         private const int HammerIterations = 5000;
         private static object s_gate = null!;

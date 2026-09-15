@@ -383,11 +383,12 @@ namespace OS.Boot
             // reports that the clock is wrong.
             bool retuned = OS.Hal.Apic.LocalApic.RetuneToDeliveredRate(TimerHz);
             Console.Write("[apic] retune: ");
-            Console.Write(retuned ? "in range" : "OUT OF RANGE after correction");
+            Console.Write(retuned ? "in range" : "OUT OF RANGE, count left as calibrated");
             // What each 100 ms window saw: a shortfall that varies from round
             // to round is lost ticks, a steady one is a clock off by a factor.
+            // The fourth number is the window after a correction, 0 if none.
             Console.Write(" (ticks per round:");
-            for (uint round = 0; round < 3; round++)
+            for (uint round = 0; round < 4; round++)
             {
                 Console.Write(" ");
                 Console.WriteInt((int)OS.Hal.Apic.LocalApic.LastRetuneObserved[round]);

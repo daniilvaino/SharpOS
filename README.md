@@ -111,7 +111,7 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | `[ModuleInitializer]` | ✅ | ✅ | ✅ |  |
 | `yield return` (Roslyn state machine) | ✅ | ✅ | ✅ | |
 | `async/await` | ✅ | ✅ | ✅ | свои `TaskAwaiter` / `AsyncTaskMethodBuilder` в std. Продолжение исполняется на потоке, завершившем ожидание: контекст синхронизации не захватывается |
-| `Task.Run`, `Task.Delay` | ✅ | ✅ | ✅ | не планировщик: задача = поток плюс ожидание, пула потоков нет. В приложениях потоки через таблицу служб (ABI v3) |
+| `Task.Run`, `Task.Delay` | ✅ | ✅ | ✅ | не планировщик, но с пулом потоков (step174); ожидания блокируются в ядре (`WaitOnAddress`), не опрос. В приложениях потоки через таблицу служб (ABI v3) и умирают вместе с приложением |
 | `ThreadPool.QueueUserWorkItem` | ⏳ | ⏳ | ✅ | |
 | Array covariance / `stelem.ref` | 🟡 | 🟡 | ✅ | в AOT `RhpStelemRef` **skipped все checks** (null/bounds/covariance) - wrong-type store даёт silent UB вместо `ArrayTypeMismatchException`. Монотипичный stelem работает корректно |
 | Generic sharing (USG - `__Canon`) | ✅ | ✅ | ✅ |  |

@@ -218,6 +218,7 @@ namespace OS.Kernel.Process
             ProcessManager.SetCurrent(ref processImage, ref loadedImage);
             bool jumpOk = false;
             int returnExitCode = 0;
+            uint previousGeneration = OS.Kernel.Threading.Scheduler.EnterApp(out uint appGeneration);
             try
             {
                 jumpOk = JumpStub.Run(
@@ -229,6 +230,7 @@ namespace OS.Kernel.Process
             }
             finally
             {
+                AppServiceBuilder.EndAppRun(appGeneration, previousGeneration);
                 ProcessManager.ClearCurrent();
             }
 

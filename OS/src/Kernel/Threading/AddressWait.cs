@@ -11,17 +11,15 @@
     //     - If memcmp(addr, cmpAddr, size) != 0 -> return immediately.
     //     - Otherwise link the current thread into the bucket for `addr`
     //       and yield. On wake (WakeByAddress*), return.
-    //     - timeoutMs == INFINITE (-1) -> wait indefinitely. Finite ms
-    //       not yet supported (would need TimerQueue cancel-on-wake);
-    //       degrade to infinite.
+    //     - timeoutMs == INFINITE (-1) -> wait indefinitely; finite -> also
+    //       on the timer queue, false when the deadline wins; 0 -> probe.
     //   WakeByAddressSingle(addr):
     //     - Wake the first thread parked on this exact `addr`.
     //   WakeByAddressAll(addr):
     //     - Wake every thread parked on this `addr`.
     //
-    // Single-CPU cooperative -- any Wait/Wake sequence is by construction
-    // serialised across threads on this CPU. No locks needed today. SMP
-    // would need per-bucket spinlocks.
+    // Single CPU: preemption is the only concurrency, so the bucket edits
+    // run with it suppressed. SMP would need per-bucket spinlocks.
     //
     // Storage: 64-bucket hash table keyed by (addr >> 3) & 63 (drop low 3
     // bits since most addresses are 8-aligned; spreads better than raw
@@ -61,71 +59,105 @@
             return true;
         }
 
-        // Returns true on signal-driven wake (or no-wait fast path),
-        // false on timeout. timeoutMs == 0xFFFFFFFF means infinite.
-        // Finite timeouts use a HPET-deadline yield-poll on the value at
-        // `addr` (same pattern as ThreadStubs.WaitForSingleObject for
-        // Event/Semaphore): re-check memcmp on every Yield, return false
-        // when deadline passes. Less efficient than a real composite
-        // address+timer wait, but it works without needing cancel-on-wake
-        // plumbing through WakeByAddress*. SP1-class composite wait is a
-        // future Phase F task.
+        // Returns true on a wake (or when the value already differs), false
+        // on timeout. timeoutMs == 0xFFFFFFFF means infinite, 0 is a probe.
+        //
+        // Comparing the value and joining the bucket are ONE operation, the
+        // same as in Event.Wait and Semaphore.WaitUntil: split by a thread
+        // switch, a waker can change the value and wake an empty bucket in
+        // between, and this thread then sleeps on a value that has already
+        // changed, with nobody left to wake it.
+        //
+        // A finite wait parks on the bucket AND on the timer queue, and on
+        // return works out which woke it. It used to re-read the value in a
+        // Yield loop instead, which kept the waiter in the round-robin and
+        // spent its slices reading the clock (see Semaphore.WaitUntil).
         public static bool WaitOnAddress(void* addr, void* cmpAddr, uint size, uint timeoutMs)
         {
             if (addr == null || cmpAddr == null || size == 0) return true;
             if (s_buckets == null) return true;
 
-            // No-wait fast path: the value already differs.
-            if (!MemEq(addr, cmpAddr, size))
-                return true;
+            if (timeoutMs == 0)
+                return !MemEq(addr, cmpAddr, size);
 
             Thread? curr = Scheduler.Current;
             if (curr == null) return true;
 
-            bool infinite = (timeoutMs == 0xFFFFFFFFu);
-            if (infinite)
+            ulong freq = OS.Hal.Timer.Hpet.FrequencyHz;
+            bool timed = timeoutMs != 0xFFFFFFFFu && freq != 0;   // no HPET: wait without a deadline
+
+            Preemption.Suppress();
+
+            if (!MemEq(addr, cmpAddr, size))
             {
-                // Infinite — park on bucket and wait for WakeByAddress*.
-                int b = BucketOf(addr);
-                curr.Wait.Address = addr;
-                curr.Wait.Kind = WaitKind.Address;
-                curr.Wait.Next = s_buckets[b];
-                s_buckets[b] = curr;
-                curr.State = ThreadState.Waiting;
-                Scheduler.Yield();
+                Preemption.Allow();
                 return true;
             }
 
-            // Finite — HPET-deadline poll-yield. We don't park on the
-            // bucket because WakeByAddress* doesn't cancel timers; instead
-            // we observe value changes directly by re-reading memory.
-            ulong freq = OS.Hal.Timer.Hpet.FrequencyHz;
-            if (freq == 0)
+            int b = BucketOf(addr);
+            curr.Wait.Address = addr;
+            curr.Wait.Kind = WaitKind.Address;
+            curr.Wait.Signalled = false;
+            curr.Wait.Next = s_buckets[b];
+            s_buckets[b] = curr;
+            curr.State = ThreadState.Waiting;
+
+            if (timed)
             {
-                // No HPET — fall back to infinite wait behaviour.
-                int b = BucketOf(addr);
-                curr.Wait.Address = addr;
-                curr.Wait.Kind = WaitKind.Address;
-                curr.Wait.Next = s_buckets[b];
-                s_buckets[b] = curr;
-                curr.State = ThreadState.Waiting;
-                Scheduler.Yield();
-                return true;
+                ulong ticksPerMs = freq / 1000UL;
+                if (ticksPerMs == 0UL) ticksPerMs = 1UL;
+                TimerQueue.Schedule(curr, OS.Hal.Timer.Hpet.ReadCounter() + (ulong)timeoutMs * ticksPerMs);
             }
-            ulong ticksPerMs = freq / 1000UL;
-            if (ticksPerMs == 0UL) ticksPerMs = 1UL;
-            ulong deadline = OS.Hal.Timer.Hpet.ReadCounter() + (ulong)timeoutMs * ticksPerMs;
-            while (true)
+
+            Preemption.Allow();
+            ulong parked = OS.Kernel.Diagnostics.PerfCounters.Now();
+            Scheduler.Yield();
+            OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                OS.Kernel.Diagnostics.PerfCounter.AddressWaits, OS.Kernel.Diagnostics.PerfCounter.AddressWaitTicks, parked);
+
+            if (!timed) return true;
+
+            // A wake marks the waiter it took off the bucket; anything else is
+            // the deadline, and then we take ourselves off the bucket — nobody
+            // else knows we stopped waiting.
+            Preemption.Suppress();
+            bool signalled = curr.Wait.Signalled;
+            if (signalled) TimerQueue.Cancel(curr);
+            else Unlink(curr, b);
+            Preemption.Allow();
+            return signalled;
+        }
+
+        /// <summary>Takes a thread out of whatever bucket it is parked in (Scheduler.LeaveApp).</summary>
+        public static void Forget(Thread t)
+        {
+            if (s_buckets == null || t.Wait.Address == null) return;
+            Unlink(t, BucketOf(t.Wait.Address));
+        }
+
+        private static void Unlink(Thread t, int b)
+        {
+            Thread? prev = null;
+            Thread? cur = s_buckets![b];
+            while (cur != null && cur != t) { prev = cur; cur = cur.Wait.Next; }
+            if (cur != null)
             {
-                if (!MemEq(addr, cmpAddr, size)) return true;          // signaled
-                if (OS.Hal.Timer.Hpet.ReadCounter() >= deadline) return false;  // timed out
-                Scheduler.Yield();
+                if (prev == null) s_buckets[b] = cur.Wait.Next;
+                else prev.Wait.Next = cur.Wait.Next;
             }
+            t.Wait.Next = null;
+            t.Wait.Address = null;
+            t.Wait.Kind = WaitKind.None;
         }
 
         public static void WakeByAddressSingle(void* addr)
         {
             if (addr == null || s_buckets == null) return;
+            OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.AddressWakes);
+
+            // The other half of the wait's critical section: walking and
+            // editing a bucket while a waiter joins it corrupts the list.
+            Preemption.Suppress();
             int b = BucketOf(addr);
             Thread? prev = null;
             Thread? cur = s_buckets[b];
@@ -135,21 +167,21 @@
                 {
                     if (prev == null) s_buckets[b] = cur.Wait.Next;
                     else prev.Wait.Next = cur.Wait.Next;
-                    Thread woken = cur;
-                    woken.Wait.Next = null;
-                    woken.Wait.Address = null;
-                    woken.Wait.Kind = WaitKind.None;
-                    Scheduler.WakeFromWait(woken);
-                    return;
+                    Wake(cur);
+                    break;
                 }
                 prev = cur;
                 cur = cur.Wait.Next;
             }
+            Preemption.Allow();
         }
 
         public static void WakeByAddressAll(void* addr)
         {
             if (addr == null || s_buckets == null) return;
+            OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.AddressWakes);
+
+            Preemption.Suppress();
             int b = BucketOf(addr);
             Thread? prev = null;
             Thread? cur = s_buckets[b];
@@ -160,10 +192,7 @@
                 {
                     if (prev == null) s_buckets[b] = next;
                     else prev.Wait.Next = next;
-                    cur.Wait.Next = null;
-                    cur.Wait.Address = null;
-                    cur.Wait.Kind = WaitKind.None;
-                    Scheduler.WakeFromWait(cur);
+                    Wake(cur);
                     // prev unchanged (we removed `cur`)
                 }
                 else
@@ -172,6 +201,16 @@
                 }
                 cur = next;
             }
+            Preemption.Allow();
+        }
+
+        private static void Wake(Thread t)
+        {
+            t.Wait.Next = null;
+            t.Wait.Address = null;
+            t.Wait.Kind = WaitKind.None;
+            t.Wait.Signalled = true;
+            Scheduler.WakeFromWait(t);
         }
     }
 }

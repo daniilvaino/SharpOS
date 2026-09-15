@@ -137,6 +137,7 @@ namespace OS.Kernel.Threading
         {
             if (entry == null) return null;
             if (stackBytes == 0) stackBytes = DefaultStackBytes;
+            ulong spawnStarted = OS.Kernel.Diagnostics.PerfCounters.Now();
 
             byte* ctx = AllocateContextBlock();
             if (ctx == null) return null;
@@ -199,6 +200,8 @@ namespace OS.Kernel.Threading
             }
 
             RegisterThread(t);
+            OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                OS.Kernel.Diagnostics.PerfCounter.ThreadSpawns, OS.Kernel.Diagnostics.PerfCounter.ThreadSpawnTicks, spawnStarted);
 
             if (startRunnable)
                 EnqueueRunnable(t);
@@ -216,6 +219,89 @@ namespace OS.Kernel.Threading
             t.State = ThreadState.Runnable;
             EnqueueRunnable(t);
             return true;
+        }
+
+        // ─── app thread lifetime ─────────────────────────────────────────
+
+        private static uint s_nextAppGeneration;
+
+        /// <summary>
+        /// Gives the current thread a new app generation for the app it is
+        /// about to run; returns the generation it replaces, for LeaveApp.
+        /// </summary>
+        public static uint EnterApp(out uint generation)
+        {
+            generation = ++s_nextAppGeneration;
+            Thread? curr = s_current;
+            if (curr == null) return 0;
+            uint previous = curr.AppGeneration;
+            curr.AppGeneration = generation;
+            return previous;
+        }
+
+        /// <summary>
+        /// Ends an app's run: restores the current thread's generation and
+        /// takes every other thread of that run off the machine. Returns how
+        /// many there were.
+        /// </summary>
+        /// <remarks>
+        /// Nothing else would stop them. A thread still running the app's code
+        /// runs it after the image is unmapped; one parked in the kernel —
+        /// a sleep, a wait on an address — is woken later into code that is
+        /// gone, or into the next app, which loads at the same address and can
+        /// wake the very same word. App threads only block in those two
+        /// places, so leaving the run queue, the timer queue and the address
+        /// buckets is leaving everything. Their stacks leak, as every exited
+        /// thread's does today.
+        /// </remarks>
+        public static uint LeaveApp(uint generation, uint previous)
+        {
+            Thread? curr = s_current;
+            if (curr != null) curr.AppGeneration = previous;
+            if (generation == 0) return 0;
+
+            uint discarded = 0;
+            Preemption.Suppress();
+            Thread? t = s_allHead;
+            while (t != null)
+            {
+                Thread? next = t.AllNext;
+                if (t.AppGeneration == generation && t != curr && t.State != ThreadState.Exited)
+                {
+                    RemoveRunnable(t);
+                    TimerQueue.Cancel(t);
+                    AddressWait.Forget(t);
+                    t.State = ThreadState.Exited;
+                    UnregisterThread(t);
+                    discarded++;
+                }
+                t = next;
+            }
+            Preemption.Allow();
+            return discarded;
+        }
+
+        // The CPU has nothing to run: sleep until the next interrupt, which
+        // is the tick unless a device raises one first. Counted and timed —
+        // a wait that ends here waits for the tick, not for its event.
+        private static void HaltUntilInterrupt()
+        {
+            s_idleHalts++;
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
+            X64Asm.StiHlt();
+            OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                OS.Kernel.Diagnostics.PerfCounter.IdleHalts, OS.Kernel.Diagnostics.PerfCounter.IdleHaltTicks, started);
+        }
+
+        private static void RemoveRunnable(Thread t)
+        {
+            Thread? prev = null;
+            Thread? c = s_runnableHead;
+            while (c != null && c != t) { prev = c; c = c.Next; }
+            if (c == null) return;
+            if (prev == null) s_runnableHead = c.Next;
+            else prev.Next = c.Next;
+            c.Next = null;
         }
 
         // Phase E9 -- spawn a thread whose entry has Win32 LPTHREAD_START_ROUTINE
@@ -369,8 +455,7 @@ namespace OS.Kernel.Threading
                 s_switching = false;
                 if (OS.Hal.Apic.LocalApic.IsEnabled)
                 {
-                    s_idleHalts++;
-                    OS.Hal.X64Asm.StiHlt();
+                    HaltUntilInterrupt();
                 }
                 // No CPU-pause hint yet; tight spin. Once IRQ-driven
                 // wake lands this becomes HLT-in-IST and the spin
@@ -399,6 +484,7 @@ namespace OS.Kernel.Threading
             next.State = ThreadState.Running;
             s_current = next;
             s_switchCount++;
+            OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.SchedSwitches);
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
             s_switching = false;
             // CoopSwitch returns here when SOMEBODY switches back to curr.
@@ -415,6 +501,7 @@ namespace OS.Kernel.Threading
         {
             Thread? curr = s_current;
             if (curr == null) return;
+            OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.Sleeps);
             // Sleep(0) is the other half of CoreCLR's spin escalation, and it
             // arrives just as often as SwitchToThread. Same reasoning: idle
             // rather than spin when there is nothing to run.
@@ -439,8 +526,13 @@ namespace OS.Kernel.Threading
             ulong now = Hpet.ReadCounter();
             ulong deadline = now + (ulong)milliseconds * ticksPerMs;
 
+            // Marking the thread waiting and queueing its deadline are one
+            // step. A tick between them switches away a Waiting thread that
+            // is on no queue yet — nothing would ever make it runnable again.
+            Preemption.Suppress();
             curr.State = ThreadState.Waiting;
             TimerQueue.Schedule(curr, deadline);
+            Preemption.Allow();
             Yield();
             // When we return, deadline has expired and someone (Yield's
             // drain or another scheduler tick) put us back on Runnable.
@@ -561,8 +653,7 @@ namespace OS.Kernel.Threading
 
             if (!someoneWorking && OS.Hal.Apic.LocalApic.IsEnabled)
             {
-                s_idleHalts++;
-                OS.Hal.X64Asm.StiHlt();
+                HaltUntilInterrupt();
             }
             else
             {
@@ -593,8 +684,7 @@ namespace OS.Kernel.Threading
                 s_switching = false;
                 if (OS.Hal.Apic.LocalApic.IsEnabled)
                 {
-                    s_idleHalts++;
-                    X64Asm.StiHlt();
+                    HaltUntilInterrupt();
                 }
                 s_switching = true;
 
@@ -611,6 +701,7 @@ namespace OS.Kernel.Threading
             next.State = ThreadState.Running;
             s_current = next;
             s_switchCount++;
+            OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.SchedSwitches);
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
             s_switching = false;
             // Unreachable — curr is Exited, no one re-enters its frame.
