@@ -181,6 +181,23 @@ namespace SharpOS.Std.NoRuntime
             while (true) { }
         }
 
+        // Set when the heap took a new segment, cleared by whoever reads it.
+        //
+        // A flag rather than a callback on purpose: a report printed from
+        // inside the allocator re-enters it through the print path, and the
+        // caller is holding the allocation critical section. The consumer
+        // picks it up from its own idle loop, where printing is free to
+        // allocate.
+        private static bool s_segmentGrew;
+
+        /// <summary>True once per new segment; reading it clears it.</summary>
+        public static bool TakeSegmentGrewFlag()
+        {
+            if (!s_segmentGrew) return false;
+            s_segmentGrew = false;
+            return true;
+        }
+
         public static void* AllocateRaw(uint size)
         {
             if (!s_initialized)
@@ -192,7 +209,17 @@ namespace SharpOS.Std.NoRuntime
             void* allocated = AllocateRawCore(size);
             if (s_leaveCritical != null) s_leaveCritical();
 
-            if (allocated != null) return allocated;
+            if (allocated != null)
+            {
+                // Sampled outside the critical section: the profiler walks the
+                // stack, which is longer than anything the lock is meant to
+                // cover.
+                if (GC.AllocSampleEvery != 0 && GC.s_allocSampleHook != null
+                    && (s_allocCount % GC.AllocSampleEvery) == 0)
+                    GC.s_allocSampleHook(size);
+
+                return allocated;
+            }
 
             // Out of room — collect, then ask once more.
             //
@@ -256,6 +283,7 @@ namespace SharpOS.Std.NoRuntime
                     s_currentSegment->Next = fresh;
                     s_currentSegment = fresh;
                     s_segmentCount++;
+                    s_segmentGrew = true;
 
                     result = (void*)fresh->Current;
                     fresh->Current += (nint)aligned;

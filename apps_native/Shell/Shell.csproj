@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>Shell</IlcSystemModule>
+    <!-- ShellSyntaxTree is built upstream with LangVersion latest. -->
+    <LangVersion>14.0</LangVersion>
+    <!-- Annotations understood, nullable warnings off: the library is
+         null-annotated, our std is not, and turning the warnings on would
+         bury the build log in diagnostics about neither. -->
+    <Nullable>annotations</Nullable>
+  </PropertyGroup>
+
+  <!-- The freestanding win-x64 PE recipe every AOT app uses. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <!-- The bash parser. Sources, not a package: apps are their own system
+       module, so a compiled assembly has no CoreLib to bind against. -->
+  <Import Project="..\..\vendor\ShellSyntaxTree\ShellSyntaxTree.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="Executor.cs" />
+    <Compile Include="LineReader.cs" />
+  </ItemGroup>
+</Project>

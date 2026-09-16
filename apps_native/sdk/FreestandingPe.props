@@ -48,6 +48,12 @@
     <Compile Include="$(MSBuildThisFileDirectory)AppThreads.cs"           Link="sdk\AppThreads.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppConsole.cs"           Link="sdk\AppConsole.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppGC.cs"                Link="sdk\AppGC.cs" />
+    <!-- What fills the app's fixed 64 MiB pool, reported when it takes a new
+         segment. Polled from the idle loop, never from the allocator. -->
+    <Compile Include="$(MSBuildThisFileDirectory)AppHeapCensus.cs"        Link="sdk\AppHeapCensus.cs" />
+    <!-- Key-to-frame time, measured at the main loop's own boundaries. The
+         profiler cannot answer this one: a loop waiting for input is idle. -->
+    <Compile Include="$(MSBuildThisFileDirectory)UiLatency.cs"            Link="sdk\UiLatency.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ByRefAssignRefStub.cs" Link="sdk\ByRefAssignRefStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AtomicStub.cs" Link="sdk\AtomicStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)InterfaceDispatchTrampoline.cs" Link="sdk\InterfaceDispatchTrampoline.cs" />
@@ -93,6 +99,19 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\CodeAnalysisAttributes.cs" Link="std\Runtime\CodeAnalysisAttributes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ByReference.cs"     Link="std\Runtime\ByReference.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Unsafe.cs"          Link="std\Runtime\Unsafe.cs" />
+    <!-- What ILC's `ldtoken` lowering looks up by name in the system module —
+         which for a freestanding app is the app. Needed since apps started
+         using `typeof`, by way of record types. System.Type itself lives in
+         MinimalRuntime.cs beside the other core types. -->
+    <Compile Include="$(MSBuildThisFileDirectory)LdTokenHelpers.cs"        Link="sdk\LdTokenHelpers.cs" />
+    <!-- Marker types the compiler looks up by name. Without IsExternalInit an
+         `init` accessor — and therefore every `record` — fails to compile;
+         apps did without it until one of them vendored a library built out of
+         records. -->
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\CompilerFeatures.cs" Link="std\Runtime\CompilerFeatures.cs" />
+    <!-- Keys are held strongly, not weakly: no weak handles in either
+         collector. See the file's header and limits §8. -->
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ConditionalWeakTable.cs" Link="std\Runtime\ConditionalWeakTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ValueTuple.cs"      Link="std\Runtime\ValueTuple.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Span.cs"            Link="std\Runtime\Span.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ReadOnlySpan.cs"    Link="std\Runtime\ReadOnlySpan.cs" />
@@ -182,6 +201,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\EventHandling.cs" Link="std\EventHandling.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\ComponentModel.cs" Link="std\ComponentModel.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Globalization.cs" Link="std\Globalization.cs" />
+    <!-- Declared for BCL-shaped parse calls; the values are real, nothing
+         honours them. See the file header. -->
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Globalization.NumberStyles.cs" Link="std\Globalization.NumberStyles.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringComparer.cs" Link="std\StringComparer.cs" />
   </ItemGroup>
 

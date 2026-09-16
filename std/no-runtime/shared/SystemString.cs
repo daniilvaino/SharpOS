@@ -308,6 +308,21 @@ namespace System
             return SharpOS.Std.NoRuntime.StringQueries.EndsWith(this, value);
         }
 
+        public bool EndsWith(string value, StringComparison comparisonType)
+        {
+            return SharpOS.Std.NoRuntime.StringQueries.EndsWith(this, value, comparisonType);
+        }
+
+        public int IndexOfAny(char[] anyOf)
+        {
+            return SharpOS.Std.NoRuntime.StringQueries.IndexOfAny(this, anyOf);
+        }
+
+        public int LastIndexOf(char value, int startIndex)
+        {
+            return SharpOS.Std.NoRuntime.StringQueries.LastIndexOf(this, value, startIndex);
+        }
+
         // ---- Transforms (stage 4) ----
 
         public string Substring(int startIndex)

@@ -195,7 +195,7 @@ namespace OS.Kernel.Diagnostics
         // code included — and its RVA there. By address range: only the
         // kernel's own managed code has GcInfo, and classifying by that put
         // every CoreCLR function under "JIT output".
-        private static bool TryKernelRva(ulong rip, out ulong rva)
+        public static bool TryKernelRva(ulong rip, out ulong rva)
         {
             rva = 0;
             byte* image = CoffRuntimeFunctionTable.ImageBase;
@@ -311,6 +311,24 @@ namespace OS.Kernel.Diagnostics
             if (sleptThisWindow >= (ReportEvery - (ReportEvery / 10))) return;
 
             Report();
+
+            // Start a fresh window, so the next report describes the next ten
+            // seconds instead of the whole boot.
+            //
+            // Cumulative was blinding. A machine that idled for twenty minutes
+            // and then started spinning kept reporting the idle: 943 281 hits
+            // in the halt loop, against which nothing new could place. The
+            // table holds 8192 entries but probes only 16 from each hash, so a
+            // new address lands in a full run, evicts the coldest of sixteen,
+            // and is evicted in turn before it can accumulate — eviction ran
+            // at one per sample while the top three never moved.
+            //
+            // The cost is per-scope profiles: a run longer than one window now
+            // reports only its last window rather than all of it. Worth it —
+            // every app in the battery finishes inside ten seconds, and the
+            // runs that do not are exactly the ones whose CURRENT behaviour is
+            // the question.
+            if (Probes.SamplerRollingWindow) BeginWindow();
         }
 
         public static void Report()

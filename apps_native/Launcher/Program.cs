@@ -401,11 +401,10 @@ namespace Launcher
                 }
                 else
                 {
-                    SetStatus("Nested launch refused.");
+                    SetStatus("Nesting limit reached.");
                     MessageBox.ErrorQuery("Cannot run",
-                        "The kernel allows one level of nested launching, and\n"
-                        + "this launcher was itself started by another one.\n\n"
-                        + "Replacing the old launcher removes the nesting.", "OK");
+                        "The chain of programs is as deep as the kernel allows.\n"
+                        + "Leave one of the programs above this one first.", "OK");
                 }
             }
             else

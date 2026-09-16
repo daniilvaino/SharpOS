@@ -106,5 +106,25 @@ namespace OS.Hal.Usb
             slotId = 0;
             return false;
         }
+
+        public static bool TryFindCdcAcm(out XhciController controller, out uint slotId)
+        {
+            for (int i = 0; i < s_count; i++)
+            {
+                XhciController hc = s_controllers[i];
+                for (int d = 0; d < hc.DeviceCount; d++)
+                {
+                    uint slot = hc.SlotIdAt(d);
+                    if (!hc.IsCdcAcm(slot)) continue;
+
+                    controller = hc;
+                    slotId = slot;
+                    return true;
+                }
+            }
+            controller = null;
+            slotId = 0;
+            return false;
+        }
     }
 }

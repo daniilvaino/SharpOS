@@ -48,6 +48,11 @@ namespace OS.Kernel.Threading
             // give us here: the scheduler owns the threads, so it is the one
             // that can name the running one.
             ManagedThreadIds.Install(&CurrentThreadId);
+
+            // Monitor's side tables, built here rather than on first lock:
+            // this runs before there is a second thread, and building them
+            // under contention is what made `lock` fault on a null array.
+            Monitor.EnsureTables();
         }
 
         private static int CurrentThreadId()

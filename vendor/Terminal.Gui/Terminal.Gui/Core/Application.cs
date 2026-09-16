@@ -1266,6 +1266,19 @@ namespace Terminal.Gui {
 
 			bool IsTopNeedsDisplay (Toplevel toplevel)
 			{
+				// SharpOS change: null guard on both operands.
+				//
+				// Top is set to null on every exit path (three sites in this
+				// file), and a main-loop iteration that lands after one of them
+				// dereferenced it. Entering and leaving nested applications in
+				// quick succession hits that window and kills the process with
+				// an unhandled null reference — one frame, in here.
+				//
+				// Nothing to display when there is no top, so false is the
+				// answer rather than a rarer crash.
+				if (toplevel == null || Top == null)
+					return false;
+
 				if (toplevel != Top && !toplevel.Modal
 					&& (!Top.NeedDisplay.IsEmpty || Top.ChildNeedsDisplay || Top.LayoutNeeded)) {
 

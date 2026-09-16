@@ -38,6 +38,56 @@ namespace OS.Kernel.Memory
             var markRoot = (delegate* unmanaged<nuint, void>)markCallback;
             KernelGcPreciseWalk.RunFromCurrentFrame(markRoot);
             KernelGC.MarkOtherThreadStacks(markRoot);
+            Report();
+        }
+
+        // The walk's own account of itself, said where the app's collector
+        // says its numbers — the two halves of one collection belong on one
+        // screen. Every counter here is a place the walk stops without
+        // saying so: a frame cap, a frame whose PC falls outside any
+        // interruptible range, a slot table wider than the buffer. A stack
+        // that ended because it ran out and a stack that ended because we
+        // gave up are indistinguishable without them.
+        private static void Report()
+        {
+            Put("[appwalk] frames=");
+            PutInt(KernelGcPreciseWalk.LastFramesWalked);
+            Put(" roots=");
+            PutInt(KernelGcPreciseWalk.LastRootsMarked);
+            Put(" unresolved=");
+            PutInt(KernelGcPreciseWalk.LastFramesUnresolved);
+            Put(" outofrange=");
+            PutInt(KernelGcPreciseWalk.LastFramesSkippedOutOfRange);
+            Put(" slotoverflow=");
+            PutInt(KernelGcPreciseWalk.LastFramesSlotOverflow);
+            Put(" capped=");
+            PutInt(KernelGcPreciseWalk.LastFrameCapHits);
+            Put("\n");
+        }
+
+        // Digits straight to the channel: this runs inside the app's
+        // collection, and a formatter that allocates would ask a heap in the
+        // middle of the one question it must not ask.
+        private static void PutInt(int value)
+        {
+            uint v = (uint)value;
+            char* digits = stackalloc char[10];
+            int count = 0;
+            do
+            {
+                digits[count++] = (char)('0' + (int)(v % 10));
+                v /= 10;
+            }
+            while (v != 0);
+
+            while (count > 0)
+                OS.Hal.Platform.WriteChar(digits[--count], OS.Hal.OutputChannel.Perf);
+        }
+
+        private static void Put(string text)
+        {
+            for (int i = 0; i < text.Length; i++)
+                OS.Hal.Platform.WriteChar(text[i], OS.Hal.OutputChannel.Perf);
         }
     }
 }

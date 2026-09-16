@@ -153,6 +153,38 @@ namespace System
         // which generally prefers CRLF (same as Windows). Stringbuilder's
         // AppendLine() and similar paths read this.
         public static string NewLine => "\r\n";
+
+        /// <summary>
+        /// Always the root. There is no per-process current directory here:
+        /// the file system has one namespace and nothing tracks a cursor into
+        /// it, so relative paths are resolved by whoever owns the notion of
+        /// "where I am" — a shell keeps its own.
+        /// </summary>
+        public static string CurrentDirectory
+        {
+            get => "\\";
+            set { }
+        }
+
+        /// <summary>
+        /// Empty for every folder. The concept is a user profile's worth of
+        /// well-known locations, and this system has neither users nor
+        /// profiles; an invented path would read as real to callers that
+        /// expand `~` against it.
+        /// </summary>
+        public static string GetFolderPath(SpecialFolder folder) => "";
+
+        /// <summary>Declared so callers compile; see GetFolderPath.</summary>
+        public enum SpecialFolder
+        {
+            Desktop = 0,
+            Personal = 5,
+            MyDocuments = 5,
+            ApplicationData = 26,
+            LocalApplicationData = 28,
+            CommonApplicationData = 35,
+            UserProfile = 40,
+        }
     }
 
     // Exception types live in Exception.cs / Exceptions.Derived.cs as of

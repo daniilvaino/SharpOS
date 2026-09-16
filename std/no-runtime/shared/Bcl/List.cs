@@ -205,6 +205,34 @@ namespace System.Collections.Generic
         // validation, which our ThrowHelpers cannot report anyway.
         public void AddRange(IEnumerable<T> collection) => InsertRange(_size, collection);
 
+        // Straight onto Array.Sort (introsort, step115) over the live backing
+        // array, bounded by _size so the unused tail stays out of it. Through
+        // the comparer overload rather than the bare one: that one constrains
+        // T to IComparable<T>, and a List does not.
+        public void Sort() => Array.Sort(_items, 0, _size, Comparer<T>.Default);
+
+        public void Sort(IComparer<T> comparer) => Array.Sort(_items, 0, _size, comparer);
+
+        public void Sort(int index, int count, IComparer<T> comparer)
+        {
+            if (index < 0 || count < 0 || index + count > _size)
+                throw new ArgumentOutOfRangeException("index");
+            Array.Sort(_items, index, count, comparer);
+        }
+
+        public void Sort(Comparison<T> comparison)
+        {
+            if (comparison == null) throw new ArgumentNullException("comparison");
+            if (_size <= 1) return;
+
+            // Array.Sort(T[], Comparison<T>) sorts the whole array, and ours is
+            // longer than the list. Sort a right-sized copy and put it back.
+            T[] window = new T[_size];
+            Array.Copy(_items, 0, window, 0, _size);
+            Array.Sort(window, comparison);
+            Array.Copy(window, 0, _items, 0, _size);
+        }
+
         public void InsertRange(int index, IEnumerable<T> collection)
         {
             if (collection is ICollection<T> c)
@@ -314,8 +342,19 @@ namespace System.Collections.Generic
 
         public System.Collections.ObjectModel.ReadOnlyCollection<T> AsReadOnly() => new System.Collections.ObjectModel.ReadOnlyCollection<T>(this);
 
+        // Validated like the BCL's, and it was not: a caller asking for a
+        // range past the end read whatever followed the backing array, which
+        // surfaces as an access violation in the caller's caller rather than
+        // as the argument error it is. Terminal.Gui's WordWrap does exactly
+        // that on some inputs, and the crash named List.GetRange without a
+        // word about who asked for what.
         public List<T> GetRange(int index, int count)
         {
+            if (index < 0) throw new ArgumentOutOfRangeException(nameof(index));
+            if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+            if (_size - index < count)
+                throw new ArgumentException("index and count do not name a range within the list");
+
             var list = new List<T>(count);
             for (int i = 0; i < count; i++) list.Add(_items[index + i]);
             return list;
@@ -323,7 +362,12 @@ namespace System.Collections.Generic
 
         public void RemoveRange(int index, int count)
         {
-            if (count <= 0) return;
+            if (index < 0) throw new ArgumentOutOfRangeException(nameof(index));
+            if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+            if (_size - index < count)
+                throw new ArgumentException("index and count do not name a range within the list");
+
+            if (count == 0) return;
 
             _size -= count;
             for (int i = index; i < _size; i++)

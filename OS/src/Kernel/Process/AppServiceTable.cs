@@ -170,6 +170,13 @@
         // apps; zero is the "not published" answer.
         public ulong WaitOnAddressAddress;
         public ulong WakeByAddressAllAddress;
+
+        // Diagnostics that must not reach the screen (step175): heap censuses
+        // and the like, from an application drawing a full-screen interface.
+        // Ordinary output and error output both paint, so a report printed
+        // through them lands in the middle of the interface it is describing.
+        // This one goes where measurements go — the serial port and the log.
+        public ulong WriteDiagnosticAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

@@ -29,6 +29,17 @@ namespace SharpOS.Std.NoRuntime
         // fall back to the best-effort scan (apps without the trampoline).
         public static delegate*<void> s_collectHook;
 
+        // Allocation-sampling hook: called with the requested size on every
+        // AllocSampleEvery-th successful allocation, so a profiler can look at
+        // the stack and see who asked. Null and zero by default — apps and
+        // ordinary kernel runs pay one comparison per allocation.
+        //
+        // Triggered by allocation rather than by the timer on purpose: small
+        // allocations are cheap, so a CPU profile of a machine that allocates
+        // steadily while idle shows the idling, not the allocating.
+        public static delegate*<uint, void> s_allocSampleHook;
+        public static uint AllocSampleEvery;
+
 
         // When true, GcSweep.Run() is a no-op: unmarked objects are NOT
         // converted to free markers and the freelist is not rebuilt, so no

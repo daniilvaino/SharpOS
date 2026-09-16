@@ -14,6 +14,11 @@
     [switch]$SkipCoreClr,
     [switch]$NoRun,
     [switch]$Stop,
+    # Stage apps_native\Shell\autorun.sh as \apps\AUTORUN.SH, which makes the
+    # kernel start the shell instead of the launcher: it runs the script and
+    # the machine powers itself off. That is the unattended shape the test rig
+    # needs; without the switch a build boots to the launcher as before.
+    [switch]$Autorun,
     # Trace faults instead of letting the machine die quietly. When output
     # stops mid-line and nothing follows, a triple fault and a hang look
     # exactly alike from the serial port; this tells them apart in one run.
@@ -547,7 +552,8 @@ $peApps = @(
     @{ Src = "apps_native\GPL_AHEAD_WARNING_DOOM_managed\bin\Release\out-win-x64\DoomApp.exe"; Dest = "DOOM.EXE" },
     @{ Src = "apps_native\TriCNES\bin\Release\out-win-x64\TriCNESApp.exe";        Dest = "TRICNES.EXE" },
     @{ Src = "apps_native\Fami\bin\Release\out-win-x64\FamiApp.exe";              Dest = "FAMI.EXE" },
-    @{ Src = "apps_native\Launcher\bin\Release\out-win-x64\Launcher.exe";         Dest = "LAUNCHER.EXE" }
+    @{ Src = "apps_native\Launcher\bin\Release\out-win-x64\Launcher.exe";         Dest = "LAUNCHER.EXE" },
+    @{ Src = "apps_native\Shell\bin\Release\out-win-x64\Shell.exe";               Dest = "SHELL.EXE" }
 )
 foreach ($peApp in $peApps) {
     $peSrc = Join-Path $repoRoot $peApp.Src
@@ -564,6 +570,24 @@ foreach ($peApp in $peApps) {
     if (Test-Path -LiteralPath "$peDst.abi") {
         Remove-Item -LiteralPath "$peDst.abi" -Force
     }
+}
+
+# The battery, when this build is meant to run by itself. Its presence at
+# \apps\AUTORUN.SH is the whole switch: the kernel sees it and starts
+# SHELL.EXE instead of LAUNCHER.EXE. Removed when the switch is off, so a
+# normal build after an -Autorun one does not keep booting headless.
+$autorunDst = Join-Path $espAppsDir "AUTORUN.SH"
+if ($Autorun) {
+    $autorunSrc = Join-Path $repoRoot "apps_native\Shell\autorun.sh"
+    if (Test-Path -LiteralPath $autorunSrc) {
+        Copy-Item -LiteralPath $autorunSrc -Destination $autorunDst -Force
+        Write-Host "Prepared autorun script: $autorunDst"
+    } else {
+        Write-Host "Autorun requested but $autorunSrc is missing — skipping"
+    }
+} elseif (Test-Path -LiteralPath $autorunDst) {
+    Remove-Item -LiteralPath $autorunDst -Force
+    Write-Host "Removed stale autorun script: $autorunDst"
 }
 
 # Payload staging. Game data — IWADs, cartridges — lives in payloads\ at the

@@ -59,6 +59,25 @@ namespace OS.Hal
         private static bool s_earlyOverflowed;
         private static bool s_earlyDrained;
 
+        // Second sink: the same text out a USB serial port.
+        //
+        // The file on the stick only becomes readable once the machine is
+        // switched off and the medium handed back. On the test rig the other
+        // end of this port is the phone, which can read the run as it happens
+        // — and, when the machine hangs, still has everything up to the hang.
+        private const int SerialSize = 512;
+
+        private struct SerialBuffer
+        {
+            public fixed byte Data[SerialSize];
+        }
+
+        private static SerialBuffer s_serial;
+        private static int s_serialUsed;
+        private static bool s_serialReady;
+        private static bool s_inSerial;
+        private static bool s_drainingEarly;
+
         public static bool IsReady => s_ready;
 
         // 0 none, 1 could not create, 2 created but fragmented.
@@ -121,6 +140,10 @@ namespace OS.Hal
             if (s_earlyDrained) return;
             s_earlyDrained = true;
 
+            // The serial sink replays the same buffer itself when it attaches;
+            // without this it would receive the early boot twice.
+            s_drainingEarly = true;
+
             const string banner = "===== SharpOS boot log start =====\n";
             for (int i = 0; i < banner.Length; i++) Putc(banner[i]);
 
@@ -136,6 +159,56 @@ namespace OS.Hal
                 const string note = "[bootlog] early buffer overflowed - lines lost here\n";
                 for (int i = 0; i < note.Length; i++) Putc(note[i]);
             }
+
+            s_drainingEarly = false;
+        }
+
+        /// <summary>
+        /// Start mirroring to a USB serial port and replay the boot so far.
+        /// Called once the CDC-ACM device is configured; before that there is
+        /// nowhere for the text to go.
+        /// </summary>
+        public static void AttachSerial()
+        {
+            if (s_serialReady || !Usb.UsbCdcAcm.IsPresent) return;
+            s_serialReady = true;
+
+            const string banner = "===== SharpOS boot log start =====\n";
+            for (int i = 0; i < banner.Length; i++) SerialPutc(banner[i]);
+
+            for (int i = 0; i < s_earlyUsed; i++)
+            {
+                char c;
+                fixed (byte* p = s_early.Data) c = (char)p[i];
+                SerialPutc(c);
+            }
+            SerialFlush();
+        }
+
+        private static void SerialPutc(char ch)
+        {
+            if (!s_serialReady || s_inSerial || s_drainingEarly) return;
+
+            if (s_serialUsed < SerialSize)
+            {
+                fixed (byte* p = s_serial.Data) p[s_serialUsed++] = (byte)ch;
+            }
+
+            if (ch == '\n' || s_serialUsed >= SerialSize) SerialFlush();
+        }
+
+        private static void SerialFlush()
+        {
+            if (!s_serialReady || s_inSerial || s_serialUsed == 0) return;
+
+            s_inSerial = true;
+            bool ok;
+            fixed (byte* p = s_serial.Data) ok = Usb.UsbCdcAcm.Write(p, s_serialUsed);
+            s_serialUsed = 0;
+            // The other end went away: stop trying rather than pay a timeout
+            // per line for the rest of the boot.
+            if (!ok) s_serialReady = false;
+            s_inSerial = false;
         }
 
         /// <summary>Records one character. Called from Platform.WriteChar, so
@@ -143,6 +216,10 @@ namespace OS.Hal
         public static void Putc(char ch)
         {
             if (ch == '\r') return;                  // the file wants bare LF
+
+            // Independent of the disk sink: the port is usually up first, and
+            // stays up when the filesystem does not.
+            SerialPutc(ch);
 
             if (!s_ready)
             {

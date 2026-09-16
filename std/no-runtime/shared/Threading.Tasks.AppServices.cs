@@ -46,6 +46,11 @@ namespace SharpOS.AppSdk
             if (AppThreads.CurrentThreadId() != 0)
                 ManagedThreadIds.Install(&CurrentThreadId);
 
+            // Monitor's side tables, built here rather than on first lock:
+            // this runs before the app has a second thread, and building them
+            // under contention is what made `lock` fault on a null array.
+            Monitor.EnsureTables();
+
             return true;
         }
 

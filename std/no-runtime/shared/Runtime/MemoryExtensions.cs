@@ -212,6 +212,46 @@ namespace System
                 ref Unsafe.Add(ref MemoryMarshal.GetReference(span), extra), value.Length,
                 ref MemoryMarshal.GetReference(value), value.Length);
         }
+
+        // The char overloads that take a comparison. std is Ordinal-only by
+        // design, so the culture-aware values fall back to the ordinal path
+        // rather than pretending to a collation we do not have — the same cut
+        // StringQueries makes for the string versions.
+        public static bool StartsWith(this ReadOnlySpan<char> span, ReadOnlySpan<char> value,
+                                      StringComparison comparisonType)
+        {
+            if (value.Length > span.Length) return false;
+            return EqualsCore(span.Slice(0, value.Length), value, IgnoresCase(comparisonType));
+        }
+
+        public static bool EndsWith(this ReadOnlySpan<char> span, ReadOnlySpan<char> value,
+                                    StringComparison comparisonType)
+        {
+            int extra = span.Length - value.Length;
+            if (extra < 0) return false;
+            return EqualsCore(span.Slice(extra, value.Length), value, IgnoresCase(comparisonType));
+        }
+
+        private static bool IgnoresCase(StringComparison comparisonType)
+            => comparisonType == StringComparison.OrdinalIgnoreCase
+               || comparisonType == StringComparison.CurrentCultureIgnoreCase
+               || comparisonType == StringComparison.InvariantCultureIgnoreCase;
+
+        private static bool EqualsCore(ReadOnlySpan<char> left, ReadOnlySpan<char> right, bool ignoreCase)
+        {
+            if (left.Length != right.Length) return false;
+
+            for (int i = 0; i < left.Length; i++)
+            {
+                char a = left[i];
+                char b = right[i];
+                if (a == b) continue;
+                if (!ignoreCase) return false;
+                if (SharpOS.Std.NoRuntime.CharHelpers.ToUpperInvariant(a)
+                    != SharpOS.Std.NoRuntime.CharHelpers.ToUpperInvariant(b)) return false;
+            }
+            return true;
+        }
     }
 
     // Helpers specific to string storage. Kept separate from SpanHelpers

@@ -31,6 +31,25 @@ namespace OS.Kernel.Memory
         public static int LastRootsMarked;
         public static int LastFramesUnresolved;
 
+        // Where the walk gives up quietly. Each of these is a frame whose
+        // roots nobody reports and nobody misses until the sweep frees them,
+        // so they are counted rather than left to inference: a stack that
+        // ends at the frame cap and a stack that ends at its bottom look
+        // identical from the outside.
+        public static int LastFramesSkippedOutOfRange;
+        public static int LastFramesSlotOverflow;
+        public static int LastFrameCapHits;
+
+        public static void ResetTelemetry()
+        {
+            LastFramesWalked = 0;
+            LastRootsMarked = 0;
+            LastFramesUnresolved = 0;
+            LastFramesSkippedOutOfRange = 0;
+            LastFramesSlotOverflow = 0;
+            LastFrameCapHits = 0;
+        }
+
         public static bool IsAvailable =>
             GcContextSpill.IsInitialized
             && CoffRuntimeFunctionTable.ImageBase != null;
@@ -45,17 +64,23 @@ namespace OS.Kernel.Memory
         // sweep; they borrow the walker, not the memory.
         private static delegate* unmanaged<nuint, void> s_markRoot;
 
+        // Whether the topmost frame's Rip is an instruction about to execute
+        // or an address to return to. Only an interrupt captures the former;
+        // a spilled context and a parked thread both hand us a return
+        // address, and a return address needs the same one-byte step back
+        // into the call that every frame below it gets.
+        private static bool s_topFrameIsActive;
+
         public static void RunFromCurrentFrame() => RunFromCurrentFrame(null);
 
         public static void RunFromCurrentFrame(delegate* unmanaged<nuint, void> markRoot)
         {
-            LastFramesWalked = 0;
-            LastRootsMarked = 0;
-            LastFramesUnresolved = 0;
+            ResetTelemetry();
 
             if (!IsAvailable) return;
 
             s_markRoot = markRoot;
+            s_topFrameIsActive = false;
             Context ctx = default;
             GcContextSpill.Invoke(&ctx, &WalkCallback);
             s_markRoot = null;
@@ -107,6 +132,7 @@ namespace OS.Kernel.Memory
             if (ctx.Rip == 0) return;
 
             s_markRoot = markRoot;
+            s_topFrameIsActive = false;
             WalkFrames(&ctx);
             s_markRoot = null;
         }
@@ -156,6 +182,7 @@ namespace OS.Kernel.Memory
             if (ctx.Rip == 0 || ctx.Rsp == 0) return;
 
             s_markRoot = markRoot;
+            s_topFrameIsActive = true;
             WalkFrames(&ctx);
             s_markRoot = null;
         }
@@ -173,8 +200,14 @@ namespace OS.Kernel.Memory
             // Cap protects against runaway loops if unwind glitches.
             const int MaxFrames = 64;
 
-            for (int frameIdx = 0; frameIdx < MaxFrames; frameIdx++)
+            for (int frameIdx = 0; ; frameIdx++)
             {
+                if (frameIdx >= MaxFrames)
+                {
+                    LastFrameCapHits++;
+                    return;
+                }
+
                 byte* rip = (byte*)ctx->Rip;
                 if (!CoffMethodGcInfo.TryResolve(rip, out CoffMethodGcInfo.Result r))
                 {
@@ -189,7 +222,8 @@ namespace OS.Kernel.Memory
                 }
 
                 LastFramesWalked++;
-                MarkOneFrame(ctx, in r, gcInfoVersion);
+                MarkOneFrame(ctx, in r, gcInfoVersion,
+                             isActiveFrame: frameIdx == 0 && s_topFrameIsActive);
 
                 // Image base PER FRAME, not one fixed base for the whole walk.
                 // A stack that crosses from an app into the kernel (or back)
@@ -213,7 +247,8 @@ namespace OS.Kernel.Memory
             }
         }
 
-        private static void MarkOneFrame(Context* ctx, in CoffMethodGcInfo.Result r, int gcInfoVersion)
+        private static void MarkOneFrame(Context* ctx, in CoffMethodGcInfo.Result r, int gcInfoVersion,
+                                         bool isActiveFrame)
         {
             CoffGcInfoDecoder.DecodeHeader(r.GcInfo, gcInfoVersion, out CoffGcInfoHeader hdr);
 
@@ -224,12 +259,22 @@ namespace OS.Kernel.Memory
             CoffGcInfoDecoder.DecodeFullSlotTable(r.GcInfo, afterIr, slots, out CoffGcSlotTable counts);
 
             if (counts.NumSlots == 0) return;
+            if ((int)counts.NumSlots > slots.Length) LastFramesSlotOverflow++;
 
             int trackedCount = (int)counts.NumTracked;
             // stackalloc cannot be 0-sized — use 1 as floor; we just won't read it.
             System.Span<bool> live = stackalloc bool[trackedCount > 0 ? trackedCount : 1];
+            // Every frame but the innermost is stopped at a return address,
+            // and a return address is not where the call site was recorded:
+            // the encoder indexes call sites by an offset INSIDE the call
+            // instruction. One byte back lands there, and the next call's
+            // live set — a different one — is what the unadjusted offset
+            // would have found. NativeAOT's own code manager does exactly
+            // this and says the encoder depends on it.
+            uint codeOffset = isActiveFrame ? r.CodeOffset : r.CodeOffset - 1;
+
             bool inRange = CoffGcInfoDecoder.EnumerateLiveSlotsAtPc(
-                r.GcInfo, gcInfoVersion, r.CodeOffset, live);
+                r.GcInfo, gcInfoVersion, codeOffset, live);
 
             // When PC is outside any interruptible range we're in a
             // prologue/epilogue transition window. Slot table may name
@@ -238,7 +283,11 @@ namespace OS.Kernel.Memory
             // frame in that case — JIT placed the call site such that
             // GC shouldn't fire there anyway; we just got there as a
             // return PC because the previous frame was inside body.
-            if (!inRange) return;
+            if (!inRange)
+            {
+                LastFramesSkippedOutOfRange++;
+                return;
+            }
 
             for (int i = 0; i < (int)counts.NumSlots && i < slots.Length; i++)
             {

@@ -283,6 +283,14 @@ namespace OS.Kernel.Memory
             Console.WriteUInt(pageCount);
             Log.EndLine();
 
+            // Periodically, what the heap is full OF. Growth alone says only
+            // that it is filling; a machine left at a prompt produced 502 of
+            // these lines and nothing else, which named no culprit. The census
+            // walks the objects and names the types.
+            uint every = OS.Kernel.Diagnostics.Probes.HeapCensusEveryGrowths;
+            if (every != 0 && (s_growCount % every) == 0)
+                GcHeapCensus.Dump(12);
+
             MergeWithPrevious(block);
             return true;
         }

@@ -83,6 +83,63 @@
             WriteUtf8Chunks(text, (delegate* unmanaged<ulong, void>)services->WriteErrorAddress);
         }
 
+        /// <summary>
+        /// Diagnostics for the log, never for the screen.
+        /// </summary>
+        /// <remarks>
+        /// Ordinary output and error output both paint. An application drawing
+        /// a full-screen interface therefore cannot report through either —
+        /// the report lands in the middle of what it describes, which is what
+        /// a heap census from the launcher did. This goes where measurements
+        /// go: the serial port and the log.
+        ///
+        /// Silent on a kernel that does not publish it. Deliberately NOT
+        /// falling back to ordinary output: the whole point is not painting,
+        /// and a fallback that paints would defeat it exactly where it matters.
+        /// </remarks>
+        public static void WriteDiagnostic(string text)
+        {
+            if (text == null || text.Length == 0)
+                return;
+
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null || services->WriteDiagnosticAddress == 0)
+                return;
+
+            WriteUtf8Chunks(text, (delegate* unmanaged<ulong, void>)services->WriteDiagnosticAddress);
+        }
+
+        /// <summary>
+        /// The same, from a buffer the caller already has: no string, no
+        /// allocation.
+        /// </summary>
+        /// <remarks>
+        /// For reports that must come out at the moment memory ran out — the
+        /// collector runs from inside the allocator, and composing a string
+        /// there would ask the allocator that just failed, and recurse.
+        /// </remarks>
+        public static void WriteDiagnostic(byte* utf8)
+        {
+            if (utf8 == null) return;
+
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null || services->WriteDiagnosticAddress == 0)
+                return;
+
+            var write = (delegate* unmanaged<ulong, void>)services->WriteDiagnosticAddress;
+            write((ulong)utf8);
+        }
+
+        /// <summary>Whether the kernel takes diagnostics that do not paint.</summary>
+        public static bool HasDiagnosticStream
+        {
+            get
+            {
+                AppServiceTable* services = AppRuntime.Services;
+                return services != null && services->WriteDiagnosticAddress != 0;
+            }
+        }
+
         /// <summary>Whether the kernel keeps an error stream apart from output.</summary>
         public static bool HasErrorStream
         {

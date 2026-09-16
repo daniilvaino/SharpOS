@@ -32,6 +32,13 @@ namespace OS.Kernel.Process
         // suspended context, so anything it starts would otherwise be refused.
         private const string LauncherPath = "\\apps\\LAUNCHER.EXE";
 
+        // A script on the volume means the machine has work to do with nobody
+        // at it: the shell runs the lines and exits, and the batch ends the way
+        // it always does — with Shutdown below. This is how the test rig gets a
+        // full run out of a boot without a keypress.
+        private const string ShellPath = "\\apps\\SHELL.EXE";
+        private const string AutorunScriptPath = "\\apps\\AUTORUN.SH";
+
         // It exits cleanly when the user leaves it.
         private const int LauncherExitCodeExpected = 0;
 
@@ -61,7 +68,13 @@ namespace OS.Kernel.Process
 
             // PeLoader flattens, maps and jumps it; WindowsX64 service ABI.
             BootApp launcher = default;
-            launcher.Path = LauncherPath;
+
+            bool unattended = FileSystem.Exists(AutorunScriptPath)
+                              && FileSystem.Exists(ShellPath);
+            if (unattended)
+                DebugLog.Write(LogLevel.Info, "autorun script found: starting the shell, not the launcher");
+
+            launcher.Path = unattended ? ShellPath : LauncherPath;
             // Follows CurrentAbiVersion rather than naming a number: pinned to
             // V2 it kept working after V3 landed, which hid the version
             // mismatch that broke every app launched from the launcher.

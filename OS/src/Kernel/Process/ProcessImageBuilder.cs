@@ -8,8 +8,26 @@ namespace OS.Kernel.Process
     {
         private const ulong PageSize = X64PageTable.PageSize;
         private const uint DefaultStackPages = 8;
-        public const ulong DefaultStackMappedTop = 0x0000004000000000UL;
-        public const ulong NestedStackMappedTop  = 0x0000008000000000UL;
+
+        // One stack region per nesting level, because a parent's stack stays
+        // mapped the whole time its child runs — it is what the kernel is
+        // still executing on. Two fixed addresses were enough while only one
+        // level of nesting existed; a third app down the chain would have
+        // landed on its parent's stack.
+        //
+        // The stride is enormous next to the 32 KiB a stack actually uses, and
+        // deliberately so: these are addresses, not memory, and the distance
+        // makes an overrun fault instead of quietly reaching the neighbour.
+        public const ulong StackRegionStride = 0x0000004000000000UL;
+        public const ulong DefaultStackMappedTop = StackRegionStride;
+
+        /// <summary>
+        /// Stack top for an app at the given nesting depth: 0 is the app the
+        /// kernel starts, each nested launch adds one. Depths 0 and 1 keep the
+        /// addresses they had when they were named constants.
+        /// </summary>
+        public static ulong StackMappedTopForDepth(uint depth)
+            => DefaultStackMappedTop + (ulong)depth * StackRegionStride;
 
         public static bool TryBuild(
             ref LoadedImage loadedImage,

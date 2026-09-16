@@ -19,7 +19,19 @@ namespace XtermSharp {
 	/// that is surfaced via reset
 	/// </remarks>
 	class ReadingBuffer {
-		byte[] putbackBuffer = new byte [0];
+		// SharpOS change: one shared empty array instead of a fresh `new
+		// byte[0]` at each of the three sites below.
+		//
+		// Done() runs at the end of every parse pass, so on a terminal that is
+		// printing this allocated once per write. Harmless on a runtime with a
+		// generational collector; here nothing collects the kernel heap unless
+		// an allocation fails, and this alone put 1.45 million byte[] and
+		// 49 MiB into it in under a minute of PowerShell output — the machine
+		// then slowed to a standstill. Array.Empty<T>() is no help: ours
+		// allocates too.
+		static readonly byte[] s_empty = new byte [0];
+
+		byte[] putbackBuffer = s_empty;
 		unsafe byte* buffer;
 		int bufferStart;
 		int totalCount;
@@ -82,7 +94,7 @@ namespace XtermSharp {
 				Array.Copy (putbackBuffer, index, newPutback, 0, newPutback.Length);
 				putbackBuffer = newPutback;
 			} else {
-				putbackBuffer = new byte [0];
+				putbackBuffer = s_empty;                // SharpOS change: see s_empty
 			}
 
 			buffer = null;
@@ -90,7 +102,7 @@ namespace XtermSharp {
 
 		public void Reset ()
 		{
-			putbackBuffer = new byte [0];
+			putbackBuffer = s_empty;                // SharpOS change: see s_empty
 			index = 0;
 		}
 	}

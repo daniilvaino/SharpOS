@@ -266,6 +266,111 @@ namespace OS.Boot.EH
             return bitOffset + numBitsPerOffset * (int)hdr.NumSafePoints;
         }
 
+        // Which call site a code offset names, or NumSafePoints when it names
+        // none. The table is sorted, so the search is the encoder's own
+        // binary one.
+        //
+        // The offset asked about must already be inside the call instruction
+        // rather than at the return address after it — the caller subtracts
+        // one for every frame but the innermost, which is the convention the
+        // encoder assumes (CoffNativeCodeManager::EnumGcRefs says so in as
+        // many words, and warns that changing it means changing both halves).
+        public static uint FindSafePoint(
+            byte* gcInfo,
+            in CoffGcInfoHeader hdr,
+            int bitOffsetAfterHeader,
+            uint codeOffset)
+        {
+            if (hdr.NumSafePoints == 0) return 0;
+
+            int numBitsPerOffset = CoffGcInfoTypes.CeilOfLog2(
+                (int)CoffGcInfoTypes.NormalizeCodeOffset((uint)hdr.CodeLength));
+            uint target = CoffGcInfoTypes.NormalizeCodeOffset(codeOffset);
+
+            BitReader r = new BitReader(gcInfo);
+            int low = 0;
+            int high = (int)hdr.NumSafePoints;
+
+            while (low < high)
+            {
+                int mid = (low + high) / 2;
+                r.SetBitOffset(bitOffsetAfterHeader + mid * numBitsPerOffset);
+                uint normOffset = r.ReadBits(numBitsPerOffset);
+
+                if (normOffset == target) return (uint)mid;
+                if (normOffset < target) low = mid + 1;
+                else high = mid;
+            }
+
+            return hdr.NumSafePoints;
+        }
+
+        // One call site's live set. Two encodings, chosen by the encoder on
+        // size: an offset table pointing at shared run-length sets (most
+        // methods reuse the same handful of live sets across their call
+        // sites), or a plain bitmap per call site.
+        private static void DecodeLiveSetAtSafePoint(
+            ref BitReader r,
+            in CoffGcInfoHeader hdr,
+            int offsetTablePos,
+            int numBitsPerOffset,
+            int safePointIndex,
+            int numSlots,
+            Span<bool> liveOut)
+        {
+            if (numBitsPerOffset != 0)
+            {
+                r.SetBitOffset(offsetTablePos + safePointIndex * numBitsPerOffset);
+                int liveStatesOffset = (int)r.ReadBits(numBitsPerOffset);
+
+                // The shared sets live in the second stream, which starts
+                // byte-aligned right after this table.
+                int liveStatesStart =
+                    (offsetTablePos + (int)hdr.NumSafePoints * numBitsPerOffset + 7) & ~7;
+                r.SetBitOffset(liveStatesStart + liveStatesOffset);
+
+                if (r.ReadBit())
+                {
+                    bool skip = !r.ReadBit();
+                    bool report = true;
+
+                    int read = (int)r.DecodeVarLengthUnsigned(skip
+                        ? CoffGcInfoTypes.LivestateRleSkipEncBase
+                        : CoffGcInfoTypes.LivestateRleRunEncBase);
+                    skip = !skip;
+
+                    while (read < numSlots)
+                    {
+                        int count = (int)r.DecodeVarLengthUnsigned(skip
+                            ? CoffGcInfoTypes.LivestateRleSkipEncBase
+                            : CoffGcInfoTypes.LivestateRleRunEncBase) + 1;
+
+                        if (report)
+                            for (int s = read; s < read + count && s < liveOut.Length; s++)
+                                liveOut[s] = true;
+
+                        read += count;
+                        skip = !skip;
+                        report = !report;
+                    }
+
+                    return;
+                }
+
+                // Not run-length — a plain bitmap starts where we stand.
+            }
+            else
+            {
+                r.SetBitOffset(offsetTablePos + safePointIndex * numSlots);
+            }
+
+            for (int s = 0; s < numSlots; s++)
+            {
+                bool live = r.ReadBit();
+                if (live && s < liveOut.Length) liveOut[s] = true;
+            }
+        }
+
         // After safepoint offsets, decode interruptible-range deltas.
         // Each range is (delta1 + delta2) varints; we skip in place.
         public static int SkipInterruptibleRanges(byte* gcInfo, in CoffGcInfoHeader hdr, int bitOffset)
@@ -333,10 +438,10 @@ namespace OS.Boot.EH
         //      apply only those with offsetInChunk <= pcInChunk (parity
         //      flips).
         //
-        // Returns true if PC is inside an interruptible range and liveOut
-        // has been populated; false if PC is outside (caller must use a
-        // different code path — e.g. safepoint table for partially-
-        // interruptible methods).
+        // Returns true if liveOut has been populated — including the case of
+        // a method with nothing tracked, where "all false" is the answer.
+        // False means the PC belongs to neither a call site nor an
+        // interruptible range, and the frame's tracked slots are unknowable.
         //
         // Untracked slots are NOT in liveOut — they're always live for the
         // whole function frame and need separate handling by the caller.
@@ -350,6 +455,16 @@ namespace OS.Boot.EH
             Span<bool> liveOut)
         {
             DecodeHeader(gcInfo, gcInfoVersion, out CoffGcInfoHeader hdr);
+
+            // Which call site this PC names, before the offsets are stepped
+            // over. Partially-interruptible code — which is most of what ILC
+            // emits — records its live sets HERE and not in the
+            // interruptible-range chunks below, and a stack walk asks about
+            // return addresses, which is to say about call sites almost
+            // exclusively. Skipping this table (which is all this decoder
+            // used to do with it) answers "not interruptible" for such a
+            // frame and loses every root it holds.
+            uint safePointIndex = FindSafePoint(gcInfo, in hdr, hdr.BitOffsetAfterHeader, pcCodeOffset);
 
             int bitOffset = SkipSafePointOffsets(gcInfo, in hdr, hdr.BitOffsetAfterHeader);
 
@@ -368,6 +483,36 @@ namespace OS.Boot.EH
 
             if (slots.NumTracked == 0)
                 return true;   // no tracked slots, nothing to enumerate
+
+            int numSlots = (int)slots.NumTracked;
+
+            // The call-site section, laid out as the encoder writes it: a
+            // flag bit saying whether live sets are reached through an
+            // offset table, then either that table's element width or
+            // nothing.
+            BitReader cs = new BitReader(gcInfo);
+            cs.SetBitOffset(bitOffset);
+
+            int numBitsPerOffset = 0;
+            if (hdr.NumSafePoints > 0 && cs.ReadBit())
+                numBitsPerOffset = (int)cs.DecodeVarLengthUnsigned(
+                    CoffGcInfoTypes.PointerSizeEncBase) + 1;
+
+            int offsetTablePos = cs.BitOffset;
+
+            if (safePointIndex != hdr.NumSafePoints)
+            {
+                DecodeLiveSetAtSafePoint(
+                    ref cs, in hdr,
+                    offsetTablePos, numBitsPerOffset, (int)safePointIndex, numSlots, liveOut);
+                return true;
+            }
+
+            // Not a call site — fall through to the fully-interruptible
+            // encoding, which begins past the call-site live sets.
+            bitOffset = offsetTablePos + (int)hdr.NumSafePoints * numSlots;
+            if (hdr.NumInterruptibleRanges == 0)
+                return false;
 
             // Find which range PC lives in, and normalize.
             int targetRange = -1;

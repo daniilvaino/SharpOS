@@ -183,6 +183,17 @@ namespace System
 
         public static bool TryParse(string s, out int result)
             => SharpOS.Std.NoRuntime.NumberParsing.TryParseInt32(s, out result);
+
+        /// <summary>
+        /// The overload callers written against the BCL reach for. The style
+        /// and the provider are accepted and ignored: parsing here is plain
+        /// decimal with an optional sign, which is what NumberStyles.Integer
+        /// and NumberStyles.None both describe, and the only culture is
+        /// invariant.
+        /// </summary>
+        public static bool TryParse(string s, System.Globalization.NumberStyles style,
+                                    IFormatProvider provider, out int result)
+            => SharpOS.Std.NoRuntime.NumberParsing.TryParseInt32(s, out result);
     }
 
     public struct UInt32 : IEquatable<uint>, IComparable<uint>, IComparable
@@ -401,6 +412,31 @@ namespace System
             return (ReadUnderlyingValue(this) & other) == other;
         }
 
+        /// <summary>
+        /// Whether <paramref name="value"/> is one of the declared members of
+        /// the enum. ALWAYS ANSWERS TRUE HERE.
+        /// </summary>
+        /// <remarks>
+        /// A truthful answer needs the list of declared values, which lives in
+        /// reflection metadata the compiler does not emit for us. There are
+        /// three ways to be wrong and this is the least bad one: throwing
+        /// would take down every caller, returning false would make every
+        /// caller reject valid data, and answering true is correct for every
+        /// value the program itself produced — which is what the callers that
+        /// exist here are checking. It is wrong only for a value forged out of
+        /// a cast or read off a wire, and it will not notice.
+        ///
+        /// Recorded in docs/nativeaot-nostd-kernel-limits.md; if a caller ever
+        /// genuinely needs this to police untrusted input, it needs the
+        /// metadata, not a better guess.
+        /// </remarks>
+        public static bool IsDefined(Type enumType, object value)
+        {
+            if (enumType == null) throw new ArgumentNullException(nameof(enumType));
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            return true;
+        }
+
         private static unsafe ulong ReadUnderlyingValue(Enum value)
         {
             // Data sits immediately after the object header, which is what
@@ -465,8 +501,74 @@ namespace System
         }
     }
 
-    public abstract class Type { }
-    public class RuntimeType : Type { }
+    /// <summary>
+    /// A type, cut down to what <c>typeof</c> needs — which is identity and
+    /// nothing else.
+    /// </summary>
+    /// <remarks>
+    /// This was an empty placeholder until apps started using records. Every
+    /// record makes the compiler emit
+    /// <c>EqualityContract =&gt; typeof(X)</c> and compare two of them with
+    /// <c>==</c>, so a record cannot compile without GetTypeFromHandle and the
+    /// equality operator.
+    ///
+    /// What a type IS here is its MethodTable pointer, and that is the whole
+    /// implementation. Two instances describing the same type are equal
+    /// without being the same object, which is the property record equality
+    /// rests on.
+    ///
+    /// Everything reflective stays absent: no Name, no members, no
+    /// inheritance queries, no Type.GetType(string). Those need metadata the
+    /// compiler does not emit for us, and inventing answers reads as real.
+    /// </remarks>
+    public abstract class Type
+    {
+        // MethodTable*. Unique per type and stable for the life of the image.
+        internal readonly IntPtr _handle;
+
+        internal Type(IntPtr handle)
+        {
+            _handle = handle;
+        }
+
+        /// <summary>
+        /// What <c>typeof(X)</c> becomes: the compiler emits <c>ldtoken X</c>
+        /// and calls this with the resulting handle.
+        /// </summary>
+        public static Type GetTypeFromHandle(RuntimeTypeHandle handle)
+            => new RuntimeType(handle._value);
+
+        public RuntimeTypeHandle TypeHandle
+        {
+            get
+            {
+                RuntimeTypeHandle handle = default;
+                handle._value = _handle;
+                return handle;
+            }
+        }
+
+        public static bool operator ==(Type left, Type right)
+        {
+            if ((object)left == null) return (object)right == null;
+            if ((object)right == null) return false;
+            return left._handle == right._handle;
+        }
+
+        public static bool operator !=(Type left, Type right) => !(left == right);
+
+        // `is` with a concrete type rather than `as`: the cast helper the
+        // latter needs is not linked in here.
+        public override bool Equals(object obj)
+            => obj is Type other && other._handle == _handle;
+
+        public override int GetHashCode() => unchecked((int)(long)_handle);
+    }
+
+    public class RuntimeType : Type
+    {
+        internal RuntimeType(IntPtr handle) : base(handle) { }
+    }
 
     public unsafe struct EETypePtr
     {
@@ -574,6 +676,25 @@ namespace System
         public class RuntimeHelpers
         {
             public static unsafe int OffsetToStringData => sizeof(IntPtr) + sizeof(int);
+
+            /// <summary>
+            /// Hash by object identity, ignoring any GetHashCode the type
+            /// declares. Needed by side tables keyed on "this exact object" —
+            /// a record, for instance, hashes by value, and two equal records
+            /// would collide into one entry.
+            /// </summary>
+            /// <remarks>
+            /// The address is the identity: no collector here moves objects,
+            /// so it neither changes under the table nor repeats while the
+            /// object is alive.
+            /// </remarks>
+            public static unsafe int GetHashCode(object o)
+            {
+                if (o == null) return 0;
+
+                nint address = *(nint*)Unsafe.AsPointer(ref o);
+                return (int)(address >> 4) ^ (int)((long)address >> 32);
+            }
 
             // Roslyn lowers `ReadOnlySpan<T> x = [1,2,3,...]` and similar RVA
             // literals into `ldtoken <field> + call RuntimeHelpers.CreateSpan<T>`.

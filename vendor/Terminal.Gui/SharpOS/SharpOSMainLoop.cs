@@ -52,6 +52,18 @@ namespace Terminal.Gui
 
         bool IMainLoopDriver.EventsPending(bool wait)
         {
+            // Back here means the previous key has been handled and its frame
+            // is on screen — the far end of the only latency anyone actually
+            // notices. Measured here rather than around the redraw call
+            // because a key can repaint more than once, and what is felt is
+            // the whole gap.
+            SharpOS.AppSdk.UiLatency.FrameDone();
+
+            // The idle point is where a heap report belongs: outside the
+            // allocator, with nothing half-updated, and reached often enough
+            // that a segment taken during a redraw is reported at once.
+            SharpOS.AppSdk.AppHeapCensus.MaybeDump();
+
             CheckResize();
 
             if (_hasPending) return true;
@@ -77,6 +89,8 @@ namespace Terminal.Gui
 
             KeyInfo key = _pending;
             _hasPending = false;
+
+            SharpOS.AppSdk.UiLatency.KeyDispatched();
 
             // Releases arrive with no character and are reported as key-up only:
             // passing one to the ordinary handler would type the character twice.

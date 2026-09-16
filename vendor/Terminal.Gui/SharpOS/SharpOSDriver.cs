@@ -200,6 +200,10 @@ namespace Terminal.Gui
             // MoveTo already skips the cursor sequence when the next cell
             // follows the last one written, so a run of changed cells costs one
             // position and then the text.
+            // Counted, not estimated: a frame that got slower and a frame that
+            // got bigger look identical from a latency number alone.
+            uint painted = 0;
+
             for (int row = 0; row < _rows; row++)
             {
                 if (!_dirtyLine[row]) continue;
@@ -213,8 +217,11 @@ namespace Terminal.Gui
                     MoveTo(col, row);
                     SetOutputAttribute(_contents[row, col, 1]);
                     AppendRune(_contents[row, col, 0]);
+                    painted++;
                 }
             }
+
+            SharpOS.AppSdk.UiLatency.CountCells(painted);
 
             UpdateCursor();
             Flush();

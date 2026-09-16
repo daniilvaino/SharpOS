@@ -50,6 +50,12 @@ namespace OS.Kernel.Process
         // before load so it returns `unsupported`, never the faulting
         // nested build.
         private static int s_runExternalDepth;
+
+        // Levels of app-starts-app allowed below the one the kernel started.
+        // Each costs a stack region (ProcessImageBuilder.StackRegionStride)
+        // and a live frame per level on the kernel stack.
+        private const int MaxNestedLaunchDepth = 4;
+
         private static uint s_publishedAbiVersion = AppServiceTable.AbiVersionV1;
 
         private static bool s_serviceThunksInitialized;
@@ -91,6 +97,8 @@ namespace OS.Kernel.Process
         private static ulong s_systemVSleepThunk;
         private static ulong s_win64WriteErrorThunk;
         private static ulong s_systemVWriteErrorThunk;
+        private static ulong s_win64WriteDiagnosticThunk;
+        private static ulong s_systemVWriteDiagnosticThunk;
 
         public static bool TryBuild(
             ulong serviceVirtual,
@@ -122,6 +130,7 @@ namespace OS.Kernel.Process
             delegate* managed<uint> currentThreadIdAddress = &CurrentThreadId;
             delegate* managed<uint> consoleSizeAddress = &ConsoleSize;
             delegate* managed<ulong, void> writeErrorAddress = &WriteError;
+            delegate* managed<ulong, void> writeDiagnosticAddress = &WriteDiagnostic;
 
             ulong tableWriteStringAddress = (ulong)writeStringAddress;
             ulong tableWriteUIntAddress = (ulong)writeUIntAddress;
@@ -141,6 +150,7 @@ namespace OS.Kernel.Process
             ulong tableCurrentThreadIdAddress = 0;
             ulong tableConsoleSizeAddress = 0;
             ulong tableWriteErrorAddress = 0;
+            ulong tableWriteDiagnosticAddress = 0;
 
             if (!EnsureServiceThunks(
                 (ulong)writeStringAddress,
@@ -160,7 +170,8 @@ namespace OS.Kernel.Process
                 (ulong)sleepAddress,
                 (ulong)currentThreadIdAddress,
                 (ulong)consoleSizeAddress,
-                (ulong)writeErrorAddress))
+                (ulong)writeErrorAddress,
+                (ulong)writeDiagnosticAddress))
             {
                 return false;
             }
@@ -175,6 +186,7 @@ namespace OS.Kernel.Process
                 tableWriteCharAddress = s_systemVWriteCharThunk;
                 tableWriteBuildIdAddress = s_systemVWriteBuildIdThunk;
                 tableWriteErrorAddress = s_systemVWriteErrorThunk;
+                tableWriteDiagnosticAddress = s_systemVWriteDiagnosticThunk;
                 if (publishedAbiVersion >= AppServiceTable.AbiVersionV2)
                 {
                     tableFileExistsAddress = s_systemVFileExistsThunk;
@@ -202,6 +214,7 @@ namespace OS.Kernel.Process
                 tableWriteCharAddress = s_win64WriteCharThunk;
                 tableWriteBuildIdAddress = s_win64WriteBuildIdThunk;
                 tableWriteErrorAddress = s_win64WriteErrorThunk;
+                tableWriteDiagnosticAddress = s_win64WriteDiagnosticThunk;
                 if (publishedAbiVersion >= AppServiceTable.AbiVersionV2)
                 {
                     tableFileExistsAddress = s_win64FileExistsThunk;
@@ -241,6 +254,7 @@ namespace OS.Kernel.Process
             table.CurrentThreadIdAddress = tableCurrentThreadIdAddress;
             table.ConsoleSizeAddress = tableConsoleSizeAddress;
             table.WriteErrorAddress = tableWriteErrorAddress;
+            table.WriteDiagnosticAddress = tableWriteDiagnosticAddress;
 
             // Hand the app the kernel's interface-dispatch bridge entry so it
             // can trampoline its RhpInitialDynamicInterfaceDispatch into our
@@ -330,7 +344,8 @@ namespace OS.Kernel.Process
             ulong sleepTarget,
             ulong currentThreadIdTarget,
             ulong consoleSizeTarget,
-            ulong writeErrorTarget)
+            ulong writeErrorTarget,
+            ulong writeDiagnosticTarget)
         {
             if (s_serviceThunksInitialized)
                 return true;
@@ -534,6 +549,17 @@ namespace OS.Kernel.Process
 
                 s_systemVWriteErrorThunk = thunkPageVirtual + cursor;
                 if (!TryWriteSystemVOneArgThunk(page + cursor, writeErrorTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                // Diagnostics: same shape again, different channel.
+                s_win64WriteDiagnosticThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64OneArgThunk(page + cursor, writeDiagnosticTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVWriteDiagnosticThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVOneArgThunk(page + cursor, writeDiagnosticTarget))
                     return false;
                 cursor += ServiceThunkSlotSize;
 
@@ -763,6 +789,19 @@ namespace OS.Kernel.Process
         // a full-screen interface: an error is a message, not part of a frame,
         // and hiding it from the logs because the screen was busy would lose
         // exactly the line worth keeping.
+        /// <summary>
+        /// Diagnostics from an application, routed where measurements go: the
+        /// serial port and the log, never the screen.
+        /// </summary>
+        /// <remarks>
+        /// A full-screen application cannot report through ordinary or error
+        /// output — both paint, so the report lands inside the interface it is
+        /// describing. That is exactly what a heap census from the launcher
+        /// did.
+        /// </remarks>
+        private static void WriteDiagnostic(ulong textAddress)
+            => WriteUtf8(textAddress, OS.Hal.OutputChannel.Perf);
+
         private static void WriteError(ulong textAddress)
             => WriteUtf8(textAddress, OS.Hal.OutputChannel.AppErr);
 
@@ -1527,11 +1566,18 @@ namespace OS.Kernel.Process
         {
             exitCode = 0;
 
-            // Max nested depth = 1: reject a recursive app->app launch
-            // up front (clean `unsupported`, no faulting nested build).
-            if (s_runExternalDepth >= 1)
+            // A chain has to end somewhere, and nothing here grows a stack to
+            // meet it: every level keeps a frame of RunExternalApp plus the
+            // whole load-and-build path alive on the kernel stack. Four is
+            // past anything asked for — a shell starting a program that starts
+            // another — and far short of what the stack would notice.
+            if (s_runExternalDepth >= MaxNestedLaunchDepth)
             {
-                DebugLog.Write(LogLevel.Info, "nested app launch rejected (max depth 1)");
+                DebugLog.Begin(LogLevel.Info);
+                Console.Write("nested app launch rejected (depth limit ");
+                Console.WriteUInt(MaxNestedLaunchDepth);
+                Console.Write(")");
+                DebugLog.EndLine();
                 return AppServiceStatus.Unsupported;
             }
             s_runExternalDepth++;
@@ -1620,7 +1666,12 @@ namespace OS.Kernel.Process
                         DebugLog.EndLine();
                     }
 
-                    if (!ProcessImageBuilder.TryBuild(ref loadedImage, 0, serviceAbi, appAbiVersion, ProcessImageBuilder.NestedStackMappedTop, out processImage))
+                    // One stack region per level: the parent's stack stays
+                    // mapped while the child runs, so they must not share one.
+                    ulong childStackTop =
+                        ProcessImageBuilder.StackMappedTopForDepth((uint)s_runExternalDepth);
+
+                    if (!ProcessImageBuilder.TryBuild(ref loadedImage, 0, serviceAbi, appAbiVersion, childStackTop, out processImage))
                     {
                         result = FailedAtStep(4);
                         break;
@@ -1662,6 +1713,14 @@ namespace OS.Kernel.Process
                     int returnExitCode = 0;
                     bool jumped;
                     uint previousGeneration = OS.Kernel.Threading.Scheduler.EnterApp(out uint appGeneration);
+
+                    // The child is the current process while it runs, so that
+                    // a launch of its own suspends ITS image rather than the
+                    // one at the top of the chain. The displaced context goes
+                    // on this frame and comes back below — the kernel stack is
+                    // the stack of process contexts.
+                    ProcessContext parentContext = ProcessManager.ExchangeCurrent(
+                        ref processImage, ref loadedImage, out bool hadParentContext);
                     try
                     {
                         jumped = JumpStub.Run(
@@ -1673,6 +1732,7 @@ namespace OS.Kernel.Process
                     }
                     finally
                     {
+                        ProcessManager.RestoreCurrent(ref parentContext, hadParentContext);
                         EndAppRun(appGeneration, previousGeneration);
                     }
 

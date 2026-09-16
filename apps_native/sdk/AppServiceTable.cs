@@ -133,6 +133,12 @@
         // on a kernel without them — std then waits by polling.
         public ulong WaitOnAddressAddress;
         public ulong WakeByAddressAllAddress;
+
+        // Diagnostics that must not paint: they go to the serial port and the
+        // log, never the screen. For a full-screen application, reporting
+        // through ordinary or error output lands the report inside the
+        // interface it describes. Zero on a kernel without it.
+        public ulong WriteDiagnosticAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

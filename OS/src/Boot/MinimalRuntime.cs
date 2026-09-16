@@ -590,6 +590,25 @@ namespace System
         {
             public static unsafe int OffsetToStringData => sizeof(IntPtr) + sizeof(int);
 
+            /// <summary>
+            /// Hash by object identity, ignoring any GetHashCode the type
+            /// declares. Needed by side tables keyed on "this exact object" —
+            /// a record, for instance, hashes by value, and two equal records
+            /// would collide into one entry.
+            /// </summary>
+            /// <remarks>
+            /// The address is the identity: no collector here moves objects,
+            /// so it neither changes under the table nor repeats while the
+            /// object is alive. Twin of the app SDK's copy.
+            /// </remarks>
+            public static unsafe int GetHashCode(object o)
+            {
+                if (o == null) return 0;
+
+                nint address = *(nint*)Unsafe.AsPointer(ref o);
+                return (int)(address >> 4) ^ (int)((long)address >> 32);
+            }
+
             // Roslyn lowers `ReadOnlySpan<T> x = [1,2,3,...]` and similar RVA
             // literals into `ldtoken <field> + call RuntimeHelpers.CreateSpan<T>`.
             // [Intrinsic] tells ILC to fold the pattern into a direct span over

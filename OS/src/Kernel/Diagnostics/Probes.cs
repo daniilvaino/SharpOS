@@ -461,6 +461,50 @@
         // a QEMU run, never in anything that ships to hardware.
         public const bool UsbStorageWrite = false;
 
+        // Reset the sampler's tables after each periodic report, so every
+        // report describes the last window instead of the whole boot.
+        //
+        // False restores the cumulative profile, which is what a ten-second
+        // boot wants and what an hour-long session must not have: the idle
+        // loop accumulates hundreds of thousands of hits and nothing measured
+        // afterwards can ever displace it.
+        public const bool SamplerRollingWindow = true;
+
+        // Every N growths of the kernel heap, print what is IN it — live
+        // objects tallied by type, biggest first. 0 turns it off.
+        //
+        // The managed kernel heap grows and never collects: collection fires
+        // only when an allocation fails, and allocations do not fail while
+        // there are pages to hand out. A machine left at a prompt grew 133 MiB
+        // and stopped, and the log said only "heap grow pages" 502 times —
+        // enough to see it filling, nothing about who filled it. Turning
+        // collection on by a budget would have hidden the question rather than
+        // answered it: garbage a collector reclaims, a leak it does not.
+        //
+        // 16 rather than every growth: each census is a full heap walk, and by
+        // the end of a long run that is not free.
+        public const uint HeapCensusEveryGrowths = 16;
+
+        // Sample every N-th kernel allocation and record the stack above it,
+        // so the census's "what" is joined by a "who". 0 turns it off.
+        //
+        // 4096 keeps the cost invisible — a stack scan every four thousand
+        // allocations, against a run that makes a million and a half — while
+        // still giving hundreds of samples between two censuses.
+        public const uint AllocSampleEvery = 4096;
+
+        // Print every interface and endpoint each USB device declares, before
+        // deciding what to do with it. The only way to tell "we declined this
+        // device" from "we misread its descriptor".
+        public const bool UsbDescriptorDump = true;
+
+        // Mirror the boot log out a USB serial port when the machine has one.
+        // Costs one bulk transfer per line, buys a log readable from the other
+        // end while the run is happening — including runs that hang. The test
+        // rig phone is the only thing that answers; after the first timeout
+        // the sink switches itself off, so a machine without one pays once.
+        public const bool UsbSerialLog = true;
+
         // Stop the machine right after printing the USB list. On the test
         // hardware there is no serial, no log (the boot medium is USB and we
         // cannot read it post-EBS) and the screen scrolls past the answer

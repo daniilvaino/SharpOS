@@ -32,8 +32,15 @@ namespace SharpOS.Std.NoRuntime
 
         // Diagnostics
         private static uint s_markedCount;
+        private static uint s_droppedCount;
 
         public static uint LastMarkedCount => s_markedCount;
+
+        // References the mark stack had no room for. Every one of them is a
+        // subgraph the sweep is about to free while it is still reachable,
+        // so a non-zero value here is not a statistic — it is the explanation
+        // for whatever corruption follows.
+        public static uint LastDroppedCount => s_droppedCount;
 
         // Where MethodTables live, [low, high). Every object on a heap this
         // collector manages has its type in one image — the kernel's for the
@@ -49,6 +56,7 @@ namespace SharpOS.Std.NoRuntime
         {
             s_count = 0;
             s_markedCount = 0;
+            s_droppedCount = 0;
         }
 
         // Push a root pointer and drain the mark stack until empty. Safe to
@@ -139,7 +147,10 @@ namespace SharpOS.Std.NoRuntime
         private static void Push(nint ptr)
         {
             if (s_count >= StackCapacity)
-                return; // stack overflow — silently drop (should not happen in practice)
+            {
+                s_droppedCount++;
+                return;
+            }
 
             fixed (GcMarkStackStorage* basePtr = &s_stack)
             {

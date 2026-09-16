@@ -162,6 +162,75 @@ namespace SharpOS.Std.NoRuntime
             return true;
         }
 
+        /// <summary>First position holding any of the given characters, or -1.</summary>
+        public static int IndexOfAny(string str, char[] anyOf)
+        {
+            if (str == null || anyOf == null)
+                return -1;
+
+            for (int i = 0; i < str.Length; i++)
+            {
+                char c = str[i];
+                for (int j = 0; j < anyOf.Length; j++)
+                {
+                    if (c == anyOf[j])
+                        return i;
+                }
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// Last position of <paramref name="value"/> at or before
+        /// <paramref name="startIndex"/>, searching backwards, or -1.
+        /// </summary>
+        public static int LastIndexOf(string str, char value, int startIndex)
+        {
+            if (str == null)
+                return -1;
+            if (startIndex >= str.Length)
+                startIndex = str.Length - 1;
+
+            for (int i = startIndex; i >= 0; i--)
+            {
+                if (str[i] == value)
+                    return i;
+            }
+            return -1;
+        }
+
+        // The mirror of StartsWith(string, string, StringComparison) above, and
+        // absent for as long as it was: the pair is asymmetric in BCL-facing
+        // code only by accident. Same cut — culture-aware branches fall back to
+        // the ordinal path.
+        public static bool EndsWith(string str, string value, System.StringComparison comparisonType)
+        {
+            if (str == null || value == null)
+                return false;
+            if (value.Length == 0)
+                return true;
+            if (value.Length > str.Length)
+                return false;
+
+            bool ignoreCase = comparisonType == System.StringComparison.OrdinalIgnoreCase
+                || comparisonType == System.StringComparison.CurrentCultureIgnoreCase
+                || comparisonType == System.StringComparison.InvariantCultureIgnoreCase;
+
+            int start = str.Length - value.Length;
+            for (int i = 0; i < value.Length; i++)
+            {
+                char a = str[start + i];
+                char b = value[i];
+                if (a == b)
+                    continue;
+                if (!ignoreCase)
+                    return false;
+                if (CharHelpers.ToUpperInvariant(a) != CharHelpers.ToUpperInvariant(b))
+                    return false;
+            }
+            return true;
+        }
+
         public static bool EndsWith(string str, string value)
         {
             if (str == null || value == null)

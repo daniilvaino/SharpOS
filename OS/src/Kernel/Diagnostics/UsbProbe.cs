@@ -156,6 +156,32 @@ namespace OS.Kernel.Diagnostics
             if (OS.Hal.ScancodeSource.TryAttachUsb())
                 Console.WriteLine("[xhci] usb keyboard attached as system input");
 
+            // Before the log binds to a file: the port is the only sink that
+            // survives a machine whose filesystem never comes up.
+            if (Probes.UsbSerialLog && OS.Hal.Usb.UsbCdcAcm.TryAttach())
+            {
+                // One line down the port before handing it the log. The sink
+                // switches itself off on its first failure, so without this
+                // "attached" and "attached and mute" read the same.
+                byte* hello = stackalloc byte[32];
+                const string banner = "[cdc] port open\n";
+                for (int i = 0; i < banner.Length; i++) hello[i] = (byte)banner[i];
+
+                Console.Write("[xhci] usb serial ");
+                if (OS.Hal.Usb.UsbCdcAcm.Write(hello, banner.Length))
+                {
+                    Console.WriteLine("attached as log sink");
+                    OS.Hal.BootLog.AttachSerial();
+                }
+                else
+                {
+                    Console.Write("write FAILED code=0x");
+                    if (Xhci.TryFindCdcAcm(out XhciController chc, out _))
+                        Console.WriteHex(chc.LastCompletionCode);
+                    Console.WriteLine(" (0 = no event before the timeout)");
+                }
+            }
+
             ReportStorage();
             Summarise();
         }
@@ -272,32 +298,94 @@ namespace OS.Kernel.Diagnostics
                 }
                 Console.WriteLine("");
 
+                if (Probes.UsbDescriptorDump) DumpDescriptor(hc, slot);
+
+                // One device can be several things at once, so this lists what
+                // it turned out to be rather than picking the first match.
                 Console.Write("[xhci] slot ");
                 Console.WriteUInt(slot);
-                Console.Write(" hid=");
-                if (!hc.TryConfigureHid(slot, out uint stage))
+                Console.Write(" functions=");
+                if (!hc.TryConfigureFunctions(slot, out uint stage))
                 {
-                    // Not a HID device — the other thing we drive is storage.
-                    Console.Write("no (stage=");
+                    Console.Write("none (stage=");
                     Console.WriteUInt(stage);
-                    Console.Write(") msd=");
-                    if (hc.TryConfigureMsd(slot, out uint msdStage))
-                        Console.WriteLine("configured");
-                    else
-                    {
-                        Console.Write("no (stage=");
-                        Console.WriteUInt(msdStage);
-                        Console.WriteLine(")");
-                    }
+                    Console.WriteLine(")");
                     continue;
                 }
 
                 byte proto = hc.HidProtocolOf(slot);
-                Console.Write(proto == 1 ? "keyboard" : proto == 2 ? "mouse" : "other");
-                Console.WriteLine(" configured");
+                if (proto != 0)
+                    Console.Write(proto == 1 ? "keyboard " : proto == 2 ? "mouse " : "hid ");
+                if (hc.IsMassStorage(slot)) Console.Write("storage ");
+                if (hc.IsCdcAcm(slot)) Console.Write("serial ");
+                Console.WriteLine("configured");
 
-                if (Probes.UsbHidPoll)
+                if (Probes.UsbHidPoll && proto != 0)
                     PollReports(hc, slot, proto);
+            }
+        }
+
+        // What the device actually said about itself. Printed as the record
+        // list rather than as hex: the question these answer is always "which
+        // interfaces are there and which endpoints hang off them", and
+        // counting bytes by hand in a log photographed off a screen is how
+        // that question stayed open for a day.
+        private static void DumpDescriptor(XhciController hc, uint slot)
+        {
+            byte* d = stackalloc byte[512];
+            if (!hc.TryFetchConfigDescriptor(slot, d, 512, out int len))
+            {
+                Console.WriteLine("[xhci] descriptor unreadable");
+                return;
+            }
+
+            Console.Write("[xhci] descriptor bytes=");
+            Console.WriteUInt((uint)len);
+            Console.WriteLine("");
+
+            int offset = 0;
+            while (offset + 2 <= len)
+            {
+                byte recordLength = d[offset];
+                byte type = d[offset + 1];
+                if (recordLength == 0) { Console.WriteLine("[xhci]   zero-length record, stopping"); break; }
+
+                if (type == 4 && recordLength >= 9)
+                {
+                    Console.Write("[xhci]   interface ");
+                    Console.WriteUInt(d[offset + 2]);
+                    Console.Write(" alt=");
+                    Console.WriteUInt(d[offset + 3]);
+                    Console.Write(" eps=");
+                    Console.WriteUInt(d[offset + 4]);
+                    Console.Write(" class=0x");
+                    Console.WriteHex(d[offset + 5]);
+                    Console.Write(" sub=0x");
+                    Console.WriteHex(d[offset + 6]);
+                    Console.Write(" proto=0x");
+                    Console.WriteHex(d[offset + 7]);
+                    Console.WriteLine("");
+                }
+                else if (type == 5 && recordLength >= 7)
+                {
+                    Console.Write("[xhci]     endpoint 0x");
+                    Console.WriteHex(d[offset + 2]);
+                    Console.Write(" attr=0x");
+                    Console.WriteHex(d[offset + 3]);
+                    Console.Write(" max=");
+                    Console.WriteUInt((uint)(d[offset + 4] | (d[offset + 5] << 8)));
+                    Console.WriteLine("");
+                }
+                else
+                {
+                    Console.Write("[xhci]   record type=0x");
+                    Console.WriteHex(type);
+                    Console.Write(" len=");
+                    Console.WriteUInt(recordLength);
+                    Console.WriteLine("");
+                }
+
+                offset += recordLength;
             }
         }
 

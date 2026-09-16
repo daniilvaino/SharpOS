@@ -161,15 +161,42 @@ namespace System.Threading
         /// <summary>
         /// Finds this object's slot, claiming a free one if it has none.
         /// </summary>
+        /// <summary>
+        /// Builds the side tables. Idempotent, and meant to be called once at
+        /// startup — before a second thread exists — by whoever installs the
+        /// threading backend.
+        /// </summary>
+        /// <remarks>
+        /// This used to be inline in SlotFor, and it published s_owners FIRST.
+        /// Every other method tests s_owners and then indexes the other three,
+        /// so one timer tick landing between those assignments left the next
+        /// thread reading a null array: `lock` faulted on a null dereference at
+        /// offset 8, which is an array's length field. The lock probe runs two
+        /// hammering threads with preemption on and hit it exactly there.
+        ///
+        /// Publishing the flag last closes that. It does not close two threads
+        /// both building tables at once — the reference CompareExchange in this
+        /// std is a managed read-compare-write, not an atomic one — which is
+        /// why the real fix is calling this before there is anyone to race.
+        /// </remarks>
+        public static void EnsureTables()
+        {
+            if (s_owners != null) return;
+
+            int[] holders = new int[Capacity];
+            int[] recursion = new int[Capacity];
+            int[] waiters = new int[Capacity];
+            object?[] owners = new object?[Capacity];
+
+            s_holders = holders;
+            s_recursion = recursion;
+            s_waiters = waiters;
+            s_owners = owners;          // last: it is the one everyone tests
+        }
+
         private static int SlotFor(object obj)
         {
-            if (s_owners == null)
-            {
-                s_owners = new object?[Capacity];
-                s_holders = new int[Capacity];
-                s_recursion = new int[Capacity];
-                s_waiters = new int[Capacity];
-            }
+            EnsureTables();
 
             int start = (int)((uint)obj.GetHashCode() % Capacity);
 

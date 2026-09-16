@@ -34,8 +34,15 @@ namespace OS.Hal.Usb
             public uint TrCycle;
             public bool Addressed;
 
-            // Filled in once the interface is understood (see XhciHid).
+            // What the device turned out to be (see XhciInterfaces). One slot
+            // can carry several of these at once: the test rig phone is a
+            // stick, a keyboard and a serial port on a single connector.
+            public bool HasHid;
+            public bool HasMsd;
+            public bool HasCdc;
+
             public byte HidProtocol;      // 1 keyboard, 2 mouse, 0 neither
+            public byte HidInterface;
             public byte EpAddress;
             public ushort EpMaxPacket;
             public byte EpInterval;
@@ -50,10 +57,17 @@ namespace OS.Hal.Usb
             public bool ReportPending;
 
             // Mass storage: two bulk endpoints instead of one interrupt one.
-            public byte InterfaceClass;
             public byte MsdInterface;
             public BulkEp BulkIn;
             public BulkEp BulkOut;
+
+            // CDC-ACM: a second bulk pair, on the data interface. The comm
+            // interface is only an address for class requests — its
+            // notification endpoint reports modem lines we have no use for.
+            public byte CdcCommInterface;
+            public byte CdcDataInterface;
+            public BulkEp CdcIn;
+            public BulkEp CdcOut;
         }
 
         internal struct BulkEp

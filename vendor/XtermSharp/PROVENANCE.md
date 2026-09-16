@@ -97,6 +97,7 @@ cell grid is the next step.
 | `Terminal.GetEnvironmentVariables` split into `Terminal.Environment.cs` | the one place that needs `System.Environment`; only a hosted build seeds a child process, so the kernel build leaves the file out |
 | `Encoding.Default` → `Encoding.UTF8` in DECRQSS | std ships no code-page table, and the DCS payload is UTF-8 like everything else here |
 | `TerminalLog` (new) replaces direct `Console.WriteLine` in the parser and `Terminal.Report` | the kernel has several consoles and picks per boot; the engine should not choose one |
+| `ReadingBuffer` — one shared `s_empty` array instead of `new byte[0]` at three sites | `Done()` runs at the end of every parse pass, so a printing terminal allocated one empty array per write. Harmless where a generational collector exists; here nothing collects the kernel heap until an allocation fails, and this alone put 1.45 million `byte[]` and 49 MiB into it in under a minute of PowerShell output, after which the machine slowed to a standstill. `Array.Empty<T>()` is no help — ours allocates too |
 
 All of the above were found by the corpus runner in `work/TermRace` and confirmed with its
 `--reduce` mode, which shrinks a failing corpus file to a minimal input that still fails at
@@ -119,3 +120,4 @@ now. We follow xterm.js's own fixtures in all three cases; see the remark on
 Keep this table growing as the fork diverges — once the naming discipline of
 `CLAUDE.md` §"Инвариант 2" applies (partial types moving to `SharpOS.*` namespaces), this
 file is what explains why our behavior differs from upstream and from xterm.js.
+| `ReadingBuffer` — one shared `s_empty` array instead of `new byte[0]` at three sites | `Done()` runs at the end of every parse pass, so a printing terminal allocated one empty array per write. Harmless where a generational collector exists; here nothing collects the kernel heap until an allocation fails, and this alone put 1.45 million `byte[]` and 49 MiB into it in under a minute of PowerShell output, after which the machine slowed to a standstill. `Array.Empty<T>()` is no help — ours allocates too |

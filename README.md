@@ -99,6 +99,11 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 |---|---|---|---|---|
 | `new T()` / managed heap | ✅ | ✅ | ✅ | |
 | Collections (`List<T>`, `Dictionary<K,V>`, и т.д.) | ✅ | ✅ | ✅ | BCL-порты в std; полный перечень - в limits-доках |
+| `typeof(T)` / `System.Type` | 🔴 | 🟡 | ✅ | тип это указатель на MethodTable, `==` по указателю - хватает на равенство записей и ни на что больше. Отражения нет: ни `Name`, ни членов, ни `Type.GetType(string)`. В ядре не собран - там `typeof` не используется |
+| `record` / `init`-аксессоры | 🔴 | ✅ | ✅ | следствие строки выше: компилятор генерирует `EqualityContract => typeof(X)`. До step175 любая запись давала `CS0656`, а `init` - `CS0518` |
+| `Enum.IsDefined` | 🔴 | 🟡 | ✅ | **всегда `true`** - правдивый ответ требует метаданных перечисления, которых нет. Верен для значений, построенных самой программой; молча неверен для подделанных приведением |
+| `ConditionalWeakTable<K,V>` | 🔴 | 🟡 | ✅ | ссылки **сильные**, не слабые: слабых дескрипторов нет ни у одного сборщика, запись живёт вместе с таблицей. Поиск по тождеству ссылки, хеш - адрес (объекты не двигаются). Подключён только в рецепте приложений, в ядре не собирается. Подробности - limits §8 |
+| `WeakReference` / `GCHandle` | 🔴 | 🔴 | ✅ | слабых дескрипторов в сборщиках нет; из-за этого выше и `ConditionalWeakTable` частичный |
 | `string`, primitives, structs | ✅ | ✅ | ✅ | |
 | `string.Format` / `StringBuilder.AppendFormat` | 🟡 | 🟡 | ✅ | частичное и слабое покрытие в std реализации |
 | `lock` (`Monitor.Enter`/`Exit`) | ✅ | ✅ | ✅ | таблица замков сбоку по тождеству ссылки (в объекте негде хранить слово); ожидание уступкой, не кручением. `Pulse`/`Wait` осознанно не реализованы |
@@ -127,6 +132,8 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | LINQ extensions | ✅ | ✅ | ✅ | наш `System.Linq.Enumerable` (mini-LINQ). Source - `List<T>` / итератор / string / массив (порт `Array<T>` даёт массивам честные интерфейсы; limits §4) |
 | **Managed delegates / lambdas** | ✅ | ✅ | ✅ | завендорены из dotnet/runtime v8.0.27; вырезано в `NotSupportedException`: reflection-поверхность, GVM, open-instance, variance-cast (limits §5) |
 | **Terminal.Gui (текстовый интерфейс)** | 🚫 | ✅ | ⏳ | вся библиотека на нашей std, свой драйвер поверх эмулятора терминала ядра. Исключены 6 файлов (ADO.NET, маски, `FileSystemWatcher`); мыши нет. Ядру ни к чему — там свой вывод |
+| **Оболочка (bash-синтаксис)** | 🚫 | 🟡 | 🚫 | разбор чужой (ShellSyntaxTree, bash-половина), исполнение наше: `&&` `\|\|` `;`, встроенные `cd pwd ls cat echo expect exit`, запуск `.EXE` и `.DLL`. Каналы, перенаправления и аргументы программам **отказывают вслух** — в ABI запуска нет argv. Скрипт `\apps\AUTORUN.SH` запускает оболочку вместо лаунчера: батарея без единого нажатия |
+| Вложенные запуски приложений | ✅ | ✅ | 🚫 | до 4 уровней (было 1). Проверено: лаунчер → оболочка → лаунчер → оболочка и обратно. Каждый уровень стоит области адресов под стек и кадра на стеке ядра |
 | **Reflection runtime metadata** | 🔴 | 🔴 | ✅ | нет `System.Reflection` в std |
 | **`Reflection.Emit`** | 🚫 | 🚫 | ✅ | требует JIT |
 | **`Activator.CreateInstance(Type)`** | 🔴 | 🔴 | ✅ | нужны метаданные |
@@ -143,7 +150,7 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | **`AssemblyLoadContext` (multiple ALCs)** | 🚫 | 🚫 | ⏳ | требует JIT |
 | File I/O (read) | ✅ | ✅ | ✅ | hosted-tier читает DLL/файлы с собственного FAT (в т.ч. post-EBS) |
 | File I/O (write) | 🟡 | 🔴 | 🔴 | FAT32: перезапись на месте + создание файла (8.3, зеркалит все FAT). Нет: удаление, рост файла/каталога, LFN |
-| USB (xHCI) | 🟡 | 🚫 | 🚫 | свой стек: несколько контроллеров, HID boot-протокол (клавиатура = системный ввод), BOT+SCSI (флешка как `Disk`). Проверено на железе (ноутбук, ПК): клавиатура + флешка + запись + DOOM + полная батарея. Опрос без прерываний, без хабов (флешка за хабом не видна — остановка с сообщением о диске), мышь не подключена |
+| USB (xHCI) | 🟡 | 🚫 | 🚫 | свой стек: несколько контроллеров, HID boot-протокол (клавиатура = системный ввод), BOT+SCSI (флешка как `Disk`), CDC-ACM на запись (живой лог в COM-порт). Составные устройства: все функции слота поднимаются одной командой Configure Endpoint - иначе вторая снимает точки первой. Проверено на железе (ноутбук, ПК): клавиатура + флешка + запись + DOOM + полная батарея; накопитель и COM-порт одним устройством. Опрос без прерываний, без хабов (флешка за хабом не видна — остановка с сообщением о диске), мышь не подключена, чтения из CDC-ACM нет |
 | Network I/O | 🔴 | 🔴 | 🔴 | нет NIC driver |
 | Console keyboard input | ✅ | ✅ | ⏳ | |
 | **Direct hardware (CR3 / PCI / MMIO / IDT)** | ✅ | 🚫 | 🚫 | guest tiers - design boundary |
@@ -169,10 +176,10 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 ## Контуры Репозитория
 
 - `OS/src/Boot|Hal|Kernel|PAL` - код операционной системы и слои ядра.
-- `apps_native/` - freestanding win-x64 PE приложения (лаунчер, AotTests-батарея, DOOM) + общий `apps_native/sdk/` (ABI/SDK, FreestandingPe.props).
+- `apps_native/` - freestanding win-x64 PE приложения (лаунчер, оболочка, AotTests-батарея, DOOM) + общий `apps_native/sdk/` (ABI/SDK, FreestandingPe.props).
 - `apps_managed/` - стоковые .NET-программы для CoreCLR-hosted tier'а.
 - `std/no-runtime/` - общий слой замены стандартной библиотеки (BCL-порты + runtime-хелперы); компилится и в ядро, и в приложения.
-- `vendor/` — вендоренные библиотеки (Iced, PeNet, Terminal.Gui, XtermSharp, TurboXml), каждая со своим `LICENSE` и `PROVENANCE.md`.
+- `vendor/` — вендоренные библиотеки (Iced, PeNet, Terminal.Gui, XtermSharp, TurboXml, ShellSyntaxTree), каждая со своим `LICENSE` и `PROVENANCE.md`.
 - `done/` - хроника разработки: пошаговые разборы с архитектурой, трассами и решениями.
 
 Правило: всё, что относится к эволюции std/runtime, развивается в `std/`, а не в слоях ОС.
@@ -209,6 +216,7 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 - **[Terminal.Gui](https://github.com/gui-cs/Terminal.Gui)** (Miguel de Icaza и участники, MIT) — библиотека текстового интерфейса. На ней написан лаунчер.
 - **[XtermSharp](https://github.com/migueldeicaza/XtermSharp)** (Miguel de Icaza, MIT) — движок эмулятора терминала: ANSI/VT, сетка ячеек, прокрутка.
 - **[TurboXml](https://github.com/xoofx/TurboXml)** (Alexandre Mutel, BSD-2-Clause) — разбор XML без аллокаций. Читает манифест приложения из ресурсов PE.
+- **[ShellSyntaxTree](https://github.com/Aaronontheweb/ShellSyntaxTree)** (Aaron Stannard, Apache-2.0) — разбор командной строки bash в дерево. На нём стоит оболочка; половина для PowerShell не компилируется.
 - **[MOOS](https://github.com/nifanfa/MOOS)** (nifanfa, Unlicense) — драйверы `AHCI`, `Disk`, `PCI(Express)` и глифы CP437. Адаптированы под наш HAL, лежат в `OS/src/`.
 - **[Font 8x8](https://github.com/dhepper/font8x8)** (Daniel Hepper, Public Domain) — глифы консоли framebuffer.
 

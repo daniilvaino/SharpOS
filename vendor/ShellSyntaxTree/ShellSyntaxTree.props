@@ -1,0 +1,43 @@
+<Project>
+
+  <!-- ShellSyntaxTree as a compile-in module for SharpOS apps.
+
+       The sources come from the submodule in upstream\ and are never edited:
+       what we do not want, we do not compile. The list lives here rather than
+       in each csproj so the two cannot drift apart.
+
+       A NuGet reference cannot work here. Apps are built with
+       IlcSystemModule set to themselves — there is no shared
+       System.Private.CoreLib, our std compiles into the app — so a package
+       assembly's references to [netstandard]System.String resolve to nothing.
+       Source is also what lets the PowerShell half stay out; a compiled
+       assembly is all or nothing, and that half wants Regex, which the app
+       tier does not have. -->
+
+  <ItemGroup>
+    <!-- The public AST and the two option records. PwshParser.cs is the one
+         root file left out: it is the entry point into Internal\Pwsh.
+         PwshParserOptions stays because the resolvers name it; its only tie to
+         the parser is a doc comment cref, and we generate no documentation. -->
+    <Compile Include="$(MSBuildThisFileDirectory)upstream\src\ShellSyntaxTree\*.cs"
+             Exclude="$(MSBuildThisFileDirectory)upstream\src\ShellSyntaxTree\PwshParser.cs" />
+
+    <!-- Properties\IsExternalInit.cs is deliberately absent: our std declares
+         that type already, and two definitions in one assembly do not compile.
+         The init accessors these records use bind to ours. -->
+
+    <Compile Include="$(MSBuildThisFileDirectory)upstream\src\ShellSyntaxTree\Internal\*.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)upstream\src\ShellSyntaxTree\Internal\Bash\**\*.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)upstream\src\ShellSyntaxTree\Internal\Lexing\**\*.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)upstream\src\ShellSyntaxTree\Internal\Parsing\**\*.cs" />
+
+    <!-- Resolving comes whole, PwshResolver included. It is on the bash path:
+         BashStructuralCoordinator names ShellSyntaxProjection, which names
+         AuthoredOperandSemanticsProjection, which dispatches to both
+         resolvers. PwshResolver costs 709 lines and depends on nothing but
+         System, System.IO and System.Text, so severing that is more edit than
+         it is worth. -->
+    <Compile Include="$(MSBuildThisFileDirectory)upstream\src\ShellSyntaxTree\Internal\Resolving\**\*.cs" />
+  </ItemGroup>
+
+</Project>

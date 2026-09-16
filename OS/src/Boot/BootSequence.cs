@@ -235,6 +235,12 @@ namespace OS.Boot
             // swept if the JIT kept it in a register (write-barrier probe FAIL).
             SharpOS.Std.NoRuntime.GC.s_collectHook = &global::OS.Kernel.Memory.KernelGC.CollectConservative;
 
+            // Who allocates, sampled by allocation. The heap census says what
+            // fills the heap; this says who put it there.
+            SharpOS.Std.NoRuntime.GC.AllocSampleEvery = Probes.AllocSampleEvery;
+            if (Probes.AllocSampleEvery != 0)
+                SharpOS.Std.NoRuntime.GC.s_allocSampleHook = &AllocProfiler.OnAllocation;
+
             // The managed heap must not be left half-updated by a thread
             // switch. std cannot reference the scheduler, so the kernel hands
             // it the two calls; apps leave them null and stay as they were.
@@ -257,6 +263,12 @@ namespace OS.Boot
                 Log.Write(LogLevel.Warn, "coff method table init failed");
             else
                 BoundMethodTablesToImage(OS.Boot.EH.CoffRuntimeFunctionTable.ImageBase);
+
+            // From here an unhandled exception can say what it was and where
+            // it came from. Installed right after the image base is known,
+            // since that is what turns the recorded frames into addresses a
+            // symbolizer will take.
+            OS.Boot.EH.UnhandledExceptionReport.Install();
 
             // GC statics materialization. After this, canonical
             // `static readonly T x = new T()` works for any code that

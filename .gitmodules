@@ -4,3 +4,6 @@
 [submodule "apps_native/Fami/Fami"]
 	path = apps_native/Fami/Fami
 	url = https://github.com/RupertAvery/Fami
+[submodule "vendor/ShellSyntaxTree/upstream"]
+	path = vendor/ShellSyntaxTree/upstream
+	url = https://github.com/Aaronontheweb/ShellSyntaxTree.git
