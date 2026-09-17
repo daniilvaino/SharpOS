@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    SharpOS cut: вырез из Starling.Paint.
+
+    Взята только папка DisplayList/ — 5 файлов, ни один не ссылается на
+    SixLabors или Silk.NET (проверено grep'ом). Исключены Backend/ImageSharp*,
+    Compositor/Gpu*, Font*, Interop/, Svg/. Цель — получить DisplayList и
+    DisplayListBuilder без единого PackageReference, то есть без ImageSharp
+    (лицензия Six Labors вне нашего списка) и без нативного wgpu.
+
+    Имя сборки ОБЯЗАНО остаться Starling.Paint: Starling.Layout выдаёт
+    InternalsVisibleTo именно на него, а DisplayListBuilder лезет в
+    layout-internal хелперы (BlockLayout.ToPx). Переименуешь — получишь
+    24 ошибки CS0122.
+
+    Путь к дереву Starling задаётся через -p:StarlingRoot=... (см. build_starling.ps1).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Starling.Paint</AssemblyName>
+    <RootNamespace>Starling.Paint</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Чтобы в bin легли и транзитивные NuGet-сборки (Microsoft.Extensions.*,
+         их требуют конструкторы StyleEngine/LayoutEngine): у библиотеки
+         dotnet build их по умолчанию не копирует. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(StarlingRoot)/src/Starling.Paint/DisplayList/*.cs" LinkBase="DisplayList" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(StarlingRoot)/src/Starling.Common/Starling.Common.csproj" />
+    <ProjectReference Include="$(StarlingRoot)/src/Starling.Css/Starling.Css.csproj" />
+    <ProjectReference Include="$(StarlingRoot)/src/Starling.Dom/Starling.Dom.csproj" />
+    <ProjectReference Include="$(StarlingRoot)/src/Starling.Layout/Starling.Layout.csproj" />
+  </ItemGroup>
+</Project>

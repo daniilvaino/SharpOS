@@ -489,6 +489,32 @@ if (Test-Path -LiteralPath $forkFxNames) {
         }
     }
 
+    # StarlingProbe: низ движка Starling (HTML/DOM/CSS/раскладка/display-list)
+    # на hosted-ярусе. Сборки Starling лежат в payloads/starling/ — их кладёт
+    # build_starling.ps1; в гит они не попадают, как WAD и pwsh. Верхние слои
+    # движка (Engine, Bindings) не везём: им нужны net11, Wasmtime и сеть.
+    $starlingLib  = Join-Path $repoRoot "payloads\starling"
+    $starlingDest = Join-Path $espSharpOSDir "starling"
+    $probeProj    = Join-Path $repoRoot "apps_managed\StarlingProbe"
+    $probeDllSrc  = Join-Path $probeProj "bin\Release\net10.0\StarlingProbe.dll"
+    if ((Test-Path -LiteralPath $starlingLib) -and
+        (Test-Path -LiteralPath (Join-Path $probeProj "StarlingProbe.csproj"))) {
+        Push-Location $probeProj; & dotnet build -c Release | Out-Null; Pop-Location
+        New-Item -ItemType Directory -Force -Path $starlingDest | Out-Null
+        $n = 0
+        Get-ChildItem -LiteralPath $starlingLib -Filter *.dll | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $starlingDest $_.Name) -Force
+            $n++
+        }
+        if (Test-Path -LiteralPath $probeDllSrc) {
+            Copy-Item -LiteralPath $probeDllSrc -Destination (Join-Path $espSharpOSDir "StarlingProbe.dll") -Force
+            $ph = (Get-FileHash -LiteralPath $probeDllSrc -Algorithm SHA256).Hash
+            Write-Host "Prepared StarlingProbe.dll sha256=$ph (+$n сборок Starling)"
+        } else {
+            Write-Warning "StarlingProbe.dll not found at $probeDllSrc"
+        }
+    }
+
     # Generate TPA list: SPC (root) + every fx dll + every pwsh/* dll + the
     # app. Semicolon-sep, virtual-drive C:\sharpos\ paths so BCL's
     # Path.IsPathFullyQualified accepts them. SharpOSHost_FileOpen strips the
@@ -520,6 +546,15 @@ if (Test-Path -LiteralPath $forkFxNames) {
     [void]$tpa.Append(';C:\sharpos\NormalHello.dll')
     [void]$tpa.Append(';C:\sharpos\PowerShellBootstrap.dll')
     [void]$tpa.Append(';C:\sharpos\Bench.dll')
+    # Сборки Starling — по той же схеме, что pwsh: всё в TPA по имени,
+    # дубликаты fx пропускаем (побеждает вариант из fx).
+    if (Test-Path -LiteralPath $starlingDest) {
+        Get-ChildItem -LiteralPath $starlingDest -Filter *.dll | ForEach-Object {
+            if ($fxNames.ContainsKey($_.Name)) { return }
+            [void]$tpa.Append(';C:\sharpos\starling\' + $_.Name)
+        }
+    }
+    [void]$tpa.Append(';C:\sharpos\StarlingProbe.dll')
     [System.IO.File]::WriteAllText((Join-Path $espSharpOSDir "tpa.txt"), $tpa.ToString())
     Write-Host "Prepared \sharpos\tpa.txt (length=$($tpa.Length))"
 }

@@ -9,6 +9,14 @@
 | `*.wad` | `\apps\<ИМЯ>.WAD` | `DOOM.EXE` |
 | `*.nes` | `\apps\GAME.NES` | `TRICNES.EXE`, `FAMI.EXE` |
 | `pwsh\<дистрибутив>\` | `\sharpos\pwsh\` | `pwsh.dll` |
+| `starling\*.dll` | `\sharpos\starling\` | `StarlingProbe.dll` |
+
+Starling — низ движка браузера (HTML, DOM, CSS, раскладка, display-list).
+Собирается скриптом `build_starling.ps1` из дерева Starling, клонированного
+рядом с репозиторием; сам движок в гит не попадает. Верхние слои не берём:
+`Engine` и `Bindings` требуют net11, `Bindings` тянет нативный Wasmtime,
+`Paint` целиком — SixLabors и wgpu, `Net` — сокеты, которых у нас нет. Из
+`Paint` берётся вырез на 5 файлов, см. `apps_managed/Starling.Paint.Carve/`.
 
 PowerShell — распакованный каталог целиком, из релизов проекта; берётся тот, чьё
 имя больше по алфавиту. Версия должна быть под ту же .NET, что и наш рантайм

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SharpOS.StarlingProbe</RootNamespace>
+    <AssemblyName>StarlingProbe</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Сборки Starling кладутся в payloads/starling/ скриптом build_starling.ps1.
+         В репозиторий не попадают: payloads/* в .gitignore, как WAD и pwsh. -->
+    <StarlingLib>$(MSBuildThisFileDirectory)..\..\payloads\starling\</StarlingLib>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Starling.Common"><HintPath>$(StarlingLib)Starling.Common.dll</HintPath></Reference>
+    <Reference Include="Starling.Url"><HintPath>$(StarlingLib)Starling.Url.dll</HintPath></Reference>
+    <Reference Include="Starling.Dom"><HintPath>$(StarlingLib)Starling.Dom.dll</HintPath></Reference>
+    <Reference Include="Starling.Html"><HintPath>$(StarlingLib)Starling.Html.dll</HintPath></Reference>
+    <Reference Include="Starling.Css"><HintPath>$(StarlingLib)Starling.Css.dll</HintPath></Reference>
+    <Reference Include="Starling.Layout"><HintPath>$(StarlingLib)Starling.Layout.dll</HintPath></Reference>
+    <Reference Include="Starling.Paint"><HintPath>$(StarlingLib)Starling.Paint.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions"><HintPath>$(StarlingLib)Microsoft.Extensions.Logging.Abstractions.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection.Abstractions"><HintPath>$(StarlingLib)Microsoft.Extensions.DependencyInjection.Abstractions.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>
