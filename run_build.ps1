@@ -1,4 +1,4 @@
-﻿param(
+param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     # step113-followup: which CoreCLR fork build the kernel links + ships.
@@ -178,9 +178,10 @@ if ([string]::IsNullOrWhiteSpace($targetFramework)) {
 }
 
 if (-not $QemuExe) {
-    $cmd = Get-Command "qemu-system-x86_64.exe" -ErrorAction SilentlyContinue
-    if ($cmd) {
-        $QemuExe = $cmd.Source
+    # На Windows бинарь зовётся с .exe, на macOS и Linux — без.
+    foreach ($candidate in @("qemu-system-x86_64.exe", "qemu-system-x86_64")) {
+        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($cmd) { $QemuExe = $cmd.Source; break }
     }
 }
 
@@ -188,8 +189,11 @@ $QemuExe = Resolve-FirstPath -Candidates @(
     $QemuExe,
     "C:\msys64\mingw64\bin\qemu-system-x86_64.exe",
     "C:\Program Files\qemu\qemu-system-x86_64.exe",
-    "C:\Program Files\QEMU\qemu-system-x86_64.exe"
-) -Label "qemu-system-x86_64.exe"
+    "C:\Program Files\QEMU\qemu-system-x86_64.exe",
+    "/opt/homebrew/bin/qemu-system-x86_64",
+    "/usr/local/bin/qemu-system-x86_64",
+    "/usr/bin/qemu-system-x86_64"
+) -Label "qemu-system-x86_64"
 
 # Strict-NX OVMF (built via .\ovmf\build.ps1) is preferred.
 # Falls back to the system QEMU OVMF if not yet built.
@@ -200,7 +204,12 @@ $OvmfCode = Resolve-FirstPath -Candidates @(
     "C:\Program Files\qemu\share\edk2-x86_64-code.fd",
     "C:\Program Files\QEMU\share\edk2-x86_64-code.fd",
     "C:\Program Files\qemu\share\ovmf\OVMF_CODE.fd",
-    "C:\Program Files\QEMU\share\ovmf\OVMF_CODE.fd"
+    "C:\Program Files\QEMU\share\ovmf\OVMF_CODE.fd",
+    "/opt/homebrew/share/qemu/edk2-x86_64-code.fd",
+    "/usr/local/share/qemu/edk2-x86_64-code.fd",
+    "/usr/share/qemu/edk2-x86_64-code.fd",
+    "/usr/share/OVMF/OVMF_CODE_4M.fd",
+    "/usr/share/OVMF/OVMF_CODE.fd"
 ) -Label "OVMF firmware code file"
 
 $OvmfVars = Resolve-OptionalPath -Candidates @(
@@ -211,7 +220,12 @@ $OvmfVars = Resolve-OptionalPath -Candidates @(
     "C:\Program Files\qemu\share\edk2-x86_64-vars.fd",
     "C:\Program Files\QEMU\share\edk2-x86_64-vars.fd",
     "C:\Program Files\qemu\share\ovmf\OVMF_VARS.fd",
-    "C:\Program Files\QEMU\share\ovmf\OVMF_VARS.fd"
+    "C:\Program Files\QEMU\share\ovmf\OVMF_VARS.fd",
+    "/opt/homebrew/share/qemu/edk2-i386-vars.fd",
+    "/usr/local/share/qemu/edk2-i386-vars.fd",
+    "/usr/share/qemu/edk2-i386-vars.fd",
+    "/usr/share/OVMF/OVMF_VARS_4M.fd",
+    "/usr/share/OVMF/OVMF_VARS.fd"
 )
 
 $qemuWorkDir = Join-Path $efiProjectDir ".qemu"
