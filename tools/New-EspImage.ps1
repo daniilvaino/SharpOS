@@ -20,11 +20,26 @@
 function Resolve-MtoolsPath {
     param([string]$Name)
 
-    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+    # На Windows инструмент зовётся mformat.exe, на macOS и Linux — mformat.
+    # Пробуем оба имени, поэтому вызывающему можно передавать любое.
+    $bare = [System.IO.Path]::GetFileNameWithoutExtension($Name)
+    foreach ($candidate in @($Name, $bare, "$bare.exe")) {
+        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($cmd) { return $cmd.Source }
+    }
 
-    $fallback = Join-Path "C:\msys64\mingw64\bin" $Name
-    if (Test-Path -LiteralPath $fallback) { return $fallback }
+    $roots = @(
+        "C:\msys64\mingw64\bin",   # MSYS2
+        "/opt/homebrew/bin",         # Homebrew на Apple Silicon
+        "/usr/local/bin",            # Homebrew на Intel
+        "/usr/bin"                   # пакет mtools в Linux
+    )
+    foreach ($root in $roots) {
+        foreach ($candidate in @($Name, $bare, "$bare.exe")) {
+            $fallback = Join-Path $root $candidate
+            if (Test-Path -LiteralPath $fallback) { return $fallback }
+        }
+    }
 
     return $null
 }
@@ -39,7 +54,7 @@ function New-EspImage {
     $mformat = Resolve-MtoolsPath "mformat.exe"
     $mcopy = Resolve-MtoolsPath "mcopy.exe"
     if (-not $mformat -or -not $mcopy) {
-        Write-Warning "mtools (mformat/mcopy) not found - falling back to QEMU VVFAT. Filesystem writes cannot be tested against it; install mingw-w64-x86_64-mtools."
+        Write-Warning "mtools (mformat/mcopy) not found - falling back to QEMU VVFAT. Filesystem writes cannot be tested against it; install mingw-w64-x86_64-mtools (MSYS2), brew install mtools (macOS) или apt install mtools (Linux)."
         return $false
     }
 
