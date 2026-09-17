@@ -1,5 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- Кросс-хост сборка (macOS/Linux -> win-x64 PE). На Windows файл ничего не делает. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\CrossHostLink.props" />
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
@@ -237,8 +240,14 @@
     EFI follows the Windows ABI so we would need to pretend we're compiling for Windows. Should be possible
     with targetos ILC argument, but I don't have bandwidth to test. Plus we need to run linker somehow after.
   -->
-  <Target Name="ErrorOut" Condition="'$(OS)' != 'Windows_NT'" BeforeTargets="Compile">
-    <Error Text="This sample is only supported on Windows for now, sorry" />
+  <!-- SharpOS: заглушка снята. EFI следует Windows ABI, поэтому цель всегда
+       win-x64 независимо от хоста: ILC получает аргумент targetos=windows, сшивание
+       делает lld-link (MSVC link.exe только под Windows). Оставлено на случай
+       отладки: -p:RequireWindowsHost=true вернёт прежний отказ. -->
+  <Target Name="ErrorOut"
+          Condition="'$(OS)' != 'Windows_NT' AND '$(RequireWindowsHost)' == 'true'"
+          BeforeTargets="Compile">
+    <Error Text="Host is not Windows and RequireWindowsHost=true was requested" />
   </Target>
 
   <Target Name="BuildVHDX"

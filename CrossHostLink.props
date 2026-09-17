@@ -1,0 +1,84 @@
+<Project>
+  <!--
+    Сборка win-x64 PE на НЕ-Windows хосте: ядро (OS/) и freestanding-приложения
+    (apps_native/). На Windows файл ничего не делает.
+
+    Это тулинг ЯДРА. Форк CoreCLR (dotnet-runtime-sharpos) — отдельная репа,
+    C++ и CMake; его кросс-сборка это xwin + clang-cl /winsysroot + llvm-ml
+    вместо ml64 + llvm-lib вместо lib.exe, и живёт она там, а не здесь.
+
+    EFI следует Windows ABI, поэтому цель всегда win-x64 независимо от хоста.
+    Проверено на macOS arm64: ILC компилирует кросс-платформенно без единой
+    правки, весь вопрос был в сшивании.
+
+    ПРЕДУСТАНОВКА (в дерево не тащим, как MSVC и MSYS2 — см. README):
+      macOS : brew install lld
+      Linux : apt install lld
+
+    Заголовки и библиотеки MSVC здесь НЕ НУЖНЫ и лицензия VS Build Tools тоже:
+    ядро NoStdLib, к Win32 не обращается, сшивается без import-библиотек.
+
+    Механика совпадает с PublishAotCrossXWin (MIT, Aaron Robinson и Michal
+    Strehovsky, github.com/Windows10CE/PublishAotCrossXWin) — пришли к одному
+    независимо. Пакет здесь не подключён по двум причинам: он штатно включается
+    только на Linux-хосте (Condition IsOSPlatform('Linux')), и он обязательно
+    тянет sysroot от xwin с принятием лицензии Microsoft, что ядру не требуется.
+    Когда дело дойдёт до форка — xwin берём там.
+
+    Три рычага:
+      DisableUnsupportedError   — снимает заслон "Cross-OS native compilation is
+                                  not supported" в Microsoft.NETCore.Native.Publish.targets.
+                                  Заслон декларативный: ILC targetos=windows умеет.
+      IlcUseEnvironmentalTools  — отключает поиск MSVC через findvcvarsall.bat.
+      CppLinker                 — lld-link вместо link.exe. Он понимает
+                                  /SUBSYSTEM:EFI_APPLICATION и выдаёт корректный
+                                  PE32+ с .pdata (проверено: 2944 записи раскрутки).
+
+    Путь к lld-link переопределяется через -p:SharpOsLldLink=/путь/к/lld-link.
+  -->
+  <PropertyGroup Condition="'$(OS)' != 'Windows_NT'">
+    <DisableUnsupportedError>true</DisableUnsupportedError>
+    <IlcUseEnvironmentalTools>true</IlcUseEnvironmentalTools>
+    <SharpOsLldLink Condition="'$(SharpOsLldLink)' == '' AND Exists('/opt/homebrew/opt/lld/bin/lld-link')">/opt/homebrew/opt/lld/bin/lld-link</SharpOsLldLink>
+    <SharpOsLldLink Condition="'$(SharpOsLldLink)' == '' AND Exists('/usr/local/opt/lld/bin/lld-link')">/usr/local/opt/lld/bin/lld-link</SharpOsLldLink>
+    <SharpOsLldLink Condition="'$(SharpOsLldLink)' == ''">lld-link</SharpOsLldLink>
+  </PropertyGroup>
+
+  <Target Name="SharpOsCrossHostLink"
+          AfterTargets="SetupOSSpecificProps"
+          BeforeTargets="LinkNative"
+          Condition="'$(OS)' != 'Windows_NT'">
+    <!-- CppLinker=link выставляется в Microsoft.NETCore.Native.Windows.targets,
+         который импортируется ПОСЛЕ нас, поэтому подменять его надо здесь. -->
+    <PropertyGroup>
+      <CppLinker>$(SharpOsLldLink)</CppLinker>
+    </PropertyGroup>
+    <ItemGroup>
+      <!-- Import-библиотеки Win32 к этому моменту уже запечены в LinkerArg как
+           "kernel32.lib" и прочие — убирать надо сами аргументы. Без них
+           сшивание проходит без неразрешённых символов: ядро к Win32 не ходит. -->
+      <LinkerArg Remove="&quot;advapi32.lib&quot;" />
+      <LinkerArg Remove="&quot;bcrypt.lib&quot;" />
+      <LinkerArg Remove="&quot;crypt32.lib&quot;" />
+      <LinkerArg Remove="&quot;iphlpapi.lib&quot;" />
+      <LinkerArg Remove="&quot;kernel32.lib&quot;" />
+      <LinkerArg Remove="&quot;mswsock.lib&quot;" />
+      <LinkerArg Remove="&quot;ncrypt.lib&quot;" />
+      <LinkerArg Remove="&quot;normaliz.lib&quot;" />
+      <LinkerArg Remove="&quot;ntdll.lib&quot;" />
+      <LinkerArg Remove="&quot;ole32.lib&quot;" />
+      <LinkerArg Remove="&quot;oleaut32.lib&quot;" />
+      <LinkerArg Remove="&quot;secur32.lib&quot;" />
+      <LinkerArg Remove="&quot;user32.lib&quot;" />
+      <LinkerArg Remove="&quot;version.lib&quot;" />
+      <LinkerArg Remove="&quot;ws2_32.lib&quot;" />
+      <!-- Отладочная обвязка MSVC: natvis-визуализаторы и динамический ucrt. -->
+      <LinkerArg Remove="/DEFAULTLIB:ucrt.lib" />
+      <LinkerArg Remove="/DEBUG" />
+      <LinkerArg Remove="@(LinkerArg)"
+                 Condition="$([System.String]::Copy('%(Identity)').StartsWith('/NATVIS'))" />
+    </ItemGroup>
+    <Message Importance="normal"
+             Text="SharpOS: кросс-хост сшивание через $(CppLinker) (хост $(OS), цель win-x64)" />
+  </Target>
+</Project>

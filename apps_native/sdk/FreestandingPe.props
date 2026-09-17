@@ -1,5 +1,8 @@
 ﻿<Project>
 
+  <!-- Кросс-хост сборка (macOS/Linux -> win-x64 PE). На Windows ничего не делает. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\..\CrossHostLink.props" />
+
   <!-- Shared freestanding win-x64 PE recipe for SharpOS native apps (step138).
        Imported by each app csproj (HelloSharpFs, FetchApp, AotTests, ...). Turns
        `dotnet publish -r win-x64` into a self-contained PE the kernel's PeLoader
