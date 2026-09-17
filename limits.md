@@ -6,6 +6,8 @@
 | Проблема | Tier | Статус | Источник / комментарий |
 |---|---|---|---|
 | `GC.WaitForPendingFinalizers` зависает | CoreCLR-hosted | 🔴 hang | SYM-003: finalizer-thread completion event не wired; `GC.Collect` сам работает |
+| `[ModuleInitializer]` не доходит до user code | Kernel | 🔴 | проба `Probe_ModuleInit` красная. Атрибут в std с step119, `docs/nativeaot-nostd-kernel-limits.md` §«работает» устарел. Сличено на Windows и macOS — одинаково |
+| Имена кадров теряются после `throw;` | Kernel / PE-app | 🔴 | проба `rethrow preserves stack trace`: трасса длиной 7 символов, `RethrowSource` в ней нет. Наполнение трассы само работает (L14, L17 зелёные) |
 | `DateTime.Now` (local timezone) | все | 🔴 | нет tz DB; `DateTime.UtcNow` через CMOS+HPET ✅ |
 | `Process.Start` | CoreCLR-hosted | 🔴 | отсутствует `CreateProcessW` (лог 2026-08-21). Ярус решает по Windows-пути; порождения процессов у нас нет вовсе |
 | `GZipStream` / `System.IO.Compression` | все | 🔴 | `libSystem.IO.Compression.Native` отсутствует |

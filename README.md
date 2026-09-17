@@ -1,4 +1,4 @@
-﻿# SharpOS
+# SharpOS
 
 SharpOS - это экспериментальная операционная система, которая строится как **полностью C#-проект** с управляемым развитием низкоуровневых компонентов.
 
@@ -52,6 +52,45 @@ Expand-Archive pwsh.zip -DestinationPath payloads\pwsh\PowerShell-7.6.5-win-x64
 $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 & .\run_build.ps1 -SkipCoreClr 2>&1 | Tee-Object last_build.log   # лог ядра (COM1); вывод программ — last_app.log (COM3), их ошибки — last_err.log (COM4)
 ```
+
+### Сборка на macOS и Linux
+
+Ядро и PE-приложения собираются и запускаются без Windows. EFI следует
+Windows ABI, поэтому цель остаётся `win-x64` независимо от того, на чём
+вы сидите: ILC компилирует кросс-платформенно, а сшивает `lld-link` из
+LLVM — он понимает `/SUBSYSTEM:EFI_APPLICATION`. Механика в
+[`CrossHostLink.props`](CrossHostLink.props), на Windows файл ничего не
+делает.
+
+```bash
+# macOS
+brew install lld mtools xorriso qemu
+# Linux (Debian/Ubuntu)
+sudo apt install lld mtools xorriso qemu-system-x86
+
+pwsh ./build_launcher.ps1
+pwsh ./run_build.ps1 -SkipCoreClr
+```
+
+Прошивка UEFI берётся из самого qemu (`share/qemu/edk2-x86_64-code.fd`),
+отдельный OVMF не нужен. Заголовки и библиотеки MSVC тоже не нужны:
+ядро `NoStdLib`, к Win32 не обращается и сшивается без единой
+import-библиотеки — значит и лицензия VS Build Tools не требуется.
+
+Проверено на macOS 26 arm64: ядро и лаунчер собраны, образ FAT32 сделан
+`mtools`, загружено в QEMU до запуска лаунчера. Батарея проб даёт тот же
+результат, что на Windows, — 129 зелёных и те же 4 провала, то есть от
+хоста сборки поведение не зависит.
+
+**Чего на маке и линуксе нет:** форк CoreCLR (`dotnet-runtime-sharpos`)
+собирается своим CMake и требует заголовков MSVC — для него нужен либо
+Windows, либо [xwin](https://github.com/Jake-Shadle/xwin) и подмена
+`ml64` на `llvm-ml` (для последней нужен патч на 66 вхождений
+`real4/real8 ptr` в трёх `.asm`; данные раскрутки `llvm-ml` выдаёт
+корректные, `SAVE_XMM128` включительно). Без форка собирается ядро с
+`-SkipCoreClr`, то есть **без CoreCLR-hosted яруса** — стоковые .NET-программы
+и PowerShell на таком образе не запустятся. На arm64-маке QEMU эмулирует
+x86-64 программно, без ускорения: загрузка идёт заметно медленнее.
 
 ## Архитектурные инварианты
 
@@ -110,10 +149,10 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 | `System.Enum` | 🟡 | 🟡 | ✅ | ToString, Parse, GetNames не реализованы |
 | `try` / `catch` / `finally` / `throw;` / `when`-filter | ✅ | ✅ | ✅ |  |
 | HW-fault → managed exception (`#PF` → `NullReferenceException`) | ✅ | ✅ | ✅ | |
-| `Exception.StackTrace` | ✅ | ✅ | 🟡 | в hosted CoreCLR `StackTrace` пустой для exception'ов брошенных из CLR-internal C++ EH path (`0xE06D7363 PEAVEEMessageException`); см. [`docs/coreclr-hosted-limits.md`](docs/coreclr-hosted-limits.md) §12 |
+| `Exception.StackTrace` | 🟡 | 🟡 | 🟡 | в hosted CoreCLR `StackTrace` пустой для exception'ов брошенных из CLR-internal C++ EH path (`0xE06D7363 PEAVEEMessageException`); см. [`docs/coreclr-hosted-limits.md`](docs/coreclr-hosted-limits.md) §12. В ядре и приложениях трасса наполняется (пробы L14, L17 зелёные), но после `throw;` имена кадров теряются — проба `rethrow preserves stack trace` красная |
 | Cctor - exception → `TypeInitializationException` wrapping | ✅ | ✅ | 🟡 | в hosted exception из cctor пробрасывается **raw** (не оборачивается в TIE); managed catch на конкретный тип сработает, но `catch (TypeInitializationException)` нет |
 | Boxing / unboxing | ✅ | ✅ | ✅ | int/long/struct/Nullable<T>-as-underlying - все работают; `[BoxedEnumerator]` thunks для интерфейсных enumerator'ов на value-типах |
-| `[ModuleInitializer]` | ✅ | ✅ | ✅ |  |
+| `[ModuleInitializer]` | 🔴 | ⏳ | ✅ | проба `Probe_ModuleInit` в ядре красная: флаг не выставлен к моменту прогона. Атрибут в std есть (step119), но до пользовательского кода дело не доходит. Сличено на Windows и macOS — одинаково, от хоста сборки не зависит. В PE-приложениях не проверялось |
 | `yield return` (Roslyn state machine) | ✅ | ✅ | ✅ | |
 | `async/await` | ✅ | ✅ | ✅ | свои `TaskAwaiter` / `AsyncTaskMethodBuilder` в std. Продолжение исполняется на потоке, завершившем ожидание: контекст синхронизации не захватывается |
 | `Task.Run`, `Task.Delay` | ✅ | ✅ | ✅ | не планировщик, но с пулом потоков (step174); ожидания блокируются в ядре (`WaitOnAddress`), не опрос. В приложениях потоки через таблицу служб (ABI v3) и умирают вместе с приложением |

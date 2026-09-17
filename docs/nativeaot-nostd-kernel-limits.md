@@ -341,7 +341,7 @@ negative throwing-test намеренно пропущен (silent corruption у
 бы probe runner). CoreCLR-side `work/normal-hello` Sec 8 тестирует
 оба варианта (positive + ATME-throwing).
 
-### ✅ `[ModuleInitializer]` работает
+### 🔴 `[ModuleInitializer]` не доходит до user code
 
 ```csharp
 public static class MyInit
@@ -353,10 +353,18 @@ public static class MyInit
 ```
 
 C# 9 `[ModuleInitializer]` — атрибут добавлен в std step 119
-(`std/no-runtime/shared/Runtime/RuntimeAttributes.cs`). Roslyn нашёл
-type по name, ILC dispatch'ит до user code. Verify через
-`NativeAotProbe.Probe_ModuleInit` (флаг должен быть true к моменту
-probe-run'а).
+(`std/no-runtime/shared/Runtime/RuntimeAttributes.cs`), Roslyn находит
+тип по имени и компилирует. Но **до пользовательского кода дело не
+доходит**: `NativeAotProbe.Probe_ModuleInit` красная, флаг к моменту
+прогона всё ещё false.
+
+Step 119 записал эту строку как зелёную; с тех пор либо регрессия, либо
+проба тогда читалась неверно. Сличено на образах, собранных на Windows и
+на macOS — провал одинаковый, то есть от хоста сборки и от сшивателя не
+зависит. Ядро читает из RTR только секции 203 (`InterfaceDispatchTable`)
+и 204 (`TypeManagerIndirection`) — `OS/src/Kernel/Memory/NativeAotModuleInit.cs`;
+ILC складывает модульные инициализаторы в соседнюю секцию, и разбор её
+не написан. Это первая версия для проверки, а не установленная причина.
 
 ---
 
