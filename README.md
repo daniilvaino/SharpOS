@@ -55,42 +55,65 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 
 ### Сборка на macOS и Linux
 
-Ядро и PE-приложения собираются и запускаются без Windows. EFI следует
-Windows ABI, поэтому цель остаётся `win-x64` независимо от того, на чём
-вы сидите: ILC компилирует кросс-платформенно, а сшивает `lld-link` из
-LLVM — он понимает `/SUBSYSTEM:EFI_APPLICATION`. Механика в
-[`CrossHostLink.props`](CrossHostLink.props), на Windows файл ничего не
-делает.
+Полный образ — ядро, PE-приложения, форк CoreCLR и hosted-ярус — собирается
+и запускается без Windows. EFI следует Windows ABI, поэтому цель остаётся
+`win-x64` независимо от того, на чём вы сидите: ILC компилирует
+кросс-платформенно, сшивает `lld-link` из LLVM (он понимает
+`/SUBSYSTEM:EFI_APPLICATION`), а форк собирают `clang-cl` + `lld-link` +
+`llvm-lib` + JWasm поверх sysroot'а MSVC от xwin. Механика ядра — в
+[`CrossHostLink.props`](CrossHostLink.props), форка — в
+`dotnet-runtime-sharpos/eng/native/sharpos-crosshost.cmake`; на Windows оба
+файла ничего не делают.
+
+Инструменты (один раз):
 
 ```bash
 # macOS
-brew install lld mtools xorriso qemu
-# Linux (Debian/Ubuntu)
-sudo apt install lld mtools xorriso qemu-system-x86
+brew install llvm@22 lld cmake ninja mtools xorriso qemu && brew install --cask powershell
+# Linux (Debian/Ubuntu): clang-22 lld-22 cmake ninja-build mtools xorriso qemu-system-x86 + pwsh
 
-pwsh ./build_launcher.ps1
-pwsh ./run_build.ps1 -SkipCoreClr
+# sysroot MSVC + Windows SDK (лицензия принимается ключом; ~1 ГБ в .xwin-cache, в гит не попадает)
+cargo install xwin
+xwin --accept-license --cache-dir .xwin-cache --arch x86_64 --sdk-version 10.0.22621 \
+     splat --preserve-ms-arch-notation --include-debug-libs --output .xwin-cache/splat
+
+# JWasm — в пакетных системах его нет, рецепт сборки в sharpos-crosshost.cmake; итог в ~/.local/bin/jwasm
 ```
 
-Прошивка UEFI берётся из самого qemu (`share/qemu/edk2-x86_64-code.fd`),
-отдельный OVMF не нужен. Заголовки и библиотеки MSVC тоже не нужны:
-ядро `NoStdLib`, к Win32 не обращается и сшивается без единой
-import-библиотеки — значит и лицензия VS Build Tools не требуется.
+Версия LLVM значима: clang 23 отвергает `__try` рядом с объектом, требующим
+раскрутки, clang 19 — `no_builtin` на defaulted-функции; 22 проходит обе, и
+ею же форк собирается на Windows. JWasm вместо `llvm-ml` — осознанно:
+`llvm-ml` не умеет `SECTIONREL`, на котором держится быстрый путь
+`INLINE_GETTHREAD`, а JWasm выдаёт его и на unix-хосте.
 
-Проверено на macOS 26 arm64: ядро и лаунчер собраны, образ FAT32 сделан
-`mtools`, загружено в QEMU до запуска лаунчера. Батарея проб даёт тот же
-результат, что на Windows, — 129 зелёных и те же 4 провала, то есть от
-хоста сборки поведение не зависит.
+Сборка — те же скрипты, что на Windows:
 
-**Чего на маке и линуксе нет:** форк CoreCLR (`dotnet-runtime-sharpos`)
-собирается своим CMake и требует заголовков MSVC — для него нужен либо
-Windows, либо [xwin](https://github.com/Jake-Shadle/xwin) и подмена
-`ml64` на `llvm-ml` (для последней нужен патч на 66 вхождений
-`real4/real8 ptr` в трёх `.asm`; данные раскрутки `llvm-ml` выдаёт
-корректные, `SAVE_XMM128` включительно). Без форка собирается ядро с
-`-SkipCoreClr`, то есть **без CoreCLR-hosted яруса** — стоковые .NET-программы
-и PowerShell на таком образе не запустятся. На arm64-маке QEMU эмулирует
-x86-64 программно, без ускорения: загрузка идёт заметно медленнее.
+```bash
+pwsh ./dotnet-runtime-sharpos/build_clr_sharpos.ps1 -Configuration Release -SkipLinuxIL
+pwsh ./build_launcher.ps1
+SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly -TraceFaults
+```
+
+PowerShell для гостя скачивается отдельно, как описано в
+[`payloads/README.md`](payloads/README.md) (`PowerShell-7.6.x-win-x64` в
+`payloads/pwsh/`); без него `run_build.ps1` предупредит и соберёт образ без
+него. Прошивка UEFI берётся из самого qemu, отдельный OVMF не нужен.
+
+Проверено на macOS 26 arm64, сборка с нуля: ядро с форком слинковано и
+загружено (`[info] fork: Release`), crossgen'нутый `System.Private.CoreLib`
+принят (`[r2r] accepted`), `coreclr_initialize hr=0x0`, и стоковый
+`NormalHello.dll` из обычного `dotnet build` отработал байт-в-байт —
+`execute_assembly hr=0x0 exitCode=42`, как на Windows. Батарея проб даёт тот
+же результат, что на Windows: 129 зелёных и те же 4 провала.
+
+Что стоит знать. `\sharpos\fx` на Windows берёт список имён из
+`coreclr-pack`, оставшегося от step 67; без него список берётся из SDK
+форка (`.dotnet/shared/Microsoft.NETCore.App`, те же 171 сборки), а байты —
+из `crossgen2_publish`, как и на Windows. На arm64-маке QEMU эмулирует
+x86-64 программно, без ускорения: загрузка идёт заметно медленнее
+(`NormalHello` — ~15 с). На macOS 26 SDK объявляет `pipe2`, которого в
+системе нет, — проверка конфигурации в форке это учитывает, иначе crossgen2
+падал бы молча при инициализации PAL (подробности в истории форка).
 
 ## Архитектурные инварианты
 

@@ -532,7 +532,13 @@ namespace OS.Kernel.Diagnostics
 
                     // Stage A — host a byte-for-byte stock `dotnet build` app
                     // via the normal-program entry point (runs its Main).
-                    Console.WriteLine("--- coreclr_execute_assembly(\\\\sharpos\\pwsh\\pwsh.dll) ---");
+                    // Путь в сообщении обязан совпадать с тем, что уходит в вызов:
+                    // литерал "\sharpos\pwsh\pwsh.dll" тут не запускался ни в одной
+                    // ветке и уводил диагностику в сторону. Оба пути константны,
+                    // выбор тот же, что у s_normalAppPath, — ILC свернёт в одну строку.
+                    Console.WriteLine(Probes.LaunchNormalHelloCensus
+                        ? "--- coreclr_execute_assembly(C:\\sharpos\\NormalHello.dll) ---"
+                        : "--- coreclr_execute_assembly(C:\\sharpos\\PowerShellBootstrap.dll) ---");
                     uint exitCode = 0xFFFFFFFF;
 
                     // Kernel diagnostics off while the hosted app owns the screen:

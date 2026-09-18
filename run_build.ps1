@@ -448,11 +448,35 @@ $normalDllSrc = Join-Path $normalProj "bin\Release\net10.0\NormalHello.dll"
 # apps_managed/PowerShellBootstrap/Program.cs for the override logic.
 $psBootstrapProj   = Join-Path $repoRoot "apps_managed\PowerShellBootstrap"
 $psBootstrapDllSrc = Join-Path $psBootstrapProj "bin\Release\net10.0\PowerShellBootstrap.dll"
+# Список имён — ФИЛЬТР, а не источник байтов: он нужен, чтобы из crossgen2_publish
+# не утащить сборки инструментов (ILCompiler.*, crossgen2, System.CommandLine,
+# clrjit_*...). coreclr-pack даёт его на Windows, где он остался от step 67 и
+# переиспользуется через -SkipLinuxIL. Без него тот же список есть в SDK форка:
+# .dotnet/shared/Microsoft.NETCore.App/<версия>/ — это и есть runtime pack,
+# 172 сборки, без System.Private.CoreLib ровно те же 171. Он появляется после
+# любой сборки форка, Linux-сборка и cross-toolchain не нужны. Из SDK берутся
+# ТОЛЬКО имена: байты — из crossgen2_publish, как и на Windows; сборка, которой
+# там нет, пропускается с предупреждением, а не подменяется стоковой.
+$fxNameSource = $null
+$fxNameKind   = $null
 if (Test-Path -LiteralPath $forkFxNames) {
+    $fxNameSource = $forkFxNames
+    $fxNameKind   = 'coreclr-pack'
+}
+elseif (Test-Path -LiteralPath $forkFxWinSrc) {
+    $sdkShared = Get-ChildItem -LiteralPath (Join-Path $repoRoot "dotnet-runtime-sharpos\.dotnet\shared\Microsoft.NETCore.App") -Directory -ErrorAction SilentlyContinue |
+                 Sort-Object Name -Descending | Select-Object -First 1
+    if ($sdkShared) {
+        $fxNameSource = $sdkShared.FullName
+        $fxNameKind   = "SDK shared framework $($sdkShared.Name)"
+    }
+}
+if ($fxNameSource) {
     New-Item -ItemType Directory -Force -Path $fxDest | Out-Null
     $copiedFromWin = 0
     $copiedFromLinux = 0
-    Get-ChildItem -LiteralPath $forkFxNames -Filter *.dll |
+    $skipped = @()
+    Get-ChildItem -LiteralPath $fxNameSource -Filter *.dll |
         Where-Object { $_.Name -ne "System.Private.CoreLib.dll" } |
         ForEach-Object {
             $name = $_.Name
@@ -460,135 +484,154 @@ if (Test-Path -LiteralPath $forkFxNames) {
             if (Test-Path -LiteralPath $winSrc) {
                 Copy-Item -LiteralPath $winSrc -Destination (Join-Path $fxDest $name) -Force
                 $copiedFromWin++
-            } else {
+            } elseif ($fxNameKind -eq 'coreclr-pack') {
                 Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $fxDest $name) -Force
                 $copiedFromLinux++
+            } else {
+                $skipped += $name
             }
         }
     $fxCount = (Get-ChildItem -LiteralPath $fxDest -Filter *.dll).Count
-    Write-Host "Prepared framework: \sharpos\fx\ ($fxCount dll, Win-impl=$copiedFromWin, Linux-fallback=$copiedFromLinux)"
-
-    # Build the normal app (stock SDK, normal references). If project missing,
-    # create a vanilla `dotnet new console`.
-    if (-not (Test-Path -LiteralPath (Join-Path $normalProj "NormalHello.csproj"))) {
-        New-Item -ItemType Directory -Force -Path $normalProj | Out-Null
-        Push-Location $normalProj; & dotnet new console -n NormalHello -o . | Out-Null; Pop-Location
+    Write-Host "Prepared framework: \sharpos\fx\ ($fxCount dll, Win-impl=$copiedFromWin, Linux-fallback=$copiedFromLinux; names from $fxNameKind)"
+    if ($skipped.Count) {
+        Write-Warning "fx: $($skipped.Count) сборок из списка нет в crossgen2_publish, пропущены: $($skipped -join ', ')"
     }
-    Push-Location $normalProj; & dotnet build -c Release | Out-Null; Pop-Location
-    if (Test-Path -LiteralPath $normalDllSrc) {
-        Copy-Item -LiteralPath $normalDllSrc -Destination (Join-Path $espSharpOSDir "NormalHello.dll") -Force
-        $h = (Get-FileHash -LiteralPath $normalDllSrc -Algorithm SHA256).Hash
-        Write-Host "Prepared NormalHello.dll (stock dotnet build) sha256=$h"
+}
+else {
+    # $forkFx никогда не определялась — предупреждение печатало пустой путь
+    # и не подсказывало, чего именно не хватает.
+    Write-Warning "fork fx unavailable - Stage A normal hosting unavailable"
+    Write-Warning "  names: $forkFxNames (coreclr-pack) or dotnet-runtime-sharpos\.dotnet\shared\Microsoft.NETCore.App"
+    Write-Warning "  bytes: $forkFxWinSrc (crossgen2_publish; собирается сабсетом clr форка)"
+}
+
+# Гейт выше закрыт здесь намеренно. Раньше он охватывал ещё две вещи, к fx
+# отношения не имеющие: сборку приложений и генерацию tpa.txt. Без
+# coreclr-pack терялось всё сразу — в том числе PowerShellBootstrap, который
+# снимает блокировку языкового режима, и сам список сборок. Ядро при этом
+# запускало pwsh.dll, тот не мог разрешить зависимости по имени и вставал
+# молча: ни строки на обоих последовательных портах, машина жива и тикает.
+# Когда fx на месте, ничего не меняется: имена из него по-прежнему кладутся
+# в tpa.txt первыми и побеждают одноимённые из дистрибутива pwsh.
+
+# Build the normal app (stock SDK, normal references). If project missing,
+# create a vanilla `dotnet new console`.
+if (-not (Test-Path -LiteralPath (Join-Path $normalProj "NormalHello.csproj"))) {
+    New-Item -ItemType Directory -Force -Path $normalProj | Out-Null
+    Push-Location $normalProj; & dotnet new console -n NormalHello -o . | Out-Null; Pop-Location
+}
+Push-Location $normalProj; & dotnet build -c Release | Out-Null; Pop-Location
+if (Test-Path -LiteralPath $normalDllSrc) {
+    Copy-Item -LiteralPath $normalDllSrc -Destination (Join-Path $espSharpOSDir "NormalHello.dll") -Force
+    $h = (Get-FileHash -LiteralPath $normalDllSrc -Algorithm SHA256).Hash
+    Write-Host "Prepared NormalHello.dll (stock dotnet build) sha256=$h"
+} else {
+    Write-Warning "NormalHello.dll not found at $normalDllSrc"
+}
+
+# Build PowerShellBootstrap shim — managed wrapper that forces
+# SystemPolicy → None via reflection, then forwards to ManagedPSEntry.
+if (Test-Path -LiteralPath (Join-Path $psBootstrapProj "PowerShellBootstrap.csproj")) {
+    Push-Location $psBootstrapProj; & dotnet build -c Release | Out-Null; Pop-Location
+    if (Test-Path -LiteralPath $psBootstrapDllSrc) {
+        Copy-Item -LiteralPath $psBootstrapDllSrc -Destination (Join-Path $espSharpOSDir "PowerShellBootstrap.dll") -Force
+        $bh = (Get-FileHash -LiteralPath $psBootstrapDllSrc -Algorithm SHA256).Hash
+        Write-Host "Prepared PowerShellBootstrap.dll sha256=$bh"
     } else {
-        Write-Warning "NormalHello.dll not found at $normalDllSrc"
+        Write-Warning "PowerShellBootstrap.dll not found at $psBootstrapDllSrc"
     }
+} else {
+    Write-Warning "PowerShellBootstrap project not found at $psBootstrapProj"
+}
 
-    # Build PowerShellBootstrap shim — managed wrapper that forces
-    # SystemPolicy → None via reflection, then forwards to ManagedPSEntry.
-    if (Test-Path -LiteralPath (Join-Path $psBootstrapProj "PowerShellBootstrap.csproj")) {
-        Push-Location $psBootstrapProj; & dotnet build -c Release | Out-Null; Pop-Location
-        if (Test-Path -LiteralPath $psBootstrapDllSrc) {
-            Copy-Item -LiteralPath $psBootstrapDllSrc -Destination (Join-Path $espSharpOSDir "PowerShellBootstrap.dll") -Force
-            $bh = (Get-FileHash -LiteralPath $psBootstrapDllSrc -Algorithm SHA256).Hash
-            Write-Host "Prepared PowerShellBootstrap.dll sha256=$bh"
-        } else {
-            Write-Warning "PowerShellBootstrap.dll not found at $psBootstrapDllSrc"
-        }
+# Benchmarks (step 168): a stock console app, run from the launcher when a
+# number is wanted. Its [perf] lines and the kernel's are gathered by
+# tools/perf_report.ps1.
+$benchProj   = Join-Path $repoRoot "apps_managed\Bench"
+$benchDllSrc = Join-Path $benchProj "bin\Release\net10.0\Bench.dll"
+if (Test-Path -LiteralPath (Join-Path $benchProj "Bench.csproj")) {
+    Push-Location $benchProj; & dotnet build -c Release | Out-Null; Pop-Location
+    if (Test-Path -LiteralPath $benchDllSrc) {
+        Copy-Item -LiteralPath $benchDllSrc -Destination (Join-Path $espSharpOSDir "Bench.dll") -Force
+        $bh = (Get-FileHash -LiteralPath $benchDllSrc -Algorithm SHA256).Hash
+        Write-Host "Prepared Bench.dll sha256=$bh"
     } else {
-        Write-Warning "PowerShellBootstrap project not found at $psBootstrapProj"
+        Write-Warning "Bench.dll not found at $benchDllSrc"
     }
+}
 
-    # Benchmarks (step 168): a stock console app, run from the launcher when a
-    # number is wanted. Its [perf] lines and the kernel's are gathered by
-    # tools/perf_report.ps1.
-    $benchProj   = Join-Path $repoRoot "apps_managed\Bench"
-    $benchDllSrc = Join-Path $benchProj "bin\Release\net10.0\Bench.dll"
-    if (Test-Path -LiteralPath (Join-Path $benchProj "Bench.csproj")) {
-        Push-Location $benchProj; & dotnet build -c Release | Out-Null; Pop-Location
-        if (Test-Path -LiteralPath $benchDllSrc) {
-            Copy-Item -LiteralPath $benchDllSrc -Destination (Join-Path $espSharpOSDir "Bench.dll") -Force
-            $bh = (Get-FileHash -LiteralPath $benchDllSrc -Algorithm SHA256).Hash
-            Write-Host "Prepared Bench.dll sha256=$bh"
-        } else {
-            Write-Warning "Bench.dll not found at $benchDllSrc"
-        }
+# StarlingProbe: низ движка Starling (HTML/DOM/CSS/раскладка/display-list)
+# на hosted-ярусе. Сборки Starling лежат в payloads/starling/ — их кладёт
+# build_starling.ps1; в гит они не попадают, как WAD и pwsh. Верхние слои
+# движка (Engine, Bindings) не везём: им нужны net11, Wasmtime и сеть.
+$starlingLib  = Join-Path $repoRoot "payloads\starling"
+$starlingDest = Join-Path $espSharpOSDir "starling"
+$probeProj    = Join-Path $repoRoot "apps_managed\StarlingProbe"
+$probeDllSrc  = Join-Path $probeProj "bin\Release\net10.0\StarlingProbe.dll"
+if ((Test-Path -LiteralPath $starlingLib) -and
+    (Test-Path -LiteralPath (Join-Path $probeProj "StarlingProbe.csproj"))) {
+    Push-Location $probeProj; & dotnet build -c Release | Out-Null; Pop-Location
+    New-Item -ItemType Directory -Force -Path $starlingDest | Out-Null
+    $n = 0
+    Get-ChildItem -LiteralPath $starlingLib -Filter *.dll | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $starlingDest $_.Name) -Force
+        $n++
     }
-
-    # StarlingProbe: низ движка Starling (HTML/DOM/CSS/раскладка/display-list)
-    # на hosted-ярусе. Сборки Starling лежат в payloads/starling/ — их кладёт
-    # build_starling.ps1; в гит они не попадают, как WAD и pwsh. Верхние слои
-    # движка (Engine, Bindings) не везём: им нужны net11, Wasmtime и сеть.
-    $starlingLib  = Join-Path $repoRoot "payloads\starling"
-    $starlingDest = Join-Path $espSharpOSDir "starling"
-    $probeProj    = Join-Path $repoRoot "apps_managed\StarlingProbe"
-    $probeDllSrc  = Join-Path $probeProj "bin\Release\net10.0\StarlingProbe.dll"
-    if ((Test-Path -LiteralPath $starlingLib) -and
-        (Test-Path -LiteralPath (Join-Path $probeProj "StarlingProbe.csproj"))) {
-        Push-Location $probeProj; & dotnet build -c Release | Out-Null; Pop-Location
-        New-Item -ItemType Directory -Force -Path $starlingDest | Out-Null
-        $n = 0
-        Get-ChildItem -LiteralPath $starlingLib -Filter *.dll | ForEach-Object {
-            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $starlingDest $_.Name) -Force
-            $n++
-        }
-        if (Test-Path -LiteralPath $probeDllSrc) {
-            Copy-Item -LiteralPath $probeDllSrc -Destination (Join-Path $espSharpOSDir "StarlingProbe.dll") -Force
-            $ph = (Get-FileHash -LiteralPath $probeDllSrc -Algorithm SHA256).Hash
-            Write-Host "Prepared StarlingProbe.dll sha256=$ph (+$n сборок Starling)"
-        } else {
-            Write-Warning "StarlingProbe.dll not found at $probeDllSrc"
-        }
+    if (Test-Path -LiteralPath $probeDllSrc) {
+        Copy-Item -LiteralPath $probeDllSrc -Destination (Join-Path $espSharpOSDir "StarlingProbe.dll") -Force
+        $ph = (Get-FileHash -LiteralPath $probeDllSrc -Algorithm SHA256).Hash
+        Write-Host "Prepared StarlingProbe.dll sha256=$ph (+$n сборок Starling)"
+    } else {
+        Write-Warning "StarlingProbe.dll not found at $probeDllSrc"
     }
+}
 
-    # Generate TPA list: SPC (root) + every fx dll + every pwsh/* dll + the
-    # app. Semicolon-sep, virtual-drive C:\sharpos\ paths so BCL's
-    # Path.IsPathFullyQualified accepts them. SharpOSHost_FileOpen strips the
-    # C:\ prefix transparently.
-    #
-    # All pwsh/*.dll are added so PowerShell-internal assembly resolution
-    # finds them by NAME via TPABinder (CoreCLR picks the path from TPA).
-    # Without pwsh/* in TPA, PowerShell falls back to constructing paths
-    # itself ($PSHome + filename) and hits a Path.Join bug that doubles the
-    # prefix into "C:\sharpos\C:\sharpos\pwsh\X.dll".
-    $tpa = New-Object System.Text.StringBuilder
-    [void]$tpa.Append('C:\sharpos\System.Private.CoreLib.dll')
-    $fxNames = @{}
+# Generate TPA list: SPC (root) + every fx dll + every pwsh/* dll + the
+# app. Semicolon-sep, virtual-drive C:\sharpos\ paths so BCL's
+# Path.IsPathFullyQualified accepts them. SharpOSHost_FileOpen strips the
+# C:\ prefix transparently.
+#
+# All pwsh/*.dll are added so PowerShell-internal assembly resolution
+# finds them by NAME via TPABinder (CoreCLR picks the path from TPA).
+# Without pwsh/* in TPA, PowerShell falls back to constructing paths
+# itself ($PSHome + filename) and hits a Path.Join bug that doubles the
+# prefix into "C:\sharpos\C:\sharpos\pwsh\X.dll".
+$tpa = New-Object System.Text.StringBuilder
+[void]$tpa.Append('C:\sharpos\System.Private.CoreLib.dll')
+$fxNames = @{}
+# Каталога может не быть — тогда весь фреймворк берётся из дистрибутива pwsh,
+# он самодостаточный и несёт все 300 сборок.
+if (Test-Path -LiteralPath $fxDest) {
     Get-ChildItem -LiteralPath $fxDest -Filter *.dll | ForEach-Object {
         [void]$tpa.Append(';C:\sharpos\fx\' + $_.Name)
         $fxNames[$_.Name] = $true
     }
-    # Add pwsh/*.dll skipping (a) the duplicate SPC and (b) any dll already
-    # provided by fx/ (169 of 300 pwsh dlls overlap with fx — those keep
-    # the fx variant; CoreCLR would honor the first TPA entry anyway).
-    $pwshDest = Join-Path $espSharpOSDir "pwsh"
-    if (Test-Path -LiteralPath $pwshDest) {
-        Get-ChildItem -LiteralPath $pwshDest -Filter *.dll | ForEach-Object {
-            if ($_.Name -eq 'System.Private.CoreLib.dll') { return }
-            if ($fxNames.ContainsKey($_.Name)) { return }
-            [void]$tpa.Append(';C:\sharpos\pwsh\' + $_.Name)
-        }
-    }
-    [void]$tpa.Append(';C:\sharpos\NormalHello.dll')
-    [void]$tpa.Append(';C:\sharpos\PowerShellBootstrap.dll')
-    [void]$tpa.Append(';C:\sharpos\Bench.dll')
-    # Сборки Starling — по той же схеме, что pwsh: всё в TPA по имени,
-    # дубликаты fx пропускаем (побеждает вариант из fx).
-    if (Test-Path -LiteralPath $starlingDest) {
-        Get-ChildItem -LiteralPath $starlingDest -Filter *.dll | ForEach-Object {
-            if ($fxNames.ContainsKey($_.Name)) { return }
-            [void]$tpa.Append(';C:\sharpos\starling\' + $_.Name)
-        }
-    }
-    [void]$tpa.Append(';C:\sharpos\StarlingProbe.dll')
-    [System.IO.File]::WriteAllText((Join-Path $espSharpOSDir "tpa.txt"), $tpa.ToString())
-    Write-Host "Prepared \sharpos\tpa.txt (length=$($tpa.Length))"
 }
-else {
-    # $forkFx никогда не определялась — предупреждение печатало пустой путь
-    # и не подсказывало, чего именно не хватает. Проверяется $forkFxNames.
-    Write-Warning "fork fx not found at $forkFxNames - Stage A normal hosting unavailable"
-    Write-Warning "  (coreclr-pack собирается только без -SkipLinuxIL и только когда SharpOSBuild не задан)"
+# Add pwsh/*.dll skipping (a) the duplicate SPC and (b) any dll already
+# provided by fx/ (169 of 300 pwsh dlls overlap with fx — those keep
+# the fx variant; CoreCLR would honor the first TPA entry anyway).
+$pwshDest = Join-Path $espSharpOSDir "pwsh"
+if (Test-Path -LiteralPath $pwshDest) {
+    Get-ChildItem -LiteralPath $pwshDest -Filter *.dll | ForEach-Object {
+        if ($_.Name -eq 'System.Private.CoreLib.dll') { return }
+        if ($fxNames.ContainsKey($_.Name)) { return }
+        [void]$tpa.Append(';C:\sharpos\pwsh\' + $_.Name)
+    }
 }
+[void]$tpa.Append(';C:\sharpos\NormalHello.dll')
+[void]$tpa.Append(';C:\sharpos\PowerShellBootstrap.dll')
+[void]$tpa.Append(';C:\sharpos\Bench.dll')
+# Сборки Starling — по той же схеме, что pwsh: всё в TPA по имени,
+# дубликаты fx пропускаем (побеждает вариант из fx).
+if (Test-Path -LiteralPath $starlingDest) {
+    Get-ChildItem -LiteralPath $starlingDest -Filter *.dll | ForEach-Object {
+        if ($fxNames.ContainsKey($_.Name)) { return }
+        [void]$tpa.Append(';C:\sharpos\starling\' + $_.Name)
+    }
+}
+[void]$tpa.Append(';C:\sharpos\StarlingProbe.dll')
+[System.IO.File]::WriteAllText((Join-Path $espSharpOSDir "tpa.txt"), $tpa.ToString())
+Write-Host "Prepared \sharpos\tpa.txt (length=$($tpa.Length))"
 # step137: ELF apps removed. No ELF images are generated or staged anymore;
 # actively delete any stale ELF images + .abi sidecars from a prior ESP so the
 # launcher only ever sees PE apps. (Fetch is dormant until its PE migration.)
