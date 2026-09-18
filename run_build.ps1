@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     # step113-followup: which CoreCLR fork build the kernel links + ships.
