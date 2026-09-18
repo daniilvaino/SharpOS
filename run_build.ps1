@@ -177,82 +177,94 @@ if ([string]::IsNullOrWhiteSpace($targetFramework)) {
     throw "Could not resolve TargetFramework from $projectFile"
 }
 
-if (-not $QemuExe) {
-    # На Windows бинарь зовётся с .exe, на macOS и Linux — без.
-    foreach ($candidate in @("qemu-system-x86_64.exe", "qemu-system-x86_64")) {
-        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-        if ($cmd) { $QemuExe = $cmd.Source; break }
+# QEMU и прошивка нужны только для запуска: с -NoRun образ собирается и там,
+# где QEMU не установлен (например, машина сборки без эмулятора).
+$qemuWorkDir = Join-Path $efiProjectDir ".qemu"
+$localOvmfVars = $null
+if (-not $NoRun) {
+    if (-not $QemuExe) {
+        # На Windows бинарь зовётся с .exe, на macOS и Linux — без.
+        foreach ($candidate in @("qemu-system-x86_64.exe", "qemu-system-x86_64")) {
+            $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+            if ($cmd) { $QemuExe = $cmd.Source; break }
+        }
+    }
+
+    $QemuExe = Resolve-FirstPath -Candidates @(
+        $QemuExe,
+        "C:\msys64\mingw64\bin\qemu-system-x86_64.exe",
+        "C:\Program Files\qemu\qemu-system-x86_64.exe",
+        "C:\Program Files\QEMU\qemu-system-x86_64.exe",
+        "/opt/homebrew/bin/qemu-system-x86_64",
+        "/usr/local/bin/qemu-system-x86_64",
+        "/usr/bin/qemu-system-x86_64"
+    ) -Label "qemu-system-x86_64"
+
+    # Прошивка рядом с самим QEMU: <префикс>/share/qemu/edk2-*.fd. Список ниже —
+    # фиксированные раскладки (Homebrew, FHS), а на NixOS префикс — путь в
+    # /nix/store, узнать его можно только от бинаря; PATH-запись в профиле —
+    # цепочка символических ссылок, поэтому разрешаем её до конца.
+    $qemuShare = $null
+    if ($QemuExe -and (Test-Path -LiteralPath $QemuExe)) {
+        try {
+            $qemuReal = (Get-Item -LiteralPath $QemuExe).ResolveLinkTarget($true)
+            if (-not $qemuReal) { $qemuReal = Get-Item -LiteralPath $QemuExe }
+            $qemuShare = Join-Path (Split-Path -Parent (Split-Path -Parent $qemuReal.FullName)) "share/qemu"
+        } catch { $qemuShare = $null }
+    }
+
+    # Strict-NX OVMF (built via .\ovmf\build.ps1) is preferred.
+    # Falls back to the system QEMU OVMF if not yet built.
+    $OvmfCode = Resolve-FirstPath -Candidates @(
+        $OvmfCode,
+        (Join-Path $repoRoot "ovmf\OVMF_CODE.strict-nx.fd"),
+        $(if ($qemuShare) { Join-Path $qemuShare "edk2-x86_64-code.fd" }),
+        "C:\msys64\mingw64\share\qemu\edk2-x86_64-code.fd",
+        "C:\Program Files\qemu\share\edk2-x86_64-code.fd",
+        "C:\Program Files\QEMU\share\edk2-x86_64-code.fd",
+        "C:\Program Files\qemu\share\ovmf\OVMF_CODE.fd",
+        "C:\Program Files\QEMU\share\ovmf\OVMF_CODE.fd",
+        "/opt/homebrew/share/qemu/edk2-x86_64-code.fd",
+        "/usr/local/share/qemu/edk2-x86_64-code.fd",
+        "/usr/share/qemu/edk2-x86_64-code.fd",
+        "/usr/share/OVMF/OVMF_CODE_4M.fd",
+        "/usr/share/OVMF/OVMF_CODE.fd"
+    ) -Label "OVMF firmware code file"
+
+    $OvmfVars = Resolve-OptionalPath -Candidates @(
+        $OvmfVars,
+        (Join-Path $repoRoot "ovmf\OVMF_VARS.strict-nx.fd"),
+        $(if ($qemuShare) { Join-Path $qemuShare "edk2-i386-vars.fd" }),
+        "C:\msys64\mingw64\share\qemu\edk2-x86_64-vars.fd",
+        "C:\msys64\mingw64\share\qemu\edk2-i386-vars.fd",
+        "C:\Program Files\qemu\share\edk2-x86_64-vars.fd",
+        "C:\Program Files\QEMU\share\edk2-x86_64-vars.fd",
+        "C:\Program Files\qemu\share\ovmf\OVMF_VARS.fd",
+        "C:\Program Files\QEMU\share\ovmf\OVMF_VARS.fd",
+        "/opt/homebrew/share/qemu/edk2-i386-vars.fd",
+        "/usr/local/share/qemu/edk2-i386-vars.fd",
+        "/usr/share/qemu/edk2-i386-vars.fd",
+        "/usr/share/OVMF/OVMF_VARS_4M.fd",
+        "/usr/share/OVMF/OVMF_VARS.fd"
+    )
+
+    $firmwareDir = Join-Path $qemuWorkDir "firmware"
+    New-Item -ItemType Directory -Force -Path $firmwareDir | Out-Null
+    $localOvmfCode = Join-Path $firmwareDir "OVMF_CODE.fd"
+    Copy-Item -LiteralPath $OvmfCode -Destination $localOvmfCode -Force
+    $localOvmfVars = $null
+    if ($OvmfVars) {
+        $localOvmfVars = Join-Path $firmwareDir "OVMF_VARS.fd"
+        Copy-Item -LiteralPath $OvmfVars -Destination $localOvmfVars -Force
     }
 }
 
-$QemuExe = Resolve-FirstPath -Candidates @(
-    $QemuExe,
-    "C:\msys64\mingw64\bin\qemu-system-x86_64.exe",
-    "C:\Program Files\qemu\qemu-system-x86_64.exe",
-    "C:\Program Files\QEMU\qemu-system-x86_64.exe",
-    "/opt/homebrew/bin/qemu-system-x86_64",
-    "/usr/local/bin/qemu-system-x86_64",
-    "/usr/bin/qemu-system-x86_64"
-) -Label "qemu-system-x86_64"
-
-# Прошивка рядом с самим QEMU: <префикс>/share/qemu/edk2-*.fd. Список ниже —
-# фиксированные раскладки (Homebrew, FHS), а на NixOS префикс — путь в
-# /nix/store, узнать его можно только от бинаря; PATH-запись в профиле — цепочка
-# символических ссылок, поэтому разрешаем её до конца.
-$qemuShare = $null
-if ($QemuExe -and (Test-Path -LiteralPath $QemuExe)) {
-    try {
-        $qemuReal = (Get-Item -LiteralPath $QemuExe).ResolveLinkTarget($true)
-        if (-not $qemuReal) { $qemuReal = Get-Item -LiteralPath $QemuExe }
-        $qemuShare = Join-Path (Split-Path -Parent (Split-Path -Parent $qemuReal.FullName)) "share/qemu"
-    } catch { $qemuShare = $null }
-}
-
-# Strict-NX OVMF (built via .\ovmf\build.ps1) is preferred.
-# Falls back to the system QEMU OVMF if not yet built.
-$OvmfCode = Resolve-FirstPath -Candidates @(
-    $OvmfCode,
-    (Join-Path $repoRoot "ovmf\OVMF_CODE.strict-nx.fd"),
-    $(if ($qemuShare) { Join-Path $qemuShare "edk2-x86_64-code.fd" }),
-    "C:\msys64\mingw64\share\qemu\edk2-x86_64-code.fd",
-    "C:\Program Files\qemu\share\edk2-x86_64-code.fd",
-    "C:\Program Files\QEMU\share\edk2-x86_64-code.fd",
-    "C:\Program Files\qemu\share\ovmf\OVMF_CODE.fd",
-    "C:\Program Files\QEMU\share\ovmf\OVMF_CODE.fd",
-    "/opt/homebrew/share/qemu/edk2-x86_64-code.fd",
-    "/usr/local/share/qemu/edk2-x86_64-code.fd",
-    "/usr/share/qemu/edk2-x86_64-code.fd",
-    "/usr/share/OVMF/OVMF_CODE_4M.fd",
-    "/usr/share/OVMF/OVMF_CODE.fd"
-) -Label "OVMF firmware code file"
-
-$OvmfVars = Resolve-OptionalPath -Candidates @(
-    $OvmfVars,
-    (Join-Path $repoRoot "ovmf\OVMF_VARS.strict-nx.fd"),
-    $(if ($qemuShare) { Join-Path $qemuShare "edk2-i386-vars.fd" }),
-    "C:\msys64\mingw64\share\qemu\edk2-x86_64-vars.fd",
-    "C:\msys64\mingw64\share\qemu\edk2-i386-vars.fd",
-    "C:\Program Files\qemu\share\edk2-x86_64-vars.fd",
-    "C:\Program Files\QEMU\share\edk2-x86_64-vars.fd",
-    "C:\Program Files\qemu\share\ovmf\OVMF_VARS.fd",
-    "C:\Program Files\QEMU\share\ovmf\OVMF_VARS.fd",
-    "/opt/homebrew/share/qemu/edk2-i386-vars.fd",
-    "/usr/local/share/qemu/edk2-i386-vars.fd",
-    "/usr/share/qemu/edk2-i386-vars.fd",
-    "/usr/share/OVMF/OVMF_VARS_4M.fd",
-    "/usr/share/OVMF/OVMF_VARS.fd"
-)
-
-$qemuWorkDir = Join-Path $efiProjectDir ".qemu"
-$firmwareDir = Join-Path $qemuWorkDir "firmware"
-New-Item -ItemType Directory -Force -Path $firmwareDir | Out-Null
-$localOvmfCode = Join-Path $firmwareDir "OVMF_CODE.fd"
-Copy-Item -LiteralPath $OvmfCode -Destination $localOvmfCode -Force
-$localOvmfVars = $null
-if ($OvmfVars) {
-    $localOvmfVars = Join-Path $firmwareDir "OVMF_VARS.fd"
-    Copy-Item -LiteralPath $OvmfVars -Destination $localOvmfVars -Force
-}
+# Сборочные инструменты: версии из toolchain.json, проверка до начала сборки.
+# Чистому ядру (-SkipCoreClr) нужны только SDK и lld-link; ядру с форком ещё
+# библиотеки MSVC CRT и Windows SDK (splat xwin).
+. (Join-Path $repoRoot "tools\Toolchain.ps1")
+$toolchainParts = if ($SkipCoreClr) { @('lld', 'dotnet') } else { @('lld', 'winsdk', 'dotnet') }
+$toolchainSaved = Enter-SharpOsToolchain -Components $toolchainParts
 
 $env:DOTNET_CLI_HOME = Join-Path $repoRoot ".dotnet-home"
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1"
@@ -306,6 +318,7 @@ try {
 }
 finally {
     Pop-Location
+    Exit-SharpOsToolchain $toolchainSaved
 }
 
 $publishDir = Join-Path $efiProjectDir "bin\$Configuration\$targetFramework\win-x64\publish"
@@ -394,11 +407,17 @@ Write-Host "Prepared PSReadLine history: \sharpos\Microsoft\Windows\PowerShell\P
 # startup. Guarded, because a throwing profile would break the prompt itself.
 $espProfile = Join-Path $espSharpOSDir "pwsh\profile.ps1"
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $espProfile) | Out-Null
-@'
-# SharpOS: the boot media is read-only, so history cannot be persisted.
-# Keep in-session history (Up-arrow still works) but never touch the file.
-try { Set-PSReadLineOption -HistorySaveStyle SaveNothing -ErrorAction Stop } catch { }
-'@ | Set-Content -LiteralPath $espProfile -Encoding UTF8
+# Written byte-exact: CRLF (the guest is Windows-shaped) and UTF-8 without BOM.
+# Set-Content would end the file with the build host's newline, and its UTF8
+# means "with BOM" in Windows PowerShell 5.1 but not in pwsh 7 — the image
+# must not depend on which host or shell built it.
+$profileText = @(
+    '# SharpOS: the boot media is read-only, so history cannot be persisted.'
+    '# Keep in-session history (Up-arrow still works) but never touch the file.'
+    'try { Set-PSReadLineOption -HistorySaveStyle SaveNothing -ErrorAction Stop } catch { }'
+    ''
+) -join "`r`n"
+[System.IO.File]::WriteAllText($espProfile, $profileText, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "Prepared PS profile: \sharpos\pwsh\profile.ps1 (history SaveNothing)"
 
 # Stock PowerShell module manifests: required for built-in cmdlet registration.
@@ -414,12 +433,17 @@ Write-Host "Prepared PS profile: \sharpos\pwsh\profile.ps1 (history SaveNothing)
 # объяснено, почему версия дистрибутива вообще важна). Брать модули у pwsh,
 # установленного на машине сборки, нельзя: вне Windows это вообще чужая
 # платформа, а на Windows — другая версия, чем в payloads.
-$pwshDist = Get-ChildItem -LiteralPath (Join-Path $repoRoot "payloads\pwsh") -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1
-$stockPwshModules = if ($pwshDist) { Join-Path $pwshDist.FullName "Modules" }
-                    else { "C:\Program Files\PowerShell\7\Modules" }
+# Версия — из toolchain.json (pwsh.version), каталог — ровно под неё. Раньше
+# брался «самый большой по алфавиту», и 7.10 проиграл бы 7.6.
+$pwshVersion = (Get-SharpOsToolchainSpec).pwsh.version
+$pwshDist = Get-Item -LiteralPath (Join-Path $repoRoot "payloads\pwsh\PowerShell-$pwshVersion-win-x64") -ErrorAction SilentlyContinue
+if (-not $pwshDist) {
+    $others = (Get-ChildItem -LiteralPath (Join-Path $repoRoot "payloads\pwsh") -Directory -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', '
+    Write-Warning "payloads\pwsh\PowerShell-$pwshVersion-win-x64 нет (версия из toolchain.json)$(if ($others) { "; есть: $others" })"
+}
+$stockPwshModules = if ($pwshDist) { Join-Path $pwshDist.FullName "Modules" } else { $null }
 $espPwshModules   = Join-Path $espSharpOSDir "pwsh\Modules"
-if (Test-Path -LiteralPath $stockPwshModules) {
+if ($stockPwshModules -and (Test-Path -LiteralPath $stockPwshModules)) {
     New-Item -ItemType Directory -Force -Path $espPwshModules | Out-Null
     Copy-Item -LiteralPath $stockPwshModules -Destination (Join-Path $espSharpOSDir "pwsh") -Recurse -Force
     $modCount = (Get-ChildItem -LiteralPath $espPwshModules -Directory).Count
@@ -448,10 +472,6 @@ else {
 # types (Microsoft.Win32.Registry, System.Net.Sockets, etc.) contain
 # real implementations that talk to our advapi32/ws2_32/etc. stubs
 # instead of PNSE throw bodies.
-# Filter set comes from coreclr-pack (linux-x64) — same 171 BCL names —
-# so we don't pull tooling assemblies (ILCompiler.*, crossgen2.*) that
-# happen to live next to BCL in crossgen2_publish.
-$forkFxNames  = Join-Path $repoRoot "dotnet-runtime-sharpos\artifacts\bin\coreclr-pack\Debug\net10.0\linux-x64"
 $forkFxWinSrc = Join-Path $repoRoot "dotnet-runtime-sharpos\artifacts\bin\crossgen2_publish\x64\Release"
 $fxDest   = Join-Path $espSharpOSDir "fx"
 $normalProj = Join-Path $repoRoot "apps_managed\normal-hello"
@@ -464,59 +484,61 @@ $normalDllSrc = Join-Path $normalProj "bin\Release\net10.0\NormalHello.dll"
 $psBootstrapProj   = Join-Path $repoRoot "apps_managed\PowerShellBootstrap"
 $psBootstrapDllSrc = Join-Path $psBootstrapProj "bin\Release\net10.0\PowerShellBootstrap.dll"
 # Список имён — ФИЛЬТР, а не источник байтов: он нужен, чтобы из crossgen2_publish
-# не утащить сборки инструментов (ILCompiler.*, crossgen2, System.CommandLine,
-# clrjit_*...). coreclr-pack даёт его на Windows, где он остался от step 67 и
-# переиспользуется через -SkipLinuxIL. Без него тот же список есть в SDK форка:
-# .dotnet/shared/Microsoft.NETCore.App/<версия>/ — это и есть runtime pack,
-# 172 сборки, без System.Private.CoreLib ровно те же 171. Он появляется после
-# любой сборки форка, Linux-сборка и cross-toolchain не нужны. Из SDK берутся
-# ТОЛЬКО имена: байты — из crossgen2_publish, как и на Windows; сборка, которой
-# там нет, пропускается с предупреждением, а не подменяется стоковой.
-$fxNameSource = $null
-$fxNameKind   = $null
-if (Test-Path -LiteralPath $forkFxNames) {
-    $fxNameSource = $forkFxNames
-    $fxNameKind   = 'coreclr-pack'
+# не утащить сборки инструментов (ILCompiler.*, crossgen2, System.CommandLine...).
+# Источник имён — общий фреймворк Microsoft.NETCore.App того SDK, которым
+# собирается форк (global.json форка): это и есть runtime pack, без
+# System.Private.CoreLib — те же ~171 сборки. Где стоит SDK (в .dotnet форка
+# или в системе), спрашиваем у dotnet --list-runtimes, а не угадываем путь.
+# Нативные файлы из него (coreclr.dll, clrjit.dll, msquic.dll...) отсекаются
+# по содержимому: в fx и tpa.txt идут только управляемые сборки, на любом хосте
+# одинаково — на Windows это .dll, на unix .so/.dylib, раньше их разделял
+# только фильтр по расширению, и образы с разных хостов отличались.
+# Байты — из crossgen2_publish; сборка, которой там нет, пропускается с
+# предупреждением, а не подменяется стоковой.
+function Test-ManagedAssembly([string]$Path) {
+    try { [void][System.Reflection.AssemblyName]::GetAssemblyName($Path); return $true }
+    catch { return $false }
 }
-elseif (Test-Path -LiteralPath $forkFxWinSrc) {
-    $sdkShared = Get-ChildItem -LiteralPath (Join-Path $repoRoot "dotnet-runtime-sharpos\.dotnet\shared\Microsoft.NETCore.App") -Directory -ErrorAction SilentlyContinue |
-                 Sort-Object Name -Descending | Select-Object -First 1
-    if ($sdkShared) {
-        $fxNameSource = $sdkShared.FullName
-        $fxNameKind   = "SDK shared framework $($sdkShared.Name)"
-    }
+$fxNameSource = $null
+if (Test-Path -LiteralPath $forkFxWinSrc) {
+    # --list-runtimes показывает рантаймы той установки, чей это muxer, —
+    # global.json на это не влияет. Поэтому сперва .dotnet форка (его ставит
+    # Arcade), иначе системный dotnet (если SDK форка стоит в системе).
+    $forkDotnet = Join-Path $repoRoot "dotnet-runtime-sharpos\.dotnet\dotnet"
+    if (Test-Path -LiteralPath "$forkDotnet.exe") { $forkDotnet = "$forkDotnet.exe" }
+    if (-not (Test-Path -LiteralPath $forkDotnet)) { $forkDotnet = 'dotnet' }
+    $runtimes = & $forkDotnet --list-runtimes 2>$null
+    # Строка вида: Microsoft.NETCore.App 10.0.5 [C:\...\shared\Microsoft.NETCore.App]
+    $netcore = $runtimes | Where-Object { $_ -match '^Microsoft\.NETCore\.App (10\.\S+) \[(.+)\]$' } |
+               ForEach-Object { [pscustomobject]@{ Version = $Matches[1]; Dir = Join-Path $Matches[2] $Matches[1] } } |
+               Sort-Object { [version]($_.Version -replace '-.*$', '') } -Descending | Select-Object -First 1
+    if ($netcore -and (Test-Path -LiteralPath $netcore.Dir)) { $fxNameSource = $netcore.Dir }
 }
 if ($fxNameSource) {
+    if (Test-Path -LiteralPath $fxDest) { Remove-Item -LiteralPath $fxDest -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $fxDest | Out-Null
-    $copiedFromWin = 0
-    $copiedFromLinux = 0
+    $copied = 0
     $skipped = @()
     Get-ChildItem -LiteralPath $fxNameSource -Filter *.dll |
-        Where-Object { $_.Name -ne "System.Private.CoreLib.dll" } |
+        Where-Object { $_.Name -ne "System.Private.CoreLib.dll" -and (Test-ManagedAssembly $_.FullName) } |
         ForEach-Object {
             $name = $_.Name
             $winSrc = Join-Path $forkFxWinSrc $name
             if (Test-Path -LiteralPath $winSrc) {
                 Copy-Item -LiteralPath $winSrc -Destination (Join-Path $fxDest $name) -Force
-                $copiedFromWin++
-            } elseif ($fxNameKind -eq 'coreclr-pack') {
-                Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $fxDest $name) -Force
-                $copiedFromLinux++
+                $copied++
             } else {
                 $skipped += $name
             }
         }
-    $fxCount = (Get-ChildItem -LiteralPath $fxDest -Filter *.dll).Count
-    Write-Host "Prepared framework: \sharpos\fx\ ($fxCount dll, Win-impl=$copiedFromWin, Linux-fallback=$copiedFromLinux; names from $fxNameKind)"
+    Write-Host "Prepared framework: \sharpos\fx\ ($copied dll; names from Microsoft.NETCore.App $($netcore.Version))"
     if ($skipped.Count) {
         Write-Warning "fx: $($skipped.Count) сборок из списка нет в crossgen2_publish, пропущены: $($skipped -join ', ')"
     }
 }
 else {
-    # $forkFx никогда не определялась — предупреждение печатало пустой путь
-    # и не подсказывало, чего именно не хватает.
     Write-Warning "fork fx unavailable - Stage A normal hosting unavailable"
-    Write-Warning "  names: $forkFxNames (coreclr-pack) or dotnet-runtime-sharpos\.dotnet\shared\Microsoft.NETCore.App"
+    Write-Warning "  names: Microsoft.NETCore.App 10.x из dotnet --list-runtimes (в каталоге форка)"
     Write-Warning "  bytes: $forkFxWinSrc (crossgen2_publish; собирается сабсетом clr форка)"
 }
 
@@ -625,9 +647,12 @@ if (Test-Path -LiteralPath $fxDest) {
 # Add pwsh/*.dll skipping (a) the duplicate SPC and (b) any dll already
 # provided by fx/ (169 of 300 pwsh dlls overlap with fx — those keep
 # the fx variant; CoreCLR would honor the first TPA entry anyway).
-$pwshDest = Join-Path $espSharpOSDir "pwsh"
-if (Test-Path -LiteralPath $pwshDest) {
-    Get-ChildItem -LiteralPath $pwshDest -Filter *.dll | ForEach-Object {
+# Список — по самому дистрибутиву, а не по \sharpos\pwsh в ESP: туда сборки
+# копируются ниже, уже после этого места. Со списком по ESP свежая сборка
+# давала TPA без единой сборки pwsh, а повторная — список из остатков прошлого
+# прогона (в том числе другой версии pwsh).
+if ($pwshDist) {
+    Get-ChildItem -LiteralPath $pwshDist.FullName -Filter *.dll | ForEach-Object {
         if ($_.Name -eq 'System.Private.CoreLib.dll') { return }
         if ($fxNames.ContainsKey($_.Name)) { return }
         [void]$tpa.Append(';C:\sharpos\pwsh\' + $_.Name)

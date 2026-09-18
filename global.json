@@ -1,0 +1,8 @@
+{
+  "sdk": {
+    "version": "10.0.105",
+    "rollForward": "disable",
+    "paths": [ "dotnet-runtime-sharpos/.dotnet", "$host$" ],
+    "errorMessage": "SharpOS собирается .NET SDK 10.0.105 — тем же, что форк CoreCLR (toolchain.json). Он появляется в dotnet-runtime-sharpos/.dotnet после первой сборки форка, либо поставьте его в систему: https://dotnet.microsoft.com/download/dotnet/10.0"
+  }
+}

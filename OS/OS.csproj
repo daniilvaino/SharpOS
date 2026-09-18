@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Кросс-хост сборка (macOS/Linux -> win-x64 PE). На Windows файл ничего не делает. -->
-  <Import Project="$(MSBuildThisFileDirectory)..\CrossHostLink.props" />
+  <!-- Сшивание PE через lld-link + xwin из тулчейна SharpOS, на любом хосте. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\SharpOsNativeLink.props" />
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -144,17 +144,11 @@
                       ..\vendor\XtermSharp\XtermSharp\bin\**\*.cs"
              LinkBase="XtermSharp" />
   </ItemGroup>
-  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
-    <!-- step 121: kernel-side libcmt cut completed via CoffStub.Generator.
-         OS.obj's единственный native ref (__security_cookie) теперь покрыт
-         compile-time-emitted .obj через [CoffDataSymbol] атрибут на C#
-         static field (см. CrtAndEhStubs.cs SecurityCookie). Никакого
-         ручного .c файла в дереве, никакого ручного cl.exe step'а.
-         /NODEFAULTLIB:libcmt — игнорировать /DEFAULTLIB:libcmt директивы
-         embedded в .obj'ах. Всё что libcmt'у нужно вложено в
-         coreclr_static.lib через fork's build_clr_sharpos.ps1 merge step. -->
-    <LinkerArg Include="/NODEFAULTLIB:libcmt.lib" />
-  </ItemGroup>
+  <!-- step 121: OS.obj's единственный native ref (__security_cookie) покрыт
+       compile-time-emitted .obj через [CoffDataSymbol] атрибут на C# static
+       field (см. CrtAndEhStubs.cs SecurityCookie) — самому ядру libcmt не
+       нужен. Нужен он форку CoreCLR; его передаём явно рядом с библиотеками
+       форка ниже. -->
 
   <!-- CoffStub.Generator — auto-import targets для [CoffDataSymbol]
        attribute → .obj emission pipeline. Включает attribute defn в
@@ -189,10 +183,14 @@
   <PropertyGroup Condition="'$(SkipCoreClr)' == 'true'">
     <DefineConstants>$(DefineConstants);SKIP_CORECLR</DefineConstants>
   </PropertyGroup>
-  <!-- SharpOS cross-host: условие смотрит только на SkipCoreClr. Привязка к
-       Windows-хосту здесь была лишней: библиотеки форка — обычные COFF-архивы,
-       и lld-link читает их на любом хосте. Форк кросс-собирается с macOS и
-       Linux (см. dotnet-runtime-sharpos/eng/native/sharpos-crosshost.cmake). -->
+  <!-- Библиотеки MSVC CRT и Windows SDK (splat xwin) — только ядру с форком,
+       см. SharpOsNativeLink.props. Чистое ядро сшивается без них. -->
+  <PropertyGroup Condition="'$(SkipCoreClr)' != 'true'">
+    <SharpOsLinkWinSdk>true</SharpOsLinkWinSdk>
+  </PropertyGroup>
+  <!-- Библиотеки форка — обычные COFF-архивы, lld-link читает их на любом
+       хосте. Форк собирается тем же тулчейном SharpOS на Windows, macOS и
+       Linux (см. dotnet-runtime-sharpos/eng/native/sharpos-toolchain.cmake). -->
   <ItemGroup Condition="'$(SkipCoreClr)' != 'true'">
     <LinkerArg Include="&quot;$(CoreClrForkObj)\dlls\mscoree\coreclr\coreclr_static.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\gc\sharpos\gc_pal.lib&quot;" />
@@ -219,6 +217,13 @@
          needs both libs explicitly. See docs/eh-model.md. -->
     <LinkerArg Include="&quot;$(CoreClrForkObj)\dlls\mscorrc\mscorrc.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\nativeresources\nativeresourcestring.lib&quot;" />
+    <!-- Статический CRT MSVC для форка (из splat'а xwin, путь даёт
+         SharpOsNativeLink.props). Последним: coreclrpal_kernel_crt.lib выше
+         перехватывает то, что ядру надо подменить, а libcmt добирает остальное.
+         Раньше на Windows он вливался внутрь coreclr_static.lib, но средства
+         LLVM его не переупаковывают (объекты с машинным типом 0), и ради
+         одного пути на всех хостах слияние убрано. -->
+    <LinkerArg Include="libcmt.lib" />
 
     <!-- Force /INCLUDE of coreclr_initialize — без этого linker /OPT:REF
          drops the entire coreclr_static.lib (no symbol references it from
@@ -239,20 +244,6 @@
          anonymous: a whole day of addresses that could have been names. -->
     <LinkerArg Include="/MAP:$(MSBuildProjectDirectory)\..\sharpos.map" />
   </ItemGroup>
-
-  <!--
-    EFI follows the Windows ABI so we would need to pretend we're compiling for Windows. Should be possible
-    with targetos ILC argument, but I don't have bandwidth to test. Plus we need to run linker somehow after.
-  -->
-  <!-- SharpOS: заглушка снята. EFI следует Windows ABI, поэтому цель всегда
-       win-x64 независимо от хоста: ILC получает аргумент targetos=windows, сшивание
-       делает lld-link (MSVC link.exe только под Windows). Оставлено на случай
-       отладки: -p:RequireWindowsHost=true вернёт прежний отказ. -->
-  <Target Name="ErrorOut"
-          Condition="'$(OS)' != 'Windows_NT' AND '$(RequireWindowsHost)' == 'true'"
-          BeforeTargets="Compile">
-    <Error Text="Host is not Windows and RequireWindowsHost=true was requested" />
-  </Target>
 
   <Target Name="BuildVHDX"
           AfterTargets="CopyNativeBinary"

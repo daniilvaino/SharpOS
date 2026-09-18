@@ -1,0 +1,93 @@
+<Project>
+  <!--
+    Как ядро (OS/) и freestanding-приложения (apps_native/) становятся PE —
+    одинаково на Windows, macOS и Linux.
+
+    ILC компилирует под win-x64 (EFI следует Windows ABI, поэтому цель всегда
+    win-x64 независимо от хоста), а сшивает lld-link. Visual Studio и link.exe
+    не участвуют и на Windows: один компоновщик на всех хостах — одна раскладка
+    образа и одни и те же .pdata.
+
+    Заголовки и библиотеки MSVC CRT / Windows SDK (splat от xwin) нужны ТОЛЬКО
+    ядру с форком CoreCLR: форк обращается к Win32 и тянет libcmt. Чистое ядро
+    (-p:SkipCoreClr=true) и приложения — NoStdLib, к Win32 не обращаются, и
+    сшиваются без единой библиотеки Microsoft.
+
+    Инструменты и их версии проверяет tools/Toolchain.ps1 по toolchain.json и
+    передаёт сюда через SHARPOS_LLVM_BIN и SHARPOS_XWIN_SPLAT. Без них (прямой
+    dotnet publish) lld-link берётся из PATH, splat — из .xwin-cache/splat.
+
+    Механика совпадает с PublishAotCrossXWin (MIT, Aaron Robinson и Michal
+    Strehovsky, github.com/Windows10CE/PublishAotCrossXWin) — пришли к одному
+    независимо. Пакет не подключён: он штатно включается только на Linux-хосте
+    и всегда тянет sysroot от xwin.
+
+    Рычаги:
+      DisableUnsupportedError   — снимает заслон "Cross-OS native compilation is
+                                  not supported" в Microsoft.NETCore.Native.Publish.targets.
+                                  Заслон декларативный: ILC targetos=windows умеет.
+      IlcUseEnvironmentalTools  — отключает поиск MSVC через findvcvarsall.bat.
+      CppLinker                 — lld-link вместо link.exe. Он понимает
+                                  /SUBSYSTEM:EFI_APPLICATION и выдаёт корректный
+                                  PE32+ с .pdata.
+  -->
+  <PropertyGroup>
+    <DisableUnsupportedError>true</DisableUnsupportedError>
+    <IlcUseEnvironmentalTools>true</IlcUseEnvironmentalTools>
+
+    <SharpOsLldLink Condition="'$(SHARPOS_LLVM_BIN)' != ''">$(SHARPOS_LLVM_BIN)/lld-link</SharpOsLldLink>
+    <SharpOsLldLink Condition="'$(SHARPOS_LLVM_BIN)' != '' AND $([MSBuild]::IsOSPlatform('Windows'))">$(SharpOsLldLink).exe</SharpOsLldLink>
+    <SharpOsLldLink Condition="'$(SharpOsLldLink)' == ''">lld-link</SharpOsLldLink>
+    <SharpOsXwinSplat Condition="'$(SharpOsXwinSplat)' == ''">$(SHARPOS_XWIN_SPLAT)</SharpOsXwinSplat>
+    <SharpOsXwinSplat Condition="'$(SharpOsXwinSplat)' == ''">$(MSBuildThisFileDirectory).xwin-cache/splat</SharpOsXwinSplat>
+
+    <!-- Версия ILCompiler для net8.0 — из toolchain.json (dotnet.ilcompilerNet8).
+         Без неё SDK берёт последний патч, который знает сам, и версия плавает
+         вместе с установленным SDK. -->
+    <SharpOsToolchainJson>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)toolchain.json'))</SharpOsToolchainJson>
+    <SharpOsIlcVersion>$([System.Text.RegularExpressions.Regex]::Replace($(SharpOsToolchainJson), '(?s).*"ilcompilerNet8"\s*:\s*"([^"]+)".*', '$1'))</SharpOsIlcVersion>
+  </PropertyGroup>
+
+  <!-- В target, а не на уровне проекта: условие по метаданным (какая это
+       TargetFramework) MSBuild допускает только здесь. ProcessFrameworkReferences
+       выбирает пакет ILCompiler и в restore, и в сборке — правка успевает к обоим. -->
+  <Target Name="SharpOsPinIlCompiler" BeforeTargets="ProcessFrameworkReferences">
+    <ItemGroup>
+      <KnownILCompilerPack Condition="'%(KnownILCompilerPack.Identity)' == 'Microsoft.DotNet.ILCompiler' AND '%(KnownILCompilerPack.TargetFramework)' == 'net8.0'">
+        <ILCompilerPackVersion>$(SharpOsIlcVersion)</ILCompilerPackVersion>
+      </KnownILCompilerPack>
+    </ItemGroup>
+  </Target>
+
+  <Target Name="SharpOsNativeLink"
+          AfterTargets="SetupOSSpecificProps"
+          BeforeTargets="LinkNative">
+    <!-- CppLinker=link выставляется в Microsoft.NETCore.Native.Windows.targets,
+         который импортируется ПОСЛЕ нас, поэтому подменять его надо здесь. -->
+    <PropertyGroup>
+      <CppLinker>$(SharpOsLldLink)</CppLinker>
+    </PropertyGroup>
+
+    <!-- Ядро с форком: библиотеки MSVC CRT и Windows SDK из splat'а. Сам
+         libcmt.lib перечисляет OS.csproj рядом с библиотеками форка. -->
+    <Error Condition="'$(SharpOsLinkWinSdk)' == 'true' AND !Exists('$(SharpOsXwinSplat)/crt/lib/x64/libcmt.lib')"
+           Text="Ядру с форком CoreCLR нужен splat xwin (MSVC CRT + Windows SDK), а в $(SharpOsXwinSplat) его нет. Задайте SHARPOS_XWIN_SPLAT; версии — в toolchain.json, как сделать — README." />
+    <ItemGroup Condition="'$(SharpOsLinkWinSdk)' == 'true'">
+      <LinkerArg Include="/LIBPATH:&quot;$(SharpOsXwinSplat)/crt/lib/x64&quot;" />
+      <LinkerArg Include="/LIBPATH:&quot;$(SharpOsXwinSplat)/sdk/lib/um/x64&quot;" />
+      <LinkerArg Include="/LIBPATH:&quot;$(SharpOsXwinSplat)/sdk/lib/ucrt/x64&quot;" />
+    </ItemGroup>
+
+    <!-- Всё остальное (чистое ядро, приложения): ни одной библиотеки
+         Microsoft. ILC по умолчанию перечисляет import-библиотеки Win32
+         (SdkNativeLibrary: kernel32.lib и др.) и динамический ucrt — их
+         снимаем, иначе компоновщик искал бы их на диске. К этому моменту они
+         уже запечены в LinkerArg как "kernel32.lib" и т.п. -->
+    <ItemGroup Condition="'$(SharpOsLinkWinSdk)' != 'true'">
+      <LinkerArg Remove="@(SdkNativeLibrary->'&quot;%(Identity)&quot;')" />
+      <LinkerArg Remove="/DEFAULTLIB:ucrt.lib" />
+    </ItemGroup>
+
+    <Message Importance="normal" Text="SharpOS: сшивание через $(CppLinker), ILCompiler $(SharpOsIlcVersion), Windows SDK: $(SharpOsLinkWinSdk)" />
+  </Target>
+</Project>

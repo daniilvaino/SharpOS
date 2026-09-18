@@ -1,23 +1,31 @@
-﻿# Building SharpOS on a fresh machine
+# Building SharpOS on a fresh machine
 
-Windows-only. The repo is already cloned; everything below is host setup and
-build order. Times are for a warm cache on a mid-range desktop.
+The build is the same on Windows, macOS and Linux: the same scripts, the same
+tools at the same versions. The repo is already cloned; this page covers
+QEMU, firmware, media and build order. Times are for a warm cache on a
+mid-range desktop.
 
 ## What has to be installed
 
-| Component | Why | Notes |
-|---|---|---|
-| **Visual Studio 2022** with "Desktop development with C++" | `link.exe` links the kernel image; the CoreCLR fork builds with `clang-cl` | Include the **Clang/LLVM (clang-cl)** and **Windows 11 SDK** components. Plain MSVC is not enough for the fork: `pal/inc` assumes gcc-style `__attribute__` predefines. |
-| **.NET SDK 10.x preview** | The fork (`dotnet/runtime` tree) pins it | `dotnet-runtime-sharpos/global.json` requires `10.0.105`, `allowPrerelease: true`. The SDK bootstraps its own toolset on first fork build. |
-| **.NET SDK 8.x** | The kernel and apps target `net8.0` with `PublishAot` | ILC 8 is what the image is built and tested against. Installing 8 and 10 side by side is fine and expected. |
-| **CMake** and **Python 3** | `dotnet/runtime`'s native build invokes them | Both must be on `PATH`. Ninja comes from the VS toolchain. |
-| **PowerShell 7** | Build scripts, plus its `Modules` directory is staged into the image | `run_build.ps1` copies `C:\Program Files\PowerShell\7\Modules` into the ESP. Without it PowerShell boots with no cmdlets registered. |
-| **QEMU** (`qemu-system-x86_64.exe`) | Runs the image | Looked up on `PATH`, then `C:\msys64\mingw64\bin`, `C:\Program Files\qemu`, `C:\Program Files\QEMU`. Override with `-QemuExe`. |
-| **Windows Debugging Tools** (optional) | `tools/symbolize.ps1` | Needs `dbghelp.dll` from the Windows Kits Debuggers directory. Only for diagnosing crashes. |
+The tool list, the exact versions and how to install them are in the README
+(section «Инструменты») and in [`toolchain.json`](../toolchain.json), which is
+the single place the versions are written down. The build scripts install
+nothing: before building they locate the tools and check their versions
+against `toolchain.json` (`tools/Toolchain.ps1`), failing early with a message
+that names what is missing or mismatched.
 
-Localized Windows is supported: the build scripts force UTF-8 and
-`VSLANG=1033` so MSVC diagnostics stay readable in `last_build.log`.
+In short: .NET SDK 10.0.105; LLVM 22.1.8 (`clang-cl`, `lld-link`, `llvm-lib`,
+`llvm-rc`); for the CoreCLR fork also JWasm 2.21, the MSVC CRT + Windows SDK
+splat made by xwin, cmake, ninja and python3. Visual Studio is not used on any
+host: the kernel and apps are linked by `lld-link`, the fork is compiled by
+`clang-cl` against the xwin splat.
 
+Optional: **Windows Debugging Tools** for `tools/symbolize.ps1` (needs
+`dbghelp.dll` from the Windows Kits Debuggers directory; only for diagnosing
+crashes).
+
+Localized Windows is supported: the build scripts force UTF-8 so tool
+diagnostics stay readable in `last_build.log`.
 ## QEMU and its firmware
 
 Nothing exotic is required of QEMU: `q35` with TCG (pure software emulation —
@@ -145,15 +153,14 @@ cd dotnet-runtime-sharpos
 
 Produces two artifacts the kernel needs:
 
-- `artifacts/bin/coreclr/windows.x64.Release/coreclr_static.lib` — linked into `BOOTX64.EFI`;
-- `artifacts/bin/coreclr/linux.x64.Release/IL/System.Private.CoreLib.dll` — the IL CoreLib
+- `artifacts/obj/coreclr/windows.x64.Release/dlls/mscoree/coreclr/coreclr_static.lib` — linked into `BOOTX64.EFI`;
+- `artifacts/bin/coreclr/windows.x64.Release/System.Private.CoreLib.dll` — the CoreLib
   dropped into the image and loaded at runtime.
 
-Both must come from the **same** configuration: `MethodTable` layout differs
-between Debug and Release, and a mismatch corrupts field offsets at runtime.
+Both come from the same build, so their configuration always matches: `MethodTable`
+layout differs between Debug and Release, and a mismatch corrupts field offsets at runtime.
 
-Useful switches: `-SkipLinuxIL` when only native fork code changed;
-`-NinjaClean` when ninja aborts with `FindFirstFileExA(Note: including file: ...)`
+Useful switches: `-NinjaClean` when ninja aborts with `FindFirstFileExA(Note: including file: ...)`
 (clang-cl's `/showIncludes` output corrupts ninja's depfile database — this
 deletes `.ninja_deps` and costs ~30 s instead of a full `-Clean`).
 
@@ -202,21 +209,14 @@ build is driven by hand, do it once:
 dotnet build .\bootasm\CoffStub.Generator\CoffStub.Generator.csproj -c Release
 ```
 
-## If the kernel build fails inside ILC
-
-ILC resolves its native tools through `vswhere`, which fails outside a
-developer environment. Either run the build from a **"x64 Native Tools Command
-Prompt for VS 2022"**, or pass `-p:IlcUseEnvironmentalTools=true` after running
-`vcvars64.bat`. The symptom is a link step exiting with code 123.
-
 `invalid symbol redefinition` warnings from ILC are benign noise, not failures.
-
 ## Machine-independence
 
 The produced image is self-contained: the OS version it reports (`10.0.26100`)
 is a constant in `OS/src/PAL/SharpOSHost/SystemIdentity.cs`, not read from the
-build host. What is host-dependent is the *build*: the PowerShell 7 modules
-staged into the ESP come from the machine's own installation.
+build host. The PowerShell modules staged into the ESP come from
+`payloads/pwsh/PowerShell-<version>-win-x64`, the version pinned in
+`toolchain.json`, never from the build machine.
 
 ## First-run sanity check
 

@@ -1,5 +1,5 @@
 # build_fetch.ps1 -- build FetchApp as a freestanding win-x64 PE.
-# Thin wrapper over build_launcher.ps1 (the generic builder). Run in vcvars64.
+# Thin wrapper over build_launcher.ps1 (the generic builder).
 param(
     [string]$Configuration = "Release",
     [string]$RuntimeIdentifier = "win-x64"

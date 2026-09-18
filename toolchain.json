@@ -1,0 +1,41 @@
+{
+  "_comment": "Версии сборочных инструментов SharpOS и форка CoreCLR — одни на Windows, macOS и Linux. Скрипты сборки ничего не ставят: находят инструменты (PATH или переменные окружения) и сверяют версии с этим файлом через tools/Toolchain.ps1. Как поставить — README, раздел «Инструменты».",
+
+  "llvm": {
+    "version": "22.1.8",
+    "_why": "Точная версия. clang 23 отвергает __try рядом с объектом, требующим раскрутки; clang 19 — no_builtin на defaulted-функции из заголовков MSVC. clang-cl, lld-link, llvm-lib и llvm-rc берутся из одного каталога LLVM.",
+    "_where": "каталог bin LLVM в PATH (ищется clang-cl) или SHARPOS_LLVM_BIN"
+  },
+
+  "jwasm": {
+    "version": "2.21",
+    "commit": "7f6f32e78b79565d40bcce496756aadd1ff66900",
+    "_why": "Ассемблер MASM-исходников форка на всех хостах. llvm-ml не умеет SECTIONREL (INLINE_GETTHREAD), ml64 есть только в Visual Studio. Версию проверяем по его выводу; commit — из какого дерева собирать.",
+    "_where": "jwasm в PATH или SHARPOS_JWASM (путь к исполняемому файлу)"
+  },
+
+  "winsdk": {
+    "sdkVersion": "10.0.26100",
+    "crtVersion": "14.44.35220",
+    "_why": "Заголовки и библиотеки Windows SDK и MSVC CRT, splat от xwin. Нужны только форку и ядру с форком; чистому ядру (-SkipCoreClr) и приложениям — нет. crtVersion — как в crt/include/crtversion.h; у xwin это --crt-version 14.44.17.14.",
+    "_where": "SHARPOS_XWIN_SPLAT или .xwin-cache/splat в корне SharpOS"
+  },
+
+  "dotnet": {
+    "sdkVersion": "10.0.105",
+    "ilcompilerNet8": "8.0.27",
+    "_why": "SDK — тот, что требует Arcade форка (dotnet-runtime-sharpos/global.json); global.json SharpOS требует его же. ILCompiler для ядра и приложений задаётся явно, а не берётся по умолчанию из SDK."
+  },
+
+  "minimum": {
+    "_why": "На результат сборки не влияют; нужна не ниже указанной.",
+    "cmake": "3.20",
+    "ninja": "1.10",
+    "python": "3.8"
+  },
+
+  "pwsh": {
+    "version": "7.6.5",
+    "_why": "PowerShell для гостя, payloads/pwsh/PowerShell-<версия>-win-x64. Мажорная версия .NET должна совпадать с рантаймом (10 → 7.6.x)."
+  }
+}

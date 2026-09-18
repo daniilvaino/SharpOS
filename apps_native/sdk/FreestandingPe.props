@@ -1,7 +1,7 @@
 ﻿<Project>
 
-  <!-- Кросс-хост сборка (macOS/Linux -> win-x64 PE). На Windows ничего не делает. -->
-  <Import Project="$(MSBuildThisFileDirectory)..\..\CrossHostLink.props" />
+  <!-- Сшивание PE через lld-link + xwin из тулчейна SharpOS, на любом хосте. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\..\SharpOsNativeLink.props" />
 
   <!-- Shared freestanding win-x64 PE recipe for SharpOS native apps (step138).
        Imported by each app csproj (HelloSharpFs, FetchApp, AotTests, ...). Turns
