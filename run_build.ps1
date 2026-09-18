@@ -573,7 +573,10 @@ if (Test-Path -LiteralPath $forkFxNames) {
     Write-Host "Prepared \sharpos\tpa.txt (length=$($tpa.Length))"
 }
 else {
-    Write-Warning "fork fx not found at $forkFx - Stage A normal hosting unavailable"
+    # $forkFx никогда не определялась — предупреждение печатало пустой путь
+    # и не подсказывало, чего именно не хватает. Проверяется $forkFxNames.
+    Write-Warning "fork fx not found at $forkFxNames - Stage A normal hosting unavailable"
+    Write-Warning "  (coreclr-pack собирается только без -SkipLinuxIL и только когда SharpOSBuild не задан)"
 }
 # step137: ELF apps removed. No ELF images are generated or staged anymore;
 # actively delete any stale ELF images + .abi sidecars from a prior ESP so the
