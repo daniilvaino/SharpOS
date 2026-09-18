@@ -2,7 +2,7 @@
 #
 #   git clone --recurse-submodules https://github.com/daniilvaino/SharpOS && cd SharpOS
 #   # по желанию — форк CoreCLR, ровно в эту папку:
-#   git clone -b cross-host-build https://github.com/daniilvaino/dotnet-runtime-sharpos
+#   git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos
 #   mise bootstrap
 #   ./run_build.ps1 -UsbOnly         # в оболочке с `mise activate --shims` (или через `mise exec --`)
 #

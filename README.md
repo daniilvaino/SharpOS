@@ -17,7 +17,7 @@ SharpOS - это экспериментальная операционная с�
 # 2. репозиторий (с подмодулями)
 git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd SharpOS
 # 3. по желанию — форк CoreCLR (hosted-ярус); без него собирается чистое ядро
-git clone -b cross-host-build https://github.com/daniilvaino/dotnet-runtime-sharpos.git
+git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos.git
 # 4. инструменты, системные пакеты, подмодули, зависимости форка
 mise trust && mise bootstrap          # Linux со старым индексом apt: mise bootstrap --update
 ```
