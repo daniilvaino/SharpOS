@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Кросс-хост сборка (macOS/Linux -> win-x64 PE). На Windows файл ничего не делает. -->
   <Import Project="$(MSBuildThisFileDirectory)..\CrossHostLink.props" />
@@ -189,7 +189,11 @@
   <PropertyGroup Condition="'$(SkipCoreClr)' == 'true'">
     <DefineConstants>$(DefineConstants);SKIP_CORECLR</DefineConstants>
   </PropertyGroup>
-  <ItemGroup Condition="'$(OS)' == 'Windows_NT' AND '$(SkipCoreClr)' != 'true'">
+  <!-- SharpOS cross-host: условие смотрит только на SkipCoreClr. Привязка к
+       Windows-хосту здесь была лишней: библиотеки форка — обычные COFF-архивы,
+       и lld-link читает их на любом хосте. Форк кросс-собирается с macOS и
+       Linux (см. dotnet-runtime-sharpos/eng/native/sharpos-crosshost.cmake). -->
+  <ItemGroup Condition="'$(SkipCoreClr)' != 'true'">
     <LinkerArg Include="&quot;$(CoreClrForkObj)\dlls\mscoree\coreclr\coreclr_static.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\gc\sharpos\gc_pal.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\gcinfo\gcinfo_win_x64.lib&quot;" />
