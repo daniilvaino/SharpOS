@@ -392,6 +392,15 @@ Write-Host "Prepared PS profile: \sharpos\pwsh\profile.ps1 (history SaveNothing)
 # Modules/<Name>/<Name>.psd1 at PS startup. Without these manifests every cmdlet
 # lookup ends in "is not recognized" — even though the .dll is in TPA.
 $stockPwshModules = "C:\Program Files\PowerShell\7\Modules"
+# На macOS и Linux pwsh лежит не по этому пути, и командлеты в гостя не
+# попадали: каждый вызов кончался бы "is not recognized", хотя .dll в TPA.
+# $PSHOME указывает на каталог работающего сейчас pwsh, Modules лежит рядом.
+# На Windows у pwsh 7 $PSHOME и есть "C:\Program Files\PowerShell\7", так что
+# запасной путь там даёт ту же папку — поведение не меняется.
+if (-not (Test-Path -LiteralPath $stockPwshModules)) {
+    $psHomeModules = Join-Path $PSHOME "Modules"
+    if (Test-Path -LiteralPath $psHomeModules) { $stockPwshModules = $psHomeModules }
+}
 $espPwshModules   = Join-Path $espSharpOSDir "pwsh\Modules"
 if (Test-Path -LiteralPath $stockPwshModules) {
     New-Item -ItemType Directory -Force -Path $espPwshModules | Out-Null
