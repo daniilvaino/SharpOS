@@ -10,139 +10,42 @@ SharpOS - это экспериментальная операционная с�
 
 ## Как запустить
 
-Сборка одна на Windows, macOS и Linux: те же скрипты, те же инструменты тех же
-версий. EFI следует Windows ABI, поэтому цель всегда `win-x64`, на чём бы вы ни
-собирали. Visual Studio не нужна и на Windows.
-
-Скрипты сборки ничего не ставят сами: перед сборкой они находят инструменты и
-сверяют версии с [`toolchain.json`](toolchain.json) (проверка —
-[`tools/Toolchain.ps1`](tools/Toolchain.ps1)). Не та версия — понятная ошибка до
-начала сборки.
-
-### Инструменты
-
-| Что | Версия | Кому нужно | Где ищется |
-|---|---|---|---|
-| .NET SDK | 10.0.105 ровно | всем | [`global.json`](global.json): `dotnet-runtime-sharpos/.dotnet` (туда его ставит сборка форка) или системный |
-| LLVM: `clang-cl`, `lld-link`, `llvm-lib`, `llvm-rc` | 22.1.8 ровно | `lld-link` — ядру и приложениям; остальное — форку | `SHARPOS_LLVM_BIN` или каталог `clang-cl` в `PATH` |
-| JWasm | 2.21 (коммит в `toolchain.json`) | форку | `SHARPOS_JWASM` или `jwasm` в `PATH` |
-| MSVC CRT 14.44.35220 + Windows SDK 10.0.26100 (splat от xwin) | как слева | форку и ядру с форком; чистому ядру и приложениям — нет | `SHARPOS_XWIN_SPLAT` или `.xwin-cache/splat` |
-| cmake, ninja, python3 | ≥ 3.20, ≥ 1.10, ≥ 3.8 | форку | `PATH` |
-| PowerShell для гостя | 7.6.5 | образу | `payloads/pwsh/PowerShell-7.6.5-win-x64/` |
-| pwsh (оболочка сборки), qemu, mtools | любая свежая | всем | `PATH` |
-
-Почему версии именно такие — в `_why` у каждого пункта `toolchain.json`. Коротко:
-clang 23 отвергает `__try` рядом с объектом, требующим раскрутки, clang 19 —
-`no_builtin` на defaulted-функции из заголовков MSVC, 22 проходит оба. JWasm
-вместо `ml64`/`llvm-ml`: `llvm-ml` не умеет `SECTIONREL` (быстрый путь
-`INLINE_GETTHREAD`), `ml64` есть только в Visual Studio.
-
-Как поставить:
+Зависимости ставятся через [mise](https://mise.jdx.dev) ([`mise.toml`](mise.toml)).
 
 ```bash
-# .NET SDK 10.0.105. Отдельно ставить не обязательно: сборка форка кладёт его в
-# dotnet-runtime-sharpos/.dotnet, и global.json SharpOS берёт его оттуда.
-#   Windows: winget install Microsoft.DotNet.SDK.10 --version 10.0.105
-#   иначе:   https://dotnet.microsoft.com/download/dotnet/10.0 (SDK 10.0.105)
-
-# LLVM 22.1.8 — архив релиза, https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8
-#   Windows: clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz
-#   macOS:   LLVM-22.1.8-macOS-ARM64.tar.xz   (только архив: в brew llvm@22 нет lld-link, а brew lld — уже 23.x)
-#   Linux:   LLVM-22.1.8-Linux-X64.tar.xz
-# распаковать куда угодно и указать каталог bin:
-export SHARPOS_LLVM_BIN=/путь/к/LLVM-22.1.8/bin          # Windows: $env:SHARPOS_LLVM_BIN = 'C:\...\bin'
-
-# xwin 0.10.0 (готовые сборки под Windows и Linux в релизах; на macOS — cargo) и splat
-cargo install xwin --version 0.10.0 --locked
-xwin --accept-license --cache-dir .xwin-cache --manifest-version 17 \
-     --sdk-version 10.0.26100 --crt-version 14.44.17.14 --arch x86_64 \
-     splat --preserve-ms-arch-notation --include-debug-libs --output .xwin-cache/splat
-
-# JWasm 2.21 из исходников, тем же clang (в пакетных системах его нет)
-git clone https://github.com/Baron-von-Riedesel/JWasm && cd JWasm
-git checkout 7f6f32e78b79565d40bcce496756aadd1ff66900
-#   macOS/Linux (malloc.h на macOS нет — JWasm берёт из него только alloca):
-mkdir shim && printf '#include <stdlib.h>\n#include <alloca.h>\n' > shim/malloc.h
-$SHARPOS_LLVM_BIN/clang -D__UNIX__ -std=gnu99 -DNDEBUG -O2 -w -Isrc/H -Ishim \
-    $(ls src/*.c | grep -v trmem) -o jwasm
-#   Windows (pwsh), splat из шага выше:
-#   $s = '..\.xwin-cache\splat'; & "$env:SHARPOS_LLVM_BIN\clang-cl.exe" /nologo -D__NT__ -DNDEBUG /O2 /GS- -w -Isrc/H `
-#       /vctoolsdir $s/crt /winsdkdir $s/sdk -fuse-ld=lld (Get-ChildItem src/*.c -Exclude trmem.c) /Fejwasm.exe `
-#       /link /LIBPATH:$s/crt/lib/x64 /LIBPATH:$s/sdk/lib/um/x64 /LIBPATH:$s/sdk/lib/ucrt/x64
-export SHARPOS_JWASM=$PWD/jwasm                          # Windows: $env:SHARPOS_JWASM = "$PWD\jwasm.exe"
-
-# cmake, ninja, python3, pwsh, qemu, mtools — из пакетного менеджера:
-#   macOS:  brew install cmake ninja python qemu mtools && brew install --cask powershell
-#   Ubuntu: apt install cmake ninja-build python3 build-essential liblttng-ust-dev libicu74 \
-#                       qemu-system-x86 qemu-system-gui ovmf mtools + pwsh (packages.microsoft.com)
-#           build-essential — libc и компоновщик для clang при сборке JWasm и инструментов
-#           форка под хост; liblttng-ust-dev — хостовая часть форка; libicu — для
-#           скачанного SDK; ovmf — прошивка (в Debian/Ubuntu её нет в qemu-system-data)
-#   Windows: winget (cmake, ninja, python, PowerShell); qemu и mtools — через MSYS2, см. ниже
+# 1. mise:  Windows — winget install jdx.mise;  macOS — brew install mise;  Linux — curl https://mise.run | sh
+# 2. репозиторий (с подмодулями)
+git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd SharpOS
+# 3. по желанию — форк CoreCLR (hosted-ярус); без него собирается чистое ядро
+git clone -b cross-host-build https://github.com/daniilvaino/dotnet-runtime-sharpos.git
+# 4. инструменты, системные пакеты, подмодули, зависимости форка
+mise trust && mise bootstrap          # Linux со старым индексом apt: mise bootstrap --update
 ```
 
-На Windows qemu и mtools удобнее всего взять из MSYS2:
+Payloads (необязательны, см. [`payloads/README.md`](payloads/README.md)):
+`payloads/DOOM1.WAD`, картриджи `.nes`, PowerShell для гостя в
+`payloads/pwsh/PowerShell-7.6.5-win-x64/`.
+
+Один раз включить mise в оболочке — тогда инструменты из него сами попадают в
+PATH в каталоге репозитория:
+
+```bash
+# PowerShell:  Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'
+# bash / zsh:  echo 'eval "$(mise activate bash --shims)"' >> ~/.bashrc   (zsh — ~/.zshrc, mise activate zsh --shims)
+```
+
+Сборка и запуск:
 
 ```powershell
-winget install --id MSYS2.MSYS2 --source winget --accept-package-agreements --accept-source-agreements
-# Обновление гоняется дважды: первый прогон обновляет ядро MSYS2 и обрывает сессию — это штатно.
-C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
-C:\msys64\usr\bin\bash.exe -lc "pacman -Syuu --noconfirm"
-C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm mingw-w64-x86_64-mtools mingw-w64-x86_64-qemu mingw-w64-x86_64-qemu-image-util xorriso util-linux"
-[Environment]::SetEnvironmentVariable('Path',
-  [Environment]::GetEnvironmentVariable('Path','User')+ ';C:\msys64\mingw64\bin;C:\msys64\usr\bin',  'User')
+cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..   # форк, если он есть (Release по умолчанию)
+./build_launcher.ps1                                      # и build_fetch / aottests / benchaot / doom / shell / tricnes / fami
+$env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly              # ядро + образ + QEMU; без форка: -SkipCoreClr
+# из bash/zsh — через pwsh:  SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly
 ```
 
-### Сборка
+Лог ядра (COM1) — `last_build.log`, вывод программ — `last_app.log` (COM3),
+их ошибки — `last_err.log` (COM4).
 
-```bash
-# --recurse-submodules обязателен: эмуляторы NES (TriCNES, Fami) и разбор команд
-# оболочки (vendor/ShellSyntaxTree/upstream) подключены подмодулями, без них
-# не соберутся TRICNES, FAMI и SHELL. Уже склонировали без него:
-#   git submodule update --init --recursive
-git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd SharpOS
-
-# Данные для приложений — в payloads/, см. payloads/README.md
-curl -L -o payloads/DOOM1.WAD https://raw.githubusercontent.com/nifanfa/MOOS/refs/heads/master/Ramdisk/DOOM1.WAD
-curl -L -o pwsh.zip https://github.com/PowerShell/PowerShell/releases/download/v7.6.5/PowerShell-7.6.5-win-x64.zip
-pwsh -c "Expand-Archive pwsh.zip -DestinationPath payloads/pwsh/PowerShell-7.6.5-win-x64"
-
-# Форк CoreCLR (для ядра с hosted-ярусом; для чистого ядра не нужен)
-git clone -b cross-host-build https://github.com/daniilvaino/dotnet-runtime-sharpos.git
-pwsh ./dotnet-runtime-sharpos/build_clr_sharpos.ps1 -Configuration Release
-
-# Приложения
-pwsh ./build_launcher.ps1   # и build_fetch / build_aottests / build_benchaot / build_doom / build_shell / build_tricnes / build_fami
-
-# Ядро + образ + запуск в QEMU (SHARPOS_GUI=1 — окно QEMU с GOP-фреймбуфером + serial)
-SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly -TraceFaults
-# чистое ядро, без форка:  pwsh ./run_build.ps1 -SkipCoreClr
-```
-
-Лог ядра (COM1) — `last_build.log`, вывод программ — `last_app.log` (COM3), их
-ошибки — `last_err.log` (COM4).
-
-Как собирается: ILC компилирует ядро и приложения под `win-x64`, сшивает
-`lld-link` ([`SharpOsNativeLink.props`](SharpOsNativeLink.props)); форк
-собирают `clang-cl` + `lld-link` + `llvm-lib` + `llvm-rc` + JWasm поверх splat'а
-xwin (`dotnet-runtime-sharpos/eng/native/sharpos-toolchain.cmake`). Библиотеки
-Microsoft (CRT, Windows SDK) попадают только в ядро с форком: чистое ядро и
-приложения — NoStdLib и сшиваются без них.
-
-Прошивка UEFI берётся из каталога `share/qemu` рядом с самим qemu (Homebrew,
-NixOS); в Debian/Ubuntu её нет в пакетах qemu — нужен пакет `ovmf`.
-
-NixOS: инструменты берутся из PATH или переменных выше (`clang-cl` есть только
-в **unwrapped** clang). Скачанный Arcade'ом .NET SDK и `ilc` из NuGet — обычные
-glibc-бинари и без `/lib64/ld-linux-x86-64.so.2` не стартуют: нужен
-`programs.nix-ld.enable = true` с библиотеками
-`stdenv.cc.cc zlib icu openssl krb5 lttng-ust`. Прошивка выводится из пути
-самого `qemu-system-x86_64`. На NixOS сборка пока не проверялась.
-
-На arm64-маке QEMU эмулирует x86-64 программно, без ускорения:
-загрузка идёт заметно медленнее (`NormalHello` — ~15 с). На macOS 26 SDK
-объявляет `pipe2`, которого в системе нет, — проверка конфигурации в форке это
-учитывает, иначе crossgen2 падал бы молча при инициализации PAL.
 ## Архитектурные инварианты
 
 **Инвариант 1 - C# is the only source language.** Весь исполняемый код - на C#. В дереве исходников нет ни одного `.c`, `.cpp`, `.h`, `.asm` или `.s` файла. Ни одного. Сборку и запуск, как и в любом .NET-проекте, оркестрируют MSBuild (`.csproj`/`.props`/`.targets`) и PowerShell (`.ps1`) - это не логика системы, а её build-обвязка. Всё остальное - обработчики прерываний, spill callee-saved regs, runtime-bridges, write barriers, interface-dispatch trampolines - выражается одним из трёх способов:

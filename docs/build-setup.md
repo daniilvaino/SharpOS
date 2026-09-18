@@ -7,8 +7,7 @@ mid-range desktop.
 
 ## What has to be installed
 
-The tool list, the exact versions and how to install them are in the README
-(section «Инструменты») and in [`toolchain.json`](../toolchain.json), which is
+The tools are installed by `mise bootstrap` from [`mise.toml`](../mise.toml) (README, «Как запустить»); the exact versions are in [`toolchain.json`](../toolchain.json), which is
 the single place the versions are written down. The build scripts install
 nothing: before building they locate the tools and check their versions
 against `toolchain.json` (`tools/Toolchain.ps1`), failing early with a message

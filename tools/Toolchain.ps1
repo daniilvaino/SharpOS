@@ -8,7 +8,7 @@
 # Где ищет (одинаково на Windows, macOS и Linux):
 #   LLVM    SHARPOS_LLVM_BIN, иначе каталог clang-cl из PATH; lld-link,
 #           llvm-lib, llvm-rc — оттуда же
-#   JWasm   SHARPOS_JWASM, иначе jwasm из PATH
+#   JWasm   SHARPOS_JWASM, иначе jwasm из PATH, иначе .cache/jwasm в корне SharpOS
 #   splat   SHARPOS_XWIN_SPLAT, иначе .xwin-cache/splat в корне SharpOS
 #   cmake, ninja, python — из PATH
 #   dotnet  global.json в корне SharpOS (он же требует версию SDK)
@@ -99,6 +99,8 @@ function Assert-SharpOsToolchain {
         $want = $spec.jwasm.version
         $exe = $env:SHARPOS_JWASM
         if (-not $exe) { $exe = Find-SharpOsInPath 'jwasm' }
+        # Туда его собирает mise bootstrap (задача bootstrap:jwasm).
+        if (-not $exe) { $exe = Join-Path $script:SharpOsRoot ('.cache/jwasm/' + (Get-SharpOsExeName 'jwasm')) }
         if (-not $exe -or -not (Test-Path -LiteralPath $exe)) {
             $bad.Add("JWasm $want`: не найден (нет jwasm в PATH и не задан SHARPOS_JWASM)")
         } else {
@@ -152,7 +154,7 @@ function Assert-SharpOsToolchain {
 
     if ($bad.Count -gt 0) {
         throw ("Сборочные инструменты не совпадают с toolchain.json:`n  " + ($bad -join "`n  ") +
-               "`nКак поставить нужные версии — README, раздел «Инструменты».")
+               "`nПоставить нужные версии: mise bootstrap (см. README «Как запустить»).")
     }
     return [pscustomobject]$found
 }

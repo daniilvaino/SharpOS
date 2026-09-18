@@ -141,3 +141,6 @@ sharpos.map
 # (несколько сотен мегабайт, восстанавливается командой из README)
 .xwin-cache/
 .DS_Store
+
+# mise bootstrap: собранный JWasm (bootstrap:jwasm)
+.cache/

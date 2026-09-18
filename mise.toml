@@ -1,0 +1,135 @@
+# Окружение сборки и запуска SharpOS — Windows, macOS, Linux.
+#
+#   git clone --recurse-submodules https://github.com/daniilvaino/SharpOS && cd SharpOS
+#   # по желанию — форк CoreCLR, ровно в эту папку:
+#   git clone -b cross-host-build https://github.com/daniilvaino/dotnet-runtime-sharpos
+#   mise bootstrap
+#   ./run_build.ps1 -UsbOnly         # в оболочке с `mise activate --shims` (или через `mise exec --`)
+#
+# mise только готовит окружение. Собирают существующие скрипты (run_build.ps1,
+# build_*.ps1, dotnet-runtime-sharpos/build_clr_sharpos.ps1), и они же сверяют
+# версии с toolchain.json (tools/Toolchain.ps1): версии здесь должны совпадать
+# с ним, расхождение сборка поймает до начала работы.
+#
+# Форк CoreCLR необязателен. Если он лежит в dotnet-runtime-sharpos/, bootstrap
+# ставит и его зависимости; если нет — их версия "system", и mise их не ставит.
+
+[vars]
+coreclr = "{% if config_root ~ '/dotnet-runtime-sharpos/build_clr_sharpos.ps1' is file %}1{% endif %}"
+
+[tools]
+# ── основная репа ───────────────────────────────────────────────────────────
+dotnet = "10.0.105"      # global.json; тот же SDK берёт Arcade форка
+powershell = "7.6.5"     # оболочка сборки и задач ниже
+
+# ── форк CoreCLR ────────────────────────────────────────────────────────────
+cmake = "{% if vars.coreclr %}3.31.12{% else %}system{% endif %}"
+ninja = "{% if vars.coreclr %}1.12.1{% else %}system{% endif %}"
+python = "{% if vars.coreclr %}3.12{% else %}system{% endif %}"
+# xwin: готовые сборки только под Windows и Linux, на macOS — из crates.io.
+"github:Jake-Shadle/xwin" = { version = "{% if vars.coreclr %}0.10.0{% else %}system{% endif %}", os = ["windows", "linux"] }
+"cargo:xwin" = { version = "{% if vars.coreclr %}0.10.0{% else %}system{% endif %}", os = ["macos"], depends = ["rust"] }
+rust = { version = "{% if vars.coreclr %}1.89.0{% else %}system{% endif %}", os = ["macos"] }
+
+# LLVM 22.1.8 ровно (toolchain.json): clang 23 отвергает __try рядом с объектом,
+# требующим раскрутки, clang 19 — no_builtin на defaulted-функции. lld-link
+# отсюда нужен и без форка — им сшиваются ядро и приложения. Официальные
+# архивы: в brew llvm@22 нет lld-link, а brew lld уже 23.x.
+[tools."github:llvm/llvm-project"]
+version = "22.1.8"
+version_prefix = "llvmorg-"
+strip_components = 1    # у архивов LLVM один верхний каталог
+bin_path = "bin"
+[tools."github:llvm/llvm-project".platforms]
+windows-x64 = { asset_pattern = "clang*llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz", checksum = "sha256:d96c2cc1736f4eb7fa43cb9bbdf56d93551a9ae0a9aadb9c99c3c3b2b712a234" }
+linux-x64 = { asset_pattern = "LLVM-22.1.8-Linux-X64.tar.xz", checksum = "sha256:df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384" }
+macos-arm64 = { asset_pattern = "LLVM-22.1.8-macOS-ARM64.tar.xz", checksum = "sha256:f260f4f7c0d430828a81ae8a3826a1d63fc0963ec2459489308cc23b1f7eab4f" }
+
+# Системное: запуск (QEMU, прошивка UEFI, mtools для образа ESP) и то, что не
+# ставится как инструмент. Записи чужих ОС и отсутствующих менеджеров mise
+# пропускает. Прошивку на Windows и macOS приносит сам QEMU.
+[bootstrap.packages]
+"winget:SoftwareFreedomConservancy.QEMU" = "latest"
+"winget:MSYS2.MSYS2" = "latest"              # mtools на Windows есть только в MSYS2
+"brew:qemu" = { os = "macos" }       # brew бывает и на Linux — там берём apt
+"brew:mtools" = { os = "macos" }
+"apt:qemu-system-x86" = "latest"
+"apt:qemu-system-gui" = "latest"             # окно QEMU (SHARPOS_GUI=1)
+"apt:ovmf" = "latest"                        # в Debian/Ubuntu прошивки нет в пакетах qemu
+"apt:mtools" = "latest"
+"apt:libicu-dev" = "latest"                  # ICU для .NET SDK
+
+# Последний шаг `mise bootstrap`. Все шаги можно повторять: их результат либо
+# проверяется (sources/outputs), либо сам по себе идемпотентен. Без форка его
+# задачи ничего не делают, а выходом у них числится сам mise.toml.
+[tasks.bootstrap]
+depends = ["bootstrap:submodules", "bootstrap:mtools", "bootstrap:coreclr-system", "bootstrap:splat", "bootstrap:jwasm"]
+
+[tasks."bootstrap:submodules"]
+run = "git submodule update --init --recursive"
+
+[tasks."bootstrap:mtools"]
+shell = "pwsh -NoProfile -NonInteractive -Command"
+run = '''
+if ($IsWindows -and -not (Test-Path C:\msys64\mingw64\bin\mformat.exe)) {
+    & C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm mingw-w64-x86_64-mtools"
+}
+'''
+
+# Системные зависимости форка: хостовая часть его сборки (инструменты для
+# crossgen2) собирается clang'ом из LLVM выше, ему нужны libc и lttng хоста.
+[tasks."bootstrap:coreclr-system"]
+shell = "pwsh -NoProfile -NonInteractive -Command"
+run = '''
+if (-not '{{ vars.coreclr }}') { return }
+if ($IsLinux) { mise bootstrap packages apply --yes apt:build-essential apt:liblttng-ust-dev }
+if ($IsMacOS) {
+    xcode-select -p *> $null
+    if ($LASTEXITCODE) { throw 'Форку нужны Xcode Command Line Tools: xcode-select --install' }
+}
+'''
+
+# Заголовки и библиотеки MSVC CRT 14.44.35220 + Windows SDK 10.0.26100
+# (toolchain.json). --accept-license — лицензия Microsoft на эти файлы.
+[tasks."bootstrap:splat"]
+sources = ["mise.toml"]
+outputs = ["{% if vars.coreclr %}.xwin-cache/splat/crt/include/crtversion.h{% else %}mise.toml{% endif %}"]
+shell = "pwsh -NoProfile -NonInteractive -Command"
+run = '''
+if (-not '{{ vars.coreclr }}') { return }
+xwin --accept-license --cache-dir .xwin-cache --manifest-version 17 `
+     --sdk-version 10.0.26100 --crt-version 14.44.17.14 --arch x86_64 `
+     splat --preserve-ms-arch-notation --include-debug-libs --output .xwin-cache/splat
+'''
+
+# JWasm 2.21 (коммит 7f6f32e7) — ассемблер MASM-исходников форка. Готовых
+# сборок нет; собирается тем же clang'ом, на Windows — поверх splat'а. Результат —
+# .cache/jwasm, оттуда его берёт tools/Toolchain.ps1.
+[tasks."bootstrap:jwasm"]
+depends = ["bootstrap:splat"]
+sources = ["mise.toml"]
+outputs = ["{% if vars.coreclr %}.cache/jwasm/jwasm*{% else %}mise.toml{% endif %}"]
+shell = "pwsh -NoProfile -NonInteractive -Command"
+run = '''
+if (-not '{{ vars.coreclr }}') { return }
+$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true
+$out = '.cache/jwasm'; $src = "$out/src"
+New-Item -ItemType Directory -Force $src | Out-Null
+git -C $src init -q
+git -C $src fetch -q --depth 1 https://github.com/Baron-von-Riedesel/JWasm 7f6f32e78b79565d40bcce496756aadd1ff66900
+git -C $src -c core.protectNTFS=false checkout -q -f FETCH_HEAD -- src
+$c = Get-ChildItem "$src/src/*.c" -Exclude trmem.c | ForEach-Object FullName
+if ($IsWindows) {
+    $s = '.xwin-cache/splat'
+    clang-cl /nologo -D__NT__ -DNDEBUG /O2 /GS- -w "-I$src/src/H" /vctoolsdir "$s/crt" /winsdkdir "$s/sdk" `
+        -fuse-ld=lld @c "/Fe$out/jwasm.exe" "/Fo$out/" `
+        /link "/LIBPATH:$s/crt/lib/x64" "/LIBPATH:$s/sdk/lib/um/x64" "/LIBPATH:$s/sdk/lib/ucrt/x64"
+    Remove-Item "$out/*.obj"
+} else {
+    # malloc.h на macOS нет; JWasm берёт из него только alloca.
+    New-Item -ItemType Directory -Force "$out/shim" | Out-Null
+    Set-Content "$out/shim/malloc.h" "#include <stdlib.h>`n#include <alloca.h>"
+    $sys = if ($IsMacOS) { @('-isysroot', (xcrun --show-sdk-path)) } else { @() }
+    clang -D__UNIX__ -std=gnu99 -DNDEBUG -O2 -w "-I$src/src/H" "-I$out/shim" @sys @c -o "$out/jwasm"
+}
+'''
