@@ -70,15 +70,38 @@ $env:SHARPOS_GUI = 1   # окно QEMU (GOP-фреймбуфер) + serial
 ```bash
 # macOS
 brew install llvm@22 lld cmake ninja mtools xorriso qemu && brew install --cask powershell
-# Linux (Debian/Ubuntu): clang-22 lld-22 cmake ninja-build mtools xorriso qemu-system-x86 + pwsh
 
-# sysroot MSVC + Windows SDK (лицензия принимается ключом; ~1 ГБ в .xwin-cache, в гит не попадает)
-cargo install xwin
+# Ubuntu 24.04 — LLVM 22 в архиве noble нет, нужен репозиторий apt.llvm.org:
+#   wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 22
+sudo apt install clang-22 llvm-22 lld-22 cmake ninja-build build-essential python3 \
+                 liblttng-ust-dev libicu74 mtools xorriso qemu-system-x86 qemu-system-gui ovmf
+#   llvm-22 — llvm-lib/llvm-rc (clang-22 их не тянет); build-essential — make/gcc для JWasm
+#   и системный cc для кросс-инструментов; liblttng-ust-dev — хостовая часть форка;
+#   ovmf — прошивка (в Debian/Ubuntu qemu-system-data её не содержит);
+#   pwsh — из репозитория Microsoft (packages.microsoft.com).
+
+# sysroot MSVC + Windows SDK (лицензия принимается ключом; ~1 ГБ в .xwin-cache, в гит не попадает).
+# xwin собирается rustup'ом (cargo из apt старше edition 2024) либо берётся готовым
+# из релизов xwin; на NixOS есть pkgs.xwin.
+cargo install --locked xwin
 xwin --accept-license --cache-dir .xwin-cache --arch x86_64 --sdk-version 10.0.22621 \
      splat --preserve-ms-arch-notation --include-debug-libs --output .xwin-cache/splat
 
 # JWasm — в пакетных системах его нет, рецепт сборки в sharpos-crosshost.cmake; итог в ~/.local/bin/jwasm
 ```
+
+NixOS: все инструменты берутся из PATH (nix shell с llvm 22 — `clang-cl`
+есть только в **unwrapped** clang, — lld, cmake, ninja, mtools, xorriso, qemu,
+powershell, python3, lttng-ust, xwin). Две вещи, которых скрипты сами не
+решают: (1) сборка форка скачивает .NET SDK 10.0.105 в
+`dotnet-runtime-sharpos/.dotnet/`, а ядро и приложения запускают `ilc` из
+NuGet-пакета — оба glibc-бинари и без `/lib64/ld-linux-x86-64.so.2` не
+стартуют; нужен `programs.nix-ld.enable = true` с библиотеками
+`stdenv.cc.cc zlib icu openssl krb5 lttng-ust` (либо `DOTNET_INSTALL_DIR` на
+nix-овский SDK ровно версии 10.0.105 из `global.json`, но `ilc` всё равно
+потребует nix-ld или patchelf); (2) прошивка выводится из пути самого
+`qemu-system-x86_64` (`<store-path>/share/qemu/edk2-*.fd`) — так что ничего
+задавать не нужно, но если QEMU собран без edk2, укажите `-OvmfCode`.
 
 Версия LLVM значима: clang 23 отвергает `__try` рядом с объектом, требующим
 раскрутки, clang 19 — `no_builtin` на defaulted-функции; 22 проходит обе, и
@@ -97,7 +120,7 @@ SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly -TraceFaults
 PowerShell для гостя скачивается отдельно, как описано в
 [`payloads/README.md`](payloads/README.md) (`PowerShell-7.6.x-win-x64` в
 `payloads/pwsh/`); без него `run_build.ps1` предупредит и соберёт образ без
-него. Прошивка UEFI берётся из самого qemu, отдельный OVMF не нужен.
+него. Прошивка UEFI берётся из каталога `share/qemu` рядом с самим qemu (Homebrew, NixOS); в Debian/Ubuntu она лежит в пакете `ovmf`.
 
 Проверено на macOS 26 arm64, сборка с нуля: ядро с форком слинковано и
 загружено (`[info] fork: Release`), crossgen'нутый `System.Private.CoreLib`

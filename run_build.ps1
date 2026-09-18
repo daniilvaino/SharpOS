@@ -195,11 +195,25 @@ $QemuExe = Resolve-FirstPath -Candidates @(
     "/usr/bin/qemu-system-x86_64"
 ) -Label "qemu-system-x86_64"
 
+# Прошивка рядом с самим QEMU: <префикс>/share/qemu/edk2-*.fd. Список ниже —
+# фиксированные раскладки (Homebrew, FHS), а на NixOS префикс — путь в
+# /nix/store, узнать его можно только от бинаря; PATH-запись в профиле — цепочка
+# символических ссылок, поэтому разрешаем её до конца.
+$qemuShare = $null
+if ($QemuExe -and (Test-Path -LiteralPath $QemuExe)) {
+    try {
+        $qemuReal = (Get-Item -LiteralPath $QemuExe).ResolveLinkTarget($true)
+        if (-not $qemuReal) { $qemuReal = Get-Item -LiteralPath $QemuExe }
+        $qemuShare = Join-Path (Split-Path -Parent (Split-Path -Parent $qemuReal.FullName)) "share/qemu"
+    } catch { $qemuShare = $null }
+}
+
 # Strict-NX OVMF (built via .\ovmf\build.ps1) is preferred.
 # Falls back to the system QEMU OVMF if not yet built.
 $OvmfCode = Resolve-FirstPath -Candidates @(
     $OvmfCode,
     (Join-Path $repoRoot "ovmf\OVMF_CODE.strict-nx.fd"),
+    $(if ($qemuShare) { Join-Path $qemuShare "edk2-x86_64-code.fd" }),
     "C:\msys64\mingw64\share\qemu\edk2-x86_64-code.fd",
     "C:\Program Files\qemu\share\edk2-x86_64-code.fd",
     "C:\Program Files\QEMU\share\edk2-x86_64-code.fd",
@@ -215,6 +229,7 @@ $OvmfCode = Resolve-FirstPath -Candidates @(
 $OvmfVars = Resolve-OptionalPath -Candidates @(
     $OvmfVars,
     (Join-Path $repoRoot "ovmf\OVMF_VARS.strict-nx.fd"),
+    $(if ($qemuShare) { Join-Path $qemuShare "edk2-i386-vars.fd" }),
     "C:\msys64\mingw64\share\qemu\edk2-x86_64-vars.fd",
     "C:\msys64\mingw64\share\qemu\edk2-i386-vars.fd",
     "C:\Program Files\qemu\share\edk2-x86_64-vars.fd",
@@ -672,6 +687,11 @@ foreach ($peApp in $peApps) {
     if (Test-Path -LiteralPath $peSrc) {
         Copy-Item -LiteralPath $peSrc -Destination $peDst -Force
         Write-Host "Prepared app PE: $peDst"
+    }
+    elseif ($peApp.Dest -eq "LAUNCHER.EXE") {
+        # Без лаунчера образ грузится в пустоту. Так бывает, когда
+        # build_launcher.ps1 не запускали или ILC не смог стартовать (NixOS без nix-ld).
+        Write-Warning "LAUNCHER.EXE не собран ($peSrc) — запустите pwsh ./build_launcher.ps1"
     }
     if (Test-Path -LiteralPath "$peDst.abi") {
         Remove-Item -LiteralPath "$peDst.abi" -Force

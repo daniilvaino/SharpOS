@@ -41,6 +41,13 @@
     <IlcUseEnvironmentalTools>true</IlcUseEnvironmentalTools>
     <SharpOsLldLink Condition="'$(SharpOsLldLink)' == '' AND Exists('/opt/homebrew/opt/lld/bin/lld-link')">/opt/homebrew/opt/lld/bin/lld-link</SharpOsLldLink>
     <SharpOsLldLink Condition="'$(SharpOsLldLink)' == '' AND Exists('/usr/local/opt/lld/bin/lld-link')">/usr/local/opt/lld/bin/lld-link</SharpOsLldLink>
+    <!-- Debian/Ubuntu: пакет lld-22 кладёт /usr/lib/llvm-22/bin/lld-link и
+         /usr/bin/lld-link-22, а голого lld-link в PATH нет. SHARPOS_LLVM_BIN —
+         тот же каталог, что и у тулчейна форка. -->
+    <SharpOsLldLink Condition="'$(SharpOsLldLink)' == '' AND '$(SHARPOS_LLVM_BIN)' != '' AND Exists('$(SHARPOS_LLVM_BIN)/lld-link')">$(SHARPOS_LLVM_BIN)/lld-link</SharpOsLldLink>
+    <SharpOsLldLink Condition="'$(SharpOsLldLink)' == '' AND Exists('/usr/lib/llvm-22/bin/lld-link')">/usr/lib/llvm-22/bin/lld-link</SharpOsLldLink>
+    <SharpOsLldLink Condition="'$(SharpOsLldLink)' == '' AND Exists('/usr/lib/llvm-21/bin/lld-link')">/usr/lib/llvm-21/bin/lld-link</SharpOsLldLink>
+    <SharpOsLldLink Condition="'$(SharpOsLldLink)' == '' AND Exists('/usr/bin/lld-link-22')">/usr/bin/lld-link-22</SharpOsLldLink>
     <SharpOsLldLink Condition="'$(SharpOsLldLink)' == ''">lld-link</SharpOsLldLink>
   </PropertyGroup>
 

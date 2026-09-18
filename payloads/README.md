@@ -26,6 +26,16 @@ PowerShell — распакованный каталог целиком, из р
 запуске. `System.Private.CoreLib` из дистрибутива не берётся — он и рантайм
 собираются вместе.
 
+На macOS и Linux дистрибутив кладётся так же, только без `curl.exe` и с
+прямыми чертами (в bash обратная черта — экранирование, и файл ляжет в корень
+репозитория):
+
+```bash
+mkdir -p payloads/pwsh && cd payloads/pwsh
+curl -L -o pwsh.zip https://github.com/PowerShell/PowerShell/releases/download/v7.6.5/PowerShell-7.6.5-win-x64.zip
+unzip -q pwsh.zip -d PowerShell-7.6.5-win-x64 && rm pwsh.zip
+```
+
 Содержимое каталога не попадает в репозиторий: игровые данные — не исходники,
 а часть из них нам и не принадлежит. В гите живёт только этот файл.
 
@@ -38,4 +48,6 @@ PowerShell — распакованный каталог целиком, из р
 
 ```
 curl.exe -L -o payloads\DOOM1.WAD https://raw.githubusercontent.com/nifanfa/MOOS/refs/heads/master/Ramdisk/DOOM1.WAD
+# macOS/Linux (в bash обратная черта в пути — экранирование, файл уехал бы в корень):
+curl -L -o payloads/DOOM1.WAD https://raw.githubusercontent.com/nifanfa/MOOS/refs/heads/master/Ramdisk/DOOM1.WAD
 ```
