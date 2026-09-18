@@ -103,8 +103,9 @@ PowerShell для гостя скачивается отдельно, как о�
 загружено (`[info] fork: Release`), crossgen'нутый `System.Private.CoreLib`
 принят (`[r2r] accepted`), `coreclr_initialize hr=0x0`, и стоковый
 `NormalHello.dll` из обычного `dotnet build` отработал байт-в-байт —
-`execute_assembly hr=0x0 exitCode=42`, как на Windows. Батарея проб даёт тот
-же результат, что на Windows: 129 зелёных и те же 4 провала.
+`execute_assembly hr=0x0 exitCode=42`, как на Windows; из лаунчера
+запускается PowerShell 7.6.5. Батарея проб даёт тот же результат, что на
+Windows: 129 зелёных и те же 4 провала.
 
 Что стоит знать. `\sharpos\fx` на Windows берёт список имён из
 `coreclr-pack`, оставшегося от step 67; без него список берётся из SDK
