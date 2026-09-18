@@ -90,4 +90,35 @@
 
     <Message Importance="normal" Text="SharpOS: сшивание через $(CppLinker), ILCompiler $(SharpOsIlcVersion), Windows SDK: $(SharpOsLinkWinSdk)" />
   </Target>
+
+  <!--
+    Реализация ядра (приложения) побеждает библиотечную — по правилу, а не по
+    случайности порядка.
+
+    Ядро линкуется с /FORCE:MULTIPLE: одни и те же имена определены и в нашем
+    коде (RaiseException, RtlVirtualUnwind, RhpAssignRef, __security_cookie...),
+    и в библиотеках форка и CRT. lld-link при дубле оставляет ПЕРВОЕ
+    определение. Член архива подтягивается, только когда компоновщик дошёл до
+    самого архива, поэтому если все объектные файлы стоят раньше любой
+    библиотеки, к этому моменту наши символы уже определены, и любая
+    библиотечная копия — вторая.
+
+    Раньше порядок складывался сам: OS.obj шёл первым, но CrtGlobals.CoffData.obj
+    (наш __security_cookie) — уже после всех библиотек форка и libcmt, и
+    выигрывал только потому, что lld откладывает загрузку членов архива.
+    Здесь все .obj переставляются в начало, остальное сохраняет порядок.
+    Выполняется последним перед LinkNative — после всех targets, которые
+    правят LinkerArg.
+  -->
+  <Target Name="SharpOsObjectsFirst"
+          BeforeTargets="LinkNative"
+          DependsOnTargets="SharpOsNativeLink">
+    <ItemGroup>
+      <_SharpOsLinkObj Include="@(LinkerArg)"
+                       Condition="$([System.String]::Copy('%(Identity)').Trim('&quot;').ToLowerInvariant().EndsWith('.obj'))" />
+      <_SharpOsLinkRest Include="@(LinkerArg)" Exclude="@(_SharpOsLinkObj)" />
+      <LinkerArg Remove="@(LinkerArg)" />
+      <LinkerArg Include="@(_SharpOsLinkObj);@(_SharpOsLinkRest)" />
+    </ItemGroup>
+  </Target>
 </Project>

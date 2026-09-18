@@ -47,7 +47,7 @@ clang 23 отвергает `__try` рядом с объектом, требую
 
 # LLVM 22.1.8 — архив релиза, https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8
 #   Windows: clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz
-#   macOS:   LLVM-22.1.8-macOS-ARM64.tar.xz   (brew llvm@22 даёт последнюю 22.x, не обязательно 22.1.8)
+#   macOS:   LLVM-22.1.8-macOS-ARM64.tar.xz   (только архив: в brew llvm@22 нет lld-link, а brew lld — уже 23.x)
 #   Linux:   LLVM-22.1.8-Linux-X64.tar.xz
 # распаковать куда угодно и указать каталог bin:
 export SHARPOS_LLVM_BIN=/путь/к/LLVM-22.1.8/bin          # Windows: $env:SHARPOS_LLVM_BIN = 'C:\...\bin'
@@ -96,8 +96,10 @@ C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm mingw-w64-x86_64-
 ### Сборка
 
 ```bash
-# --recurse-submodules обязателен: эмуляторы NES (TriCNES, Fami) подключены
-# подмодулями, без него их папки будут пустыми и сборка приложений упадёт.
+# --recurse-submodules обязателен: эмуляторы NES (TriCNES, Fami) и разбор команд
+# оболочки (vendor/ShellSyntaxTree/upstream) подключены подмодулями, без них
+# не соберутся TRICNES, FAMI и SHELL. Уже склонировали без него:
+#   git submodule update --init --recursive
 git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd SharpOS
 
 # Данные для приложений — в payloads/, см. payloads/README.md

@@ -217,12 +217,14 @@
          needs both libs explicitly. See docs/eh-model.md. -->
     <LinkerArg Include="&quot;$(CoreClrForkObj)\dlls\mscorrc\mscorrc.lib&quot;" />
     <LinkerArg Include="&quot;$(CoreClrForkObj)\nativeresources\nativeresourcestring.lib&quot;" />
-    <!-- Статический CRT MSVC для форка (из splat'а xwin, путь даёт
-         SharpOsNativeLink.props). Последним: coreclrpal_kernel_crt.lib выше
-         перехватывает то, что ядру надо подменить, а libcmt добирает остальное.
-         Раньше на Windows он вливался внутрь coreclr_static.lib, но средства
-         LLVM его не переупаковывают (объекты с машинным типом 0), и ради
-         одного пути на всех хостах слияние убрано. -->
+    <!-- Статический CRT MSVC — только для форка (из splat'а xwin, путь даёт
+         SharpOsNativeLink.props). Последним среди библиотек: coreclrpal_kernel_crt.lib
+         выше перехватывает то, что форку надо подменить, а libcmt добирает
+         остальное. Над реализациями ядра он не побеждает никогда: объекты ядра
+         стоят раньше любой библиотеки (SharpOsObjectsFirst в
+         SharpOsNativeLink.props). Раньше на Windows он вливался внутрь
+         coreclr_static.lib, но средства LLVM его не переупаковывают (объекты с
+         машинным типом 0), и ради одного пути на всех хостах слияние убрано. -->
     <LinkerArg Include="libcmt.lib" />
 
     <!-- Force /INCLUDE of coreclr_initialize — без этого linker /OPT:REF
@@ -231,13 +233,14 @@
          the full CoreCLR runtime closure. -->
     <LinkerArg Include="/INCLUDE:coreclr_initialize" />
 
-    <!-- Phase 6.1.0b yolo path: CoreCLR brings duplicate copies of
-         NativeAOT runtime helpers (RhpAssignRef, RhpNewFast, etc.) which
-         conflict с our kernel's Rh* exports. /FORCE:MULTIPLE picks the
-         first definition (linker order: OS.obj приходит первым → наши
-         managed implementations win). Architectural cleanup deferred —
-         this is "see if a kernel image with CoreCLR linked even produces
-         output" experiment. -->
+    <!-- Phase 6.1.0b: CoreCLR and the CRT bring duplicate copies of names the
+         kernel implements itself (RhpAssignRef, RaiseException,
+         RtlVirtualUnwind, __security_cookie...). /FORCE:MULTIPLE keeps the
+         FIRST definition, and the kernel's always comes first: every kernel
+         object file is placed before any library (SharpOsObjectsFirst in
+         SharpOsNativeLink.props), so an archive member with the same name is
+         always the second one. Architectural cleanup (no duplicates at all)
+         deferred. -->
     <LinkerArg Include="/FORCE:MULTIPLE" />
     <!-- Link map. Faults keep landing at fixed image offsets inside the
          statically linked runtime, and without a map those offsets stay
