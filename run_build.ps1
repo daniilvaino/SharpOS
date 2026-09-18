@@ -391,16 +391,18 @@ Write-Host "Prepared PS profile: \sharpos\pwsh\profile.ps1 (history SaveNothing)
 # (Get-ChildItem etc.), Microsoft.PowerShell.Security/Diagnostics — all import via
 # Modules/<Name>/<Name>.psd1 at PS startup. Without these manifests every cmdlet
 # lookup ends in "is not recognized" — even though the .dll is in TPA.
-$stockPwshModules = "C:\Program Files\PowerShell\7\Modules"
-# На macOS и Linux pwsh лежит не по этому пути, и командлеты в гостя не
-# попадали: каждый вызов кончался бы "is not recognized", хотя .dll в TPA.
-# $PSHOME указывает на каталог работающего сейчас pwsh, Modules лежит рядом.
-# На Windows у pwsh 7 $PSHOME и есть "C:\Program Files\PowerShell\7", так что
-# запасной путь там даёт ту же папку — поведение не меняется.
-if (-not (Test-Path -LiteralPath $stockPwshModules)) {
-    $psHomeModules = Join-Path $PSHOME "Modules"
-    if (Test-Path -LiteralPath $psHomeModules) { $stockPwshModules = $psHomeModules }
-}
+# Дистрибутив PowerShell для гостя скачивается отдельно, по README:
+#   curl -L -o pwsh.zip .../PowerShell-7.6.5-win-x64.zip
+#   Expand-Archive pwsh.zip -DestinationPath payloads\pwsh\PowerShell-7.6.5-win-x64
+# Он и есть источник модулей: гость исполняет win-x64, и версия модулей должна
+# совпадать с версией сборок, которые лягут рядом (см. раскладку ниже — там
+# объяснено, почему версия дистрибутива вообще важна). Брать модули у pwsh,
+# установленного на машине сборки, нельзя: вне Windows это вообще чужая
+# платформа, а на Windows — другая версия, чем в payloads.
+$pwshDist = Get-ChildItem -LiteralPath (Join-Path $repoRoot "payloads\pwsh") -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+$stockPwshModules = if ($pwshDist) { Join-Path $pwshDist.FullName "Modules" }
+                    else { "C:\Program Files\PowerShell\7\Modules" }
 $espPwshModules   = Join-Path $espSharpOSDir "pwsh\Modules"
 if (Test-Path -LiteralPath $stockPwshModules) {
     New-Item -ItemType Directory -Force -Path $espPwshModules | Out-Null
@@ -706,8 +708,6 @@ if (Test-Path -LiteralPath $staleRom) { Remove-Item -LiteralPath $staleRom -Forc
 # System.Private.CoreLib is deliberately NOT taken from the distribution: that
 # assembly and the runtime binary are one unit, built together and agreeing on
 # internal layout. Ours stays.
-$pwshDist = Get-ChildItem -LiteralPath (Join-Path $repoRoot "payloads\pwsh") -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1
 if ($pwshDist) {
     $pwshEsp = Join-Path $espSharpOSDir "pwsh"
     New-Item -ItemType Directory -Force -Path $pwshEsp | Out-Null
@@ -718,6 +718,13 @@ if ($pwshDist) {
         $staged++
     }
     Write-Host "Prepared PowerShell: $($pwshDist.Name) -> \sharpos\pwsh\ ($staged files, CoreLib kept ours)"
+}
+else {
+    # Молча этот случай пропускать нельзя: ядро всё равно вызовет
+    # coreclr_execute_assembly(\sharpos\pwsh\pwsh.dll), файла не окажется, и
+    # загрузка встанет без сообщения ни на одном из последовательных портов.
+    Write-Warning "payloads\pwsh\ пуст — PowerShell в образ не попадёт, и загрузка встанет на запуске pwsh.dll"
+    Write-Warning "  Скачайте дистрибутив win-x64 по инструкции из README (раздел про payloads)."
 }
 
 
