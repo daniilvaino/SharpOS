@@ -44,6 +44,22 @@
     <SharpOsLldLink Condition="'$(SharpOsLldLink)' == ''">lld-link</SharpOsLldLink>
   </PropertyGroup>
 
+  <!--
+    Сборка С ФОРКОМ. На Windows build_clr_sharpos.ps1 вливает libcmt.lib внутрь
+    coreclr_static.lib (step 120), и ядру про неё знать не надо. На unix-хосте
+    слияния нет: ни llvm-lib, ни lld-link /lib не переупаковывают libcmt —
+    внутри есть объекты с машинным типом 0, LLVM их отвергает ("unknown
+    machine: 0"), а lib.exe терпит. Как обычную библиотеку при сшивании
+    lld-link её принимает, поэтому просто называем её здесь.
+
+    Путь к sysroot: -p:SharpOsXwinSplat=<путь> либо переменная окружения
+    SHARPOS_XWIN_SPLAT, либо .xwin-cache рядом с репозиторием.
+  -->
+  <PropertyGroup Condition="'$(OS)' != 'Windows_NT' AND '$(SkipCoreClr)' != 'true'">
+    <SharpOsXwinSplat Condition="'$(SharpOsXwinSplat)' == ''">$(SHARPOS_XWIN_SPLAT)</SharpOsXwinSplat>
+    <SharpOsXwinSplat Condition="'$(SharpOsXwinSplat)' == '' AND Exists('$(MSBuildThisFileDirectory).xwin-cache/splat/crt/lib/x64')">$(MSBuildThisFileDirectory).xwin-cache/splat</SharpOsXwinSplat>
+  </PropertyGroup>
+
   <Target Name="SharpOsCrossHostLink"
           AfterTargets="SetupOSSpecificProps"
           BeforeTargets="LinkNative"
@@ -53,10 +69,14 @@
     <PropertyGroup>
       <CppLinker>$(SharpOsLldLink)</CppLinker>
     </PropertyGroup>
-    <ItemGroup>
-      <!-- Import-библиотеки Win32 к этому моменту уже запечены в LinkerArg как
-           "kernel32.lib" и прочие — убирать надо сами аргументы. Без них
-           сшивание проходит без неразрешённых символов: ядро к Win32 не ходит. -->
+    <!-- Import-библиотеки Win32 снимаются ТОЛЬКО при сборке без форка: там ядро
+         NoStdLib, к Win32 не обращается, и сшивание проходит без них. С форком
+         они нужны по-настоящему — CoreCLR ссылается и на функции, и на данные
+         вроде GUID'ов из uuid.lib, — поэтому оставляем их и даём пути к
+         sysroot'у ниже. -->
+    <ItemGroup Condition="'$(SkipCoreClr)' == 'true'">
+      <!-- К этому моменту они уже запечены в LinkerArg как "kernel32.lib"
+           и прочие — убирать надо сами аргументы. -->
       <LinkerArg Remove="&quot;advapi32.lib&quot;" />
       <LinkerArg Remove="&quot;bcrypt.lib&quot;" />
       <LinkerArg Remove="&quot;crypt32.lib&quot;" />
@@ -78,6 +98,14 @@
       <LinkerArg Remove="@(LinkerArg)"
                  Condition="$([System.String]::Copy('%(Identity)').StartsWith('/NATVIS'))" />
     </ItemGroup>
+    <ItemGroup Condition="'$(SkipCoreClr)' != 'true'">
+      <LinkerArg Include="/LIBPATH:$(SharpOsXwinSplat)/crt/lib/x64" />
+      <LinkerArg Include="/LIBPATH:$(SharpOsXwinSplat)/sdk/lib/um/x64" />
+      <LinkerArg Include="/LIBPATH:$(SharpOsXwinSplat)/sdk/lib/ucrt/x64" />
+      <LinkerArg Include="libcmt.lib" />
+    </ItemGroup>
+    <Error Condition="'$(SkipCoreClr)' != 'true' AND '$(SharpOsXwinSplat)' == ''"
+           Text="Сборка с форком на unix-хосте требует sysroot от xwin: задайте -p:SharpOsXwinSplat=&lt;путь&gt; или SHARPOS_XWIN_SPLAT. Без него не найдётся libcmt.lib." />
     <Message Importance="normal"
              Text="SharpOS: кросс-хост сшивание через $(CppLinker) (хост $(OS), цель win-x64)" />
   </Target>

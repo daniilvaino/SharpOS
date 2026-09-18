@@ -136,3 +136,8 @@ boot.txt
 # Машинные срезы прогонов от tools/probe_report.ps1 — выход, не исходник.
 OS/.qemu/reports/
 sharpos.map
+
+# sysroot MSVC + Windows SDK, который xwin скачивает для сборки на macOS и Linux
+# (несколько сотен мегабайт, восстанавливается командой из README)
+.xwin-cache/
+.DS_Store
