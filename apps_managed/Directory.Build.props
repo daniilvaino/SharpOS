@@ -1,0 +1,31 @@
+<Project>
+  <!--
+    Hosted-ярус: эти программы компилируются на машине сборки, а исполняются
+    внутри SharpOS на BCL форка CoreCLR. Значит, версия ref-пакета, против которого
+    они компилируются, не должна быть новее рантайма форка — иначе сборка
+    пройдёт, а в образе вызов отсутствующего метода даст ошибку.
+
+    Версия — toolchain.json (dotnet.hostedRuntime), это Microsoft.NETCore.App
+    форка. Она закрепляется независимо от того, каким SDK идёт сборка: ядру и
+    apps_native версия SDK безразлична, и global.json принимает любой 10.0.x.
+  -->
+  <PropertyGroup>
+    <SharpOsToolchainJson>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\toolchain.json'))</SharpOsToolchainJson>
+    <SharpOsHostedRuntime>$([System.Text.RegularExpressions.Regex]::Replace($(SharpOsToolchainJson), '(?s).*"hostedRuntime"\s*:\s*"([^"]+)".*', '$1'))</SharpOsHostedRuntime>
+    <RuntimeFrameworkVersion>$(SharpOsHostedRuntime)</RuntimeFrameworkVersion>
+    <TargetLatestRuntimePatch>false</TargetLatestRuntimePatch>
+  </PropertyGroup>
+
+  <!-- Ref-пакет выбирает ProcessFrameworkReferences по метаданным
+       KnownFrameworkReference; условие по метаданным MSBuild допускает только
+       внутри target. -->
+  <Target Name="SharpOsPinHostedRuntime" BeforeTargets="ProcessFrameworkReferences">
+    <ItemGroup>
+      <KnownFrameworkReference Condition="'%(KnownFrameworkReference.Identity)' == 'Microsoft.NETCore.App' AND '%(KnownFrameworkReference.TargetFramework)' == 'net10.0'">
+        <TargetingPackVersion>$(SharpOsHostedRuntime)</TargetingPackVersion>
+        <LatestRuntimeFrameworkVersion>$(SharpOsHostedRuntime)</LatestRuntimeFrameworkVersion>
+        <DefaultRuntimeFrameworkVersion>$(SharpOsHostedRuntime)</DefaultRuntimeFrameworkVersion>
+      </KnownFrameworkReference>
+    </ItemGroup>
+  </Target>
+</Project>

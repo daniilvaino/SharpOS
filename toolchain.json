@@ -23,8 +23,9 @@
 
   "dotnet": {
     "sdkVersion": "10.0.105",
+    "hostedRuntime": "10.0.5",
     "ilcompilerNet8": "8.0.27",
-    "_why": "SDK — тот, что требует Arcade форка (dotnet-runtime-sharpos/global.json); global.json SharpOS требует его же. ILCompiler для ядра и приложений задаётся явно, а не берётся по умолчанию из SDK."
+    "_why": "sdkVersion — точная версия для форка, её требует его Arcade (dotnet-runtime-sharpos/global.json), mise ставит именно её. Ядру и apps_native версия SDK безразлична: они NoStdLib, от SDK нужен только Roslyn с C# 14, а кодогенерацию задаёт ILCompiler (закреплён отдельно) — поэтому global.json SharpOS принимает любой 10.0.x. hostedRuntime — Microsoft.NETCore.App форка: под него собираются apps_managed, чтобы не компилироваться против ref-пакета новее рантайма, на котором они исполняются в SharpOS."
   },
 
   "minimum": {

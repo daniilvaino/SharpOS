@@ -146,10 +146,14 @@ function Assert-SharpOsToolchain {
     }
 
     if ($Components -contains 'dotnet') {
-        $want = $spec.dotnet.sdkVersion
+        # Ядру и приложениям довольно любого SDK той же major.minor: они
+        # NoStdLib, от SDK нужен только Roslyn нужной версии C#, а кодогенерацию
+        # задаёт ILCompiler — он закреплён отдельно (SharpOsNativeLink.props).
+        # Точную версию SDK требует Arcade форка, и проверяет её его global.json.
+        $want = [string]::Join('.', $spec.dotnet.sdkVersion.Split('.')[0..1])
         Push-Location $script:SharpOsRoot
         try { $v = Get-SharpOsToolOutput 'dotnet' @('--version') } finally { Pop-Location }
-        if ($v -ne $want) { $bad.Add(".NET SDK $want`: dotnet --version в корне SharpOS даёт '$v'") }
+        if ($v -notlike "$want.*") { $bad.Add(".NET SDK $want.x`: dotnet --version в корне SharpOS даёт '$v'") }
     }
 
     if ($bad.Count -gt 0) {
