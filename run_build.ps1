@@ -183,8 +183,13 @@ $qemuWorkDir = Join-Path $efiProjectDir ".qemu"
 $localOvmfVars = $null
 if (-not $NoRun) {
     if (-not $QemuExe) {
-        # На Windows бинарь зовётся с .exe, на macOS и Linux — без.
-        foreach ($candidate in @("qemu-system-x86_64.exe", "qemu-system-x86_64")) {
+        # На Windows бинарь зовётся с .exe, на macOS и Linux — без. Порядок
+        # важен под WSL: там в PATH видны и программы Windows, а windows-овский
+        # QEMU не может открыть esp.img на диске WSL (block.c: assertion failed:
+        # is_power_of_2(bs->bl.request_alignment)).
+        $names = if ($env:OS -eq 'Windows_NT') { @("qemu-system-x86_64.exe", "qemu-system-x86_64") }
+                 else { @("qemu-system-x86_64") }
+        foreach ($candidate in $names) {
             $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
             if ($cmd) { $QemuExe = $cmd.Source; break }
         }

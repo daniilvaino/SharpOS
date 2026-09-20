@@ -22,6 +22,10 @@ git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-
 mise trust && mise bootstrap          # Linux со старым индексом apt: mise bootstrap --update
 ```
 
+На NixOS (и на любом Linux с nix) вместо шага 4 — [`flake.nix`](flake.nix):
+`nix develop` даёт оболочку для ядра, приложений и запуска, `nix develop .#fork` —
+для форка CoreCLR (ему нужен FHS: его Arcade качает собственный SDK).
+
 Payloads (необязательны, см. [`payloads/README.md`](payloads/README.md)):
 `payloads/DOOM1.WAD`, картриджи `.nes`, PowerShell для гостя в
 `payloads/pwsh/PowerShell-7.6.5-win-x64/`.

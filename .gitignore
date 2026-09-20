@@ -144,3 +144,7 @@ sharpos.map
 
 # mise bootstrap: собранный JWasm (bootstrap:jwasm)
 .cache/
+
+# nix build: симлинк на результат в /nix/store
+/result
+/result-*
