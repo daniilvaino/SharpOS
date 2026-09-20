@@ -13,7 +13,7 @@ nothing: before building they locate the tools and check their versions
 against `toolchain.json` (`tools/Toolchain.ps1`), failing early with a message
 that names what is missing or mismatched.
 
-In short: .NET SDK 10.0.105; LLVM 22.1.8 (`clang-cl`, `lld-link`, `llvm-lib`,
+In short: .NET SDK 10.0.x (the fork pins the exact one it needs); LLVM 22.1.8 (`clang-cl`, `lld-link`, `llvm-lib`,
 `llvm-rc`); for the CoreCLR fork also JWasm 2.21, the MSVC CRT + Windows SDK
 splat made by xwin, cmake, ninja and python3. Visual Studio is not used on any
 host: the kernel and apps are linked by `lld-link`, the fork is compiled by
@@ -25,7 +25,11 @@ crashes).
 
 Localized Windows is supported: the build scripts force UTF-8 so tool
 diagnostics stay readable in `last_build.log`.
+
 ## QEMU and its firmware
+
+`mise bootstrap` installs QEMU (winget on Windows, brew on macOS, apt on
+Linux), so the two options below matter only when installing it by hand.
 
 Nothing exotic is required of QEMU: `q35` with TCG (pure software emulation —
 no WHPX or Hyper-V needed), `-vga std` for the GOP framebuffer, a serial line,
@@ -67,8 +71,11 @@ A UEFI firmware image is mandatory; SharpOS boots as an `EFI_APPLICATION`.
 `run_build.ps1` searches, in order:
 
 1. `ovmf\OVMF_CODE.strict-nx.fd` — the strict-NX build produced by `.\ovmf\build.ps1`;
-2. `C:\msys64\mingw64\share\qemu\edk2-x86_64-code.fd`;
-3. `C:\Program Files\qemu\share\edk2-x86_64-code.fd` (and the `QEMU` / `ovmf\OVMF_CODE.fd` spellings).
+2. `share/qemu/edk2-x86_64-code.fd` next to the `qemu-system-x86_64` binary itself
+   (Homebrew, NixOS, any prefix install);
+3. the fixed layouts: `C:\msys64\mingw64\share\qemu`, `C:\Program Files\qemu\share`,
+   `/usr/share/qemu`, `/usr/share/OVMF`. On Debian and Ubuntu the firmware is not in
+   the qemu packages — it comes from the `ovmf` package, which `mise bootstrap` installs.
 
 The matching `*-vars.fd` is picked up the same way and is optional. Whatever is
 found gets copied into `OS/.qemu/firmware/` before launch, so QEMU never reads
@@ -119,7 +126,8 @@ Under MSYS2 they come from `mingw-w64-x86_64-mtools`, `mingw-w64-x86_64-qemu`,
 `-NoIso` builds only the VHD, which drops the `xorriso` requirement.
 
 This is the one place where MSYS2 is genuinely the path of least resistance:
-QEMU alone has a self-contained installer, but mtools/xorriso/sfdisk do not.
+QEMU alone has a self-contained installer, but mtools/xorriso/sfdisk do not. `mise bootstrap` installs MSYS2 and mtools on
+Windows for exactly this reason — the ESP image is built with `mformat`/`mcopy`.
 
 ### `run_vbox.ps1` — VirtualBox
 
@@ -130,11 +138,11 @@ a real bug.
 
 ### Application build scripts
 
-`build_doom.ps1`, `build_fetch.ps1`, `build_aottests.ps1`, `build_benchaot.ps1`, `build_launcher_gui.ps1`,
-`build_launcher.ps1`
-build the freestanding PE apps under `apps_native/`. They need only the .NET
-SDK — no WSL, no separate cross-toolchain — and `run_build.ps1` stages their
-output into the image if it is present.
+`build_launcher.ps1`, `build_fetch.ps1`, `build_aottests.ps1`, `build_benchaot.ps1`,
+`build_doom.ps1`, `build_shell.ps1`, `build_tricnes.ps1`, `build_fami.ps1` build the
+freestanding PE apps under `apps_native/`. They need only the .NET SDK and `lld-link`
+— no MSVC, no Windows SDK libraries, no WSL — and `run_build.ps1` stages their output
+into the image if it is present.
 
 The `probe_*.ps1` scripts are one-off analysis helpers for EH and unwind data,
 not part of any build.
@@ -209,6 +217,7 @@ dotnet build .\bootasm\CoffStub.Generator\CoffStub.Generator.csproj -c Release
 ```
 
 `invalid symbol redefinition` warnings from ILC are benign noise, not failures.
+
 ## Machine-independence
 
 The produced image is self-contained: the OS version it reports (`10.0.26100`)
