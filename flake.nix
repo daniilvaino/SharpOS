@@ -28,8 +28,11 @@
       # tools/Toolchain.ps1 ищет clang-cl, lld-link, llvm-lib и llvm-rc в одном
       # каталоге (SHARPOS_LLVM_BIN) — так они и лежат в архивах llvm.org. В
       # nixpkgs они разнесены по трём пакетам, поэтому собираем их вместе.
-      # clang-unwrapped, а не обёртка: обёртка подставляет пути к хостовой libc,
-      # а clang-cl компилирует под win-x64 по splat'у от xwin.
+      #
+      # Инструменты берутся без обёрток nixpkgs: обёртка получает пути к libc и
+      # gcc из окружения stdenv, которого в FHS нет, — зато там есть привычная
+      # раскладка /usr, по которой clang сам находит и заголовки, и gcc (его
+      # crtbeginS.o и libgcc нужны, когда хостовая часть линкуется в ELF).
       llvmBinFor =
         pkgs:
         "${
@@ -78,6 +81,13 @@
             p.llvmPackages_22.clang-unwrapped
             p.llvmPackages_22.lld
             p.llvmPackages_22.llvm
+            # Хостовая часть сборки (кросс-компоненты: clrjit для linux-x64,
+            # которым crossgen2 компилирует CoreLib) линкуется в обычный ELF —
+            # нужны ld, стартовые объекты и libgcc. gcc-unwrapped кладёт их в
+            # /usr/lib/gcc/<триплет>/<версия>, где clang их и ищет.
+            p.binutils
+            p.gcc-unwrapped
+            p.glibc.dev
             (jwasmFor p)
             p.powershell
             p.cmake
@@ -85,13 +95,25 @@
             p.python3
             p.git
             p.which # его ищут скрипты Arcade
+            # Хостовой части нужны и заголовки: в nixpkgs они в отдельном
+            # выходе .dev, в /usr/include FHS попадают только оттуда.
             p.curl
             p.icu
+            p.icu.dev
             p.openssl
+            p.openssl.dev
             p.krb5
+            p.krb5.dev
             p.lttng-ust
+            p.lttng-ust.dev
+            p.liburcu # urcu/compiler.h, его включает lttng/tracepoint.h
+            p.liburcu.dev
+            p.libuuid.dev
+            p.numactl
             p.zlib
+            p.zlib.dev
             p.libunwind
+            p.libunwind.dev
             p.xwin
           ];
           profile = ''
