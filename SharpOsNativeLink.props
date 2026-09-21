@@ -46,6 +46,14 @@
          вместе с установленным SDK. -->
     <SharpOsToolchainJson>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)toolchain.json'))</SharpOsToolchainJson>
     <SharpOsIlcVersion>$([System.Text.RegularExpressions.Regex]::Replace($(SharpOsToolchainJson), '(?s).*"ilcompilerNet8"\s*:\s*"([^"]+)".*', '$1'))</SharpOsIlcVersion>
+
+    <!-- Runtime pack той же версии: System.Private.CoreLib ILC берёт из него, а
+         принимает только не новее себя ("Overriding System.Private.CoreLib.dll
+         with a newer version is not supported"). Без привязки SDK берёт
+         последний патч net8.0, который знает сам, то есть версия зависит от
+         версии SDK: 10.0.105 даёт 8.0.27, 10.0.112 — уже 8.0.31. -->
+    <RuntimeFrameworkVersion>$(SharpOsIlcVersion)</RuntimeFrameworkVersion>
+    <TargetLatestRuntimePatch>false</TargetLatestRuntimePatch>
   </PropertyGroup>
 
   <!-- В target, а не на уровне проекта: условие по метаданным (какая это

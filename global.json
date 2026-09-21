@@ -2,7 +2,7 @@
   "sdk": {
     "version": "10.0.100",
     "rollForward": "latestFeature",
-    "paths": [ "dotnet-runtime-sharpos/.dotnet", "$host$" ],
-    "errorMessage": "Нужен .NET SDK 10.0.x. Он появляется в dotnet-runtime-sharpos/.dotnet после первой сборки форка (там своя, точная версия — этого требует Arcade), либо поставьте любой 10.0.x: https://dotnet.microsoft.com/download/dotnet/10.0"
+    "paths": [ "$host$", "dotnet-runtime-sharpos/.dotnet" ],
+    "errorMessage": "Нужен .NET SDK 10.0.x: mise bootstrap, nix develop или https://dotnet.microsoft.com/download/dotnet/10.0. Запасной вариант — dotnet-runtime-sharpos/.dotnet, он появляется после первой сборки форка (своя, точная версия — этого требует Arcade); первым берётся SDK из PATH, потому что на NixOS скачанный Arcade'ом не запускается"
   }
 }
