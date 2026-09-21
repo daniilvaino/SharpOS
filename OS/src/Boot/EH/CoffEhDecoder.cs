@@ -85,6 +85,15 @@ namespace OS.Boot.EH
             if (!CoffMethodLookup.TryFindMethod(ip, out CoffMethodLookup.MethodInfo info))
                 return false;
 
+            // Only ILC emits the trailer this reads, and only ILC code has
+            // managed EH clauses at all. The kernel image also holds CoreCLR
+            // and the CRT; for one of their records the byte below belongs to
+            // whatever the linker put next, and a stray HAS_EHINFO bit in it
+            // sends the rest of this method decoding an arbitrary RVA as a
+            // clause table. Saying "no clauses" is both safe and true.
+            if (!CoffRuntimeFunctionTable.RecordIsManaged(info.RootRuntimeFunction))
+                return false;
+
             byte* imageBase = info.ImageBase;
             byte* unwindInfo = imageBase + info.RootRuntimeFunction->UnwindInfoAddress;
 

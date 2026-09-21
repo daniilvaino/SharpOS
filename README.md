@@ -130,7 +130,7 @@ $env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly
 | Boxing / unboxing | ✅ | ✅ | ✅ | |
 | `try` / `catch` / `finally` / `throw;` / фильтры `when` | ✅ | ✅ | ✅ | |
 | Аппаратный сбой → managed-исключение (`#PF` → `NullReferenceException`) | ✅ | ✅ | ✅ | |
-| `Exception.StackTrace` | 🟡 | 🟡 | 🟡 | hosted: пуст для исключений из C++-кода CLR; AOT: после `throw;` теряются имена кадров |
+| `Exception.StackTrace` | 🟡 | 🟡 | 🔴 | AOT: текст с адресом, базой образа и смещением; имён методов пока нет. Hosted: `null` для любого исключения — рантайм не записывает кадров вовсе |
 | Исключение в статическом конструкторе → `TypeInitializationException` | ✅ | ✅ | 🟡 | в hosted пробрасывается как есть, без обёртки |
 | `[ModuleInitializer]` | 🔴 | ⏳ | ✅ | атрибут в std есть, но инициализатор не вызывается |
 | `yield return` | ✅ | ✅ | ✅ | |

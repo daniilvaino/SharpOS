@@ -18,6 +18,21 @@ namespace OS.Boot.EH
         public static void Install()
         {
             ExceptionHooks.UnhandledHandler = &Report;
+
+            // The same question the report asks below, answered for anyone
+            // who formats a trace later - Exception.StackTrace above all.
+            // One resolver rather than two, so the report and the getter
+            // cannot disagree about which image a frame belongs to.
+            System.Exception.s_resolveImageBase = &ResolveImageBase;
+        }
+
+        /// <summary>Base of the image owning <paramref name="ip"/>, or 0.</summary>
+        internal static ulong ResolveImageBase(ulong ip)
+        {
+            ulong imageBase = 0;
+            if (OS.PAL.SharpOSHost.SehUnwind.LookupFunctionEntry(ip, &imageBase) == null)
+                return 0;
+            return imageBase != 0 && ip >= imageBase ? imageBase : 0;
         }
 
         // Runs while the exception is still unwinding, on a stack that may
@@ -72,9 +87,8 @@ namespace OS.Boot.EH
                 OS.Hal.Console.Write(" rip=0x");
                 OS.Hal.Console.WriteHex(ip);
 
-                ulong imageBase = 0;
-                if (OS.PAL.SharpOSHost.SehUnwind.LookupFunctionEntry(ip, &imageBase) != null
-                    && imageBase != 0 && ip >= imageBase)
+                ulong imageBase = ResolveImageBase(ip);
+                if (imageBase != 0)
                 {
                     OS.Hal.Console.Write(" ib=0x");
                     OS.Hal.Console.WriteHex(imageBase);

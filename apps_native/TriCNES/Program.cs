@@ -126,10 +126,9 @@ namespace TriCNES
             // counter sits still.)
             if (paced)
             {
-                ulong* probe = (ulong*)counterAddress;
-                ulong t0 = ReadCounter(probe);
+                ulong t0 = ReadCounter();
                 bool moves = false;
-                for (int i = 0; i < 1000000 && !moves; i++) moves = ReadCounter(probe) != t0;
+                for (int i = 0; i < 1000000 && !moves; i++) moves = ReadCounter() != t0;
                 if (!moves)
                 {
                     AppHost.WriteString("tricnes: HPET present but STOPPED - running unpaced\n");
@@ -141,8 +140,7 @@ namespace TriCNES
                 ? "tricnes: paced 60 Hz (HPET)\n"
                 : "tricnes: unpaced, no timing (VBox: modifyvm --hpet on)\n");
             ulong ticksPerFrame = paced ? frequencyHz / 60UL : 0UL;
-            ulong* counter = (ulong*)counterAddress;
-            ulong next = paced ? *counter + ticksPerFrame : 0UL;
+            ulong next = paced ? ReadCounter() + ticksPerFrame : 0UL;
 
             // Timed separately, because "it feels laggy" has two very different
             // causes with opposite fixes: a slow core (cycle-accurate
@@ -151,18 +149,18 @@ namespace TriCNES
             // becomes the input latency directly.
             ulong emulateTicks = 0, blitTicks = 0;
             int framesTimed = 0;
-            ulong windowStart = paced ? *counter : 0;
+            ulong windowStart = paced ? ReadCounter() : 0;
 
             while (!s_quit)
             {
                 PumpKeyboard();
                 emu.ControllerPort1 = s_buttons;
 
-                ulong t0 = paced ? *counter : 0;
+                ulong t0 = paced ? ReadCounter() : 0;
                 emu._CoreFrameAdvance();
-                ulong t1 = paced ? *counter : 0;
+                ulong t1 = paced ? ReadCounter() : 0;
                 video?.Blit(emu.Screen.Bits);
-                ulong t2 = paced ? *counter : 0;
+                ulong t2 = paced ? ReadCounter() : 0;
 
                 // Count frames even without a clock: the number alone answers
                 // "is it running at all", which is the first thing anyone asks
@@ -189,10 +187,10 @@ namespace TriCNES
                         // pacing, this very print) is invisible otherwise, and
                         // "the parts add up but the loop is slower" is exactly
                         // the case worth catching.
-                        ulong windowTicks = *counter - windowStart;
+                        ulong windowTicks = ReadCounter() - windowStart;
                         ReportTiming(emulateTicks, blitTicks, windowTicks, frequencyHz, framesTimed);
                         emulateTicks = 0; blitTicks = 0; framesTimed = 0;
-                        windowStart = *counter;
+                        windowStart = ReadCounter();
                     }
                 }
 
@@ -204,7 +202,7 @@ namespace TriCNES
                 // Bounded anyway: an unbounded wait on a clock is a hang
                 // waiting to happen, and one frame skipped beats a frozen
                 // machine with no explanation.
-                for (ulong guard = 0; ReadCounter(counter) < next && guard < 200000000UL; guard++) { }
+                for (ulong guard = 0; ReadCounter() < next && guard < 200000000UL; guard++) { }
                 next += ticksPerFrame;
             }
         }
@@ -217,9 +215,14 @@ namespace TriCNES
         // This is why the hang showed up in VirtualBox and not in QEMU: under
         // QEMU a frame takes ~126 ms, longer than the 16 ms budget, so the
         // wait loop was never entered at all.
+        //
+        // Now a thin forward to the SDK's reader, which also extends a 32-bit
+        // counter across its wrap: reading that register raw gave a clock
+        // that ran backwards every 300 s on hardware whose HPET is narrow.
         [System.Runtime.CompilerServices.MethodImpl(
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static ulong ReadCounter(ulong* counter) => *counter;
+        private static ulong ReadCounter()
+            => System.Diagnostics.Stopwatch.ReadCounter();
 
         private static void ReportTiming(ulong emulateTicks, ulong blitTicks,
                                          ulong windowTicks, ulong frequencyHz, int frames)

@@ -158,10 +158,9 @@ namespace Fami
             // counter sits still.)
             if (paced)
             {
-                ulong* probe = (ulong*)counterAddress;
-                ulong t0 = ReadCounter(probe);
+                ulong t0 = ReadCounter();
                 bool moves = false;
-                for (int i = 0; i < 1000000 && !moves; i++) moves = ReadCounter(probe) != t0;
+                for (int i = 0; i < 1000000 && !moves; i++) moves = ReadCounter() != t0;
                 if (!moves)
                 {
                     AppHost.WriteString("fami: HPET present but STOPPED - running unpaced\n");
@@ -174,8 +173,7 @@ namespace Fami
                 : "fami: unpaced, no timing (VBox: modifyvm --hpet on)\n");
 
             ulong ticksPerFrame = paced ? frequencyHz / 60UL : 0UL;
-            ulong* counter = (ulong*)counterAddress;
-            ulong next = paced ? *counter + ticksPerFrame : 0UL;
+            ulong next = paced ? ReadCounter() + ticksPerFrame : 0UL;
 
             // Timed separately, because "it feels laggy" has two very different
             // causes with opposite fixes: a slow core or a slow blit (pixels to
@@ -183,7 +181,7 @@ namespace Fami
             // frame, so whichever is slow becomes the input latency directly.
             ulong emulateTicks = 0, blitTicks = 0;
             int framesTimed = 0;
-            ulong windowStart = paced ? *counter : 0;
+            ulong windowStart = paced ? ReadCounter() : 0;
 
             int cyclesLeft = 0;
             uint frameNumber = 0;
@@ -193,7 +191,7 @@ namespace Fami
                 PumpKeyboard();
                 nes.Controller[0] = s_buttons;
 
-                ulong t0 = paced ? *counter : 0;
+                ulong t0 = paced ? ReadCounter() : 0;
 
                 cyclesLeft += CyclesPerFrame - (int)(frameNumber++ & 1);
                 while (cyclesLeft > 0)
@@ -201,9 +199,9 @@ namespace Fami
                     cyclesLeft -= (int)nes.Step();
                 }
 
-                ulong t1 = paced ? *counter : 0;
+                ulong t1 = paced ? ReadCounter() : 0;
                 video?.Blit(nes.Ppu.buffer);
-                ulong t2 = paced ? *counter : 0;
+                ulong t2 = paced ? ReadCounter() : 0;
 
                 // Count frames even without a clock: the number alone answers
                 // "is it running at all", which is the first thing anyone asks
@@ -230,10 +228,10 @@ namespace Fami
                         // pacing, this very print) is invisible otherwise, and
                         // "the parts add up but the loop is slower" is exactly
                         // the case worth catching.
-                        ulong windowTicks = *counter - windowStart;
+                        ulong windowTicks = ReadCounter() - windowStart;
                         ReportTiming(emulateTicks, blitTicks, windowTicks, frequencyHz, framesTimed);
                         emulateTicks = 0; blitTicks = 0; framesTimed = 0;
-                        windowStart = *counter;
+                        windowStart = ReadCounter();
                     }
                 }
 
@@ -245,7 +243,7 @@ namespace Fami
                 // Bounded anyway: an unbounded wait on a clock is a hang
                 // waiting to happen, and one frame skipped beats a frozen
                 // machine with no explanation.
-                for (ulong guard = 0; ReadCounter(counter) < next && guard < 200000000UL; guard++) { }
+                for (ulong guard = 0; ReadCounter() < next && guard < 200000000UL; guard++) { }
                 next += ticksPerFrame;
             }
         }
@@ -254,9 +252,14 @@ namespace Fami
         // loop writes to it, so the compiler is entitled to read it once and
         // reuse the value forever — turning "wait until the clock reaches X"
         // into an infinite loop. NoInlining forces a real load per iteration.
+        //
+        // Now a thin forward to the SDK's reader, which also extends a 32-bit
+        // counter across its wrap: reading that register raw gave a clock
+        // that ran backwards every 300 s on hardware whose HPET is narrow.
         [System.Runtime.CompilerServices.MethodImpl(
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static ulong ReadCounter(ulong* counter) => *counter;
+        private static ulong ReadCounter()
+            => System.Diagnostics.Stopwatch.ReadCounter();
 
         private static void ReportTiming(ulong emulateTicks, ulong blitTicks,
                                          ulong windowTicks, ulong frequencyHz, int frames)

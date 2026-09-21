@@ -1090,6 +1090,14 @@ namespace OS.Boot
             Console.Write(" elapsed_ms=");
             Console.WriteULong((ulong)sw.ElapsedMilliseconds);
             Log.EndLine();
+
+            // Here and not with the other probes in phase 4: while it runs,
+            // the driver reads a buffer instead of the chip, and every clock
+            // in the system reads fiction with it. Phase 3 has no timer
+            // queue, no scheduler and no I/O in flight, so there is nothing
+            // to mislead.
+            if (Probes.HpetWrap)
+                OS.Kernel.Diagnostics.HpetWrapProbe.Run();
         }
 
         // ─────────────────────────────────────────────────────────────────

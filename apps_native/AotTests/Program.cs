@@ -1,4 +1,4 @@
-﻿using SharpOS.AppSdk;
+using SharpOS.AppSdk;
 using System;
 using System.Collections.Generic;
 using System.Runtime;
@@ -227,6 +227,9 @@ namespace AotTests
             Check("multi-catch select", which == 2);
 
             CheckThreadsAndTasks();
+            CheckClockWrap();
+            CheckStackTraceText();
+            CheckStackTraceOwnership();
 
             // The error stream (step 167). The check can only see that the
             // kernel offers it; whether the marker reached last_err.log and not
@@ -251,6 +254,194 @@ namespace AotTests
         // passes, that library cannot run here at all — an inline Task.Run
         // would enter a loop that never returns.
         private static volatile int s_threadRan;
+
+        // The clock must survive its own counter wrapping.
+        //
+        // This laptop's HPET reports 64bit=no: a 32-bit main counter at
+        // 14.318 MHz, which comes back to zero every 300 seconds. Every
+        // "deadline = now + delta" in the system is then set past a value the
+        // counter can no longer reach, and the wait never ends — the machine
+        // stops after ~5 minutes with every thread Waiting and nothing able to
+        // wake them. Five hundred and ninety five identical thread dumps over
+        // fourteen hours said exactly that, and nothing else did: the code is
+        // healthy, the arithmetic is not.
+        //
+        // Driven by hand rather than by waiting: `s_counterAddress` is where
+        // Stopwatch reads its ticks from, so pointing it at a local and
+        // stepping that local reproduces a wrap in microseconds instead of
+        // five minutes, and does it identically on QEMU, which has a 64-bit
+        // HPET and can never show the bug on its own.
+        // Who owns the buffer the trace is written into, and what it says
+        // when it runs out.
+        //
+        // Ownership is the one that bites: applications share the KERNEL's EH
+        // engine, so the code appending frames is kernel code even for an
+        // application's exception. While the buffer was allocated there, it
+        // sat in the kernel heap under an object in the application heap -
+        // reachable from neither collector, and free for the kernel's sweep
+        // to reclaim while the application still pointed at it.
+        private static unsafe void CheckStackTraceOwnership()
+        {
+            Exception caught = null;
+            try { TraceLevel1(); } catch (Exception e) { caught = e; }
+
+            IntPtr[] buffer = caught == null ? null : caught.StackTraceBuffer;
+            Check("trace buffer exists", buffer != null);
+            if (buffer != null)
+            {
+                nint address = *(nint*)System.Runtime.CompilerServices.Unsafe
+                    .AsPointer(ref buffer);
+                Check("trace buffer lives in the app heap",
+                      SharpOS.Std.NoRuntime.GcHeap.FindSegmentContaining(address) != null);
+            }
+
+            Exception deep = null;
+            try { DeepThrow(80); } catch (Exception e) { deep = e; }
+            string deepTrace = deep == null ? null : deep.StackTrace;
+            Check("a cut-off trace says it was cut off",
+                  deep != null && deep.DroppedStackFrames > 0 &&
+                  deepTrace != null && deepTrace.Contains("more frames"));
+
+            int inner = 0, outer = 0;
+            try
+            {
+                try { TraceLevel1(); }
+                catch (Exception e) { inner = e.GetStackIPs().Length; throw; }
+            }
+            catch (Exception e) { outer = e.GetStackIPs().Length; }
+            Check("rethrow appends frames rather than stopping",
+                  inner > 0 && outer > inner);
+        }
+
+        // The addition after the recursive call keeps each level a real
+        // frame: a tail call would collapse the depth this is measuring.
+        private static int s_deepSink;
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void DeepThrow(int depth)
+        {
+            if (depth == 0) throw new InvalidOperationException("deep-trace");
+            DeepThrow(depth - 1);
+            s_deepSink += depth;
+        }
+
+        // The stack trace as text, on this side of the boundary.
+        //
+        // An application catches, reports and dies by the same Exception type
+        // the kernel uses - one file in std, compiled into both. Until
+        // step177 its StackTrace was the literal "[trace]", so an app that
+        // printed a trace printed seven characters, and the launcher's own
+        // crash reports said nothing about where.
+        //
+        // No image base here: the resolver is a kernel hook and an app has no
+        // copy of it, so the lines carry addresses alone. Apps load at a fixed
+        // base, which makes that a symbolizer's problem rather than a reader's.
+        private static void CheckStackTraceText()
+        {
+            string trace = null;
+            int recorded = 0;
+            try
+            {
+                TraceLevel1();
+            }
+            catch (Exception e)
+            {
+                trace = e.StackTrace;
+                recorded = e.GetStackIPs().Length;
+            }
+
+            Check("stack trace is text, not a marker",
+                  trace != null && trace.Length > 32);
+            Check("stack trace lines name a frame each",
+                  trace != null && trace.Contains("   at 0x"));
+
+            int lines = 0;
+            if (trace != null)
+                for (int i = 0; i < trace.Length; i++)
+                    if (trace[i] == '\n') lines++;
+            Check("every recorded frame produced a line",
+                  recorded > 0 && lines == recorded);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void TraceLevel1() => TraceLevel2();
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void TraceLevel2() => TraceLevel3();
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void TraceLevel3()
+            => throw new InvalidOperationException("trace-text");
+
+        private static unsafe void CheckClockWrap()
+        {
+            ulong savedAddress = System.Diagnostics.Stopwatch.s_counterAddress;
+            ulong savedLatch = System.Diagnostics.Stopwatch.s_latchAddress;
+            bool savedNarrow = System.Diagnostics.Stopwatch.s_counterIsNarrow;
+
+            ulong counter = 0, latch = 0;
+            System.Diagnostics.Stopwatch.s_counterAddress = (ulong)(nuint)(&counter);
+            System.Diagnostics.Stopwatch.s_latchAddress = (ulong)(nuint)(&latch);
+            System.Diagnostics.Stopwatch.s_counterIsNarrow = true;
+            try
+            {
+                // 256 ticks short of the 32-bit boundary, then 256 past it:
+                // 512 ticks of elapsed time across the wrap. Reading the
+                // counter as a plain 64-bit value answers 4294966784 ticks in
+                // the other direction, which is the whole bug in one line.
+                counter = 0xFFFFFF00UL;
+                latch = 0xFFFFFF00UL;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                counter = 0x00000100UL;
+                sw.Stop();
+
+                Check("stopwatch survives a 32-bit counter wrap", sw.ElapsedTicks == 512);
+                Check("elapsed across a wrap is never negative", sw.ElapsedTicks >= 0);
+
+                // Three wraps in a row must accumulate, not reset: an epoch
+                // counted once is worse than one never counted, because the
+                // error is silent and permanent.
+                //
+                // The epoch moves between steps rather than at the end,
+                // because that is how it really moves — the kernel refreshes
+                // it on its timer tick, and an app that reads the clock twice
+                // across a wrap relies on a tick having happened in between.
+                // Steps are under half the range for the same reason the real
+                // refresh runs at 15 Hz: a longer step is genuinely ambiguous,
+                // indistinguishable from a step backwards.
+                counter = 0x10000000UL;
+                latch = 0x10000000UL;
+                var multi = System.Diagnostics.Stopwatch.StartNew();
+                for (int i = 0; i < 12; i++)
+                {
+                    counter = (counter + 0x40000000UL) & 0xFFFFFFFFUL;
+                    latch = System.Diagnostics.Stopwatch.ReadCounter();
+                }
+                multi.Stop();
+                Check("wraps accumulate rather than reset",
+                      multi.ElapsedTicks == (long)(12UL * 0x40000000UL));
+
+                // A reading that lands slightly BEHIND the epoch is a step
+                // back, not a wrap. It happens whenever the tick refreshes
+                // between an app's read of the epoch and its read of the
+                // counter; calling it a wrap would answer with a timestamp
+                // 300 s in the future and hang every deadline built on it.
+                counter = 0x20000000UL;
+                latch = 0x20000040UL;
+                Check("a reading behind the epoch is not a wrap",
+                      System.Diagnostics.Stopwatch.ReadCounter() == 0x20000000UL);
+            }
+            finally
+            {
+                System.Diagnostics.Stopwatch.s_counterAddress = savedAddress;
+                System.Diagnostics.Stopwatch.s_latchAddress = savedLatch;
+                System.Diagnostics.Stopwatch.s_counterIsNarrow = savedNarrow;
+            }
+        }
 
         private static void CheckThreadsAndTasks()
         {

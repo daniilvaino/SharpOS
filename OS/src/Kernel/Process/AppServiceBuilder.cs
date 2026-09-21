@@ -291,6 +291,8 @@ namespace OS.Kernel.Process
             {
                 table.HpetCounterAddress = OS.Hal.Timer.Hpet.CounterAddress;
                 table.HpetFrequencyHz = OS.Hal.Timer.Hpet.FrequencyHz;
+                table.HpetCounterBits = OS.Hal.Timer.Hpet.CounterBits;
+                table.HpetLatchAddress = OS.Hal.Timer.Hpet.LatchAddress;
             }
 
             // Precise stack-root walk, lent to the app for its own collector.

@@ -45,6 +45,21 @@ namespace OS.Boot.EH
         private static int s_recordCount;
         private static bool s_initialized;
 
+        // Where ILC's own code lives in the kernel image, as an RVA range.
+        //
+        // The image is NOT all managed. CoreCLR and the CRT are linked into it
+        // statically and land in .text; ILC's output lands in .managed. Both
+        // contribute .pdata records, and only ILC's carry the NativeAOT
+        // trailer byte after UNWIND_INFO. Reading that byte for a native
+        // record reads whatever happens to follow it - usually the next
+        // UNWIND_INFO's version byte, which is 1, which decodes as "funclet".
+        //
+        // Measured on this image: 25747 records, of which 22768 are native and
+        // 7540 of those (a third) read as funclets. Record 0 is one of them,
+        // which is why the L5 probe answered 3 instead of 7 from the moment
+        // CoreCLR was linked in, and why nobody connected the two.
+        private static uint s_managedStart, s_managedEnd;
+
         public static bool IsInitialized => s_initialized;
         public static byte* ImageBase => s_imageBase;
         public static RuntimeFunction* Records => s_records;
@@ -85,6 +100,13 @@ namespace OS.Boot.EH
             // was no longer there. The entry is kept rather than removed
             // because it comes back unchanged when the parent resumes.
             public fixed byte Mapped[MaxExtraImages];
+
+            // The image's ILC code range, the same question asked of the
+            // kernel. An app is very nearly all managed - its .text holds a
+            // few hundred bytes of startup stub - but the property belongs to
+            // the image, not to the tier, so it is asked the same way.
+            public fixed uint ManagedStart[MaxExtraImages];
+            public fixed uint ManagedEnd[MaxExtraImages];
         }
 
         private static ExtraImageTable s_extra;
@@ -102,6 +124,19 @@ namespace OS.Boot.EH
             s_extra.Records[i] = (ulong)records;
             s_extra.Counts[i] = count;
             s_extra.Mapped[i] = 1;
+
+            // Parsed from the image's own headers. A failure here is not fatal
+            // and must not be: the fallback is "the whole image is managed",
+            // which is what every caller assumed before this existed, so an
+            // unparseable image behaves exactly as it used to.
+            if (!TryFindManagedRange(imageBase, out uint managedStart, out uint managedEnd))
+            {
+                managedStart = 0;
+                managedEnd = 0xFFFFFFFFu;
+            }
+            s_extra.ManagedStart[i] = managedStart;
+            s_extra.ManagedEnd[i] = managedEnd;
+
             s_extraCount++;
             return i;
         }
@@ -220,6 +255,84 @@ namespace OS.Boot.EH
             return s_imageBase;
         }
 
+        // Was this record emitted by ILC?
+        //
+        // Only an ILC record carries the NativeAOT trailer byte after its
+        // UNWIND_INFO. For anything else - CoreCLR, the CRT, the startup stub
+        // - the byte at that offset belongs to whatever the linker put next,
+        // and reading it as function-kind flags is reading noise as metadata.
+        // Callers ask this before trusting the trailer.
+        public static bool RecordIsManaged(RuntimeFunction* rf)
+        {
+            if (rf == null) return false;
+
+            if (s_records != null && rf >= s_records && rf < s_records + s_recordCount)
+                return rf->BeginAddress >= s_managedStart && rf->BeginAddress < s_managedEnd;
+
+            for (int i = 0; i < s_extraCount; i++)
+            {
+                RuntimeFunction* r = (RuntimeFunction*)s_extra.Records[i];
+                int c = s_extra.Counts[i];
+                if (rf >= r && rf < r + c)
+                    return rf->BeginAddress >= s_extra.ManagedStart[i]
+                        && rf->BeginAddress < s_extra.ManagedEnd[i];
+            }
+
+            // An unrecognised record is treated as the kernel's, the same
+            // fallback ImageBaseForRecord makes, for the same reason.
+            return rf->BeginAddress >= s_managedStart && rf->BeginAddress < s_managedEnd;
+        }
+
+        /// <summary>The kernel image's ILC code range, for diagnostics.</summary>
+        public static uint ManagedRvaStart => s_managedStart;
+
+        /// <summary>End of the kernel image's ILC code range, exclusive.</summary>
+        public static uint ManagedRvaEnd => s_managedEnd;
+
+        // Find the `.managed` section in a PE image and return its RVA range.
+        // False when the headers cannot be read or the section is absent.
+        private static bool TryFindManagedRange(byte* dosHeader, out uint start, out uint end)
+        {
+            start = 0;
+            end = 0;
+            if (dosHeader == null) return false;
+            if (*(ushort*)dosHeader != DosSignature) return false;
+
+            int peOffset = *(int*)(dosHeader + 0x3C);
+            if (peOffset <= 0 || peOffset > 0x10000) return false;
+
+            byte* peHeader = dosHeader + peOffset;
+            if (*(uint*)peHeader != PeSignature) return false;
+
+            ushort sectionCount = *(ushort*)(peHeader + 4 + 2);
+            ushort optionalSize = *(ushort*)(peHeader + 4 + 16);
+            if (sectionCount == 0 || sectionCount > 96) return false;
+
+            byte* section = peHeader + 4 + 20 + optionalSize;
+            for (int i = 0; i < sectionCount; i++, section += 40)
+            {
+                // Exactly eight characters, so the name fills the field and
+                // there is no terminator to skip.
+                if (section[0] != 0x2E) continue;        // '.'
+                if (section[1] != 0x6D) continue;        // 'm'
+                if (section[2] != 0x61) continue;        // 'a'
+                if (section[3] != 0x6E) continue;        // 'n'
+                if (section[4] != 0x61) continue;        // 'a'
+                if (section[5] != 0x67) continue;        // 'g'
+                if (section[6] != 0x65) continue;        // 'e'
+                if (section[7] != 0x64) continue;        // 'd'
+
+                uint virtualSize = *(uint*)(section + 8);
+                uint virtualAddress = *(uint*)(section + 12);
+                if (virtualAddress == 0 || virtualSize == 0) return false;
+
+                start = virtualAddress;
+                end = virtualAddress + virtualSize;
+                return true;
+            }
+            return false;
+        }
+
         // Binary search one image's sorted record array for the record covering
         // `ip`. Returns the local index, or -1 if `ip` is outside this image or
         // falls between records. Shared by TryResolvePc; identical algorithm to
@@ -282,6 +395,15 @@ namespace OS.Boot.EH
             s_imageBase = dosHeader;
             s_records = (RuntimeFunction*)(dosHeader + pdataRva);
             s_recordCount = (int)(pdataSize / 12);
+
+            if (!TryFindManagedRange(dosHeader, out s_managedStart, out s_managedEnd))
+            {
+                // No .managed section: a pure ILC image, where every record is
+                // ILC's. That is what everything assumed before this existed.
+                s_managedStart = 0;
+                s_managedEnd = 0xFFFFFFFFu;
+            }
+
             s_initialized = true;
 
             Log.Begin(LogLevel.Info);
@@ -291,6 +413,13 @@ namespace OS.Boot.EH
             Console.WriteHexRaw(pdataRva, 8);
             Console.Write(" records=");
             Console.WriteUIntRaw((uint)s_recordCount);
+            // Without this the split between ILC and native records is
+            // invisible, and that split is the difference between a trailer
+            // byte that means something and one that does not.
+            Console.Write(" managed=0x");
+            Console.WriteHexRaw(s_managedStart, 8);
+            Console.Write("..0x");
+            Console.WriteHexRaw(s_managedEnd, 8);
             Log.EndLine();
 
             return true;

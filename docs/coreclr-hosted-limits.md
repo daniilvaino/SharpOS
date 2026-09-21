@@ -510,23 +510,36 @@ path** (`0xE06D7363 .PEAVEEMessageException@@`). Стоковый CoreCLR
 наш hosted runtime пробрасывает дальше, не материализуя managed-layer
 wrap'ы на inner frames.
 
-### 🟡 LIMIT-12.1 — `Exception.StackTrace` пустой для EE-internal exceptions
+### 🔴 LIMIT-12.1 — `Exception.StackTrace` == `null`, всегда
 
-Symptom: ловим exception, читаем `.StackTrace` — `string.Empty` или `null`
-там где стоковый CoreCLR заполнил бы full trace с frame'ами.
+Было записано как «пустой для EE-internal», и это оказалось неверно вдвойне:
+пусто не только там, и не «пусто», а **null**.
 
-Repro: `normal-hello` Sec 9 (`throw; rethrow caught` / `throw ex; rethrow
-caught`). До правки тесты asserted на content; теперь только на сам
-факт catch. Внутренние exception'ы брошенные через C++ EH path
-показывают `[seh] throw code=0xE06D7363 type=.PEAVEEMessageException@@`.
+Symptom: `.StackTrace` возвращает `null` там, где стоковый CoreCLR отдал бы
+полную трассу.
 
-Корень: `SehUnwind` не заполняет `Exception._stackTrace` поле когда
-exception доезжает managed-frame'а через EE-internal путь (не через
-`RhpThrowEx`).
+Repro (step177): блок `[trace-measure]` в `normal-hello` печатает
+`e.StackTrace` дословно для трёх случаев и ничего не утверждает. Все три:
 
-Workaround: для tests — не assert'ить на StackTrace content; в prod
-exception сам по себе catchable, type/message работают, только trace
-пустой.
+```
+[trace-measure] managed throw:  type=InvalidOperationException len=-1
+[trace-measure] rethrow:        type=InvalidOperationException len=-1
+[trace-measure] ee-internal:    type=OutOfMemoryException      len=-1
+```
+
+`len=-1` — это `null`. Обычный управляемый `throw` — тоже.
+
+Корень: геттер CoreCLR отдаёт `null` ровно когда `_stackTrace` пуст и
+`_remoteStackTraceString` пуст, то есть когда **не записано ни одного кадра**.
+Значит дело не в том, что `SehUnwind` заполняет поле частично, — наш первый
+проход не приводит в движение `StackTraceInfo` рантайма вообще.
+
+Это отличает ярус от двух других: в ядре и в приложениях кадры собираются и с
+step177 форматируются в текст (`eh L18` зелёный), здесь собирать нечего.
+
+Workaround: никакого. Тесты на содержимое трассы на этом ярусе смысла не
+имеют, пока не заработает запись кадров; исключение при этом ловится, тип и
+сообщение на месте.
 
 ### 🟡 LIMIT-12.2 — EE-internal exceptions пробивают managed catch на inner frames
 

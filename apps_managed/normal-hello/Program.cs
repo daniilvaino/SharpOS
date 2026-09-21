@@ -301,6 +301,39 @@ Probe("managed throw deep stack", () => {
     static void L8() => throw new System.InvalidOperationException("deep");
     L1();
 });
+// Замер, а не проба: печатает то, что есть, и ничего не утверждает.
+// docs/coreclr-hosted-limits.md §12 сам говорит, что после починки FH3
+// (step172) LIMIT-12.1 «StackTrace пуст» не перепроверялся, а пробы выше
+// содержимое трассы не читают вовсе — они смотрят только, кинуло ли.
+// Одна строка лога решает, есть ли у работы над стектрейсами третий ярус.
+{
+    static void Dump(string what, Exception e)
+    {
+        string? st = e.StackTrace;
+        Console.WriteLine($"   [trace-measure] {what}: type={e.GetType().Name} " +
+                          $"len={(st is null ? -1 : st.Length)}");
+        if (!string.IsNullOrEmpty(st))
+            foreach (var line in st.Split('\n'))
+                Console.WriteLine($"   [trace-measure]   {line.TrimEnd()}");
+    }
+
+    try { throw new InvalidOperationException("measure-managed"); }
+    catch (Exception e) { Dump("managed throw", e); }
+
+    try
+    {
+        try { throw new InvalidOperationException("measure-rethrow"); }
+        catch { throw; }
+    }
+    catch (Exception e) { Dump("rethrow", e); }
+
+    // Брошено рантаймом, а не пользовательским throw: 8 ГиБ больше
+    // предела массива, и отказ приходит из самого EE без единого нашего
+    // кадра в середине.
+    try { var big = new int[int.MaxValue]; GC.KeepAlive(big); }
+    catch (Exception e) { Dump("ee-internal", e); }
+}
+
 Probe("Process.GetCurrentProcess()", () => { using var p = Process.GetCurrentProcess(); });
 Probe("Process...ProcessName", () => { using var p = Process.GetCurrentProcess(); _ = p.ProcessName; });
 Probe("Process...WorkingSet64", () => { using var p = Process.GetCurrentProcess(); _ = p.WorkingSet64; });

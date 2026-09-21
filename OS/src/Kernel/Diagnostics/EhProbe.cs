@@ -138,6 +138,24 @@ namespace OS.Kernel.Diagnostics
                 ReportLevel("eh L17 multi-frame stack trace", v);
             }
 
+            if (Probes.EhTraceText)
+            {
+                int v = TraceText();
+                ReportLevel("eh L18 stack trace text", v);
+            }
+
+            if (Probes.EhTraceTruncation)
+            {
+                int v = TraceTruncation();
+                ReportLevel("eh L19 trace truncation marker", v);
+            }
+
+            if (Probes.EhRethrowAppends)
+            {
+                int v = RethrowAppends();
+                ReportLevel("eh L20 rethrow appends frames", v);
+            }
+
             if (Probes.EhCatchFuncletProbe)
             {
                 Log.Write(LogLevel.Info,
@@ -654,6 +672,123 @@ namespace OS.Kernel.Diagnostics
             return -1;
         }
 
+        // L18 gate — the trace as TEXT, which L14 and L17 never checked.
+        //
+        // L14 asks whether StackTrace is non-null and L17 counts the recorded
+        // addresses; between them they passed for years while the getter
+        // returned the literal "[trace]". Both were true statements about
+        // something nobody could read.
+        //
+        // The negative returns are distinct because they fail for different
+        // reasons and want different fixes: no trace at all, the old marker,
+        // text too short to be frames, no frame lines, or lines that do not
+        // match the addresses recorded.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int TraceText()
+        {
+            try
+            {
+                HelperLevel1_17();
+            }
+            catch (System.Exception ex)
+            {
+                string trace = ex.StackTrace;
+                if (trace == null) return -1;
+                if (trace == "[trace]") return -2;
+                if (trace.Length < 32) return -3;
+                if (trace.IndexOf("   at 0x") < 0) return -4;
+
+                int lines = 0;
+                for (int i = 0; i < trace.Length; i++)
+                    if (trace[i] == '\n') lines++;
+
+                System.IntPtr[] ips = ex.GetStackIPs();
+                if (ips == null || ips.Length != lines) return -5;
+
+                return 1800 + lines;
+            }
+            return -6;
+        }
+
+        // L19 gate — a cut-off trace says it was cut off.
+        //
+        // The cap was sixteen, and nothing said when it was reached: sixteen
+        // frames of a forty-frame stack read exactly like a forty-frame stack
+        // that happened to be sixteen deep. Now the cap is sixty-four and the
+        // text ends with "... N more frames" when there were more.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int TraceTruncation()
+        {
+            try
+            {
+                DeepThrow(80);
+            }
+            catch (System.Exception ex)
+            {
+                if (ex.DroppedStackFrames <= 0) return -1;
+
+                string trace = ex.StackTrace;
+                if (trace == null) return -2;
+                if (trace.IndexOf("more frames") < 0) return -3;
+
+                System.IntPtr[] ips = ex.GetStackIPs();
+                if (ips == null || ips.Length != 64) return -4;
+
+                return 1900 + ex.DroppedStackFrames;
+            }
+            return -5;
+        }
+
+        // Deliberately not a tail call: the addition after the recursive call
+        // keeps each level as a real frame, which is the whole point.
+        private static int s_deepSink;
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void DeepThrow(int depth)
+        {
+            if (depth == 0)
+                throw new System.InvalidOperationException("deep-trace");
+            DeepThrow(depth - 1);
+            s_deepSink += depth;
+        }
+
+        // L20 gate — `throw;` keeps walking, and the frames it walks are
+        // added to the ones already there.
+        //
+        // Until step177 the dispatcher passed no trace target on a rethrow,
+        // so the trace stopped at the rethrow site: the one frame the reader
+        // is already standing in. Counting, not naming - names are a separate
+        // piece of work and `rethrow preserves stack trace` still guards them.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int RethrowAppends()
+        {
+            int inner = 0;
+            try
+            {
+                try
+                {
+                    HelperLevel1_17();
+                }
+                catch (System.Exception e)
+                {
+                    inner = e.GetStackIPs().Length;
+                    throw;
+                }
+            }
+            catch (System.Exception e)
+            {
+                int outer = e.GetStackIPs().Length;
+                if (inner <= 0) return -1;
+                if (outer <= inner) return -2;
+                return 2000 + (outer - inner);
+            }
+            return -3;
+        }
+
         // L13 gate — hardware fault bridge (Phase 1 step 10). Path:
         //   write to non-canonical address → CPU #GP → IDT trampoline →
         //   Idt.Dispatch → HwFaultBridge.DispatchTrap → builds
@@ -760,10 +895,30 @@ namespace OS.Kernel.Diagnostics
             // Bit 2: locate the first funclet record by linear scan of
             // unwindBlockFlags. Bound the scan so we don't read every
             // record on every probe boot.
+            //
+            // The scan starts at ILC's first record, not at record 0. In a
+            // mixed image the first 22768 records belong to CoreCLR and the
+            // CRT; they have no trailer byte, and until step177 a third of
+            // them read as funclets - record 0 among them. With firstFunclet
+            // pinned at 0 the "root comes before its funclet" test below could
+            // never run, and this probe answered 3 instead of 7 for as long as
+            // CoreCLR has been part of the image.
+            int firstManaged = -1;
+            for (int i = 0; i < count; i++)
+            {
+                RuntimeFunction* mrf = CoffRuntimeFunctionTable.GetRecord(i);
+                if (mrf != null && CoffRuntimeFunctionTable.RecordIsManaged(mrf))
+                {
+                    firstManaged = i;
+                    break;
+                }
+            }
+
             const int MaxScan = 200;
-            int limit = count < MaxScan ? count : MaxScan;
+            int scanFrom = firstManaged < 0 ? 0 : firstManaged;
+            int limit = count - scanFrom < MaxScan ? count : scanFrom + MaxScan;
             int firstFuncletIdx = -1;
-            for (int i = 0; i < limit; i++)
+            for (int i = scanFrom; i < limit; i++)
             {
                 RuntimeFunction* rf = CoffRuntimeFunctionTable.GetRecord(i);
                 if (rf == null) continue;
@@ -779,11 +934,13 @@ namespace OS.Kernel.Diagnostics
 
             // Bit 4: walk to root from that funclet. Root must come
             // before the funclet in .pdata (funclets are emitted right
-            // after their parent body).
-            if (firstFuncletIdx > 0)
+            // after their parent body) and inside ILC's own records - a
+            // "root" found among the native ones would mean the trailer gate
+            // above had failed.
+            if (firstFuncletIdx > scanFrom)
             {
                 int rootIdx = CoffMethodLookup.WalkToRoot(firstFuncletIdx);
-                if (rootIdx >= 0 && rootIdx < firstFuncletIdx)
+                if (rootIdx >= scanFrom && rootIdx < firstFuncletIdx)
                     score |= 4;
             }
 
@@ -797,6 +954,11 @@ namespace OS.Kernel.Diagnostics
             Console.Write(" selfRecord=");
             if ((score & 1) != 0)
                 Console.WriteUIntRaw((uint)selfInfo.RootIndex);
+            else
+                Console.Write("none");
+            Console.Write(" firstManaged=");
+            if (firstManaged >= 0)
+                Console.WriteUIntRaw((uint)firstManaged);
             else
                 Console.Write("none");
             Console.Write(" firstFunclet=");

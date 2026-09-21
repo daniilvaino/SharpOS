@@ -26,9 +26,12 @@ namespace OS.Boot.EH
     //       unwindSize = ALIGN_UP(unwindSize, 4) + 4   // for personality RVA
     //   trailerByte = unwindBlob[unwindSize]
     //
-    // Empirically all 698 records in our current kernel binary have
-    // Unwind flags = None, so the EHANDLER/UHANDLER path never fires;
-    // we still implement it correctly for forward compatibility.
+    // The trailer exists only for records ILC emitted. The kernel image
+    // also holds CoreCLR and the CRT, linked in statically, and their .pdata
+    // records have no trailer: the byte at that offset is whatever the linker
+    // put next. Every read is gated on CoffRuntimeFunctionTable.RecordIsManaged
+    // for that reason - see step177, where a third of the native records were
+    // being read as funclets.
     internal static unsafe class CoffMethodLookup
     {
         // Bits of unwindBlockFlags trailer byte.
@@ -107,6 +110,20 @@ namespace OS.Boot.EH
         public static byte ReadUnwindBlockFlags(RuntimeFunction* rf)
         {
             if (rf == null) return 0;
+
+            // Native code carries no trailer, so there is nothing here to
+            // read and no honest answer but "this is a whole function". Under
+            // the Windows ABI that is also the true one: each .pdata entry is
+            // its own function, and the parent/funclet relation is ILC's idea,
+            // not the platform's.
+            //
+            // Before this check the byte read was usually the next
+            // UNWIND_INFO's version field - 1 - which decodes as HANDLER. A
+            // third of the image's native records claimed to be funclets, and
+            // WalkToRoot then answered with whatever unrelated function lay up
+            // to 64 records earlier.
+            if (!CoffRuntimeFunctionTable.RecordIsManaged(rf))
+                return UBF_FUNC_KIND_ROOT;
             // Image-aware (step140): UnwindInfoAddress is an RVA relative to the
             // image that owns `rf`, which may be a loaded app, not the kernel.
             byte* unwindInfo = CoffRuntimeFunctionTable.ImageBaseForRecord(rf) + rf->UnwindInfoAddress;

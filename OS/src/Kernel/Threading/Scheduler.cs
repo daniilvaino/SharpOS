@@ -170,6 +170,20 @@ namespace OS.Kernel.Threading
             delegate* unmanaged<void> thunk = &ThreadStartThunk;
             slot[8] = (ulong)thunk;
 
+            // The slot ThreadStartThunk would return through. Nobody writes
+            // it, because nobody returns: the thunk jumps to the entry and the
+            // thread dies elsewhere. But a stack walk does not know that - it
+            // reads the slot as a return address, and the stack pages come off
+            // the physical freelist carrying the last process's bytes.
+            //
+            // Zero is the terminator the walkers already check for
+            // (StackFrameIterator: `nextIP == 0` ends the walk), and it could
+            // never fire while the slot held garbage. This is the source of
+            // the four non-canonical addresses that appeared in every
+            // collection's [appwalk] line, on both machines, identical every
+            // time - a legitimate bottom of stack, counted as a failure.
+            slot[9] = 0;
+
             // ContextBlock: SavedRsp at offset 0; FXSAVE template snapshot.
             *(ulong*)ctx = (ulong)initRsp;
             *(ulong*)(ctx + 8) = 0;

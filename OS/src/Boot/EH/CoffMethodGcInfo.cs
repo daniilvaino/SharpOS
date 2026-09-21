@@ -50,8 +50,21 @@ namespace OS.Boot.EH
         private const byte UNW_FLAG_EHANDLER = 0x01;
         private const byte UNW_FLAG_UHANDLER = 0x02;
 
-        // Resolve `ip` → method GcInfo. Returns false when ip is outside
-        // the kernel image's managed code range, or .pdata isn't mounted.
+        // Resolve `ip` -> method GcInfo. Returns false when .pdata isn't
+        // mounted or no record covers `ip`.
+        //
+        // It does NOT check that `ip` is managed code, though the comment here
+        // claimed so until step177. The kernel image holds CoreCLR and the CRT
+        // as well, and for one of their frames the trailer read below is the
+        // bytes of the next UNWIND_INFO: the GcInfo pointer is then noise, and
+        // the precise walker decodes noise as a live-slot table.
+        //
+        // Adding the check is not a one-liner, which is why it is not here
+        // yet: the caller treats false as "stop walking", so gating this would
+        // end the walk at the first CoreCLR frame and lose every root below
+        // it. What the walker needs first is a third answer - "no roots in
+        // this frame, keep unwinding" - since the native unwind codes
+        // themselves are real and step the frame correctly.
         public static bool TryResolve(byte* ip, out Result result)
         {
             result = default;

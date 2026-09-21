@@ -20,7 +20,6 @@ namespace BenchAot
     // (AppGC has no generations). Timed with the HPET the kernel hands over.
     internal static unsafe class AppEntry
     {
-        private static ulong* s_counter;
         private static ulong s_frequency;
         private static int s_tasksDone;
 
@@ -42,12 +41,11 @@ namespace BenchAot
 
         private static int Run()
         {
-            if (!AppHost.TryGetHpet(out ulong counter, out ulong frequency))
+            if (!AppHost.TryGetHpet(out _, out ulong frequency))
             {
                 AppHost.WriteError("[benchaot] no HPET handed over - nothing to time with\n");
                 return 1;
             }
-            s_counter = (ulong*)counter;
             s_frequency = frequency;
 
             AppHost.WriteString("=== benchaot begin ===\n");
@@ -80,7 +78,10 @@ namespace BenchAot
         // treat two plain reads of the same address as one.
         [System.Runtime.CompilerServices.MethodImpl(
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static ulong Now() => *s_counter;
+        // Through Stopwatch rather than the raw MMIO address: on a 32-bit
+        // HPET the counter wraps every 300 s, and a benchmark that straddles
+        // a wrap would report a negative interval as an enormous one.
+        private static ulong Now() => System.Diagnostics.Stopwatch.ReadCounter();
 
         private static void Measure(string name, Func<long> body)
         {

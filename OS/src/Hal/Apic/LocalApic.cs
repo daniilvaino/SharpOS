@@ -65,7 +65,19 @@ namespace OS.Hal.Apic
         // possible body: everything here runs with interrupts disabled, on
         // whatever stack was current, and will one day run inside the
         // preemption path where every instruction is paid for on every tick.
-        public static void OnTimerTick() => s_timerTicks++;
+        //
+        // The one thing it does beyond counting: nudge the HPET epoch. On a
+        // 32-bit counter the epoch only advances when somebody reads the
+        // clock, and an idle machine reads it nowhere — the timer queue skips
+        // the counter when empty and the CPU halts. Miss the wrap and every
+        // deadline afterwards is 300 s wrong. Every 64th tick is 15.6 Hz at
+        // TimerHz=1000, against a half-range of 150 s: four orders of margin
+        // for one MMIO read.
+        public static void OnTimerTick()
+        {
+            s_timerTicks++;
+            if ((s_timerTicks & 63) == 0) OS.Hal.Timer.Hpet.Refresh();
+        }
 
         public static void OnSpurious() => s_spurious++;
 

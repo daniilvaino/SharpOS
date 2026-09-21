@@ -348,15 +348,25 @@ namespace OS.Boot.EH
                 exType = *(GcMethodTable**)exceptionPtr;
 
             // Stash exception ref for stack trace appending in FFPH walk.
+            //
+            // On a rethrow too, which it was not until step177. A `throw;`
+            // continues the search from a new place, and the frames it walks
+            // are frames the exception really passed through; leaving them out
+            // made the trace stop at the rethrow site, which is the one frame
+            // everybody already knows. Appending is safe because the buffer
+            // keeps its index - the new frames land after the old ones.
             System.Exception exObjForTrace = null;
-            if (exceptionPtr != null && !isRethrow)
+            if (exceptionPtr != null)
             {
                 System.Exception tmp = null;
                 *(byte**)&tmp = exceptionPtr;
                 exObjForTrace = tmp;
 
-                // First-chance hook — invoked once per throw before search.
-                ExceptionHooks.NotifyFirstChance(tmp);
+                // First chance stays once per THROW: a rethrow is the same
+                // exception continuing, and a debugger that stopped on it
+                // again would stop twice for one failure.
+                if (!isRethrow)
+                    ExceptionHooks.NotifyFirstChance(tmp);
             }
 
             // First-pass: find catch handler. Walks frames and appends each

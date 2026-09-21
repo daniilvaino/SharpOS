@@ -81,7 +81,13 @@ namespace DoomApp
 
                     if (paced)
                     {
-                        while (System.Diagnostics.Stopwatch.ReadCounter() < nextFrame)
+                        // Bounded, like the emulators': an unbounded wait on
+                        // a clock is a hang waiting to happen, and a skipped
+                        // frame beats a frozen screen with no explanation.
+                        for (ulong guard = 0;
+                             System.Diagnostics.Stopwatch.ReadCounter() < nextFrame
+                             && guard < 200000000UL;
+                             guard++)
                         {
                         }
                         nextFrame += ticksPerFrame;

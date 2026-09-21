@@ -80,6 +80,17 @@ namespace SharpOS.AppSdk
             {
                 System.Diagnostics.Stopwatch.s_counterAddress = s_services->HpetCounterAddress;
                 System.Diagnostics.Stopwatch.s_frequencyHz = s_services->HpetFrequencyHz;
+
+                // A 32-bit counter needs the kernel's epoch to be read at
+                // all. Both fields are checked: a kernel that predates them
+                // leaves the width zero, and a width without a latch would be
+                // worse than reading 64 bits — it would silently truncate.
+                if (s_services->HpetCounterBits == 32 &&
+                    s_services->HpetLatchAddress != 0)
+                {
+                    System.Diagnostics.Stopwatch.s_latchAddress = s_services->HpetLatchAddress;
+                    System.Diagnostics.Stopwatch.s_counterIsNarrow = true;
+                }
             }
 
             // Materialize the app image's GCStaticRegion (lazy `static readonly`

@@ -177,6 +177,19 @@
         // through them lands in the middle of the interface it is describing.
         // This one goes where measurements go — the serial port and the log.
         public ulong WriteDiagnosticAddress;
+
+        // The HPET counter's width, and where the kernel keeps the epoch for
+        // a narrow one (step177). Handing over the raw counter address alone
+        // was wrong on hardware whose counter is 32 bits: it wraps every
+        // 300 s, and an app reading it as a 64-bit value sees time jump
+        // backwards. Pacing built on "deadline = now + delta" then waits for
+        // a moment that never comes.
+        //
+        // Zero bits means the kernel predates this and the counter is 64-bit,
+        // which is what every app assumed before.
+        public uint HpetCounterBits;
+        public uint HpetReserved;
+        public ulong HpetLatchAddress;
     }
 
     internal unsafe struct AppFileExistsRequest

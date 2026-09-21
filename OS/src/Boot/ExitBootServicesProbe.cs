@@ -401,29 +401,76 @@ namespace OS.Boot
         // A clock is not a clock until it has been watched moving. Measured
         // against the HPET, which is independent of the APIC — checking a
         // timer against itself would confirm nothing.
+        //
+        // Three windows, not one, and the verdict names WHICH of two very
+        // different things went wrong:
+        //
+        //   PASS       the delivered rate is roughly the asked-for one.
+        //   FAIL       it is not, and every window agrees on how wrong.
+        //              A steady factor means the count is armed wrong —
+        //              ours to fix.
+        //   HOST-LOSS  it is not, and the windows disagree. The host could
+        //              not deliver the interrupts it was asked for; under
+        //              TCG that comes and goes with the load on the machine
+        //              running QEMU. Not a defect here, and correcting for
+        //              it is actively harmful: shortening the count asks for
+        //              more ticks than the host can deliver, so it delivers
+        //              a smaller share still. That spiral ended at 47
+        //              thousand interrupts a second in step173, and is why
+        //              RetuneToDeliveredRate refuses the correction.
+        //
+        // The same discriminator the retune uses, deliberately: the probe
+        // should go red exactly when the retune would have corrected and the
+        // result was still wrong. Measured across three boots of one image:
+        // calibration 7877 / 7849 / 7843 kHz — the same to within half a
+        // percent — while delivery was 9, 67 and 8 ticks per 100 ms. The
+        // count is armed identically every time; what varies is the host.
         private static void VerifyTickIsMoving()
         {
             if (!global::OS.Hal.Timer.Hpet.IsInitialized) return;
 
-            ulong before = OS.Hal.Apic.LocalApic.TimerTicks;
-            ulong hpetStart = global::OS.Hal.Timer.Hpet.ReadCounter();
-            ulong window = global::OS.Hal.Timer.Hpet.FrequencyHz / 10;   // 100 ms
+            const int Windows = 3;
+            ulong fewest = ulong.MaxValue, most = 0, total = 0;
 
-            while (global::OS.Hal.Timer.Hpet.ReadCounter() - hpetStart < window) { }
+            Console.Write("[apic] ticks in 100ms:");
+            for (int i = 0; i < Windows; i++)
+            {
+                ulong before = OS.Hal.Apic.LocalApic.TimerTicks;
+                ulong hpetStart = global::OS.Hal.Timer.Hpet.ReadCounter();
+                ulong window = global::OS.Hal.Timer.Hpet.FrequencyHz / 10;
 
-            ulong observed = OS.Hal.Apic.LocalApic.TimerTicks - before;
+                while (global::OS.Hal.Timer.Hpet.ReadCounter() - hpetStart < window) { }
+
+                ulong observed = OS.Hal.Apic.LocalApic.TimerTicks - before;
+                if (observed < fewest) fewest = observed;
+                if (observed > most) most = observed;
+                total += observed;
+
+                Console.Write(" ");
+                Console.WriteInt((int)observed);
+            }
+
+            ulong average = total / Windows;
             uint expected = TimerHz / 10;
 
-            Console.Write("[apic] ticks in 100ms: ");
-            Console.WriteInt((int)observed);
             Console.Write(" expected ~");
             Console.WriteInt((int)expected);
 
             // Generous bounds: this asks "is the clock roughly right", not
             // "is it precise". Being out by half is a wiring or calibration
             // fault; being out by a few percent is a busy loop.
-            if (observed >= expected / 2 && observed <= expected * 2)
+            if (average >= expected / 2 && average <= expected * 2)
+            {
                 Console.WriteLine(" PASS");
+                return;
+            }
+
+            // Steadiness is what tells a mis-armed clock from a host that
+            // could not keep up: a wrong count is wrong by the same factor
+            // every window, lost ticks come and go. A quarter is the same
+            // threshold RetuneToDeliveredRate draws the line at.
+            if (fewest != 0 && most * 4 > fewest * 5)
+                Console.WriteLine(" HOST-LOSS");
             else
                 Console.WriteLine(" FAIL");
         }

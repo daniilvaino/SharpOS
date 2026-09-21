@@ -56,6 +56,8 @@ namespace OS.Kernel.Memory
             PutInt(KernelGcPreciseWalk.LastRootsMarked);
             Put(" unresolved=");
             PutInt(KernelGcPreciseWalk.LastFramesUnresolved);
+            Put(" bottoms=");
+            PutInt(KernelGcPreciseWalk.LastBottomsReached);
             Put(" outofrange=");
             PutInt(KernelGcPreciseWalk.LastFramesSkippedOutOfRange);
             Put(" slotoverflow=");

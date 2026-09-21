@@ -31,6 +31,16 @@ namespace OS.Kernel.Memory
         public static int LastRootsMarked;
         public static int LastFramesUnresolved;
 
+        /// <summary>Walks that ended where a stack legitimately ends.</summary>
+        /// <remarks>
+        /// Counted apart from LastFramesUnresolved because they mean the
+        /// opposite thing. A walk that stops at the bottom of a thread saw
+        /// every frame there was; a walk that stops because a frame would not
+        /// resolve left roots behind it unmarked. Both used to be "unresolved",
+        /// so the number could never answer whether anything was actually lost.
+        /// </remarks>
+        public static int LastBottomsReached;
+
         // Where the walk gives up quietly. Each of these is a frame whose
         // roots nobody reports and nobody misses until the sweep frees them,
         // so they are counted rather than left to inference: a stack that
@@ -93,6 +103,7 @@ namespace OS.Kernel.Memory
             LastFramesWalked = 0;
             LastRootsMarked = 0;
             LastFramesUnresolved = 0;
+            LastBottomsReached = 0;
             LastFramesSkippedOutOfRange = 0;
             LastFramesSlotOverflow = 0;
             LastFrameCapHits = 0;
@@ -255,6 +266,27 @@ namespace OS.Kernel.Memory
                 if (frameIdx >= MaxFrames)
                 {
                     LastFrameCapHits++;
+                    return;
+                }
+
+                // The bottom of a thread's stack: the slot ThreadStartThunk
+                // would return through, zeroed at spawn. Before step177 it held
+                // whatever the page carried from its last owner, and the walk
+                // read that as a return address — four identical non-canonical
+                // values in every collection, on both machines.
+                if (ctx->Rip == 0)
+                {
+                    LastBottomsReached++;
+                    return;
+                }
+
+                // The kernel-to-application trampoline. It switches CR3 and
+                // RSP and carries no unwind data, so the walk stops here
+                // whatever we do; what changes is that it is now counted as an
+                // end rather than as a frame that failed to resolve.
+                if (OS.Kernel.Exec.JumpStub.ContainsAddress(ctx->Rip))
+                {
+                    LastBottomsReached++;
                     return;
                 }
 

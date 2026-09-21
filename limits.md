@@ -7,7 +7,8 @@
 |---|---|---|---|
 | `GC.WaitForPendingFinalizers` зависает | CoreCLR-hosted | 🔴 hang | SYM-003: finalizer-thread completion event не wired; `GC.Collect` сам работает |
 | `[ModuleInitializer]` не доходит до user code | Kernel | 🔴 | проба `Probe_ModuleInit` красная. Атрибут в std с step119, `docs/nativeaot-nostd-kernel-limits.md` §«работает» устарел. Сличено на Windows и macOS — одинаково |
-| Имена кадров теряются после `throw;` | Kernel / PE-app | 🔴 | проба `rethrow preserves stack trace`: трасса длиной 7 символов, `RethrowSource` в ней нет. Наполнение трассы само работает (L14, L17 зелёные) |
+| Имена кадров в трассе | Kernel / PE-app | 🔴 | текст трассы есть с step177 (`eh L18` зелёный, адрес + база образа + смещение), имён нет: проба `rethrow preserves stack trace` даёт `val=116` и красная по `RethrowSource`. Блобы 313/327 в образе лежат и не читаются |
+| `Exception.StackTrace` пуст целиком | CoreCLR-hosted | 🔴 | замер `[trace-measure]` (step177): **null** для управляемого `throw`, для `throw;` и для брошенного самим EE. Ни один кадр не записан — `StackTraceInfo` рантайма не приводится в движение нашим первым проходом |
 | `DateTime.Now` (local timezone) | все | 🔴 | нет tz DB; `DateTime.UtcNow` через CMOS+HPET ✅ |
 | `Process.Start` | CoreCLR-hosted | 🔴 | отсутствует `CreateProcessW` (лог 2026-08-21). Ярус решает по Windows-пути; порождения процессов у нас нет вовсе |
 | `GZipStream` / `System.IO.Compression` | все | 🔴 | `libSystem.IO.Compression.Native` отсутствует |

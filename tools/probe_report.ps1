@@ -161,6 +161,19 @@ $results += Get-ProbeStatus -Cat 'Phase3' -Name 'RtcSnapshot' `
     -Detect 'rtc: ' `
     -Status 'rtc:\s*([^\r\n]+)'
 
+# Phase 3 -- software extension of a 32-bit HPET counter (step177). Two
+# lines: the arithmetic, and the driver over a hand-driven counter. QEMU's
+# HPET is 64-bit, so this is the only place either is exercised there.
+$results += Get-ProbeStatus -Cat 'Phase3' -Name 'HpetExtend' `
+    -Detect 'hpet wrap probe begin' `
+    -Status 'hpet\.extend: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
+$results += Get-ProbeStatus -Cat 'Phase3' -Name 'HpetWrap' `
+    -Detect 'hpet wrap probe begin' `
+    -Status 'hpet\.wrap: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
 # Phase 4 -- diagnostics + EH gradient.
 $results += Get-ProbeStatus -Cat 'Phase4' -Name 'GcHeapSmoke' `
     -Detect 'gc heap test begin' `
@@ -369,7 +382,10 @@ $ehGates = @(
     @{ N='EhStackTrace';             Re='eh L14 stack trace populated: val=(\d+)';   Expect='1401' },
     @{ N='EhCollidedUnwind';         Re='eh L15 collided unwind: val=(\d+)';         Expect='1501' },
     @{ N='EhMultiFrameFinally';      Re='eh L16 multi-frame finally: val=(\d+)';     Expect='1616' },
-    @{ N='EhMultiFrameStackTrace';   Re='eh L17 multi-frame stack trace: val=(\d+)'; ExpectRe='^17\d\d$' }
+    @{ N='EhMultiFrameStackTrace';   Re='eh L17 multi-frame stack trace: val=(\d+)'; ExpectRe='^17\d\d$' },
+    @{ N='EhTraceText';              Re='eh L18 stack trace text: val=(\d+)';        ExpectRe='^18\d\d$' },
+    @{ N='EhTraceTruncation';        Re='eh L19 trace truncation marker: val=(\d+)'; ExpectRe='^19\d+$' },
+    @{ N='EhRethrowAppends';         Re='eh L20 rethrow appends frames: val=(\d+)'; ExpectRe='^20\d+$' }
 )
 foreach ($g in $ehGates) {
     $splat = @{ Cat='EH'; Name=$g.N; Detect=$g.Re; Status=$g.Re }
@@ -467,10 +483,13 @@ $results += Get-ProbeStatus -Cat 'PhaseF' -Name 'ParkedThreadRoots' `
     -Status '\[gcroots\]\s(PASS|FAIL|SKIP)' `
     -ExpectRe '^PASS$'
 
+# HOST-LOSS is not a failure here: it says the machine running QEMU could
+# not deliver the interrupts, which the probe can see and we cannot fix. A
+# clock armed wrong still shows FAIL, because that is steady and ours.
 $results += Get-ProbeStatus -Cat 'PhaseF' -Name 'ApicTick' `
     -Detect '\[apic\] ticks' `
-    -Status '\[apic\] ticks[^\r\n]*\s(PASS|FAIL)' `
-    -ExpectRe '^PASS$'
+    -Status '\[apic\] ticks[^\r\n]*\s(PASS|HOST-LOSS|FAIL)' `
+    -ExpectRe '^(PASS|HOST-LOSS)$'
 
 $results += Get-ProbeStatus -Cat 'PhaseF' -Name 'Preemption' `
     -Detect '\[preempt\] ' `

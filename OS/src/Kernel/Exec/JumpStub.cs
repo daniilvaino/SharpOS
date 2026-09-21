@@ -46,6 +46,21 @@ namespace OS.Kernel.Exec
             return s_initialized && virtualAddress != 0;
         }
 
+        /// <summary>True when the address is inside the jump stub's page.</summary>
+        /// <remarks>
+        /// Asked by stack walks. The stub switches CR3 and RSP and has no
+        /// unwind data by construction, so a walk that reaches it cannot step
+        /// past it — but reaching it is a normal end, not a failure, and the
+        /// two were indistinguishable in the counters until this existed.
+        ///
+        /// The whole page, not the emitted length: the page is zeroed and
+        /// holds nothing else.
+        /// </remarks>
+        public static bool ContainsAddress(ulong address)
+            => s_initialized && s_stubVirtualAddress != 0
+               && address >= s_stubVirtualAddress
+               && address < s_stubVirtualAddress + StubPageSize;
+
         public static bool Run(
             ulong entryVirtualAddress,
             ulong stackTopVirtualAddress,

@@ -150,6 +150,13 @@ namespace OS.Kernel.Diagnostics
         // on the laptop cost 10 ms each (step172).
         public const uint TimerHz = 1000;
 
+        // Software extension of a 32-bit HPET counter to 64 bits (step177).
+        // Two checks: the arithmetic on its own, and the driver pointed at a
+        // buffer so a wrap takes microseconds instead of the 300 seconds the
+        // real counter needs. Cheap and early — leave it on; QEMU's HPET is
+        // 64-bit and cannot reach this code any other way.
+        public const bool HpetWrap = true;
+
         // Dump where every thread is parked once per idle sampling window.
         //
         // The profiler answers "where was the CPU", and stays silent when the
@@ -233,6 +240,9 @@ namespace OS.Kernel.Diagnostics
         public const bool EhCollidedUnwind = true;         // step 11 GATE: L15 == 1501 (rethrow inside finally — funclet-aware codeOffset)
         public const bool EhMultiFrameFinally = true;      // Phase 1 polish: L16 == 1616 (caller's finally runs on callee throw)
         public const bool EhMultiFrameStackTrace = true;   // Phase 1 polish: L17 == 1700+frames (stack trace records each frame)
+        public const bool EhTraceText = true;              // step177: L18 == 1800+frames (StackTrace is text, not the "[trace]" marker)
+        public const bool EhTraceTruncation = true;        // step177: L19 == 1900+dropped (a cut-off trace says so)
+        public const bool EhRethrowAppends = true;         // step177: L20 == 2000+added (throw; keeps appending frames)
         public const bool EhEnumLive = true;              // step 5.3 probe A: enum clauses on live frame inside try (non-halting)
 
         public const bool IdtPanic = false;          // never returns when on

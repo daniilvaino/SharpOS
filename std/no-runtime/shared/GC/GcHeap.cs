@@ -199,8 +199,7 @@ namespace SharpOS.Std.NoRuntime
             PutULong(line, ref n, largest);
             Put(line, ref n, " segments=");
             PutULong(line, ref n, s_segmentCount);
-            Put(line, ref n, "
-");
+            Put(line, ref n, "\n");
             line[n] = 0;
 
             s_diagnostic(line);
