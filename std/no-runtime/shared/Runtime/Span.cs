@@ -1,4 +1,4 @@
-﻿// System.Span<T> — ported from dotnet/runtime:
+// System.Span<T> — ported from dotnet/runtime:
 //   src/libraries/System.Private.CoreLib/src/System/Span.cs
 //
 // Cuts (all local, public contract preserved):
@@ -285,9 +285,12 @@ namespace System
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static T[] EmptyArray<T>() => new T[0];
 
+        // Was `while (true) ;`. Shared by Span, ReadOnlySpan, MemoryExtensions
+        // and the span-based string paths, so an index past the end anywhere in
+        // them hung the machine without a word. EH works on every tier — throw,
+        // and let the frames name the caller.
         internal static void Halt()
-        {
-            while (true) ;
-        }
+            => throw new System.IndexOutOfRangeException(
+                "Span: index was outside the bounds of the span.");
     }
 }

@@ -50,7 +50,6 @@ macos-arm64 = { asset_pattern = "LLVM-22.1.8-macOS-ARM64.tar.xz", checksum = "sh
 # пропускает. Прошивку на Windows и macOS приносит сам QEMU.
 [bootstrap.packages]
 "winget:SoftwareFreedomConservancy.QEMU" = "latest"
-"winget:MSYS2.MSYS2" = "latest"              # mtools на Windows есть только в MSYS2
 "brew:qemu" = { os = "macos" }       # brew бывает и на Linux — там берём apt
 "brew:mtools" = { os = "macos" }
 "apt:qemu-system-x86" = "latest"
@@ -68,12 +67,22 @@ depends = ["bootstrap:submodules", "bootstrap:mtools", "bootstrap:coreclr-system
 [tasks."bootstrap:submodules"]
 run = "git submodule update --init --recursive"
 
+# mtools на Windows живёт только в MSYS2, но MSYS2 намеренно НЕ объявлен в
+# [bootstrap.packages]: winget знает лишь то, что поставил сам, а поставленный
+# руками C:\msys64 ему невидим — он пробует установить поверх, установщик
+# упирается в занятый каталог и возвращает 1, и весь bootstrap встаёт. Машины,
+# настроенные по прежним инструкциям этого же репозитория, именно такие: QEMU
+# и python у них лежат там с самого начала. Поэтому решение принимается здесь,
+# где видно, что уже есть, и шаг остаётся повторяемым — как обещано выше.
 [tasks."bootstrap:mtools"]
 shell = "pwsh -NoProfile -NonInteractive -Command"
 run = '''
-if ($IsWindows -and -not (Test-Path C:\msys64\mingw64\bin\mformat.exe)) {
-    & C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm mingw-w64-x86_64-mtools"
+if (-not $IsWindows) { return }
+if (Test-Path C:\msys64\mingw64\bin\mformat.exe) { return }
+if (-not (Test-Path C:\msys64\usr\bin\bash.exe)) {
+    mise bootstrap packages apply --yes winget:MSYS2.MSYS2
 }
+& C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm mingw-w64-x86_64-mtools"
 '''
 
 # Системные зависимости форка: хостовая часть его сборки (инструменты для

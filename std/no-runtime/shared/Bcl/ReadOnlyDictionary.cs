@@ -92,7 +92,15 @@ namespace System.Collections.ObjectModel
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
             => ((System.Collections.IEnumerable)m_dictionary).GetEnumerator();
 
-        private static void Halt() { while (true) ; }
+        private static void Halt()
+            // Was `while (true) ;`. A BCL misuse — duplicate key, pop on
+            // empty, index past the end — hung the machine silently instead
+            // of throwing, and on the app tier that hang cannot even be
+            // preempted. EH works on every tier, so throw: the frames name
+            // the caller. Type is generic because the call sites are shared;
+            // a precise one per site is a later refinement, a hang is not.
+            => throw new System.InvalidOperationException(
+                "ReadOnlyDictionary: invalid operation");
 
         public sealed class KeyCollection : System.Collections.Generic.ICollection<TKey>,
                                             System.Collections.Generic.IReadOnlyCollection<TKey>

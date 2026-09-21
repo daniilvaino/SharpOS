@@ -1,4 +1,4 @@
-﻿using OS.Boot.EH;
+using OS.Boot.EH;
 using OS.Hal;
 
 namespace OS.Kernel.Diagnostics
@@ -308,7 +308,15 @@ namespace OS.Kernel.Diagnostics
             ulong halts = OS.Kernel.Threading.Scheduler.IdleHalts;
             ulong sleptThisWindow = halts - s_haltsAtLastReport;
             s_haltsAtLastReport = halts;
-            if (sleptThisWindow >= (ReportEvery - (ReportEvery / 10))) return;
+            if (sleptThisWindow >= (ReportEvery - (ReportEvery / 10)))
+            {
+                // Idle is not always nothing: a hang that WAITS looks exactly
+                // like a prompt with nobody typing. Say where the threads are,
+                // since where the CPU is has no answer worth printing.
+                if (Probes.ThreadDumpWhenIdle)
+                    ThreadDump.Print("idle window");
+                return;
+            }
 
             Report();
 

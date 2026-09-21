@@ -379,8 +379,32 @@ namespace OS.Boot.EH
             if (!fp.Found)
             {
                 // Unhandled — notify hook then FailFast.
-                if (exObjForTrace != null)
-                    ExceptionHooks.NotifyUnhandled(exObjForTrace);
+                //
+                // The reference is rebuilt here rather than reused from
+                // exObjForTrace, which is deliberately null for a rethrow: a
+                // `throw;` is not a new first-chance event and must not restart
+                // the trace. But it IS a real exception with a type and a
+                // message, and reporting nothing for it turned every unhandled
+                // rethrow into three lines that name neither — observed on the
+                // rig 2026-09-20, where the only output was "no matching catch"
+                // followed by the panic. The object is available: the rethrow
+                // branch above took it from prev->Exception.
+                System.Exception exObjForReport = exObjForTrace;
+                if (exObjForReport == null && exceptionPtr != null)
+                {
+                    System.Exception tmp = null;
+                    *(byte**)&tmp = exceptionPtr;
+                    exObjForReport = tmp;
+                }
+
+                if (exObjForReport != null)
+                    ExceptionHooks.NotifyUnhandled(exObjForReport);
+                else
+                    // Nothing to report is itself the finding: the throw
+                    // arrived without an exception object. Saying so keeps it
+                    // from looking like the silent-rethrow case above, which
+                    // is what cost a rig run to tell apart.
+                    OS.Hal.Console.WriteLine("[unhandled] no exception object (exceptionPtr == null)");
 
                 OS.Hal.Console.Write("\r\n*** unhandled exception (no matching catch) ***\r\n");
                 ExceptionHooks.FailFast();

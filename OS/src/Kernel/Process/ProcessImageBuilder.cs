@@ -1,4 +1,4 @@
-﻿using OS.Kernel.Paging;
+using OS.Kernel.Paging;
 using OS.Kernel.Util;
 using OS.Hal;
 
@@ -7,7 +7,14 @@ namespace OS.Kernel.Process
     internal static unsafe class ProcessImageBuilder
     {
         private const ulong PageSize = X64PageTable.PageSize;
-        private const uint DefaultStackPages = 8;
+        // 16, not 8: since JumpStub enables interrupts for the duration of
+        // the app, a timer tick now lands on THIS stack (the IDT uses ist=0,
+        // so an interrupt does not switch stacks). A deep redraw plus an
+        // interrupt frame plus a scheduler switch on 32 KiB is tight, and
+        // overflowing it faults on an exhausted stack, which is a double
+        // fault and then a reset — the one failure that destroys the log it
+        // would have to be diagnosed from.
+        private const uint DefaultStackPages = 16;
 
         // One stack region per nesting level, because a parent's stack stays
         // mapped the whole time its child runs — it is what the kernel is

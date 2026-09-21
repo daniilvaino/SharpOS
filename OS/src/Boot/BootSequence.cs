@@ -1,4 +1,4 @@
-﻿using OS.Hal;
+using OS.Hal;
 using OS.Hal.Acpi;
 using OS.Hal.Idt;
 using OS.Kernel;
@@ -127,6 +127,12 @@ namespace OS.Boot
             // An allocation failure std cannot turn into an exception ends
             // here, with its reason printed, rather than in a silent loop.
             SharpOS.Std.NoRuntime.GcHeap.s_fatal = &Panic.Fail;
+
+            // Numbers at the moment an allocation is refused. Without them
+            // "out of memory" reads as "the heap is full", which is the case
+            // it is least often: a swept heap that cannot meet one large
+            // request looks identical from the exception alone.
+            SharpOS.Std.NoRuntime.GcHeap.s_diagnostic = &OomDiagnostic;
 
             Log.Write(LogLevel.Info, "on the kernel stack, installing the IDT");
             bool idtOk = Idt.Install(bootInfo);
@@ -1153,5 +1159,12 @@ namespace OS.Boot
             }
             Log.EndLine();
         }
+        private static void OomDiagnostic(byte* utf8)
+        {
+            if (utf8 == null) return;
+            for (byte* p = utf8; *p != 0; p++)
+                OS.Hal.Platform.WriteChar((char)*p, OS.Hal.OutputChannel.Perf);
+        }
+
     }
 }

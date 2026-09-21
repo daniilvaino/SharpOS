@@ -1,4 +1,4 @@
-﻿// GcHeap — linked list of GcSegment blocks, bump allocator + freelist reuse.
+// GcHeap — linked list of GcSegment blocks, bump allocator + freelist reuse.
 //
 // Allocation priority:
 //   1. Freelist first-fit — scan singly-linked list of free-object markers
@@ -121,7 +121,15 @@ namespace SharpOS.Std.NoRuntime
             if (s_outOfMemory != 0)
                 return;
 
-            var exception = new System.OutOfMemoryException();
+            // With a message, and made here for the same reason the object is:
+            // at the moment of failure there is no room to build a string. An
+            // exception that reaches the log as "(no message)" says only that
+            // something refused to allocate — not which heap, and not that the
+            // heap may well be empty and merely too broken up to serve.
+            var exception = new System.OutOfMemoryException(
+                "No memory could be allocated. The heap may still have free "
+                + "space that is too fragmented to satisfy this request — see "
+                + "the [oom] line for the request size and the largest free block.");
             exception.ReserveStackTrace();
             s_outOfMemory = *(nint*)&exception;
 
@@ -141,6 +149,78 @@ namespace SharpOS.Std.NoRuntime
         /// from recursing: its own failure comes back here and takes the
         /// preallocated one, which the catch below then drops.
         /// </remarks>
+        // Where a refused allocation says what it actually hit.
+        //
+        // "Out of memory" is the wrong words for the common case and cost a
+        // day to see past: the heap was EMPTY — 1.85 million objects had just
+        // been swept — and the request still failed, because nothing left was
+        // contiguous. The exception carries no message and no numbers, so the
+        // difference between "nothing free" and "nothing big enough" had to be
+        // reconstructed by hand from nine collections and a symbolized trace.
+        //
+        // One line at the point of failure says it outright. Nothing here
+        // allocates: the digits go into a stack buffer, and the sink takes
+        // bytes — the heap that just refused a request is the last thing to
+        // ask for a formatted string.
+        public static delegate*<byte*, void> s_diagnostic;
+
+        private static uint s_lastRequest;
+
+        private static void ReportOutOfMemory()
+        {
+            if (s_diagnostic == null) return;
+
+            uint blocks = 0;
+            ulong freeBytes = 0;
+            uint largest = 0;
+
+            // Bounded: this walks a list that is, by hypothesis, enormous, and
+            // a corrupt one must not turn a diagnosis into a hang.
+            nint cur = s_freelistHead;
+            for (uint guard = 0; cur != 0 && guard < 4000000u; guard++)
+            {
+                uint size = ((GcObject*)cur)->ComputeSize();
+                if (size == 0) break;
+                blocks++;
+                freeBytes += size;
+                if (size > largest) largest = size;
+                cur = *(nint*)(cur + FreeNextOffset);
+            }
+
+            byte* line = stackalloc byte[160];
+            int n = 0;
+            Put(line, ref n, "[oom] request=");
+            PutULong(line, ref n, s_lastRequest);
+            Put(line, ref n, " free=");
+            PutULong(line, ref n, freeBytes);
+            Put(line, ref n, " in ");
+            PutULong(line, ref n, blocks);
+            Put(line, ref n, " blocks largest=");
+            PutULong(line, ref n, largest);
+            Put(line, ref n, " segments=");
+            PutULong(line, ref n, s_segmentCount);
+            Put(line, ref n, "
+");
+            line[n] = 0;
+
+            s_diagnostic(line);
+        }
+
+        private static void Put(byte* buffer, ref int at, string text)
+        {
+            for (int i = 0; i < text.Length && at < 158; i++)
+                buffer[at++] = (byte)text[i];
+        }
+
+        private static void PutULong(byte* buffer, ref int at, ulong value)
+        {
+            byte* digits = stackalloc byte[20];
+            int count = 0;
+            do { digits[count++] = (byte)('0' + (int)(value % 10UL)); value /= 10UL; }
+            while (value != 0);
+            while (count > 0 && at < 158) buffer[at++] = digits[--count];
+        }
+
         public static System.OutOfMemoryException OutOfMemory()
         {
             if (!s_initialized)
@@ -148,13 +228,18 @@ namespace SharpOS.Std.NoRuntime
             if (s_outOfMemory == 0)
                 Fatal("out of memory before the OutOfMemoryException was made");
 
+            ReportOutOfMemory();
+
             if (!s_allocatingOutOfMemory)
             {
                 s_allocatingOutOfMemory = true;
                 System.OutOfMemoryException fresh = null;
                 try
                 {
-                    fresh = new System.OutOfMemoryException();
+                    fresh = new System.OutOfMemoryException(
+                        "No memory could be allocated. The heap may still have "
+                        + "free space that is too fragmented to satisfy this "
+                        + "request — see the [oom] line for the numbers.");
                     // Its trace buffer now, not in the middle of the throw.
                     fresh.ReserveStackTrace();
                 }
@@ -204,6 +289,10 @@ namespace SharpOS.Std.NoRuntime
                 return null;
             if (size == 0 || size > MaxAllocationSize)
                 return null;
+
+            // Remembered for the refusal report: by the time OutOfMemory() is
+            // asked for the exception, the size that could not be met is gone.
+            s_lastRequest = size;
 
             if (s_enterCritical != null) s_enterCritical();
             void* allocated = AllocateRawCore(size);

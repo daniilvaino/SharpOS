@@ -110,6 +110,11 @@ last_build.log
 last_app.log
 last_err.log
 last_linux_ref.log
+
+# Любой лог — артефакт прогона. Именованные выше оставлены как указание, что
+# именно эти пишет сборка; правило ниже ловит и чужие (логи установщиков,
+# отладочные выгрузки), которые иначе копятся в корне и тонут в git status.
+*.log
 *.lscache
 
 # Payload staging source: IWADs for DOOM.EXE, cartridges for the emulators

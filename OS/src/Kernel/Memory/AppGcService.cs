@@ -62,7 +62,37 @@ namespace OS.Kernel.Memory
             PutInt(KernelGcPreciseWalk.LastFramesSlotOverflow);
             Put(" capped=");
             PutInt(KernelGcPreciseWalk.LastFrameCapHits);
+
+            // The addresses, not just the tally. A frame the walk dropped is
+            // a root the sweep is then free to reclaim, and until these were
+            // printed the only honest statement about them was that three of
+            // them existed.
+            int skipped = KernelGcPreciseWalk.LastSkippedCount;
+            for (int i = 0; i < skipped; i++)
+            {
+                Put(i == 0 ? " skipped=0x" : ",0x");
+                PutHex(KernelGcPreciseWalk.SkippedRip(i));
+
+                // Whose unwind produced it. Zero means the frame was dropped
+                // in place (out of range), not walked into from somewhere.
+                ulong from = KernelGcPreciseWalk.SkippedFrom(i);
+                if (from != 0) { Put("<-0x"); PutHex(from); }
+            }
+
             Put("\n");
+        }
+
+        private static void PutHex(ulong value)
+        {
+            const string digits = "0123456789ABCDEF";
+            bool started = false;
+            for (int shift = 60; shift >= 0; shift -= 4)
+            {
+                int nibble = (int)((value >> shift) & 0xF);
+                if (nibble == 0 && !started && shift != 0) continue;
+                started = true;
+                OS.Hal.Platform.WriteChar(digits[nibble], OS.Hal.OutputChannel.Perf);
+            }
         }
 
         // Digits straight to the channel: this runs inside the app's

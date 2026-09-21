@@ -1,4 +1,4 @@
-﻿// System.Collections.Generic.Dictionary<TKey, TValue>
+// System.Collections.Generic.Dictionary<TKey, TValue>
 //
 // The surface. Storage lives in Dictionary.Storage.cs, ported from the real
 // dotnet/runtime Dictionary — buckets of indices over a dense entries array,
@@ -129,9 +129,15 @@ namespace System.Collections.Generic
 
         private static void ThrowKeyNull() => Halt();
 
-        // Halt without a real exception engine. Keeps the shape of the BCL
-        // throw sites but maps to a loop, same as our ThrowHelpers.
-        private static void Halt() { while (true) ; }
+        private static void Halt()
+            // Was `while (true) ;`. A BCL misuse — duplicate key, pop on
+            // empty, index past the end — hung the machine silently instead
+            // of throwing, and on the app tier that hang cannot even be
+            // preempted. EH works on every tier, so throw: the frames name
+            // the caller. Type is generic because the call sites are shared;
+            // a precise one per site is a later refinement, a hang is not.
+            => throw new System.InvalidOperationException(
+                "Dictionary: invalid operation");
 
         private int _version;
         private IEqualityComparer<TKey> _comparer;

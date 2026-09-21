@@ -1,4 +1,4 @@
-﻿namespace OS.Kernel.Diagnostics
+namespace OS.Kernel.Diagnostics
 {
     // Single source of truth for which boot-time probes/smoke-tests run.
     // BootSequence consults these flags before invoking each probe; flip
@@ -149,6 +149,19 @@
         // laptop, on the desktop and under QEMU alike, and a gen0 collection
         // on the laptop cost 10 ms each (step172).
         public const uint TimerHz = 1000;
+
+        // Dump where every thread is parked once per idle sampling window.
+        //
+        // The profiler answers "where was the CPU", and stays silent when the
+        // window was spent idle — by design, so an interactive prompt does not
+        // file "nothing happened" every ten seconds. That makes it blind to
+        // exactly one failure: a machine that hangs WAITING rather than
+        // spinning. Three such hangs on the rig produced no profile at all,
+        // and the silence itself was the clue — an idle hang.
+        //
+        // On, this prints each thread's resume address instead. Noisy at a
+        // prompt; leave it off unless hunting a hang.
+        public const bool ThreadDumpWhenIdle = true;
 
         // Isolated check of SharpOSHost_ProtectPages, called directly from the
         // kernel. OFF: it halts the boot (the export is a Panic.Fail stub) and

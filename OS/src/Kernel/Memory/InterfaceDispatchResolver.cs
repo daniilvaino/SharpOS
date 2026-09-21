@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using OS.Hal;
 using SharpOS.Std.NoRuntime;
 
@@ -454,7 +454,43 @@ namespace OS.Kernel.Memory
         {
             Log.Write(LogLevel.Warn, "iface-resolve fail (no match in inheritance chain)");
             DumpResolveState(thisPtr, thisMT, cellPtr, null, in info);
+            DumpObjectHeader(thisPtr, thisMT);
             DumpTypeMaps(thisMT);
+        }
+
+        // What the object itself looks like, not what its type claims.
+        //
+        // A dispatch that finds no implementation has two very different
+        // causes and the type dump alone cannot tell them apart: a real type
+        // whose map we misread, or a reference to memory that is no longer the
+        // object it was. The second leaves a signature — the collector
+        // overwrites a swept object with a free marker, and a free marker's
+        // MethodTable carries HasComponentSize (0x8000) with a zero base size.
+        // Printing the first words of the object says which case this is in
+        // one line, instead of another run.
+        private static void DumpObjectHeader(nint thisPtr, GcMethodTable* mt)
+        {
+            if (thisPtr == 0) return;
+
+            Log.Begin(LogLevel.Warn);
+            Console.Write("  [obj] raw");
+            ulong* words = (ulong*)thisPtr;
+            for (int i = 0; i < 4; i++)
+            {
+                Console.Write(i == 0 ? " =0x" : " 0x");
+                Console.WriteHexRaw(words[i], 16);
+            }
+            Log.EndLine();
+
+            if (mt == null) return;
+
+            Log.Begin(LogLevel.Warn);
+            Console.Write("  [obj] mt.flags=0x");
+            Console.WriteHexRaw(mt->ComponentSize, 4);
+            Console.Write(" baseSize=0x");
+            Console.WriteHexRaw(mt->BaseSize, 8);
+            Console.Write(mt->BaseSize == 0 ? "  <- LOOKS SWEPT (free marker)" : "");
+            Log.EndLine();
         }
 
         private static void DumpTypeMaps(GcMethodTable* mt)

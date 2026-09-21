@@ -292,7 +292,15 @@ namespace System.Collections.Generic
             if (node.list != this) Halt();
         }
 
-        private static void Halt() { while (true) ; }
+        private static void Halt()
+            // Was `while (true) ;`. A BCL misuse — duplicate key, pop on
+            // empty, index past the end — hung the machine silently instead
+            // of throwing, and on the app tier that hang cannot even be
+            // preempted. EH works on every tier, so throw: the frames name
+            // the caller. Type is generic because the call sites are shared;
+            // a precise one per site is a later refinement, a hang is not.
+            => throw new System.InvalidOperationException(
+                "LinkedList: invalid operation");
 
         // Struct enumerator (BCL shape). Unlike Dictionary/HashSet we haven't
         // hit the ILC 7.0.20 boxed-struct-enumerator issue with LinkedList's

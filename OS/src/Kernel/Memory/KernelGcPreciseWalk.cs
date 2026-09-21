@@ -1,4 +1,4 @@
-﻿using OS.Boot.EH;
+using OS.Boot.EH;
 using OS.Hal;
 using OS.PAL.SharpOSHost;
 using SharpOS.Std.NoRuntime;
@@ -40,8 +40,56 @@ namespace OS.Kernel.Memory
         public static int LastFramesSlotOverflow;
         public static int LastFrameCapHits;
 
+        // The addresses behind the counters. A number says three frames were
+        // dropped; it cannot say WHICH, and a dropped frame is a root nobody
+        // reports and the sweep then frees. Eight is enough: if there are more
+        // than eight, the first eight already name the district.
+        private const int SkipCapacity = 8;
+
+        private unsafe struct SkipTable
+        {
+            public fixed ulong Rip[SkipCapacity];
+            public fixed ulong From[SkipCapacity];
+        }
+
+        private static SkipTable s_skipped;
+        private static int s_skippedCount;
+
+        public static int LastSkippedCount => s_skippedCount;
+
+        public static ulong SkippedRip(int index)
+        {
+            if ((uint)index >= (uint)s_skippedCount) return 0;
+            fixed (SkipTable* t = &s_skipped) return t->Rip[index];
+        }
+
+        /// <summary>
+        /// The frame the walk was standing on when the next one came out
+        /// unusable. The skipped address alone cannot say whose unwind
+        /// produced it, and when that address is not code at all — a value
+        /// read out of data because the stack pointer was wrong — the only
+        /// thing worth knowing is which function it was read from.
+        /// </summary>
+        public static ulong SkippedFrom(int index)
+        {
+            if ((uint)index >= (uint)s_skippedCount) return 0;
+            fixed (SkipTable* t = &s_skipped) return t->From[index];
+        }
+
+        private static void NoteSkipped(ulong rip, ulong from)
+        {
+            if (s_skippedCount >= SkipCapacity) return;
+            fixed (SkipTable* t = &s_skipped)
+            {
+                t->Rip[s_skippedCount] = rip;
+                t->From[s_skippedCount] = from;
+            }
+            s_skippedCount++;
+        }
+
         public static void ResetTelemetry()
         {
+            s_skippedCount = 0;
             LastFramesWalked = 0;
             LastRootsMarked = 0;
             LastFramesUnresolved = 0;
@@ -200,6 +248,8 @@ namespace OS.Kernel.Memory
             // Cap protects against runaway loops if unwind glitches.
             const int MaxFrames = 64;
 
+            ulong prevRip = 0;
+
             for (int frameIdx = 0; ; frameIdx++)
             {
                 if (frameIdx >= MaxFrames)
@@ -218,10 +268,12 @@ namespace OS.Kernel.Memory
                         continue;
 
                     LastFramesUnresolved++;
+                    NoteSkipped(ctx->Rip, prevRip);
                     return;
                 }
 
                 LastFramesWalked++;
+                prevRip = ctx->Rip;
                 MarkOneFrame(ctx, in r, gcInfoVersion,
                              isActiveFrame: frameIdx == 0 && s_topFrameIsActive);
 
@@ -286,6 +338,7 @@ namespace OS.Kernel.Memory
             if (!inRange)
             {
                 LastFramesSkippedOutOfRange++;
+                NoteSkipped(ctx->Rip, 0);
                 return;
             }
 

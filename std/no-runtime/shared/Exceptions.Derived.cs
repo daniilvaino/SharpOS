@@ -179,4 +179,58 @@ namespace System
         public NotImplementedException(string message, Exception innerException)
             : base(message, innerException) { }
     }
+
+    // ── Для ThrowHelpers ────────────────────────────────────────────
+    // ILC зовёт помощники по фиксированным именам, и до сих пор каждый из
+    // них был вечным циклом. Чтобы бросать по-настоящему, нужны сами типы;
+    // иерархия — как в BCL, только базой везде Exception (SystemException у
+    // нас нет).
+
+    public class TypeLoadException : Exception
+    {
+        public TypeLoadException() { }
+        public TypeLoadException(string message) : base(message) { }
+        public TypeLoadException(string message, Exception innerException)
+            : base(message, innerException) { }
+    }
+
+    public class MissingMemberException : Exception
+    {
+        public MissingMemberException() { }
+        public MissingMemberException(string message) : base(message) { }
+        public MissingMemberException(string message, Exception innerException)
+            : base(message, innerException) { }
+    }
+
+    public class MissingFieldException : MissingMemberException
+    {
+        public MissingFieldException() { }
+        public MissingFieldException(string message) : base(message) { }
+        public MissingFieldException(string message, Exception innerException)
+            : base(message, innerException) { }
+    }
+
+    public class MissingMethodException : MissingMemberException
+    {
+        public MissingMethodException() { }
+        public MissingMethodException(string message) : base(message) { }
+        public MissingMethodException(string message, Exception innerException)
+            : base(message, innerException) { }
+    }
+
+    public class InvalidProgramException : Exception
+    {
+        public InvalidProgramException() { }
+        public InvalidProgramException(string message) : base(message) { }
+        public InvalidProgramException(string message, Exception innerException)
+            : base(message, innerException) { }
+    }
+
+    public class BadImageFormatException : Exception
+    {
+        public BadImageFormatException() { }
+        public BadImageFormatException(string message) : base(message) { }
+        public BadImageFormatException(string message, Exception innerException)
+            : base(message, innerException) { }
+    }
 }

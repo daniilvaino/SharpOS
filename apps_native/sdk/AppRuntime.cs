@@ -1,4 +1,4 @@
-﻿namespace SharpOS.AppSdk
+namespace SharpOS.AppSdk
 {
     internal static unsafe class AppRuntime
     {
@@ -65,6 +65,7 @@
             // Without it every allocation fails, so the app stops here with the
             // reason instead of running on into its first `new`.
             SharpOS.Std.NoRuntime.GcHeap.s_fatal = &Fatal;
+            SharpOS.Std.NoRuntime.GcHeap.s_diagnostic = &OomDiagnostic;
             if (!SharpOS.Std.NoRuntime.GcHeap.Init())
                 Fatal("app GC heap init failed");
 
@@ -123,5 +124,15 @@
         public static AppServiceTable* Services => s_services;
 
         public static bool IsInitialized => s_startup != null && s_services != null;
+        // The refusal report from the allocator, routed where the app's other
+        // diagnostics go. Silent without the service rather than painting over
+        // the interface it would be describing.
+        private static void OomDiagnostic(byte* utf8)
+        {
+            if (utf8 == null) return;
+            if (!AppHost.HasDiagnosticStream) return;
+            AppHost.WriteDiagnostic(utf8);
+        }
+
     }
 }

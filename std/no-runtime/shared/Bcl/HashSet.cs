@@ -1,4 +1,4 @@
-﻿// System.Collections.Generic.HashSet<T> — BCL-compat surface.
+// System.Collections.Generic.HashSet<T> — BCL-compat surface.
 //
 // Separate chaining hash set: `_buckets` is an array of head-of-chain
 // Entry refs, each Entry holds one value + a `m_next` pointer to the
@@ -189,7 +189,15 @@ namespace System.Collections.Generic
             return (h % (numBuckets == 0 ? _buckets.Length : numBuckets));
         }
 
-        private static void Halt() { while (true) ; }
+        private static void Halt()
+            // Was `while (true) ;`. A BCL misuse — duplicate key, pop on
+            // empty, index past the end — hung the machine silently instead
+            // of throwing, and on the app tier that hang cannot even be
+            // preempted. EH works on every tier, so throw: the frames name
+            // the caller. Type is generic because the call sites are shared;
+            // a precise one per site is a later refinement, a hang is not.
+            => throw new System.InvalidOperationException(
+                "HashSet: invalid operation");
 
         private sealed class Entry
         {

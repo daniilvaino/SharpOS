@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -881,32 +881,64 @@ namespace Internal.Runtime.CompilerHelpers
         // failed for method ..." at ILC time (surfaced step143 on the first
         // conv.ovf instantiation). Keep the set a superset of what codegen
         // can emit — mirrors std/no-runtime/shared/ThrowHelpers.cs.
-        public static void ThrowOverflowException() { while (true) ; }
-        public static void ThrowDivideByZeroException() { while (true) ; }
-        public static void ThrowArrayTypeMismatchException() { while (true) ; }
+        //
+        // Every one of these was `while (true) ;`. In an app that is the worst
+        // possible failure mode: the app runs with interrupts masked (JumpStub
+        // enters with cli and never re-enables), so a spin here cannot be
+        // preempted, cannot be reported and cannot be recovered — the machine
+        // goes silent mid-frame and stays there. EH works on this tier, so
+        // throw for real and let the frames reach the unhandled reporter.
+        public static void ThrowOverflowException()
+            => throw new System.OverflowException("Arithmetic operation resulted in an overflow.");
+        public static void ThrowDivideByZeroException()
+            => throw new System.DivideByZeroException("Attempted to divide by zero.");
+        public static void ThrowArrayTypeMismatchException()
+            => throw new System.ArrayTypeMismatchException("Attempted to store an element of the wrong type.");
 
-        public static void ThrowFeatureBodyRemoved() { while (true) ; }
-        public static void ThrowTypeLoadException() { while (true) ; }
-        public static void ThrowTypeLoadExceptionWithArgument(ExceptionStringID id) { while (true) ; }
-        public static void ThrowMissingFieldException() { while (true) ; }
-        public static void ThrowMissingMethodException() { while (true) ; }
-        public static void ThrowFileNotFoundException() { while (true) ; }
-        public static void ThrowInvalidProgramException() { while (true) ; }
-        public static void ThrowInvalidProgramExceptionWithArgument(ExceptionStringID id) { while (true) ; }
-        public static void ThrowInvalidProgramExceptionWithArgument(int id) { while (true) ; }
-        public static void ThrowInvalidProgramExceptionWithArgument(uint id) { while (true) ; }
-        public static void ThrowInvalidProgramExceptionWithArgument(string argumentName) { while (true) ; }
-        public static void ThrowInvalidProgramExceptionWithArgument(object argument) { while (true) ; }
-        public static void ThrowInvalidProgramExceptionWithArgument(System.IntPtr argument) { while (true) ; }
-        public static void ThrowBadImageFormatException() { while (true) ; }
-        public static void ThrowMarshalDirectiveException() { while (true) ; }
-        public static void ThrowNullReferenceException() { while (true) ; }
-        public static void ThrowIndexOutOfRangeException() { while (true) ; }
-        public static void ThrowArgumentNullException() { while (true) ; }
-        public static void ThrowArgumentOutOfRangeException() { while (true) ; }
-        public static void ThrowArgumentException() { while (true) ; }
-        public static void ThrowNotImplementedException() { while (true) ; }
-        public static void ThrowPlatformNotSupportedException() { while (true) ; }
+        public static void ThrowFeatureBodyRemoved()
+            => throw new System.NotSupportedException("Method body was removed by the trimmer.");
+        public static void ThrowTypeLoadException()
+            => throw new System.TypeLoadException("Failed to load type.");
+        public static void ThrowTypeLoadExceptionWithArgument(ExceptionStringID id)
+            => throw new System.TypeLoadException("Failed to load type.");
+        public static void ThrowMissingFieldException()
+            => throw new System.MissingFieldException("Field not found.");
+        public static void ThrowMissingMethodException()
+            => throw new System.MissingMethodException("Method not found.");
+        public static void ThrowFileNotFoundException()
+            => throw new System.IO.FileNotFoundException("Unable to find the specified file.");
+        public static void ThrowInvalidProgramException()
+            => throw new System.InvalidProgramException("Common Language Runtime detected an invalid program.");
+        public static void ThrowInvalidProgramExceptionWithArgument(ExceptionStringID id)
+            => throw new System.InvalidProgramException("Common Language Runtime detected an invalid program.");
+        public static void ThrowInvalidProgramExceptionWithArgument(int id)
+            => throw new System.InvalidProgramException("Common Language Runtime detected an invalid program.");
+        public static void ThrowInvalidProgramExceptionWithArgument(uint id)
+            => throw new System.InvalidProgramException("Common Language Runtime detected an invalid program.");
+        public static void ThrowInvalidProgramExceptionWithArgument(string argumentName)
+            => throw new System.InvalidProgramException(argumentName);
+        public static void ThrowInvalidProgramExceptionWithArgument(object argument)
+            => throw new System.InvalidProgramException("Common Language Runtime detected an invalid program.");
+        public static void ThrowInvalidProgramExceptionWithArgument(System.IntPtr argument)
+            => throw new System.InvalidProgramException("Common Language Runtime detected an invalid program.");
+        public static void ThrowBadImageFormatException()
+            => throw new System.BadImageFormatException("Format of the executable or library is invalid.");
+        public static void ThrowMarshalDirectiveException()
+            => throw new System.NotSupportedException("Marshalling directive is not supported.");
+        public static void ThrowNullReferenceException()
+            => throw new System.NullReferenceException("Object reference not set to an instance of an object.");
+        public static void ThrowIndexOutOfRangeException()
+            => throw new System.IndexOutOfRangeException("Index was outside the bounds of the array.");
+        public static void ThrowArgumentNullException()
+            => throw new System.ArgumentNullException(null, "Value cannot be null.");
+        public static void ThrowArgumentOutOfRangeException()
+            => throw new System.ArgumentOutOfRangeException(null, "Specified argument was out of the range of valid values.");
+        public static void ThrowArgumentException()
+            => throw new System.ArgumentException("Value does not fall within the expected range.");
+        public static void ThrowNotImplementedException()
+            => throw new System.NotImplementedException("The method or operation is not implemented.");
+        public static void ThrowPlatformNotSupportedException()
+            => throw new System.PlatformNotSupportedException("Operation is not supported on this platform.");
     }
 }
 

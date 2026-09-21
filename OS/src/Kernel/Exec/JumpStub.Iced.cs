@@ -45,8 +45,10 @@ namespace OS.Kernel.Exec
         //   sub  rsp, 0x20                ; Win64 shadow space
         //   mov  rax, rcx                 ; rax = entry address (rcx reused as arg0)
         //   mov  rcx, r8                  ; rcx = startup block (Win64 arg0 -- PE apps)
+        //   sti                           ; IRQs back on -- the app runs preemptible
         //   call rax                      ; run app entry
         //   mov  r10, rax                 ; stash return value
+        //   cli                           ; mask again before CR3/RSP are restored
         //   mov  rax, [r12-0x20]          ; reload kernel CR3 from saved slot
         //   mov  cr3, rax
         //   lea  rsp, [r12-0x18]          ; restore kernel rsp (past pushed RFLAGS)
@@ -55,6 +57,15 @@ namespace OS.Kernel.Exec
         //   pop  r13 / pop r12
         //   mov  rax, r10                 ; return value back to rax
         //   ret
+        //
+        // Why sti around the call: cli protects the CR3/RSP switch, and the
+        // stub used to leave it masked for the WHOLE app. Nothing could then
+        // preempt the app, and nothing driven by the timer ran while it did —
+        // no scheduler, no sampler. Three separate hangs on the rig came back
+        // as total silence for exactly that reason: the machine was alive and
+        // had no way to say where it was. Unmasking after the switch and
+        // masking again before the restore keeps the dangerous window as small
+        // as it was, and makes the app observable for the first time.
         private static int EmitStubIced(byte* p, int cap)
         {
             var a = new Iced.Intel.Assembler(64);
@@ -73,8 +84,10 @@ namespace OS.Kernel.Exec
             a.sub(rsp, 0x20);
             a.mov(rax, rcx);
             a.mov(rcx, r8);
+            a.sti();
             a.call(rax);
             a.mov(r10, rax);
+            a.cli();
             a.mov(rax, __qword_ptr[r12 - 0x20]);
             a.mov(cr3, rax);
             a.lea(rsp, __qword_ptr[r12 - 0x18]);
