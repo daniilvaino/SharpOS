@@ -1,241 +1,281 @@
 # SharpOS
 
-SharpOS - это экспериментальная операционная система, которая строится как **полностью C#-проект** с управляемым развитием низкоуровневых компонентов.
+Экспериментальная операционная система, целиком написанная на C#: загрузка, ядро, приложения и пользовательское окружение. Не на C# только [форк CoreCLR](https://github.com/daniilvaino/dotnet-runtime-sharpos/tree/sharpos/coreclr-port). Собирается обычным `dotnet publish -r win-x64`.
 
-На SharpOS запускаются стоковый **PowerShell 7.6.5** и играбельный **DOOM**.
+На SharpOS уже запускаются стоковый [**PowerShell 7.6.5**](#powershell) и играбельный [**DOOM**](#doom).
 
 [![SharpOS launcher](media/screenshot.png)](media/screenshot.png)
- - **весь** код ядра, приложений, загрузки и пользовательского окружения пишется на C# (кроме форка CoreCLR: [dotnet-runtime-sharpos](https://github.com/daniilvaino/dotnet-runtime-sharpos/tree/sharpos/coreclr-port));
- - сборка выполняется через `dotnet publish -r win-x64`.
 
 ## Как запустить
 
-Зависимости ставятся через [mise](https://mise.jdx.dev) ([`mise.toml`](mise.toml)).
+### Окружение
+
+Зависимости ставит [mise](https://mise.jdx.dev) по [`mise.toml`](mise.toml), так что начать нужно с него:
 
 ```bash
-# 1. mise:  Windows — winget install jdx.mise;  macOS — brew install mise;  Linux — curl https://mise.run | sh
-# 2. репозиторий (с подмодулями)
+winget install jdx.mise        # Windows
+brew install mise              # macOS
+curl https://mise.run | sh     # Linux
+```
+
+Дальше репозиторий и зависимости:
+
+```bash
 git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd SharpOS
-# 3. по желанию — форк CoreCLR (hosted-ярус); без него собирается чистое ядро
+
+# по желанию: форк CoreCLR для hosted-яруса; без него сборка идёт с -SkipCoreClr
 git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos.git
-# 4. инструменты, системные пакеты, подмодули, зависимости форка
-mise trust && mise bootstrap          # Linux со старым индексом apt: mise bootstrap --update
+
+mise trust && mise bootstrap   # Linux со старым индексом apt: mise bootstrap --update
 ```
 
-Payloads (необязательны, см. [`payloads/README.md`](payloads/README.md)):
-`payloads/DOOM1.WAD`, картриджи `.nes`, PowerShell для гостя в
-`payloads/pwsh/PowerShell-7.6.5-win-x64/`.
-
-Один раз включить mise в оболочке — тогда инструменты из него сами попадают в
-PATH в каталоге репозитория:
+Чтобы инструменты сами попадали в PATH внутри репозитория, mise нужно один раз включить в оболочке:
 
 ```bash
-# PowerShell:  Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'
-# bash / zsh:  echo 'eval "$(mise activate bash --shims)"' >> ~/.bashrc   (zsh — ~/.zshrc, mise activate zsh --shims)
+echo 'eval "$(mise activate bash --shims)"' >> ~/.bashrc   # bash
+echo 'eval "$(mise activate zsh --shims)"'  >> ~/.zshrc    # zsh
 ```
 
-На NixOS (и на любом Linux с nix) mise не нужен: шаги 1 и 4 заменяет
-[`flake.nix`](flake.nix) — две оболочки, в них те же команды сборки, что ниже.
+```powershell
+Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'
+```
+
+### NixOS
+
+На NixOS (и любом Linux с nix) mise не нужен: его установку и `mise bootstrap` заменяет [`flake.nix`](flake.nix) с двумя оболочками. Команды сборки в них те же.
 
 ```bash
 nix develop            # ядро, приложения, образ, QEMU
-patch-nupkgs .dotnet-home/.nuget/packages ~/.nuget/packages   # после каждого restore: ilc из NuGet — обычный ELF
+patch-nupkgs .dotnet-home/.nuget/packages ~/.nuget/packages   # после каждого restore
 
-nix develop .#fork     # форк CoreCLR: ему нужен FHS, его Arcade качает свой SDK
-                       # первый раз — сделать splat MSVC, команду печатает сама оболочка
+nix develop .#fork     # форк CoreCLR
 ```
 
-Сборка и запуск:
+При первом входе в `.#fork` нужен splat MSVC, команду подскажет сама оболочка.
+
+### Сборка и запуск
+
+Payloads необязательны: `payloads/DOOM1.WAD`, картриджи `.nes` и PowerShell для самой SharpOS в `payloads/pwsh/PowerShell-7.6.5-win-x64/`. Что куда класть, написано в [`payloads/README.md`](payloads/README.md).
+
+Форк CoreCLR необязателен: он нужен только для [hosted-яруса](#три-яруса-исполнения), то есть для стоковых .NET-программ вроде PowerShell. Без него ядро собирается с флагом `-SkipCoreClr`:
 
 ```powershell
-cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..   # форк, если он есть (Release по умолчанию)
-./build_launcher.ps1                                      # и build_fetch / aottests / benchaot / doom / shell / tricnes / fami
-$env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly              # ядро + образ + QEMU; без форка: -SkipCoreClr
-# из bash/zsh — через pwsh:  SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly
+./build_launcher.ps1
+$env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly -SkipCoreClr
 ```
 
-Лог ядра (COM1) — `last_build.log`, вывод программ — `last_app.log` (COM3),
-их ошибки — `last_err.log` (COM4).
+С форком сначала собирается он сам, а `-SkipCoreClr` не нужен:
+
+```powershell
+cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..
+./build_launcher.ps1
+$env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly
+```
+
+`run_build.ps1` собирает ядро, делает образ и запускает QEMU. Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`. Из bash и zsh скрипты запускаются через `pwsh`: `SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly -SkipCoreClr`.
+
+Лог ядра (COM1) пишется в `last_build.log`, вывод программ (COM3) в `last_app.log`, их ошибки (COM4) в `last_err.log`.
 
 ## Архитектурные инварианты
 
-**Инвариант 1 - C# is the only source language.** Весь исполняемый код - на C#. В дереве исходников нет ни одного `.c`, `.cpp`, `.h`, `.asm` или `.s` файла. Ни одного. Сборку и запуск, как и в любом .NET-проекте, оркестрируют MSBuild (`.csproj`/`.props`/`.targets`) и PowerShell (`.ps1`) - это не логика системы, а её build-обвязка. Всё остальное - обработчики прерываний, spill callee-saved regs, runtime-bridges, write barriers, interface-dispatch trampolines - выражается одним из трёх способов:
+### 1. Весь исходный код на C#
 
-1. **C# intrinsics** (включая `[RuntimeExport]`, `[UnmanagedCallersOnly]`, `delegate* unmanaged`, `fixed`, unsafe pointer arithmetic).
-2. **Shellcode-эмиссия из C#** - генерим машинный код в exec-stub buffer (аллокация через `AllocatePool(EfiLoaderCode)` для гарантированной исполнимости):
-   - **Early-boot (compile-time codegen Iced assembler через `BootAsm.Generator`)** - Roslyn incremental source generator материализует kernel-shellcode стабы **на этапе сборки OS** из Iced api в pre-baked `ReadOnlySpan<byte>` template'ы в `.rdata`. На runtime - `Span.CopyTo` из template'а в exec-stub, плюс точечный патч qword'ов для managed-callback адресов через явно параметризованные дырки (`MovHole`, `JmpRelHole`, `DataSlotHole`, `PushImm32Hole`). Покрывает 16 стабов (interface dispatch, byref assign, IDT trampolines, EH funclets, GC stack spill, port I/O, etc) - весь early-boot тонкий слой, до того как managed GC/heap/threading доступны.
-   - **Late-tier (runtime Iced assembler)** - после того как boot закончился и `KernelHeap`/`GcHeap`/managed exceptions работают, новый shellcode можно эмитить Iced прямо в runtime: `new Assembler(64); a.mov(rax, rcx); a.Assemble(writer, rip);`. Используется для динамически-параметризованного кода, после старта std. 
-   - Граница: compile-time codegen Iced - пока ничего нельзя аллоцировать, runtime Iced - когда уже всё доступно.
-3. **Build-time COFF data symbol emission через `CoffStub.Generator`** - когда MSVC-style линкер требует native data symbol (пример - `__security_cookie` для CRT-aware codegen) и ILC's `[RuntimeExport]` на static field его не эмиттит (исторический ILC gap), MSBuild Task сканит C# код Roslyn'ом, находит `[CoffDataSymbol(...)]` атрибут, материализует tiny `.obj` файл с native data symbol'ом и кидает его в `@(NativeLibrary)` перед link'ом. Из managed C#:
+В дереве нет ни одного файла `.c`, `.cpp`, `.h`, `.asm` или `.s`. MSBuild и PowerShell только оркестрируют сборку, логики системы в них нет. Всё низкоуровневое (обработчики прерываний, сохранение callee-saved регистров, write barrier'ы, трамплины interface dispatch) делается одним из трёх способов:
+
+1. **Средства самого C#:** `[RuntimeExport]`, `[UnmanagedCallersOnly]`, `delegate* unmanaged`, `fixed`, арифметика указателей.
+2. **Машинный код из C#.** Ассемблер [Iced](https://github.com/icedland/iced) пишет его в исполняемый буфер:
+   - *При сборке* source generator `BootAsm.Generator` заранее превращает 16 стабов раннего старта (interface dispatch, трамплины IDT, EH-фанклеты, GC stack spill, порты ввода-вывода) в байтовые шаблоны. При загрузке они копируются в буфер, и в них подставляются адреса managed-колбэков.
+   - *В рантайме*, когда куча, GC и исключения уже работают, Iced вызывается напрямую: `new Assembler(64); a.mov(rax, rcx); a.Assemble(writer, rip);`.
+3. **Нативные символы данных из атрибута.** Если линкеру нужен символ, который ILC не эмитит (например, `__security_cookie`), MSBuild-задача `CoffStub.Generator` находит атрибут в коде и сама создаёт `.obj`:
+
    ```csharp
    [BootAsm.CoffDataSymbol("__security_cookie", Section = ".data", Alignment = 8)]
    public static ulong SecurityCookie = 0x2B992DDFA232UL;
    ```
-   Никаких `.c` файлов в дереве, никаких ручных compile-step'ов - pure C# source с атрибутом, всё остальное делает build pipeline. Native apps (`apps_native/`) собираются как freestanding win-x64 PE через тот же `CoffStub.Generator` (общий `apps_native/sdk/FreestandingPe.props`, `dotnet publish` без WSL).
 
-Любая новая low-level задача должна решаться одним из этих трёх механизмов. Если задача кажется нерешаемой - задача сформулирована неправильно. Примеры из реальной работы: managed GC stack-spill, CR3 read/write, CPU cookie, interface dispatch с shared-generic resolver, NativeAOT module init без линкерных сентинелов `__modules_a..__modules_z` - всё это решено в рамках инварианта.
+   Через ту же задачу приложения из `apps_native/` собираются как freestanding win-x64 PE.
 
-Насколько нам известно, **других OS-проектов с этим инвариантом не существует**.
+Любая новая низкоуровневая задача решается одним из этих способов. Если кажется, что не решается, значит, она неверно поставлена. Так уже сделаны GC stack spill, чтение и запись CR3, interface dispatch с резолвером для shared generics, инициализация модулей NativeAOT без линкерных сентинелов.
 
-**Инвариант 2 - Naming discipline.** SharpOS **не переиспользует канонические .NET namespaces и имена типов** если реализация не полностью совместима с публичным контрактом BCL (modulo ограничения, задокументированные в [docs/nativeaot-nostd-kernel-limits.md](docs/nativeaot-nostd-kernel-limits.md)). Частичные / нестандартные реализации живут в SharpOS-specific namespace-ах (`SharpOS.Std.*`, `OS.Kernel.*` и т.д.), полноценные BCL-compat - в `System.*` и `System.Collections.Generic.*` с оригинальными именами. Это правило позволяет в перспективе таскать LINQ и прочий BCL-код из dotnet/runtime целиком как есть.
+Насколько нам известно, других ОС с таким инвариантом нет.
 
-## Поверхности исполнения (three execution tiers)
+### 2. Имена из .NET только для совместимых реализаций
 
-В SharpOS code исполняется на **трёх различных tier'ах**, каждый со своими ограничениями. Live-журнал каждого - в `docs/`:
+Реализация получает каноническое имя в `System.*` или `System.Collections.Generic.*`, только если полностью соблюдает публичный контракт BCL (с оговорками из [`docs/nativeaot-nostd-kernel-limits.md`](docs/nativeaot-nostd-kernel-limits.md)). Частичные и нестандартные живут в своих пространствах имён: `SharpOS.Std.*`, `OS.Kernel.*`. Так LINQ и другой код BCL со временем можно будет брать из dotnet/runtime как есть.
 
-| Tier | Что | Где | Toolchain | Подробно |
-|---|---|---|---|---|
-| **Kernel-AOT** | Само ядро + boot + drivers + scheduler | `OS/` | NativeAOT + NoStdLib + наш MinimalRuntime | [`docs/nativeaot-nostd-kernel-limits.md`](docs/nativeaot-nostd-kernel-limits.md) |
-| **PE-app (AOT)** | Пользовательские apps через AppService | `apps_native/` (`LAUNCHER.EXE`, `AOTTESTS.EXE`, `DOOM.EXE`, и т.д.) | NativeAOT + NoStdLib + общий `apps_native/sdk/` (FreestandingPe.props, AppHost) | тот же std, что и ядро: [`docs/nativeaot-nostd-kernel-limits.md`](docs/nativeaot-nostd-kernel-limits.md) |
-| **CoreCLR-hosted** | Стоковые .NET DLL байт-в-байт | `\sharpos\*.dll` в FAT | Форк CoreCLR (`dotnet-runtime-sharpos`), статически слинкован в kernel | [`docs/coreclr-hosted-limits.md`](docs/coreclr-hosted-limits.md) |
+## Три яруса исполнения
 
-### Легенда
+| Ярус | Что на нём работает | Где лежит | Чем собирается |
+|---|---|---|---|
+| **Kernel-AOT** | ядро, загрузка, драйверы, планировщик | `OS/` | NativeAOT + NoStdLib + свой MinimalRuntime |
+| **PE-app** | приложения: `LAUNCHER.EXE`, `AOTTESTS.EXE`, `DOOM.EXE` и другие | `apps_native/` | NativeAOT + NoStdLib + общий SDK из `apps_native/sdk/` |
+| **CoreCLR-hosted** | стоковые .NET DLL байт-в-байт | `\sharpos\*.dll` на FAT | форк CoreCLR, статически слинкованный с ядром |
 
-- ✅ - работает, доказано прогоном (см. probe в [`OS/src/Kernel/Diagnostics/`](OS/src/Kernel/Diagnostics/) или гейт в [`tools/probe_report.ps1`](tools/probe_report.ps1)).
-- 🟡 - частично / через ограниченный API.
-- ⏳ - запланировано, пока не реализовано (roadmap - [`plan.md`](plan.md)).
-- 🔴 - пока что отсутствует / временно не работает (код не написан или сломан, но архитектурно достижимо).
-- 🚫 - архитектурно невозможно (ограничение by design либо не применимо к данной подсистеме).
+Ограничения описаны в двух документах: [`docs/nativeaot-nostd-kernel-limits.md`](docs/nativeaot-nostd-kernel-limits.md) для первых двух ярусов (std у них общая) и [`docs/coreclr-hosted-limits.md`](docs/coreclr-hosted-limits.md) для третьего.
 
-### Компаративная таблица фичей
+## Что работает
 
-| Функционал | Kernel-AOT | PE-app | CoreCLR-hosted | Комментарий |
-|---|---|---|---|---|
-| `new T()` / managed heap | ✅ | ✅ | ✅ | |
-| Collections (`List<T>`, `Dictionary<K,V>`, и т.д.) | ✅ | ✅ | ✅ | BCL-порты в std; полный перечень - в limits-доках |
-| `typeof(T)` / `System.Type` | 🔴 | 🟡 | ✅ | тип это указатель на MethodTable, `==` по указателю - хватает на равенство записей и ни на что больше. Отражения нет: ни `Name`, ни членов, ни `Type.GetType(string)`. В ядре не собран - там `typeof` не используется |
-| `record` / `init`-аксессоры | 🔴 | ✅ | ✅ | следствие строки выше: компилятор генерирует `EqualityContract => typeof(X)`. До step175 любая запись давала `CS0656`, а `init` - `CS0518` |
-| `Enum.IsDefined` | 🔴 | 🟡 | ✅ | **всегда `true`** - правдивый ответ требует метаданных перечисления, которых нет. Верен для значений, построенных самой программой; молча неверен для подделанных приведением |
-| `ConditionalWeakTable<K,V>` | 🔴 | 🟡 | ✅ | ссылки **сильные**, не слабые: слабых дескрипторов нет ни у одного сборщика, запись живёт вместе с таблицей. Поиск по тождеству ссылки, хеш - адрес (объекты не двигаются). Подключён только в рецепте приложений, в ядре не собирается. Подробности - limits §8 |
-| `WeakReference` / `GCHandle` | 🔴 | 🔴 | ✅ | слабых дескрипторов в сборщиках нет; из-за этого выше и `ConditionalWeakTable` частичный |
-| `string`, primitives, structs | ✅ | ✅ | ✅ | |
-| `string.Format` / `StringBuilder.AppendFormat` | 🟡 | 🟡 | ✅ | частичное и слабое покрытие в std реализации |
-| `lock` (`Monitor.Enter`/`Exit`) | ✅ | ✅ | ✅ | таблица замков сбоку по тождеству ссылки (в объекте негде хранить слово); ожидание уступкой, не кручением. `Pulse`/`Wait` осознанно не реализованы |
-| `System.Enum` | 🟡 | 🟡 | ✅ | ToString, Parse, GetNames не реализованы |
-| `try` / `catch` / `finally` / `throw;` / `when`-filter | ✅ | ✅ | ✅ |  |
-| HW-fault → managed exception (`#PF` → `NullReferenceException`) | ✅ | ✅ | ✅ | |
-| `Exception.StackTrace` | 🟡 | 🟡 | 🟡 | в hosted CoreCLR `StackTrace` пустой для exception'ов брошенных из CLR-internal C++ EH path (`0xE06D7363 PEAVEEMessageException`); см. [`docs/coreclr-hosted-limits.md`](docs/coreclr-hosted-limits.md) §12. В ядре и приложениях трасса наполняется (пробы L14, L17 зелёные), но после `throw;` имена кадров теряются — проба `rethrow preserves stack trace` красная |
-| Cctor - exception → `TypeInitializationException` wrapping | ✅ | ✅ | 🟡 | в hosted exception из cctor пробрасывается **raw** (не оборачивается в TIE); managed catch на конкретный тип сработает, но `catch (TypeInitializationException)` нет |
-| Boxing / unboxing | ✅ | ✅ | ✅ | int/long/struct/Nullable<T>-as-underlying - все работают; `[BoxedEnumerator]` thunks для интерфейсных enumerator'ов на value-типах |
-| `[ModuleInitializer]` | 🔴 | ⏳ | ✅ | проба `Probe_ModuleInit` в ядре красная: флаг не выставлен к моменту прогона. Атрибут в std есть (step119), но до пользовательского кода дело не доходит. Сличено на Windows и macOS — одинаково, от хоста сборки не зависит. В PE-приложениях не проверялось |
-| `yield return` (Roslyn state machine) | ✅ | ✅ | ✅ | |
-| `async/await` | ✅ | ✅ | ✅ | свои `TaskAwaiter` / `AsyncTaskMethodBuilder` в std. Продолжение исполняется на потоке, завершившем ожидание: контекст синхронизации не захватывается |
-| `Task.Run`, `Task.Delay` | ✅ | ✅ | ✅ | не планировщик, но с пулом потоков (step174); ожидания блокируются в ядре (`WaitOnAddress`), не опрос. В приложениях потоки через таблицу служб (ABI v3) и умирают вместе с приложением |
+- ✅ работает, подтверждено прогоном: пробы в [`OS/src/Kernel/Diagnostics/`](OS/src/Kernel/Diagnostics/), гейт в [`tools/probe_report.ps1`](tools/probe_report.ps1)
+- 🟡 частично
+- ⏳ запланировано, см. [`plan.md`](plan.md)
+- 🔴 пока нет или сломано, но достижимо
+- 🚫 невозможно или неприменимо по архитектуре
+
+### Язык и рантайм
+
+| Возможность | Kernel-AOT | PE-app | CoreCLR-hosted | Комментарий |
+|---|:-:|:-:|:-:|---|
+| `new T()`, управляемая куча | ✅ | ✅ | ✅ | |
+| `string`, примитивы, структуры | ✅ | ✅ | ✅ | |
+| Boxing / unboxing | ✅ | ✅ | ✅ | |
+| `try` / `catch` / `finally` / `throw;` / фильтры `when` | ✅ | ✅ | ✅ | |
+| Аппаратный сбой → managed-исключение (`#PF` → `NullReferenceException`) | ✅ | ✅ | ✅ | |
+| `Exception.StackTrace` | 🟡 | 🟡 | 🟡 | hosted: пуст для исключений из C++-кода CLR; AOT: после `throw;` теряются имена кадров |
+| Исключение в статическом конструкторе → `TypeInitializationException` | ✅ | ✅ | 🟡 | в hosted пробрасывается как есть, без обёртки |
+| `[ModuleInitializer]` | 🔴 | ⏳ | ✅ | атрибут в std есть, но инициализатор не вызывается |
+| `yield return` | ✅ | ✅ | ✅ | |
+| `async` / `await` | ✅ | ✅ | ✅ | в std без захвата контекста синхронизации |
+| Делегаты и лямбды | ✅ | ✅ | ✅ | в std порт из dotnet/runtime без рефлексии, GVM, open-instance и вариантных приведений |
+| Generic sharing (`__Canon`) | ✅ | ✅ | ✅ | |
+| Виртуальные вызовы и interface dispatch | ✅ | ✅ | ✅ | |
+| Generic `as T` / `(T)x` с `where T : class` | 🟡 | 🟡 | ✅ | в AOT не работает вариантное приведение к интерфейсу |
+| Ковариантность массивов (`stelem.ref`) | 🟡 | 🟡 | ✅ | в AOT проверок нет: запись чужого типа даёт тихое UB вместо `ArrayTypeMismatchException` |
+| Многомерные массивы (`int[,]`) | 🟡 | 🟡 | ✅ | без ненулевых нижних границ и `int[*]` |
+| `typeof(T)` / `System.Type` | 🔴 | 🟡 | ✅ | в приложениях только сравнение через `==`: ни `Name`, ни членов |
+| `record`, `init`-аксессоры | 🔴 | ✅ | ✅ | записям нужен `typeof`, а в ядре его нет |
+| Рефлексия: `System.Reflection`, `Activator.CreateInstance(Type)`, `Type.GetType(string)` | 🔴 | 🔴 | ✅ | в AOT нет метаданных |
+| `Reflection.Emit`, `dynamic` / DLR, `Expression<T>.Compile()` | 🚫 | 🚫 | ✅ | нужен JIT |
+| `AssemblyLoadContext` (несколько ALC) | 🚫 | 🚫 | ⏳ | нужен JIT |
+
+### Сборка мусора
+
+| Возможность | Kernel-AOT | PE-app | CoreCLR-hosted | Комментарий |
+|---|:-:|:-:|:-:|---|
+| GC (mark-sweep, точное сканирование стека) | ✅ | ✅ | ✅ | hosted: свой GC через PAL; у каждого PE-приложения свой сборщик и своя куча |
+| `GC.Collect` | ✅ | ✅ | ✅ | `GC.WaitForPendingFinalizers`, вероятно, зависает (не перепроверяли) |
+| Write barrier (`RhpAssignRef`, `RhpStelemRef`) | ✅ | ✅ | ✅ | в AOT пустышка: сборщик без поколений |
+| `WeakReference` / `GCHandle` | 🔴 | 🔴 | ✅ | в наших сборщиках нет слабых дескрипторов |
+| `ConditionalWeakTable<K,V>` | 🔴 | 🟡 | ✅ | ссылки сильные: запись живёт, пока жива таблица |
+
+### Стандартная библиотека
+
+| Возможность | Kernel-AOT | PE-app | CoreCLR-hosted | Комментарий |
+|---|:-:|:-:|:-:|---|
+| Коллекции (`List<T>`, `Dictionary<K,V>` и т. д.) | ✅ | ✅ | ✅ | порты из BCL |
+| `SortedDictionary` | 🟡 | 🟡 | ✅ | внутри сортированный массив: вставка линейная |
+| LINQ | ✅ | ✅ | ✅ | своя мини-реализация `System.Linq.Enumerable` |
+| `string.Format` / `StringBuilder.AppendFormat` | 🟡 | 🟡 | ✅ | покрытие частичное |
+| `System.Enum` | 🟡 | 🟡 | ✅ | нет `ToString`, `Parse`, `GetNames` |
+| `Enum.IsDefined` | 🔴 | 🟡 | ✅ | в приложениях всегда `true`: метаданных перечислений нет |
+| `DateTime` / `TimeSpan` | ✅ | ✅ | ✅ | `Now` берётся из CMOS; без источника времени вернёт начало эпохи (см. `IsRealClock`) |
+| `Array.Copy` с перекрытием (семантика memmove) | ✅ | ✅ | ✅ | |
+| `Math.Abs`, `Math.Sqrt` | ✅ | ✅ | ✅ | |
+| `Math.Floor` / `Ceiling` / `Truncate` / `Round` | ✅ | ✅ | ✅ | в AOT только для \|x\| < 2^63 |
+| `Math.Sin` / `Cos` / `Exp` / `Log` / `Pow` | 🟡 | 🟡 | 🟡 | приближения: ~1e-9 в AOT, грубее в hosted; в AOT нет `Tan`, `Atan`, `Asin`, `Acos` и гиперболических |
+| `Vector128<T>` (SSE) | ✅ | ✅ | ✅ | `Vector256` объявлен, но не ускорен |
+| Разбор XML | ✅ | ⏳ | ✅ | TurboXml; ядро читает им манифесты приложений |
+| Коллекции `Concurrent.*` и `Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`, `Regex`, `ValueTuple`, `DateTimeOffset` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple<T1,T2>` есть |
+
+### Потоки и синхронизация
+
+| Возможность | Kernel-AOT | PE-app | CoreCLR-hosted | Комментарий |
+|---|:-:|:-:|:-:|---|
+| `Thread.Start()` | ✅ | 🟡 | ✅ | в приложениях вместо `Thread` есть `AppThreads.Spawn` и `Task.Run` |
+| `Task.Run`, `Task.Delay` | ✅ | ✅ | ✅ | на пуле потоков; потоки приложения умирают вместе с ним |
 | `ThreadPool.QueueUserWorkItem` | ⏳ | ⏳ | ✅ | |
-| Array covariance / `stelem.ref` | 🟡 | 🟡 | ✅ | в AOT `RhpStelemRef` **skipped все checks** (null/bounds/covariance) - wrong-type store даёт silent UB вместо `ArrayTypeMismatchException`. Монотипичный stelem работает корректно |
-| Generic sharing (USG - `__Canon`) | ✅ | ✅ | ✅ |  |
-| Virtual dispatch / interface dispatch (полный резолвер) | ✅ | ✅ | ✅ ||
-| Write barrier (`RhpAssignRef`, `RhpStelemRef`) | ✅ (∅) | ✅ (∅) | ✅ | non-generational mark-sweep в AOT → barrier seman'тически no-op; контракт ILC соблюдён.  |
-| `GC.Collect` / explicit collection | ✅ | ✅ | ✅ | full mark-sweep cycle; в приложениях корни со стеков всех потоков (step169); финализаторы в hosted runtime отрабатывают (проба 1000/1000, step172); `GC.WaitForPendingFinalizers` считается зависающим (SYM-003, не перепроверялось) |
-| Array.Copy overlap (memmove semantics) | ✅ | ✅ | ✅ | left + right shift с overlapping src/dst в одном массиве (`List<T>.RemoveAt`/`Insert` path) |
-| `SortedDictionary` | 🟡 | 🟡 | ✅ | поведение BCL-совместимо, внутри сортированный массив вместо дерева: вставка линейна, поиск логарифмичен |
-| `System.Collections.Concurrent.*`, `System.Collections.Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`| 🔴 | 🔴 | ✅ | еще не реализовано, при этом известных блокеров - нет |
-| `System.Text.RegularExpressions.Regex` | 🔴 | 🔴 | ✅ | нет имплементации|
-| `DateTime` / `TimeSpan` | ✅ | ✅ | ✅ | настоящий календарь (високосные годы, сравнение, вычитание, строгий разбор по образцу). «Сейчас» за подложкой: ядро читает CMOS, приложение спросит ядро; без неё — начало эпохи, и `IsRealClock` об этом говорит |
-| `ValueTuple<...>` / `DateTimeOffset` | 🔴 | 🔴 | ✅ | отсутствуют в std/no-runtime; `Tuple<T1,T2>` есть |
-| LINQ extensions | ✅ | ✅ | ✅ | наш `System.Linq.Enumerable` (mini-LINQ). Source - `List<T>` / итератор / string / массив (порт `Array<T>` даёт массивам честные интерфейсы; limits §4) |
-| **Managed delegates / lambdas** | ✅ | ✅ | ✅ | завендорены из dotnet/runtime v8.0.27; вырезано в `NotSupportedException`: reflection-поверхность, GVM, open-instance, variance-cast (limits §5) |
-| **Terminal.Gui (текстовый интерфейс)** | 🚫 | ✅ | ⏳ | вся библиотека на нашей std, свой драйвер поверх эмулятора терминала ядра. Исключены 6 файлов (ADO.NET, маски, `FileSystemWatcher`); мыши нет. Ядру ни к чему — там свой вывод |
-| **Оболочка (bash-синтаксис)** | 🚫 | 🟡 | 🚫 | разбор чужой (ShellSyntaxTree, bash-половина), исполнение наше: `&&` `\|\|` `;`, встроенные `cd pwd ls cat echo expect exit`, запуск `.EXE` и `.DLL`. Каналы, перенаправления и аргументы программам **отказывают вслух** — в ABI запуска нет argv. Скрипт `\apps\AUTORUN.SH` запускает оболочку вместо лаунчера: батарея без единого нажатия |
-| Вложенные запуски приложений | ✅ | ✅ | 🚫 | до 4 уровней (было 1). Проверено: лаунчер → оболочка → лаунчер → оболочка и обратно. Каждый уровень стоит области адресов под стек и кадра на стеке ядра |
-| **Reflection runtime metadata** | 🔴 | 🔴 | ✅ | нет `System.Reflection` в std |
-| **`Reflection.Emit`** | 🚫 | 🚫 | ✅ | требует JIT |
-| **`Activator.CreateInstance(Type)`** | 🔴 | 🔴 | ✅ | нужны метаданные |
-| **`dynamic` / DLR / `Expression<T>.Compile()`** | 🚫 | 🚫 | ✅ | DLR через `Reflection.Emit` |
-| **`Type.GetType("Some.Class.Name")`** | 🔴 | 🔴 | ✅ | нужны метаданные |
-| **Generic `as T` / `(T)x` с `where T : class`** | 🟡 | 🟡 | ✅ | AOT: `RhTypeCast_CheckCastAny`/`IsInstanceOfAny` есть в std на обоих тирах; вариантный интерфейс-каст не резолвится (limits §2), выделенной пробы нет |
-| **Runtime x64 assembled (Iced lib)** | ✅ | 🚫 | 🚫 | пока что `NO_EVEX`, без managed-delegate путей; Guest tiers - by design, доступно после инициализации std |
-| **Compile time x64 assembled (Iced lib)** | ✅ | 🚫 | 🚫 | пока что `NO_EVEX`, без managed-delegate путей; Guest tiers - by design |
-| `System.Threading.Thread.Start()` | ✅ | 🟡 | ✅ | в приложениях самого `Thread` нет; поток заводится через `AppThreads.Spawn` / `Task.Run` |
-| `Interlocked.CompareExchange` (real atomic) | ✅ | 🟡 | ✅ | `System.Threading.Interlocked` это fake-stub из std (read-compare-write без `LOCK` prefix, корректно только для single-thread); ядро же зовёт `X64Asm.CmpXchg64` (real LOCK CMPXCHG) напрямую через `OS.Hal`. AppSDK не expose'ит kernel atomic primitives |
-| Cooperative `Yield()` / `Sleep(ms)` | ✅ | ✅ | ✅ | в приложениях через `AppThreads.Sleep` (таблица служб) |
+| `lock` (`Monitor.Enter` / `Exit`) | ✅ | ✅ | ✅ | `Pulse` / `Wait` намеренно не реализованы |
+| `Interlocked.CompareExchange` | ✅ | 🟡 | ✅ | в std это заглушка без `LOCK`, верна только для одного потока; ядро вызывает настоящий `LOCK CMPXCHG` напрямую |
 | `Event` / `Semaphore` / `Mutex` | ✅ | ⏳ | ✅ | |
-| Multi-thread Process | ✅ | ✅ | ✅ | потоки приложения живут на планировщике ядра |
-| **`AssemblyLoadContext` (multiple ALCs)** | 🚫 | 🚫 | ⏳ | требует JIT |
-| File I/O (read) | ✅ | ✅ | ✅ | hosted-tier читает DLL/файлы с собственного FAT (в т.ч. post-EBS) |
-| File I/O (write) | 🟡 | 🔴 | 🔴 | FAT32: перезапись на месте + создание файла (8.3, зеркалит все FAT). Нет: удаление, рост файла/каталога, LFN |
-| USB (xHCI) | 🟡 | 🚫 | 🚫 | свой стек: несколько контроллеров, HID boot-протокол (клавиатура = системный ввод), BOT+SCSI (флешка как `Disk`), CDC-ACM на запись (живой лог в COM-порт). Составные устройства: все функции слота поднимаются одной командой Configure Endpoint - иначе вторая снимает точки первой. Проверено на железе (ноутбук, ПК): клавиатура + флешка + запись + DOOM + полная батарея; накопитель и COM-порт одним устройством. Опрос без прерываний, без хабов (флешка за хабом не видна — остановка с сообщением о диске), мышь не подключена, чтения из CDC-ACM нет |
-| Network I/O | 🔴 | 🔴 | 🔴 | нет NIC driver |
-| Console keyboard input | ✅ | ✅ | ⏳ | |
-| **Direct hardware (CR3 / PCI / MMIO / IDT)** | ✅ | 🚫 | 🚫 | guest tiers - design boundary |
-| AVX / AVX-512 | 🔴 | 🔴 | 🔴 | XCR0 заперт на x87\|SSE |
-| `Vector128<T>` (SSE через `System.Runtime.Intrinsics`) | ✅ | ✅ | ✅ | step165: порт из CoreLib в наш std, ILC подменяет машинными инструкциями. `Vector256` объявлен, ускорение выключено (см. строку выше) |
-| Разбор XML | ✅ | ⏳ | ✅ | step165: вендорный TurboXml (SAX, без аллокаций). В ядре читает манифест приложения из ресурсов PE |
-| `Math.Abs` (int/long/short/sbyte) | ✅ | ✅ | ✅ | integer-only в std/no-runtime |
-| `Math.Sqrt` / `Math.Abs` (double, SSE intrinsics) | ✅ | ✅ | ✅ | |
-| `Math.Sin` `Cos` `Exp` `Log` `Pow` (транцы) | 🟡 | 🟡 | 🟡 | AOT: managed-реализации в std (`Math.Double.cs`) - ряды с редукцией аргумента, ~1e-9, **не ulp-точные**; `Tan`/`Atan`/`Asin`/`Acos`/гиперболики - нет. Hosted: `lm_*` Taylor-приближения в форке (грубее). Порт точных алгоритмов (Cody-Waite + Remez) - в планах |
-| `Math.Floor` / `Math.Ceiling` / `Math.Truncate` / `Math.Round` | ✅ | ✅ | ✅ | AOT: managed в std через целочисленную трункацию (контракт: \|x\| < 2^63); Round - half-to-even. Hosted: битовые операции над IEEE 754 |
-| Свои аппаратные прерывания (local APIC, тик 100 Гц) | 🟡 | 🚫 | 🚫 | после снятия UEFI: старый PIC замаскирован, тик свой. Устройства опрашиваются, IO-APIC не поднят |
-| Вытеснение потоков (тик → переключение) | 🟡 | ⏳ | 🟡 | одно ядро, SMP нет. Включается вокруг проб: остальное ядро кооперативное. В hosted вытесняется и JIT-код (подмена адреса возврата в рантайме отключена, замки настоящие). Остановка мира для GC = подавление вытеснения. В приложениях не проверялось |
-| GC (mark-sweep, precise stack scan) | ✅ | ✅ | ✅ | hosted - свой GC через PAL; PE-app несёт **свой** сборщик (своя куча, своя разметка), у ядра одалживает только обход корней стека |
-| Многомерные массивы (`int[,]`) | 🟡 | 🟡 | ✅ | ненулевые нижние границы и ранг 1 (`int[*]`) не поддержаны |
-| Process exit code propagation | ✅ | ✅ | ⏳ | |
-| **Per-process MMU isolation** | 🚫 | 🚫 | 🚫 | unikernel design |
-| **Parallel execution at same VA** | 🚫 | 🚫 | 🟡 | single ALC (threads) ✅; multi-ALC ⏳ |
-| SMP / multi-core | ⏳ | ⏳ | ⏳ | AP startup + per-CPU TEB + memory barriers |
+| Кооперативные `Yield()` / `Sleep(ms)` | ✅ | ✅ | ✅ | в приложениях через `AppThreads.Sleep` |
+| Многопоточные процессы | ✅ | ✅ | ✅ | |
+| Вытеснение потоков | 🟡 | ⏳ | 🟡 | пока включается только вокруг проб, остальное ядро кооперативное; в hosted вытесняется и JIT-код |
+| SMP | ⏳ | ⏳ | ⏳ | |
 
-Реестр того, что сломано, висит или ждёт hardening, вынесен отдельно:
-[`limits.md`](limits.md).
+### Железо и ввод-вывод
 
-## Контуры Репозитория
+| Возможность | Kernel-AOT | PE-app | CoreCLR-hosted | Комментарий |
+|---|:-:|:-:|:-:|---|
+| Прямой доступ к железу (CR3, PCI, MMIO, IDT) | ✅ | 🚫 | 🚫 | |
+| Ассемблер x64 на Iced (при сборке и в рантайме) | ✅ | 🚫 | 🚫 | пока без EVEX |
+| Свои аппаратные прерывания (local APIC, тик 100 Гц) | 🟡 | 🚫 | 🚫 | устройства опрашиваются, IO-APIC не поднят |
+| AVX / AVX-512 | 🔴 | 🔴 | 🔴 | в XCR0 включены только x87 и SSE |
+| USB (xHCI) | 🟡 | 🚫 | 🚫 | свой стек, проверен на железе: HID-клавиатура, флешки (BOT + SCSI), лог в CDC-ACM. Без прерываний, хабов и мыши |
+| Чтение файлов | ✅ | ✅ | ✅ | свой FAT, работает и после ExitBootServices |
+| Запись файлов | 🟡 | 🔴 | 🔴 | FAT32: перезапись на месте и создание файлов (8.3). Нет удаления, роста файлов и каталогов, LFN |
+| Сеть | 🔴 | 🔴 | 🔴 | нет драйвера сетевой карты |
+| Ввод с клавиатуры в консоли | ✅ | ✅ | ✅ | |
 
-- `OS/src/Boot|Hal|Kernel|PAL` - код операционной системы и слои ядра.
-- `apps_native/` - freestanding win-x64 PE приложения (лаунчер, оболочка, AotTests-батарея, DOOM) + общий `apps_native/sdk/` (ABI/SDK, FreestandingPe.props).
-- `apps_managed/` - стоковые .NET-программы для CoreCLR-hosted tier'а.
-- `std/no-runtime/` - общий слой замены стандартной библиотеки (BCL-порты + runtime-хелперы); компилится и в ядро, и в приложения.
-- `vendor/` — вендоренные библиотеки (Iced, PeNet, Terminal.Gui, XtermSharp, TurboXml, ShellSyntaxTree), каждая со своим `LICENSE` и `PROVENANCE.md`.
+### Приложения и процессы
+
+| Возможность | Kernel-AOT | PE-app | CoreCLR-hosted | Комментарий |
+|---|:-:|:-:|:-:|---|
+| Код возврата процесса | ✅ | ✅ | ⏳ | |
+| Вложенные запуски приложений | ✅ | ✅ | 🚫 | до 4 уровней |
+| Terminal.Gui | 🚫 | ✅ | ⏳ | на нашей std, свой драйвер поверх терминала ядра; мыши нет |
+| Оболочка с синтаксисом bash | 🚫 | 🟡 | 🚫 | `&&` `\|\|` `;`, встроенные `cd` `pwd` `ls` `cat` `echo` `expect` `exit`, запуск `.EXE` и `.DLL`; без каналов, перенаправлений и аргументов программам |
+| Изоляция процессов через MMU | 🚫 | 🚫 | 🚫 | это unikernel |
+| Параллельное исполнение по одному виртуальному адресу | 🚫 | 🚫 | 🟡 | потоки в одном ALC работают, несколько ALC в планах |
+
+Всё, что сломано, виснет или ждёт доработки, собрано в [`limits.md`](limits.md).
+
+## Структура репозитория
+
+- `OS/src/` - ядро и его слои: `Boot`, `Hal`, `Kernel`, `PAL`.
+- `apps_native/` - приложения (лаунчер, оболочка, батарея AotTests, DOOM) и общий SDK в `apps_native/sdk/`.
+- `apps_managed/` - стоковые .NET-программы для яруса CoreCLR-hosted.
+- `std/no-runtime/` - замена стандартной библиотеки: порты BCL и runtime-хелперы. Общая для ядра и приложений.
+- `vendor/` - сторонние библиотеки, у каждой свои `LICENSE` и `PROVENANCE.md`.
 - `done/` - хроника разработки: пошаговые разборы с архитектурой, трассами и решениями.
 
-Правило: всё, что относится к эволюции std/runtime, развивается в `std/`, а не в слоях ОС.
-
-**Активная цель:** расширять `std/no-runtime/` и постепенно переводить unsafe-код в managed C#. Каждая новая строковая/утилитная операция - сначала в `std/`, затем используется из ядра и SDK. `unsafe` остаётся только на ABI-границах и там, где прямой доступ к железу неизбежен.
+Всё, что касается std и рантайма, развивается в `std/`, а не в слоях ОС: новая строковая или утилитная операция сначала появляется там, а уже потом используется из ядра и SDK. Текущая цель: расширять `std/no-runtime/` и постепенно заменять unsafe-код управляемым. `unsafe` остаётся только на границах ABI и там, где без прямого доступа к железу не обойтись.
 
 ## DOOM
 
 [![DOOM на SharpOS](media/doom_small.gif)](media/doom_small.gif)
 
-([ManagedDoom](https://github.com/sinshu/managed-doom)) запускается на SharpOS против собственной std: freestanding win-x64 PE, WAD с FAT32, GOP-blit 2× на весь экран, PS/2-клавиатура, 35 Hz по HPET. [Полная гифка (41 MB)](media/doom.gif)
+[ManagedDoom](https://github.com/sinshu/managed-doom) собран как PE-приложение поверх нашей std: WAD читается с FAT32, картинка выводится через GOP с увеличением 2× на весь экран, управление с PS/2-клавиатуры, 35 Гц по HPET. [Полная гифка (41 МБ)](media/doom.gif)
 
 ## PowerShell
 
 [![PowerShell 7.6.5 на SharpOS](media/pwsh.png)](media/pwsh.png)
 
-Стоковый **PowerShell 7.6.5** грузится с FAT32 на bare metal до интерактивного prompt'а и выполняет реальные cmdlet'ы (`Get-ChildItem`, `Get-Content`, pipelines, переменные, `[DateTime]::Now`). Это самый требовательный стресс-тест всего стека сразу: TPL, EH, рефлексия, GC, FAT32, ANSI-консоль. Строчный редактор **PSReadLine работает полноценно** (step147): эхо, SGR-цвета, Tab-дополнение, история со стрелками, Backspace/Delete/Home/End — всё поверх нашей framebuffer-консоли на движке XtermSharp. **Ctrl+C прерывает выполняющуюся команду** (step159): клавиши забирает отдельный поток, независимо от того, читает ли их оболочка. Известные ограничения: ConstrainedLanguage Mode, история не сохраняется между запусками (readonly FAT32)
+Стоковый PowerShell 7.6.5 грузится с FAT32 на голом железе до интерактивного приглашения и выполняет настоящие командлеты: `Get-ChildItem`, `Get-Content`, конвейеры, переменные, `[DateTime]::Now`. Это самый требовательный тест всего стека сразу: TPL, исключения, рефлексия, GC, FAT32, ANSI-консоль.
 
-## Сторонние приложения, запускаемые на SharpOS
+PSReadLine работает полностью: цвета, Tab-дополнение, история по стрелкам, редактирование строки. Всё это поверх нашей framebuffer-консоли на XtermSharp. Ctrl+C прерывает выполняющуюся команду.
 
-- **[ManagedDoom](https://github.com/sinshu/managed-doom)** (sinshu, GPL-2.0) — играбелен: полный экран, клавиатура, 35 Гц. GPL изолирован отдельным приложением, в ядро не линкуется.
-- **[TriCNES](https://github.com/100thCoin/TriCNES)** (Chris Siebert, MIT, подмодуль) — эмулятор NES, точный: 141/141 на [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin), но для игр бывает медленноват.
-- **[Fami](https://github.com/RupertAvery/Fami)** (David Khristepher Santos, MIT, подмодуль) — эмулятор NES, играбелен, не идеален.
+Ограничения: режим ConstrainedLanguage; история не сохраняется между запусками (в hosted FAT32 только на чтение).
+
+## Сторонние приложения
+
+- **[ManagedDoom](https://github.com/sinshu/managed-doom)** (sinshu, GPL-2.0) - играбелен. GPL-код изолирован в отдельном приложении и в ядро не линкуется.
+- **[TriCNES](https://github.com/100thCoin/TriCNES)** (Chris Siebert, MIT, подмодуль) - эмулятор NES, точный: 141/141 на [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin), но для игр бывает медленноват.
+- **[Fami](https://github.com/RupertAvery/Fami)** (David Khristepher Santos, MIT, подмодуль) - эмулятор NES, играбелен, не идеален.
 
 ## Вендоринг и библиотеки
 
-Чужой код, который лежит в дереве и попадает в собранный образ. Лицензии этих
-проектов обязывают нас. Копии живут в `vendor/<имя>/` со своим `LICENSE` и
-`PROVENANCE.md` — что взято и что вырезано, записано там.
+Чужой код, который лежит в дереве и попадает в образ. Лицензии этих проектов нас обязывают. Копии живут в `vendor/<имя>/`, рядом `LICENSE` и `PROVENANCE.md`: что взято и что вырезано.
 
-- **[dotnet/runtime](https://github.com/dotnet/runtime) + [runtimelab](https://github.com/dotnet/runtimelab)** (Microsoft, MIT) — toolchain NativeAOT, форк CoreCLR в `dotnet-runtime-sharpos/` и сотни BCL-портов в наш std.
-- **[Iced](https://github.com/icedland/iced)** (icedland, MIT) — кодировщик x86-64. Им пишется весь ассемблер проекта: на этапе сборки и на лету.
-- **[PeNet](https://github.com/secana/PeNet)** (Stefan Hausotte, Apache-2.0) — разбор PE в загрузчике приложений.
-- **[Terminal.Gui](https://github.com/gui-cs/Terminal.Gui)** (Miguel de Icaza и участники, MIT) — библиотека текстового интерфейса. На ней написан лаунчер.
-- **[XtermSharp](https://github.com/migueldeicaza/XtermSharp)** (Miguel de Icaza, MIT) — движок эмулятора терминала: ANSI/VT, сетка ячеек, прокрутка.
-- **[TurboXml](https://github.com/xoofx/TurboXml)** (Alexandre Mutel, BSD-2-Clause) — разбор XML без аллокаций. Читает манифест приложения из ресурсов PE.
-- **[ShellSyntaxTree](https://github.com/Aaronontheweb/ShellSyntaxTree)** (Aaron Stannard, Apache-2.0) — разбор командной строки bash в дерево. На нём стоит оболочка; половина для PowerShell не компилируется.
-- **[MOOS](https://github.com/nifanfa/MOOS)** (nifanfa, Unlicense) — драйверы `AHCI`, `Disk`, `PCI(Express)` и глифы CP437. Адаптированы под наш HAL, лежат в `OS/src/`.
-- **[Font 8x8](https://github.com/dhepper/font8x8)** (Daniel Hepper, Public Domain) — глифы консоли framebuffer.
+- **[dotnet/runtime](https://github.com/dotnet/runtime) + [runtimelab](https://github.com/dotnet/runtimelab)** (Microsoft, MIT) - toolchain NativeAOT, форк CoreCLR в `dotnet-runtime-sharpos/` и сотни портов BCL в нашу std.
+- **[Iced](https://github.com/icedland/iced)** (icedland, MIT) - кодировщик x86-64. Им пишется весь ассемблер проекта: и при сборке, и на лету.
+- **[PeNet](https://github.com/secana/PeNet)** (Stefan Hausotte, Apache-2.0) - разбор PE в загрузчике приложений.
+- **[Terminal.Gui](https://github.com/gui-cs/Terminal.Gui)** (Miguel de Icaza и участники, MIT) - библиотека текстового интерфейса. На ней написан лаунчер.
+- **[XtermSharp](https://github.com/migueldeicaza/XtermSharp)** (Miguel de Icaza, MIT) - движок эмулятора терминала: ANSI/VT, сетка ячеек, прокрутка.
+- **[TurboXml](https://github.com/xoofx/TurboXml)** (Alexandre Mutel, BSD-2-Clause) - разбор XML без аллокаций. Читает манифест приложения из ресурсов PE.
+- **[ShellSyntaxTree](https://github.com/Aaronontheweb/ShellSyntaxTree)** (Aaron Stannard, Apache-2.0) - разбор командной строки bash в дерево. На нём стоит оболочка; половина для PowerShell не компилируется.
+- **[MOOS](https://github.com/nifanfa/MOOS)** (nifanfa, Unlicense) - драйверы `AHCI`, `Disk`, `PCI(Express)` и глифы CP437. Адаптированы под наш HAL, лежат в `OS/src/`.
+- **[Font 8x8](https://github.com/dhepper/font8x8)** (Daniel Hepper, Public Domain) - глифы framebuffer-консоли.
 
 ## Отдельное спасибо
 
-Проекты, на которых SharpOS учился. Их код мы читали, но не брали, — перечислены
-по убыванию вклада.
+Проекты, на которых SharpOS учился, по убыванию вклада.
 
-- **[zerosharp](https://github.com/MichalStrehovsky/zerosharp)** (Michal Strehovský, MIT) — стартовый baseline: UEFI hello-world на NativeAOT, с которого SharpOS начался.
-- **[ManagedDotnetGC](https://github.com/kevingosse/ManagedDotnetGC)** (Kevin Gosse, MIT) — mark/sweep референс для GC.
-- **[UpsilonGC](https://github.com/kkokosa/UpsilonGC)** (Konrad Kokosa, GPL-3) — референс по custom GC под .NET.
-- **[DiscUtils](https://github.com/DiscUtils/DiscUtils)** (Kenneth Bell, MIT) — структура FAT/GPT, FAT-референс.
-- **[ChaN FatFs](https://elm-chan.org/fsw/ff/)** (BSD-1-clause) — второй FAT-референс.
-- **[Cosmos](https://github.com/CosmosOS/Cosmos)** (BSD-3) — концептуальный референс managed-OS подхода.
-- **[shitty](https://github.com/pg83/shitty)** (Anton Samokhvalov, MIT + GPL-3) — тесты для эмулятора терминала.
+- **[zerosharp](https://github.com/MichalStrehovsky/zerosharp)** (Michal Strehovský) - отправная точка: UEFI hello world на NativeAOT, с которого SharpOS начался.
+- **[ManagedDotnetGC](https://github.com/kevingosse/ManagedDotnetGC)** (Kevin Gosse, MIT) - образец mark-sweep-сборщика.
+- **[UpsilonGC](https://github.com/kkokosa/UpsilonGC)** (Konrad Kokosa, GPL-3) - пример собственного GC для .NET.
+- **[DiscUtils](https://github.com/DiscUtils/DiscUtils)** (Kenneth Bell, MIT) - структура FAT и GPT.
+- **[ChaN FatFs](https://elm-chan.org/fsw/ff/)** (BSD-1-clause) - второй ориентир по FAT.
+- **[Cosmos](https://github.com/CosmosOS/Cosmos)** (BSD-3) - сама идея managed-ОС.
+- **[shitty](https://github.com/pg83/shitty)** (Anton Samokhvalov, MIT + GPL-3) - тесты для эмулятора терминала.
 
 ## Лицензия
 
