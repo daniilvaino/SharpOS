@@ -98,6 +98,8 @@ namespace AotTests
             Check("collect reclaimed something",
                 SharpOS.Std.NoRuntime.GcSweep.LastSweptCount > 0);
 
+            CheckAllocatorShape();
+
             // Multidimensional arrays.
             //
             // A different allocation path from every array above: ILC turns
@@ -271,6 +273,113 @@ namespace AotTests
         // stepping that local reproduces a wrap in microseconds instead of
         // five minutes, and does it identically on QEMU, which has a 64-bit
         // HPET and can never show the bug on its own.
+        // The SHAPE of free memory, not the amount of it.
+        //
+        // The launcher died with 63 MB free and no room for a List<T> to
+        // double. Sweep puts one free marker on every dead object and never
+        // joins neighbours, so a heap that has been used and released comes
+        // back as thousands of separate small pieces. "Free bytes" says
+        // everything is fine; the only number that answers whether a doubling
+        // array can be served is the size of the LARGEST piece.
+        //
+        // Placed before the threading checks on purpose: a pool thread
+        // allocating in the middle of the churn would leave a live object
+        // between the dead ones, and the run of free blocks would be split by
+        // something that is nobody's bug.
+        private static unsafe void CheckAllocatorShape()
+        {
+            const int Count = 256;
+            const int Payload = 232;   // 256 bytes once the array header is on
+
+            AllocateAdjacentGarbage(Count, Payload);
+            GC.Collect();
+
+            SharpOS.Std.NoRuntime.GcHeap.GetFreeStats(
+                out ulong freeBytes, out uint blocks, out uint largest);
+
+            // Printed as well as asserted: the numbers are the evidence, and
+            // a log from before the sweep learned to join blocks can be held
+            // next to one from after.
+            AppHost.WriteString("[allocshape] free=");
+            AppHost.WriteUInt((uint)freeBytes);
+            AppHost.WriteString(" blocks=");
+            AppHost.WriteUInt(blocks);
+            AppHost.WriteString(" largest=");
+            AppHost.WriteUInt(largest);
+            AppHost.WriteString("\n");
+
+            // 64 KiB went in; half of it in one piece is a generous floor that
+            // still cannot be met by a heap that never joins anything.
+            Check("sweep joins adjacent free blocks", largest >= 32u * 1024u);
+            Check("free memory is in few pieces, not thousands",
+                  freeBytes == 0 || blocks <= Count / 4);
+
+            // A large request must come out of what was just freed. Counting
+            // segments would not prove it — the current segment has room to
+            // bump into — so the question asked is whether the FREELIST served
+            // it.
+            //
+            // The state right before the request is printed rather than
+            // inferred: the numbers above are separated from the allocation by
+            // service calls and checks, and the first run of this test failed
+            // while they said a 256 KiB block was there.
+            SharpOS.Std.NoRuntime.GcHeap.GetFreeStats(
+                out ulong preFree, out uint preBlocks, out uint preLargest);
+            AppHost.WriteString("[allocshape] pre-big free=");
+            AppHost.WriteUInt((uint)preFree);
+            AppHost.WriteString(" blocks=");
+            AppHost.WriteUInt(preBlocks);
+            AppHost.WriteString(" largest=");
+            AppHost.WriteUInt(preLargest);
+            AppHost.WriteString("\n");
+
+            // Snapshotted LAST, with nothing between them and the request.
+            // Taken any earlier, an allocation made by the printing above
+            // would raise the counter and the check would pass on somebody
+            // else's reuse while the array came from a bump. A test that can
+            // pass for the wrong reason answers nothing.
+            ulong reuseBefore = SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount;
+            ulong probesBefore = SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount;
+
+            byte[] big = new byte[48 * 1024];
+            big[0] = 1;
+            big[big.Length - 1] = 2;
+
+            AppHost.WriteString("[allocshape] post-big reuse=");
+            AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount);
+            AppHost.WriteString(" probes=");
+            AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount);
+            AppHost.WriteString(" segments=");
+            AppHost.WriteUInt(SharpOS.Std.NoRuntime.GcHeap.SegmentCount);
+            AppHost.WriteString("\n");
+
+            Check("a large request is served from freed memory",
+                  SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount > reuseBefore
+                  && big[0] == 1 && big[big.Length - 1] == 2);
+
+            // Cost, as a count of blocks examined rather than as time: the
+            // same number on a loaded host and an idle one. First-fit down a
+            // list where nothing is big enough costs the whole list and
+            // answers "no".
+            Check("finding a block does not walk the whole heap",
+                  SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount - probesBefore <= 64UL);
+        }
+
+        // In its own frame, and returning nothing: locals of the caller can
+        // stay live in a slot the precise walker still reports, and then the
+        // garbage this makes would not be garbage at all.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void AllocateAdjacentGarbage(int count, int payload)
+        {
+            object[] hold = new object[count];
+            for (int i = 0; i < count; i++)
+                hold[i] = new byte[payload];
+            if (hold[count - 1] == null) s_allocatorSink++;
+        }
+
+        private static int s_allocatorSink;
+
         // Who owns the buffer the trace is written into, and what it says
         // when it runs out.
         //

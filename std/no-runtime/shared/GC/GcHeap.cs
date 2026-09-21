@@ -11,8 +11,10 @@
 // (after MT* + Length). Minimum reusable block is 32 bytes so it fits the
 // header + next-slot + 16-byte alignment padding.
 //
-// After GcSweep turns dead objects into free markers, it calls
-// RebuildFreelist() which walks all segments and re-links them.
+// GcSweep builds this list as it walks (BeginFreelistRebuild + LinkFreeBlock),
+// joining runs of adjacent dead blocks into one entry. RebuildFreelist() still
+// exists and still derives the list from the heap itself, which is the way
+// back if the list is ever doubted.
 
 namespace SharpOS.Std.NoRuntime
 {
@@ -41,6 +43,17 @@ namespace SharpOS.Std.NoRuntime
         private static ulong s_freelistReuseCount;  // diagnostics: alloc hits
         private static ulong s_freelistSplitCount;  // diagnostics: block splits
 
+        // Free blocks examined while looking for one big enough, over the
+        // life of the heap.
+        //
+        // The cost of an allocation is not visible any other way: a first-fit
+        // walk down a list of four thousand blocks that are all too small
+        // costs four thousand reads and answers "no", and from outside that is
+        // indistinguishable from a heap that is simply busy. Measured as a
+        // count rather than as time, because a count is the same number on a
+        // loaded host and on an idle one.
+        private static ulong s_freelistProbes;
+
         public static bool IsInitialized => s_initialized;
         public static uint SegmentCount => s_segmentCount;
         public static ulong AllocCount => s_allocCount;
@@ -49,6 +62,7 @@ namespace SharpOS.Std.NoRuntime
         public static uint FreelistNodes => s_freelistNodes;
         public static ulong FreelistReuseCount => s_freelistReuseCount;
         public static ulong FreelistSplitCount => s_freelistSplitCount;
+        public static ulong FreelistProbeCount => s_freelistProbes;
 
         public static bool Init()
         {
@@ -166,16 +180,26 @@ namespace SharpOS.Std.NoRuntime
 
         private static uint s_lastRequest;
 
-        private static void ReportOutOfMemory()
+        /// <summary>Shape of the free memory: how much, in how many pieces,
+        /// and how big the biggest one is.</summary>
+        /// <remarks>
+        /// Three numbers rather than one, because "out of memory" with 63 MB
+        /// free is not a quantity problem: what a doubling array needs is one
+        /// CONTIGUOUS piece, and the largest block is the only number that
+        /// answers whether it exists.
+        ///
+        /// Bounded: this walks a list that is, by hypothesis, enormous, and a
+        /// corrupt one must not turn a diagnosis into a hang.
+        ///
+        /// Shared with the refusal report below so a test and the log can
+        /// never disagree about what was free at the moment of failure.
+        /// </remarks>
+        public static void GetFreeStats(out ulong freeBytes, out uint blocks, out uint largest)
         {
-            if (s_diagnostic == null) return;
+            blocks = 0;
+            freeBytes = 0;
+            largest = 0;
 
-            uint blocks = 0;
-            ulong freeBytes = 0;
-            uint largest = 0;
-
-            // Bounded: this walks a list that is, by hypothesis, enormous, and
-            // a corrupt one must not turn a diagnosis into a hang.
             nint cur = s_freelistHead;
             for (uint guard = 0; cur != 0 && guard < 4000000u; guard++)
             {
@@ -186,6 +210,13 @@ namespace SharpOS.Std.NoRuntime
                 if (size > largest) largest = size;
                 cur = *(nint*)(cur + FreeNextOffset);
             }
+        }
+
+        private static void ReportOutOfMemory()
+        {
+            if (s_diagnostic == null) return;
+
+            GetFreeStats(out ulong freeBytes, out uint blocks, out uint largest);
 
             byte* line = stackalloc byte[160];
             int n = 0;
@@ -403,6 +434,7 @@ namespace SharpOS.Std.NoRuntime
 
             while (cur != 0)
             {
+                s_freelistProbes++;
                 GcObject* block = (GcObject*)cur;
                 uint blockSize = block->ComputeSize();
                 if (blockSize == 0)
@@ -463,10 +495,39 @@ namespace SharpOS.Std.NoRuntime
             return null;
         }
 
+        /// <summary>Empties the free list so a sweep can build it as it goes.</summary>
+        /// <remarks>
+        /// Paired with <see cref="LinkFreeBlock"/>. The sweep already walks
+        /// every object in address order, which is exactly the walk
+        /// RebuildFreelist used to repeat afterwards — one pass instead of
+        /// two, over a heap of tens of thousands of objects.
+        /// </remarks>
+        public static void BeginFreelistRebuild()
+        {
+            s_freelistHead = 0;
+            s_freelistNodes = 0;
+        }
+
+        /// <summary>Tracks a free block for reuse, biggest-first by address.</summary>
+        /// <remarks>
+        /// Blocks below MinFreeBlockSize are NOT tracked: the next-pointer
+        /// lives at +12 and would not fit. They stay on the heap as walkable
+        /// free markers, which is what keeps the heap walk from reading their
+        /// stale bytes as a MethodTable (step131).
+        /// </remarks>
+        public static void LinkFreeBlock(nint address, uint alignedSize)
+        {
+            if (address == 0 || alignedSize < MinFreeBlockSize) return;
+            *(nint*)(address + FreeNextOffset) = s_freelistHead;
+            s_freelistHead = address;
+            s_freelistNodes++;
+        }
+
         // Walk all segments; re-link every free-object (of at least
-        // MinFreeBlockSize) into a fresh freelist. Called by GcSweep.Run
-        // after the mark/sweep pass. Smaller free blocks stay on the heap
-        // (walkable) but aren't tracked for reuse.
+        // MinFreeBlockSize) into a fresh freelist. No longer called by the
+        // sweep, which builds the list as it walks; kept because it rebuilds
+        // the list from the heap itself, which is the only way back if the
+        // list is ever doubted.
         public static void RebuildFreelist()
         {
             GcMethodTable* freeMt = GcSweep.FreeObjectMt;

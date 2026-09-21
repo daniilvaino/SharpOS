@@ -9,9 +9,10 @@
 // The order below matters:
 //   1. Mark.Begin   — reset mark bits / counters
 //   2. Roots.MarkAll — walk static roots + conservative stack scan
-//   3. Sweep.Run    — flip unmarked to free-markers; RebuildFreelist is
-//                     called at the tail of Sweep so the new free blocks
-//                     are immediately available to the next AllocateRaw.
+//   3. Sweep.Run    — flip unmarked to free-markers, joining runs of
+//                     adjacent ones into a single block and linking each
+//                     into the free list as the walk goes, so the space is
+//                     immediately available to the next AllocateRaw.
 
 namespace SharpOS.Std.NoRuntime
 {

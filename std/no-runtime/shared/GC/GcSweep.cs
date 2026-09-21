@@ -1,12 +1,19 @@
 // Sweep phase for our Serial GC.
 //
-// Algorithm (from Kevin Gosse's GCHeap.Sweep.cs, MIT):
-//   Linear walk through each segment. For every object:
-//     - if marked: clear the mark bit (ready for next GC pass)
-//     - if unmarked AND not already a free-object: overwrite with a
-//       free-object marker so the heap remains walkable.
-//   The bytes of a dead object become a "free block" that a future
-//   allocator can reuse (or ignore — see GcHeap allocation policy).
+// Algorithm (from Kevin Gosse's GCHeap.Sweep.cs, MIT, with coalescing
+// added in step177):
+//   Linear walk through each segment, in address order. For every object:
+//     - if marked: clear the mark bit (ready for next GC pass), and close
+//       whatever run of dead bytes came before it;
+//     - otherwise: add its bytes to the current run, whether it was a live
+//       object that died or a free block from an earlier sweep.
+//   A run is written as ONE free marker covering all of it, and linked into
+//   the free list there and then. Runs never cross a segment boundary.
+//
+// The coalescing is the difference between "there are free bytes" and "there
+// is a piece large enough". Without it every dead object became its own
+// marker and nothing ever merged: the launcher reached 63 MB free in
+// thousands of 256-byte pieces and could not grow a List<T>.
 //
 // The free-object marker is a synthetic GcMethodTable stored in .bss
 // that we initialize at first use:
@@ -70,6 +77,37 @@ namespace SharpOS.Std.NoRuntime
             s_initialized = true;
         }
 
+        // A run of adjacent dead blocks becomes ONE free marker.
+        //
+        // Before step177 each dead object got its own marker and the markers
+        // were never joined, so a heap that had been used and released came
+        // back as thousands of separate pieces. The launcher died of it: nine
+        // collections, 63 MB free, and no single piece large enough for a
+        // List<T> to double into. "Out of memory" was true about shape, not
+        // about quantity.
+        //
+        // Emitted at the first live object after the run and at the end of the
+        // segment, never across a segment boundary: two segments are separate
+        // allocations and the bytes between them are not ours.
+        private static void FlushRun(ref nint runStart, ref nint runBytes, GcMethodTable* freeMt)
+        {
+            if (runStart == 0 || runBytes <= 0)
+            {
+                runStart = 0;
+                runBytes = 0;
+                return;
+            }
+
+            GcObject* block = (GcObject*)runStart;
+            block->RawMethodTable = freeMt;
+            block->Length = (uint)runBytes - 12;   // ComputeSize == runBytes
+
+            GcHeap.LinkFreeBlock(runStart, (uint)runBytes);
+
+            runStart = 0;
+            runBytes = 0;
+        }
+
         // Run one sweep pass over all GcHeap segments. Assumes Mark phase
         // has already marked live objects. After Run, mark bits are cleared
         // (ready for next GC pass) and dead objects replaced with free markers.
@@ -89,11 +127,21 @@ namespace SharpOS.Std.NoRuntime
 
             GcMethodTable* freeMt = FreeObjectMt;
 
+            // The list is built as this walk goes, not rebuilt by a second
+            // walk afterwards. The sweep already visits every object in
+            // address order, which is the same pass RebuildFreelist made.
+            GcHeap.BeginFreelistRebuild();
+
             GcSegmentHeader* seg = GcHeap.FirstSegment;
             while (seg != null)
             {
                 nint p = seg->ObjectStart;
                 nint end = seg->Current;
+
+                // The run of adjacent dead bytes being accumulated. Zero start
+                // means there is none: no object ever lives at address zero.
+                nint runStart = 0;
+                nint runBytes = 0;
 
                 while (p < end)
                 {
@@ -114,25 +162,33 @@ namespace SharpOS.Std.NoRuntime
                     {
                         o->Unmark();
                         s_keptCount++;
+
+                        // A live object ends the run: the free block must
+                        // cover only bytes nobody owns.
+                        FlushRun(ref runStart, ref runBytes, freeMt);
                     }
-                    else if (!isAlreadyFree)
+                    else
                     {
-                        // Overwrite this dead object with a free marker.
-                        // Preserve total aligned size so walk stays consistent.
-                        o->RawMethodTable = freeMt;
-                        o->Length = aligned - 12; // so ComputeSize == aligned
-                        s_sweptCount++;
+                        // Dead, or already free: both are bytes available for
+                        // reuse, and a free block that already existed is
+                        // exactly what a neighbour should merge with.
+                        if (!isAlreadyFree)
+                            s_sweptCount++;
+
+                        if (runStart == 0)
+                            runStart = p;
+                        runBytes += (nint)aligned;
                     }
-                    // else: already a free object, leave as is
 
                     p += (nint)aligned;
                 }
 
+                // The segment ends the run too — never merge across the gap
+                // between two segments.
+                FlushRun(ref runStart, ref runBytes, freeMt);
+
                 seg = seg->Next;
             }
-
-            // Re-link the just-created free markers so AllocateRaw can reuse them.
-            GcHeap.RebuildFreelist();
         }
     }
 }

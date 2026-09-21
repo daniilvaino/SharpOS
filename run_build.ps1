@@ -261,6 +261,20 @@ if (-not $NoRun) {
     if ($OvmfVars) {
         $localOvmfVars = Join-Path $firmwareDir "OVMF_VARS.fd"
         Copy-Item -LiteralPath $OvmfVars -Destination $localOvmfVars -Force
+
+        # OVMF_VARS is an NVRAM store and QEMU must open the local copy for writing.
+        # On NixOS the source lives in /nix/store and is read-only, so Copy-Item
+        # preserves a mode that QEMU cannot write. Make only the copied VARS file
+        # writable; OVMF_CODE remains read-only as intended.
+        if ($env:OS -eq 'Windows_NT') {
+            (Get-Item -LiteralPath $localOvmfVars).IsReadOnly = $false
+        }
+        else {
+            & chmod u+w $localOvmfVars
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to make OVMF_VARS writable: $localOvmfVars"
+            }
+        }
     }
 }
 
