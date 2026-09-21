@@ -22,10 +22,6 @@ git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-
 mise trust && mise bootstrap          # Linux со старым индексом apt: mise bootstrap --update
 ```
 
-На NixOS (и на любом Linux с nix) вместо шага 4 — [`flake.nix`](flake.nix):
-`nix develop` даёт оболочку для ядра, приложений и запуска, `nix develop .#fork` —
-для форка CoreCLR (ему нужен FHS: его Arcade качает собственный SDK).
-
 Payloads (необязательны, см. [`payloads/README.md`](payloads/README.md)):
 `payloads/DOOM1.WAD`, картриджи `.nes`, PowerShell для гостя в
 `payloads/pwsh/PowerShell-7.6.5-win-x64/`.
@@ -36,6 +32,17 @@ PATH в каталоге репозитория:
 ```bash
 # PowerShell:  Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'
 # bash / zsh:  echo 'eval "$(mise activate bash --shims)"' >> ~/.bashrc   (zsh — ~/.zshrc, mise activate zsh --shims)
+```
+
+На NixOS (и на любом Linux с nix) mise не нужен: шаги 1 и 4 заменяет
+[`flake.nix`](flake.nix) — две оболочки, в них те же команды сборки, что ниже.
+
+```bash
+nix develop            # ядро, приложения, образ, QEMU
+patch-nupkgs .dotnet-home/.nuget/packages ~/.nuget/packages   # после каждого restore: ilc из NuGet — обычный ELF
+
+nix develop .#fork     # форк CoreCLR: ему нужен FHS, его Arcade качает свой SDK
+                       # первый раз — сделать splat MSVC, команду печатает сама оболочка
 ```
 
 Сборка и запуск:
