@@ -33,6 +33,8 @@ echo 'eval "$(mise activate zsh --shims)"'  >> ~/.zshrc                         
 Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'  # pwsh
 ```
 
+Дальше всё в PowerShell — `pwsh`.
+
 Форк по желанию:
 
 ```powershell
@@ -48,7 +50,7 @@ cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..
 $env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly    # без форка добавить -SkipCoreClr
 ```
 
-`run_build.ps1` собирает ядро, делает образ и запускает QEMU. Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`. Из bash и zsh скрипты запускаются через `pwsh`: `SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly -SkipCoreClr`.
+`run_build.ps1` собирает ядро, делает образ и запускает QEMU. Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`.
 
 ### Через nix
 
@@ -60,21 +62,21 @@ git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd 
 
 Форк по желанию, в своей оболочке — его Arcade качает собственный SDK, поэтому ей нужен FHS. Первый вход требует splat MSVC; команду печатает сама оболочка, делается один раз:
 
-```bash
+```powershell
 git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos.git
-nix develop .#fork
-xwin --accept-license --cache-dir .xwin-cache --manifest-version 17 \
-     --sdk-version 10.0.26100 --crt-version 14.44.17.14 --arch x86_64 \
+nix run .#fork -- -c pwsh                       # оболочка форка, сразу в PowerShell
+xwin --accept-license --cache-dir .xwin-cache --manifest-version 17 `
+     --sdk-version 10.0.26100 --crt-version 14.44.17.14 --arch x86_64 `
      splat --preserve-ms-arch-notation --include-debug-libs --output .xwin-cache/splat
-cd dotnet-runtime-sharpos && pwsh ./build_clr_sharpos.ps1 -Clean && cd .. && exit
+cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..
 ```
 
 Ядро, приложения и запуск — во второй оболочке:
 
-```bash
-nix develop
-pwsh ./build_launcher.ps1
-SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly    # без форка добавить -SkipCoreClr
+```powershell
+nix develop --command pwsh
+./build_launcher.ps1
+$env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly    # без форка добавить -SkipCoreClr
 ```
 
 `run_build.ps1` собирает ядро, делает образ и запускает QEMU (прошивку UEFI даёт он же). Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`. Первый заход тянет из кеша около 4.6 GiB для оболочки ядра и 2.6 GiB для оболочки форка.
