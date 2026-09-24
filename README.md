@@ -42,14 +42,25 @@ Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expressio
 
 ### NixOS
 
-На NixOS (и любом Linux с nix) mise не нужен: его установку и `mise bootstrap` заменяет [`flake.nix`](flake.nix) с двумя оболочками. Команды сборки в них те же.
+На NixOS (и любом Linux с nix) mise не нужен: его установку и `mise bootstrap` заменяет [`flake.nix`](flake.nix) с двумя оболочками. Нужны включённые флейки (`nix-command flakes`), репозиторий клонируется так же, как выше.
+
+Форк CoreCLR (по желанию) собирается в своей оболочке — его Arcade качает собственный SDK, поэтому ей нужен FHS. Первый вход требует splat MSVC; команду печатает сама оболочка, делается один раз:
 
 ```bash
-nix develop            # ядро, приложения, образ, QEMU
-nix develop .#fork     # форк CoreCLR
+nix develop .#fork
+xwin --accept-license --cache-dir .xwin-cache --manifest-version 17 \
+     --sdk-version 10.0.26100 --crt-version 14.44.17.14 --arch x86_64 \
+     splat --preserve-ms-arch-notation --include-debug-libs --output .xwin-cache/splat
+cd dotnet-runtime-sharpos && pwsh ./build_clr_sharpos.ps1 -Clean && cd .. && exit
 ```
 
-При первом входе в `.#fork` нужен splat MSVC, команду подскажет сама оболочка.
+Ядро, приложения и запуск — во второй оболочке:
+
+```bash
+nix develop
+pwsh ./build_launcher.ps1
+SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly    # без форка добавить -SkipCoreClr
+```
 
 ### Сборка и запуск
 
