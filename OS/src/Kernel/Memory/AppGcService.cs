@@ -58,6 +58,8 @@ namespace OS.Kernel.Memory
             PutInt(KernelGcPreciseWalk.LastFramesUnresolved);
             Put(" bottoms=");
             PutInt(KernelGcPreciseWalk.LastBottomsReached);
+            Put(" nogcinfo=");
+            PutInt(KernelGcPreciseWalk.LastFramesWithoutGcInfo);
             Put(" outofrange=");
             PutInt(KernelGcPreciseWalk.LastFramesSkippedOutOfRange);
             Put(" slotoverflow=");

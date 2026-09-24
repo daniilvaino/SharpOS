@@ -1,15 +1,17 @@
 // GcHeap — linked list of GcSegment blocks, bump allocator + freelist reuse.
 //
 // Allocation priority:
-//   1. Freelist first-fit — scan singly-linked list of free-object markers
-//      (produced by GcSweep). Split blocks with remainder >= MinFreeBlockSize.
+//   1. Free list, bucketed by size class — first-fit within the request's own
+//      class (bounded), then the head of the smallest larger class, which
+//      fits by construction. Split blocks with remainder >= MinFreeBlockSize.
 //   2. Bump within current segment.
 //   3. Grow: ask GcMemorySource for another block and bump in it.
 //
-// Freelist structure: each free-object uses the first 8 bytes of its payload
-// as a `next` pointer to the following free-object. Payload is at offset 12
-// (after MT* + Length). Minimum reusable block is 32 bytes so it fits the
-// header + next-slot + 16-byte alignment padding.
+// Freelist structure: one singly-linked list per size class, bucket b holding
+// blocks of 2^(5+b)..2^(6+b)-1 bytes. Each free-object uses the first 8 bytes
+// of its payload as a `next` pointer. Payload is at offset 12 (after
+// MT* + Length). Minimum reusable block is 32 bytes so it fits the header +
+// next-slot + 16-byte alignment padding.
 //
 // GcSweep builds this list as it walks (BeginFreelistRebuild + LinkFreeBlock),
 // joining runs of adjacent dead blocks into one entry. RebuildFreelist() still
@@ -36,9 +38,53 @@ namespace SharpOS.Std.NoRuntime
         private static ulong s_allocBytes;
         private static bool s_initialized;
 
-        // Freelist head (0 = empty). Each entry is a raw pointer to a free
-        // object; its next-pointer sits at (node + FreeNextOffset).
-        private static nint s_freelistHead;
+        // Free blocks, bucketed by size class. Bucket b holds blocks whose
+        // size is in [2^(5+b), 2^(6+b)) — 32..63, 64..127, and so on. Each
+        // entry is a raw pointer to a free object; its next-pointer sits at
+        // (node + FreeNextOffset).
+        //
+        // One list was enough while the sweep joined nothing, because the
+        // list was short for a different reason: it was mostly identical
+        // 256-byte scraps and a big request failed against all of them. With
+        // runs joined, a uniform workload leaves few blocks — but a MIXED one
+        // still leaves many small ones, and first-fit down a list of blocks
+        // that cannot hold the request costs the whole list to answer no.
+        //
+        // Buckets make that answer free: every block in a bucket above the
+        // request's own is larger than the request by construction, so its
+        // head fits without being measured.
+        //
+        // Heads live in a fixed-size struct in .bss rather than an array: a
+        // `static readonly nint[]` would need a class constructor, and class
+        // constructors do not run here (limits doc, ClassConstructorRunner).
+        private const int FreeBucketCount = 32;
+
+        [System.Runtime.InteropServices.StructLayout(
+            System.Runtime.InteropServices.LayoutKind.Sequential,
+            Size = FreeBucketCount * 8)]
+        private struct FreeBucketHeads { }
+        private static FreeBucketHeads s_buckets;
+
+        private static nint* BucketHeads()
+            => (nint*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_buckets);
+
+        // 32..63 -> 0, 64..127 -> 1, ... Sizes below MinFreeBlockSize never
+        // reach a bucket: they are not tracked at all.
+        private static int BucketOf(uint size)
+        {
+            uint v = size >> 5;
+            int b = 0;
+            while (v > 1) { v >>= 1; b++; }
+            return b < FreeBucketCount ? b : FreeBucketCount - 1;
+        }
+
+        // How far first-fit may walk inside the request's OWN bucket before
+        // giving up and taking a guaranteed fit from a larger one. Blocks
+        // there straddle the request — some hold it, some do not — so this is
+        // the only bucket that can be searched in vain, and the only one that
+        // needs a bound.
+        private const int MaxSameBucketProbes = 8;
+
         private static uint s_freelistNodes;
         private static ulong s_freelistReuseCount;  // diagnostics: alloc hits
         private static ulong s_freelistSplitCount;  // diagnostics: block splits
@@ -54,15 +100,137 @@ namespace SharpOS.Std.NoRuntime
         // loaded host and on an idle one.
         private static ulong s_freelistProbes;
 
+        // Bounds of every segment taken together, and the segment found last.
+        //
+        // The marker asks "is this address in the heap" about every candidate
+        // it pops, twice: once for the candidate and once for the MethodTable
+        // it claims. Almost every answer is no — stack words, .rdata pointers,
+        // kernel structs — and each no cost a walk of the whole segment list.
+        // The bounds answer those in two comparisons; the one-entry cache
+        // answers the yes cases, which cluster in whichever segment is being
+        // allocated into.
+        private static nint s_heapLow;
+        private static nint s_heapHigh;
+        private static GcSegmentHeader* s_lastFound;
+
+        // Segments examined, over the life of the heap. The cost of the
+        // question, in a number that does not depend on how busy the host is.
+        private static ulong s_segmentScanSteps;
+
         public static bool IsInitialized => s_initialized;
-        public static uint SegmentCount => s_segmentCount;
-        public static ulong AllocCount => s_allocCount;
-        public static ulong AllocBytes => s_allocBytes;
         public static GcSegmentHeader* FirstSegment => s_firstSegment;
-        public static uint FreelistNodes => s_freelistNodes;
-        public static ulong FreelistReuseCount => s_freelistReuseCount;
-        public static ulong FreelistSplitCount => s_freelistSplitCount;
-        public static ulong FreelistProbeCount => s_freelistProbes;
+
+        // The counters below are read AROUND an allocation to measure what it
+        // cost, and every one of them is NoInlining for that reason alone.
+        //
+        // ILC models `newarr` and `newobj` as allocations that do not write
+        // user statics — which is true of every allocation but ours, because
+        // ours IS the allocator and these are its counters. Two reads of the
+        // same counter either side of `new byte[4096]` were therefore folded
+        // into one, and the difference came out zero however much work had
+        // been done. That cost three wrong diagnoses in a row: the measurement
+        // said "the free list was never consulted" while the free list was
+        // serving the request perfectly.
+        //
+        // A call that cannot be inlined cannot be folded away, so each read
+        // happens where it is written.
+        public static uint SegmentCount
+        {
+            [System.Runtime.CompilerServices.MethodImpl(
+                System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            get => s_segmentCount;
+        }
+        public static ulong AllocCount
+        {
+            [System.Runtime.CompilerServices.MethodImpl(
+                System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            get => s_allocCount;
+        }
+        public static ulong AllocBytes
+        {
+            [System.Runtime.CompilerServices.MethodImpl(
+                System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            get => s_allocBytes;
+        }
+        public static uint FreelistNodes
+        {
+            [System.Runtime.CompilerServices.MethodImpl(
+                System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            get => s_freelistNodes;
+        }
+        public static ulong FreelistReuseCount
+        {
+            [System.Runtime.CompilerServices.MethodImpl(
+                System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            get => s_freelistReuseCount;
+        }
+        public static ulong FreelistSplitCount
+        {
+            [System.Runtime.CompilerServices.MethodImpl(
+                System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            get => s_freelistSplitCount;
+        }
+        public static ulong FreelistProbeCount
+        {
+            [System.Runtime.CompilerServices.MethodImpl(
+                System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            get => s_freelistProbes;
+        }
+        public static ulong SegmentScanSteps
+        {
+            [System.Runtime.CompilerServices.MethodImpl(
+                System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            get => s_segmentScanSteps;
+        }
+
+        /// <summary>Bit b set when size class b has at least one block.</summary>
+        /// <remarks>
+        /// One number that says where the free memory actually is. The stats
+        /// above say how much and how large, and those two agreed with each
+        /// other while a request still found nothing — which narrows the
+        /// question to "in which bucket", and nothing could answer it.
+        /// </remarks>
+        public static uint NonEmptyBucketMask()
+        {
+            nint* heads = BucketHeads();
+            uint mask = 0;
+            for (int b = 0; b < FreeBucketCount; b++)
+                if (heads[b] != 0) mask |= 1u << b;
+            return mask;
+        }
+
+        /// <summary>The size class a block of this size belongs to.</summary>
+        public static int BucketIndexOf(uint size) => BucketOf(size);
+
+        /// <summary>AllocCount without the NoInlining guard. For one test.</summary>
+        /// <remarks>
+        /// Exists to demonstrate the hazard the guard exists for, and for
+        /// nothing else. Read either side of an allocation with no call in
+        /// between, this one can be folded into a single read and its
+        /// difference comes out zero while the count really did go up.
+        ///
+        /// Keeping the demonstration in the tree turns "I believe the reads
+        /// were folded" into a number anybody can look at, which is worth one
+        /// unused property.
+        /// </remarks>
+        public static ulong AllocCountFoldable => s_allocCount;
+
+        // The address each path actually used for the bucket heads.
+        //
+        // BucketHeads() is Unsafe.AsPointer over a static, and a static is a
+        // moveable variable to the compiler. If ILC were to expand that to
+        // different storage at different call sites, the linker would write
+        // blocks into one table and the search would read another — which is
+        // exactly the picture that appeared once and could not be explained:
+        // the statistics walk found a 256 KiB block while a request for four
+        // kilobytes found nothing at all. Recorded rather than argued about.
+        private static nint s_headsAddrAlloc;
+        private static nint s_headsAddrLink;
+        private static nint s_headsAddrStats;
+
+        public static nint HeadsAddrAlloc => s_headsAddrAlloc;
+        public static nint HeadsAddrLink => s_headsAddrLink;
+        public static nint HeadsAddrStats => s_headsAddrStats;
 
         public static bool Init()
         {
@@ -200,15 +368,22 @@ namespace SharpOS.Std.NoRuntime
             freeBytes = 0;
             largest = 0;
 
-            nint cur = s_freelistHead;
-            for (uint guard = 0; cur != 0 && guard < 4000000u; guard++)
+            nint* heads = BucketHeads();
+            s_headsAddrStats = (nint)heads;
+            uint guard = 0;
+            for (int b = 0; b < FreeBucketCount; b++)
             {
-                uint size = ((GcObject*)cur)->ComputeSize();
-                if (size == 0) break;
-                blocks++;
-                freeBytes += size;
-                if (size > largest) largest = size;
-                cur = *(nint*)(cur + FreeNextOffset);
+                nint cur = heads[b];
+                while (cur != 0 && guard < 4000000u)
+                {
+                    guard++;
+                    uint size = ((GcObject*)cur)->ComputeSize();
+                    if (size == 0) break;
+                    blocks++;
+                    freeBytes += size;
+                    if (size > largest) largest = size;
+                    cur = *(nint*)(cur + FreeNextOffset);
+                }
             }
         }
 
@@ -420,19 +595,43 @@ namespace SharpOS.Std.NoRuntime
             return result;
         }
 
-        // First-fit walk: remove the first block whose aligned size >= needed.
-        // If the block is bigger and the remainder is at least MinFreeBlockSize,
-        // split the tail into a new free node (re-inserted at list head).
+        // Own size class first, then the smallest larger one.
+        //
+        // Searching the request's own bucket keeps a small request out of a
+        // large block, which is what stops splitting from grinding big blocks
+        // into scraps. It is bounded, because that bucket is the only one
+        // whose blocks might not fit. Everything above it fits by
+        // construction, so the first non-empty one answers immediately.
         private static void* TryAllocateFromFreelist(uint aligned)
         {
-            if (s_freelistHead == 0)
-                return null;
+            if (aligned < MinFreeBlockSize)
+                aligned = MinFreeBlockSize;
 
+            nint* heads = BucketHeads();
+            s_headsAddrAlloc = (nint)heads;
+            int own = BucketOf(aligned);
+
+            void* fromOwn = TakeFromBucket(own, heads, aligned, MaxSameBucketProbes);
+            if (fromOwn != null) return fromOwn;
+
+            for (int b = own + 1; b < FreeBucketCount; b++)
+            {
+                if (heads[b] == 0) continue;
+                void* fromLarger = TakeFromBucket(b, heads, aligned, 1);
+                if (fromLarger != null) return fromLarger;
+            }
+
+            return null;
+        }
+
+        // First-fit inside one bucket, walking at most `maxProbes` entries.
+        private static void* TakeFromBucket(int bucket, nint* heads, uint aligned, int maxProbes)
+        {
             GcMethodTable* freeMt = GcSweep.FreeObjectMt;
             nint prev = 0;
-            nint cur = s_freelistHead;
+            nint cur = heads[bucket];
 
-            while (cur != 0)
+            for (int probe = 0; cur != 0 && probe < maxProbes; probe++)
             {
                 s_freelistProbes++;
                 GcObject* block = (GcObject*)cur;
@@ -444,9 +643,9 @@ namespace SharpOS.Std.NoRuntime
 
                 if (blockAligned >= aligned)
                 {
-                    // Unlink from freelist.
+                    // Unlink from its bucket.
                     if (prev == 0)
-                        s_freelistHead = nextNode;
+                        heads[bucket] = nextNode;
                     else
                         *(nint*)(prev + FreeNextOffset) = nextNode;
                     s_freelistNodes--;
@@ -474,9 +673,11 @@ namespace SharpOS.Std.NoRuntime
                         tail->Length = remaining - 12;      // ComputeSize == remaining
                         if (remaining >= MinFreeBlockSize)
                         {
-                            // Room for the next-pointer -> track for reuse.
-                            *(nint*)(tailPtr + FreeNextOffset) = s_freelistHead;
-                            s_freelistHead = tailPtr;
+                            // Room for the next-pointer -> track for reuse,
+                            // in the bucket its new size belongs to.
+                            int tailBucket = BucketOf(remaining);
+                            *(nint*)(tailPtr + FreeNextOffset) = heads[tailBucket];
+                            heads[tailBucket] = tailPtr;
                             s_freelistNodes++;
                             s_freelistSplitCount++;
                         }
@@ -504,7 +705,8 @@ namespace SharpOS.Std.NoRuntime
         /// </remarks>
         public static void BeginFreelistRebuild()
         {
-            s_freelistHead = 0;
+            nint* heads = BucketHeads();
+            for (int b = 0; b < FreeBucketCount; b++) heads[b] = 0;
             s_freelistNodes = 0;
         }
 
@@ -518,8 +720,11 @@ namespace SharpOS.Std.NoRuntime
         public static void LinkFreeBlock(nint address, uint alignedSize)
         {
             if (address == 0 || alignedSize < MinFreeBlockSize) return;
-            *(nint*)(address + FreeNextOffset) = s_freelistHead;
-            s_freelistHead = address;
+            nint* heads = BucketHeads();
+            s_headsAddrLink = (nint)heads;
+            int bucket = BucketOf(alignedSize);
+            *(nint*)(address + FreeNextOffset) = heads[bucket];
+            heads[bucket] = address;
             s_freelistNodes++;
         }
 
@@ -531,8 +736,7 @@ namespace SharpOS.Std.NoRuntime
         public static void RebuildFreelist()
         {
             GcMethodTable* freeMt = GcSweep.FreeObjectMt;
-            s_freelistHead = 0;
-            s_freelistNodes = 0;
+            BeginFreelistRebuild();
 
             GcSegmentHeader* seg = s_firstSegment;
             while (seg != null)
@@ -551,11 +755,7 @@ namespace SharpOS.Std.NoRuntime
                     uint alignedSize = (size + (ObjectAlignment - 1)) & ~(ObjectAlignment - 1);
 
                     if (o->MethodTable == freeMt && alignedSize >= MinFreeBlockSize)
-                    {
-                        *(nint*)(p + FreeNextOffset) = s_freelistHead;
-                        s_freelistHead = p;
-                        s_freelistNodes++;
-                    }
+                        LinkFreeBlock(p, alignedSize);
 
                     p += (nint)alignedSize;
                 }
@@ -563,17 +763,54 @@ namespace SharpOS.Std.NoRuntime
             }
         }
 
-        // Linear search — OK for small segment count.
+        // Two comparisons for the common answer, a walk only for the rest.
+        //
+        // The old comment here said "linear search — OK for small segment
+        // count", and it was wrong in exactly our case: the count is small,
+        // but the question is asked twice per marked candidate, and the
+        // answer is almost always no, which is the case that cost the entire
+        // list.
         public static GcSegmentHeader* FindSegmentContaining(nint addr)
         {
+            // Outside every segment: no walk at all. This is the answer for
+            // stack words, MethodTable pointers and anything else the marker
+            // picks up, which is nearly everything it picks up.
+            if (addr < s_heapLow || addr >= s_heapHigh)
+                return null;
+
+            // Inside the bounds is not yet inside a segment — segments are
+            // separate allocations with gaps between them — so the walk still
+            // decides. It starts with the last segment that answered yes,
+            // because marking runs through one segment at a time.
+            GcSegmentHeader* cached = s_lastFound;
+            if (cached != null)
+            {
+                s_segmentScanSteps++;
+                if (addr >= cached->Start && addr < cached->End)
+                    return cached;
+            }
+
             GcSegmentHeader* seg = s_firstSegment;
             while (seg != null)
             {
+                s_segmentScanSteps++;
                 if (addr >= seg->Start && addr < seg->End)
+                {
+                    s_lastFound = seg;
                     return seg;
+                }
                 seg = seg->Next;
             }
             return null;
+        }
+
+        // Widens the bounds to cover a new segment. Called for every segment
+        // the heap takes, including the first.
+        private static void NoteSegmentBounds(GcSegmentHeader* seg)
+        {
+            if (seg == null) return;
+            if (s_heapLow == 0 || seg->Start < s_heapLow) s_heapLow = seg->Start;
+            if (seg->End > s_heapHigh) s_heapHigh = seg->End;
         }
 
         private static GcSegmentHeader* AllocateSegment(uint totalSize)
@@ -595,6 +832,9 @@ namespace SharpOS.Std.NoRuntime
             hdr->End = (nint)(block + totalSize);
             hdr->Current = hdr->ObjectStart;
             hdr->Next = null;
+
+            // Every segment widens the bounds the lookup rejects against.
+            NoteSegmentBounds(hdr);
             return hdr;
         }
     }

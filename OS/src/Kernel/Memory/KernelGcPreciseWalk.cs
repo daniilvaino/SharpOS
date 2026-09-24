@@ -41,6 +41,19 @@ namespace OS.Kernel.Memory
         /// </remarks>
         public static int LastBottomsReached;
 
+        /// <summary>Frames stepped through without marking anything.</summary>
+        /// <remarks>
+        /// Native frames — CoreCLR and the CRT are linked into this image —
+        /// have real unwind codes and no slot table. Walking through them is
+        /// correct and necessary: the managed frames that hold roots are on
+        /// the other side. Counted separately because "nothing to mark here"
+        /// and "could not read this frame" are opposite statements, and until
+        /// step177 the second was what happened: the trailer read for a native
+        /// record returns the next record's bytes, and the walker decoded
+        /// those as a live-slot table.
+        /// </remarks>
+        public static int LastFramesWithoutGcInfo;
+
         // Where the walk gives up quietly. Each of these is a frame whose
         // roots nobody reports and nobody misses until the sweep frees them,
         // so they are counted rather than left to inference: a stack that
@@ -104,6 +117,7 @@ namespace OS.Kernel.Memory
             LastRootsMarked = 0;
             LastFramesUnresolved = 0;
             LastBottomsReached = 0;
+            LastFramesWithoutGcInfo = 0;
             LastFramesSkippedOutOfRange = 0;
             LastFramesSlotOverflow = 0;
             LastFrameCapHits = 0;
@@ -306,8 +320,20 @@ namespace OS.Kernel.Memory
 
                 LastFramesWalked++;
                 prevRip = ctx->Rip;
-                MarkOneFrame(ctx, in r, gcInfoVersion,
-                             isActiveFrame: frameIdx == 0 && s_topFrameIsActive);
+
+                // A frame with no slot table is stepped, not marked. Its
+                // unwind codes below are genuine and move to the caller
+                // correctly; what it does not have is anything to tell us
+                // which of its slots hold references.
+                if (r.HasGcInfo)
+                {
+                    MarkOneFrame(ctx, in r, gcInfoVersion,
+                                 isActiveFrame: frameIdx == 0 && s_topFrameIsActive);
+                }
+                else
+                {
+                    LastFramesWithoutGcInfo++;
+                }
 
                 // Image base PER FRAME, not one fixed base for the whole walk.
                 // A stack that crosses from an app into the kernel (or back)

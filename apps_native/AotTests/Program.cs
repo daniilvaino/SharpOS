@@ -99,6 +99,9 @@ namespace AotTests
                 SharpOS.Std.NoRuntime.GcSweep.LastSweptCount > 0);
 
             CheckAllocatorShape();
+            CheckHeapLookupCost();
+            CheckAllocatorSizeClasses();
+            CheckCounterReadsAreNotFolded();
 
             // Multidimensional arrays.
             //
@@ -273,6 +276,269 @@ namespace AotTests
         // stepping that local reproduces a wrap in microseconds instead of
         // five minutes, and does it identically on QEMU, which has a 64-bit
         // HPET and can never show the bug on its own.
+        // Can a counter read either side of an allocation be trusted?
+        //
+        // AllocCount goes up on every single allocation, so both differences
+        // below must be positive. They are measured identically and differ in
+        // one thing: the first reads through a getter marked NoInlining, the
+        // second through one that is not.
+        //
+        // ILC models an allocation as something that does not write user
+        // statics — true of every allocator but ours, which is written in the
+        // same language, in the same image, and keeps these very counters. So
+        // the unguarded pair can be folded into one read, and its difference
+        // comes out zero while the allocation plainly happened.
+        //
+        // Printed rather than asserted for the unguarded half: it is a
+        // property of the compiler, not a defect to fix, and a red check
+        // would say the opposite. The guarded half IS asserted — that one is
+        // ours to keep working, and three wrong diagnoses in step178 came
+        // from its absence.
+        // The allocation must be one that cannot be removed. The first
+        // version of this used `new object()` checked only for null, and both
+        // differences came out zero — which said nothing, because ILC is free
+        // to delete an allocation whose result never escapes and never
+        // matters. Storing into a static escapes it beyond any analysis, and
+        // reading the contents back makes the store matter.
+        private static byte[] s_foldSinkA;
+        private static byte[] s_foldSinkB;
+
+        private static unsafe void CheckCounterReadsAreNotFolded()
+        {
+            ulong guardedBefore = SharpOS.Std.NoRuntime.GcHeap.AllocCount;
+            s_foldSinkA = new byte[64];
+            s_foldSinkA[0] = 0xA5;
+            ulong guardedAfter = SharpOS.Std.NoRuntime.GcHeap.AllocCount;
+
+            ulong plainBefore = SharpOS.Std.NoRuntime.GcHeap.AllocCountFoldable;
+            s_foldSinkB = new byte[64];
+            s_foldSinkB[0] = 0x5A;
+            ulong plainAfter = SharpOS.Std.NoRuntime.GcHeap.AllocCountFoldable;
+
+            ulong guarded = guardedAfter - guardedBefore;
+            ulong plain = plainAfter - plainBefore;
+
+            AppHost.WriteString("[folding] guarded=");
+            AppHost.WriteUInt((uint)guarded);
+            AppHost.WriteString(" plain=");
+            AppHost.WriteUInt((uint)plain);
+            AppHost.WriteString("\n");
+
+            Check("a guarded counter read is taken again after an allocation",
+                  guarded >= 1UL
+                  && s_foldSinkA[0] == 0xA5 && s_foldSinkB[0] == 0x5A);
+        }
+
+        // A fragmented heap, which joining neighbours cannot help with.
+        //
+        // Coalescing fixes the case where everything died together. It does
+        // nothing when live objects sit between the dead ones: the free
+        // blocks are genuinely separate, genuinely small, and genuinely many.
+        // First-fit down that list costs the whole list to answer "none of
+        // these holds four kilobytes" — and answering no is the expensive
+        // case, because it is the one that walks to the end.
+        //
+        // Size classes make the answer free: the request skips every class
+        // that cannot hold it and takes the head of the first that can.
+        private static unsafe void CheckAllocatorSizeClasses()
+        {
+            const int Pairs = 512;
+
+            AllocateInterleavedGarbage(Pairs, 64);
+            GC.Collect();
+
+            SharpOS.Std.NoRuntime.GcHeap.GetFreeStats(
+                out ulong freeBytes, out uint blocks, out uint largest);
+
+            AppHost.WriteString("[allocclass] free=");
+            AppHost.WriteUInt((uint)freeBytes);
+            AppHost.WriteString(" blocks=");
+            AppHost.WriteUInt(blocks);
+            AppHost.WriteString(" largest=");
+            AppHost.WriteUInt(largest);
+            AppHost.WriteString("\n");
+
+            // The point of the interleaving: many small free blocks, which is
+            // what makes the next check mean something. If they all merged
+            // anyway, the check below would pass for the wrong reason.
+            Check("live objects between dead ones leave many small blocks",
+                  blocks >= 64);
+
+            // Nothing between the snapshot and the request, so the deltas
+            // belong to the array and to nothing else.
+            //
+            // That this measures anything at all depends on the counter
+            // getters being NoInlining. ILC models an allocation as something
+            // that does not write user statics — true of every allocation but
+            // ours, which IS the allocator keeping these counters — so two
+            // plain reads either side of `new byte[4096]` fold into one and
+            // the difference comes out zero whatever happened. Three wrong
+            // diagnoses came from that before the cause was found.
+            ulong probesBefore = SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount;
+            ulong reuseBefore = SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount;
+            uint maskBefore = SharpOS.Std.NoRuntime.GcHeap.NonEmptyBucketMask();
+
+            byte[] mid = new byte[4096];
+            mid[0] = 7;
+            mid[mid.Length - 1] = 9;
+
+            ulong probes = SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount - probesBefore;
+            ulong reused = SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount - reuseBefore;
+
+            AppHost.WriteString("[allocclass] mask=");
+            AppHost.WriteHex(maskBefore);
+            AppHost.WriteString(" bucketOfLargest=");
+            AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.BucketIndexOf(largest));
+            AppHost.WriteString(" bucketOfRequest=");
+            AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.BucketIndexOf(4128));
+            AppHost.WriteString(" probes=");
+            AppHost.WriteUInt((uint)probes);
+            AppHost.WriteString(" reused=");
+            AppHost.WriteUInt((uint)reused);
+            AppHost.WriteString("\n");
+
+            // The same request a second time, with nothing beside it at all.
+            //
+            // This is the shape that used to report zero while the free list
+            // was serving the request perfectly: no call between the reads,
+            // so the compiler folded them. It stays as a regression test for
+            // the folding, not for the allocator — if the counter getters
+            // ever lose NoInlining, this is what goes quietly wrong.
+            // The mask and the node count FIRST: both are calls, and a call
+            // between the counter reads and the request would break exactly
+            // the folding this repeat exists to detect. Read here, they are
+            // out of the way.
+            uint maskBefore2 = SharpOS.Std.NoRuntime.GcHeap.NonEmptyBucketMask();
+            uint nodesBefore2 = SharpOS.Std.NoRuntime.GcHeap.FreelistNodes;
+
+            ulong probesBefore2 = SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount;
+            ulong reuseBefore2 = SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount;
+            byte[] again = new byte[4096];
+            ulong probes2 = SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount - probesBefore2;
+            ulong reused2 = SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount - reuseBefore2;
+
+            AppHost.WriteString("[allocclass] repeat probes=");
+            AppHost.WriteUInt((uint)probes2);
+            AppHost.WriteString(" reused=");
+            AppHost.WriteUInt((uint)reused2);
+            AppHost.WriteString(" len=");
+            AppHost.WriteUInt((uint)again.Length);
+            AppHost.WriteString("\n");
+
+            // The bucket layout either side of the printing between the two
+            // requests. It answered the question it was added for: the mask
+            // does not change, so no class is being drained and the splitting
+            // policy is not at fault. Kept because "where the free memory is"
+            // is the one thing the other numbers cannot say.
+            AppHost.WriteString("[allocclass] mask before=");
+            AppHost.WriteHex(maskBefore);
+            AppHost.WriteString(" after=");
+            AppHost.WriteHex(maskBefore2);
+            AppHost.WriteString(" nodes=");
+            AppHost.WriteUInt(nodesBefore2);
+            AppHost.WriteString(" splits=");
+            AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.FreelistSplitCount);
+            AppHost.WriteString("\n");
+
+            // And the three addresses. One table or three is a fact, not a
+            // matter of opinion about how ILC expands Unsafe.AsPointer.
+            AppHost.WriteString("[allocclass] heads alloc=");
+            AppHost.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.HeadsAddrAlloc);
+            AppHost.WriteString(" link=");
+            AppHost.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.HeadsAddrLink);
+            AppHost.WriteString(" stats=");
+            AppHost.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.HeadsAddrStats);
+            AppHost.WriteString("\n");
+
+            Check("the bucket table is one table, not one per call site",
+                  SharpOS.Std.NoRuntime.GcHeap.HeadsAddrAlloc
+                      == SharpOS.Std.NoRuntime.GcHeap.HeadsAddrLink
+                  && SharpOS.Std.NoRuntime.GcHeap.HeadsAddrLink
+                      == SharpOS.Std.NoRuntime.GcHeap.HeadsAddrStats);
+
+            // Both halves, and the first one is the one that was missing.
+            // A cost check on its own passes when the work never happened:
+            // zero blocks examined reads as "found it instantly" and as
+            // "never looked" alike, and the first run of this check reported
+            // zero while a 256 KiB block sat in the list unclaimed.
+            Check("a large request is served from the free list, not by bumping",
+                  reused == 1UL);
+            Check("a request skips the classes that cannot hold it",
+                  probes <= 64UL && mid[0] == 7 && mid[mid.Length - 1] == 9);
+
+            // Nothing held on to: the array above is the only thing this
+            // method leaves behind, and the next collection takes it.
+            s_keepAlive = null;
+        }
+
+        // Every other block stays reachable, so the dead ones cannot merge
+        // with their neighbours. Held in a static rather than a local: a
+        // local would die with the frame and the whole run would coalesce.
+        private static object[] s_keepAlive;
+
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void AllocateInterleavedGarbage(int pairs, int payload)
+        {
+            s_keepAlive = new object[pairs];
+            for (int i = 0; i < pairs; i++)
+            {
+                byte[] dead = new byte[payload];
+                dead[0] = 1;
+                s_keepAlive[i] = new byte[payload];
+            }
+        }
+
+        // What it costs to ask "is this address in the heap".
+        //
+        // The marker asks it twice about every candidate it pops — once for
+        // the candidate, once for the MethodTable the candidate claims — and
+        // nearly every answer is no: stack words, pointers into .rdata,
+        // kernel structures. Each no used to cost a walk of the whole segment
+        // list, and the comment above the walk said the linear search was
+        // "OK for small segment count", which was true about the count and
+        // false about the number of questions.
+        private static unsafe void CheckHeapLookupCost()
+        {
+            byte[] inHeap = new byte[64];
+            nint heapAddress = *(nint*)System.Runtime.CompilerServices.Unsafe
+                .AsPointer(ref inHeap);
+
+            // A fixed low address rather than a stack one: the stack is in
+            // fact outside the heap, but "outside" is what the test is
+            // supposed to be asserting, not assuming. Page one is below every
+            // segment on any tier.
+            nint definitelyOutside = (nint)0x1000;
+
+            ulong before = SharpOS.Std.NoRuntime.GcHeap.SegmentScanSteps;
+            nuint sink = (nuint)SharpOS.Std.NoRuntime.GcHeap
+                .FindSegmentContaining(definitelyOutside);
+            Check("an address outside the heap is rejected without a scan",
+                  SharpOS.Std.NoRuntime.GcHeap.SegmentScanSteps == before && sink == 0);
+
+            // Warm the cache first. The first lookup of an address in a
+            // different segment than the previous one pays the walk, and that
+            // one walk is not what is being measured here.
+            sink += (nuint)SharpOS.Std.NoRuntime.GcHeap.FindSegmentContaining(heapAddress);
+
+            // A thousand lookups of the same heap address. One step each is
+            // the cache answering; more than that means the list is being
+            // walked again for a question already answered.
+            before = SharpOS.Std.NoRuntime.GcHeap.SegmentScanSteps;
+            for (int i = 0; i < 1000; i++)
+                sink += (nuint)SharpOS.Std.NoRuntime.GcHeap.FindSegmentContaining(heapAddress);
+            ulong steps = SharpOS.Std.NoRuntime.GcHeap.SegmentScanSteps - before;
+
+            AppHost.WriteString("[seglookup] steps=");
+            AppHost.WriteUInt((uint)steps);
+            AppHost.WriteString(" per=1000 segments=");
+            AppHost.WriteUInt(SharpOS.Std.NoRuntime.GcHeap.SegmentCount);
+            AppHost.WriteString("\n");
+
+            Check("a heap address is found without rescanning the segment list",
+                  steps <= 1000UL && sink != 0 && inHeap.Length == 64);
+        }
+
         // The SHAPE of free memory, not the amount of it.
         //
         // The launcher died with 63 MB free and no room for a List<T> to
@@ -361,6 +627,10 @@ namespace AotTests
             // same number on a loaded host and an idle one. First-fit down a
             // list where nothing is big enough costs the whole list and
             // answers "no".
+            //
+            // Meaningful only next to the check above, which establishes that
+            // the free list served the request at all. On its own a budget is
+            // met most easily by not doing the work.
             Check("finding a block does not walk the whole heap",
                   SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount - probesBefore <= 64UL);
         }

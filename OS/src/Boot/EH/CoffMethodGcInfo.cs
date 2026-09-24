@@ -44,6 +44,9 @@ namespace OS.Boot.EH
             public byte* GcInfo;          // start of the per-method GcInfo blob
             public uint  CodeOffset;      // IP - MethodStart, for the decoder
             public RuntimeFunction* RuntimeFunction;   // root (non-funclet) entry — for VirtualUnwind
+
+            /// <summary>False for native frames: unwindable, but no slot table.</summary>
+            public bool HasGcInfo;
         }
 
         // PE UNWIND_INFO flags (upper 5 bits of byte 0).
@@ -53,18 +56,23 @@ namespace OS.Boot.EH
         // Resolve `ip` -> method GcInfo. Returns false when .pdata isn't
         // mounted or no record covers `ip`.
         //
-        // It does NOT check that `ip` is managed code, though the comment here
-        // claimed so until step177. The kernel image holds CoreCLR and the CRT
-        // as well, and for one of their frames the trailer read below is the
-        // bytes of the next UNWIND_INFO: the GcInfo pointer is then noise, and
-        // the precise walker decodes noise as a live-slot table.
+        // THREE answers, not two:
+        //   false                      nothing covers this address.
+        //   true, HasGcInfo == false   a frame with no GC information, but
+        //                              with real unwind codes. Native code —
+        //                              CoreCLR and the CRT are linked into
+        //                              this image — has no slot table, and a
+        //                              caller must step it without marking it.
+        //   true, HasGcInfo == true    managed frame, GcInfo points at its
+        //                              slot table.
         //
-        // Adding the check is not a one-liner, which is why it is not here
-        // yet: the caller treats false as "stop walking", so gating this would
-        // end the walk at the first CoreCLR frame and lose every root below
-        // it. What the walker needs first is a third answer - "no roots in
-        // this frame, keep unwinding" - since the native unwind codes
-        // themselves are real and step the frame correctly.
+        // The middle answer is why the range check took a step of its own to
+        // land. Until step177 nothing checked that `ip` was managed at all,
+        // and for a native frame the trailer read below is the bytes of the
+        // next UNWIND_INFO: the GcInfo pointer was noise, and the precise
+        // walker decoded noise as a live-slot table. But simply returning
+        // false would have ended the walk at the first CoreCLR frame and lost
+        // every root beneath it, because the caller reads false as "stop".
         public static bool TryResolve(byte* ip, out Result result)
         {
             result = default;
@@ -75,6 +83,22 @@ namespace OS.Boot.EH
             byte* imageBase = info.ImageBase;
             byte* methodStart = imageBase + info.RootRuntimeFunction->BeginAddress;
             byte* methodEnd   = imageBase + info.RootRuntimeFunction->EndAddress;
+
+            // Native code: everything above is true and useful — the record,
+            // its bounds, its unwind codes — and there is no slot table to
+            // read. Stop before reading the trailer, which does not exist
+            // here and whose bytes belong to whatever the linker put next.
+            if (!CoffRuntimeFunctionTable.RecordIsManaged(info.RootRuntimeFunction))
+            {
+                result.MethodStart     = methodStart;
+                result.MethodEnd       = methodEnd;
+                result.GcInfo          = null;
+                result.CodeOffset      = (uint)(ip - methodStart);
+                result.RuntimeFunction = info.RootRuntimeFunction;
+                result.HasGcInfo       = false;
+                return true;
+            }
+
             byte* unwindInfo  = imageBase + info.RootRuntimeFunction->UnwindInfoAddress;
 
             // UNWIND_INFO header walk — mirrors CoffEhDecoder.EhEnumInit.
@@ -104,6 +128,7 @@ namespace OS.Boot.EH
             result.GcInfo          = p;
             result.CodeOffset      = (uint)(ip - methodStart);
             result.RuntimeFunction = info.RootRuntimeFunction;
+            result.HasGcInfo       = true;
             return true;
         }
     }

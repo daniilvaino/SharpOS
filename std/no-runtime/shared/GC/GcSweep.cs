@@ -43,8 +43,21 @@ namespace SharpOS.Std.NoRuntime
         private static uint s_sweptCount;        // objects converted to free
         private static uint s_keptCount;         // objects that survived
 
-        public static uint LastSweptCount => s_sweptCount;
-        public static uint LastKeptCount => s_keptCount;
+        // NoInlining for the same reason as GcHeap's counters: these are
+        // read either side of a collection to measure it, and a read that the
+        // compiler is free to fold measures nothing.
+        public static uint LastSweptCount
+        {
+            [System.Runtime.CompilerServices.MethodImpl(
+                System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            get => s_sweptCount;
+        }
+        public static uint LastKeptCount
+        {
+            [System.Runtime.CompilerServices.MethodImpl(
+                System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            get => s_keptCount;
+        }
 
         public static GcMethodTable* FreeObjectMt
         {
