@@ -25,15 +25,19 @@ git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd 
 mise trust && mise bootstrap   # Linux со старым индексом apt: mise bootstrap --update
 ```
 
-Активация среды, один раз:
+Вход в среду сборки — дальше всё в PowerShell:
+
+```bash
+mise exec -- pwsh
+```
+
+Чтобы инструменты попадали в PATH сами, mise можно включить в профиле оболочки — тогда достаточно `pwsh`:
 
 ```
 echo 'eval "$(mise activate bash --shims)"' >> ~/.bashrc                            # bash
 echo 'eval "$(mise activate zsh --shims)"'  >> ~/.zshrc                             # zsh
 Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'  # pwsh
 ```
-
-Дальше всё в PowerShell — `pwsh`.
 
 Форк по желанию:
 
