@@ -22,10 +22,6 @@ curl https://mise.run | sh     # Linux
 
 ```bash
 git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd SharpOS
-
-# по желанию: форк CoreCLR
-git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos.git
-
 mise trust && mise bootstrap   # Linux со старым индексом apt: mise bootstrap --update
 ```
 
@@ -37,12 +33,19 @@ echo 'eval "$(mise activate zsh --shims)"'  >> ~/.zshrc                         
 Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'  # pwsh
 ```
 
-Сборка и запуск:
+Форк по желанию. Его зависимости (cmake, ninja, python, splat MSVC, JWasm) mise ставит, только когда форк уже на месте, поэтому `bootstrap` повторяется:
 
 ```powershell
-cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..   # если форк нужен
+git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos.git
+mise bootstrap
+cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..
+```
+
+Ядро, приложения и запуск:
+
+```powershell
 ./build_launcher.ps1
-$env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly                       # без форка: -SkipCoreClr
+$env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly    # без форка добавить -SkipCoreClr
 ```
 
 `run_build.ps1` собирает ядро, делает образ и запускает QEMU. Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`. Из bash и zsh скрипты запускаются через `pwsh`: `SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly -SkipCoreClr`.
