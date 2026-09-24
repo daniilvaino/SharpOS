@@ -67,6 +67,37 @@
     </ItemGroup>
   </Target>
 
+  <!--
+    NixOS: ilc приезжает из NuGet обычным ELF и там не запускается — ему нужен
+    другой ld.so и rpath к icu/zlib/openssl ("No usable version of libssl was
+    found"). Правит его patch-nupkgs из nixpkgs, но только по уже
+    восстановленным пакетам, поэтому вручную его пришлось бы звать между
+    restore и сборкой — то есть собирать дважды.
+
+    Здесь он вешается на MSBuild и срабатывает сам: после restore и перед
+    IlcCompile, который и запускает ilc. Так же это сделано в самом nixpkgs для
+    его императивной сборки .NET — pkgs/development/compilers/dotnet/source/
+    patch-restored-packages.proj. Вызовы идемпотентны: patch-nupkgs помечает
+    пакет файлом .nix-patched.
+
+    Путь к patch-nupkgs даёт flake.nix. Вне nix переменной нет, и target молчит:
+    ни на Windows, ни на обычном Linux с mise патчить нечего.
+  -->
+  <Target Name="SharpOsPatchNupkgs"
+          AfterTargets="Restore"
+          BeforeTargets="IlcCompile"
+          Condition="'$(SHARPOS_PATCH_NUPKGS)' != ''">
+    <PropertyGroup>
+      <!-- NuGetPackageRoot приходит из obj/*.nuget.g.props, то есть появляется
+           только после первого restore; до него берём переменную окружения. -->
+      <_SharpOsNugetRoot>$(NuGetPackageRoot)</_SharpOsNugetRoot>
+      <_SharpOsNugetRoot Condition="'$(_SharpOsNugetRoot)' == ''">$(NUGET_PACKAGES)</_SharpOsNugetRoot>
+    </PropertyGroup>
+    <Exec Condition="'$(_SharpOsNugetRoot)' != '' AND Exists('$(_SharpOsNugetRoot)')"
+          Command="&quot;$(SHARPOS_PATCH_NUPKGS)&quot; &quot;$(_SharpOsNugetRoot)&quot;"
+          StandardOutputImportance="low" />
+  </Target>
+
   <Target Name="SharpOsNativeLink"
           AfterTargets="SetupOSSpecificProps"
           BeforeTargets="LinkNative">

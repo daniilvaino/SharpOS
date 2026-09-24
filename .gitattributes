@@ -1,0 +1,8 @@
+# flake.nix содержит shell-код (shellHook, profile, here-doc). С CRLF в рабочем
+# дереве bash спотыкается на \r — "$'\r': command not found", here-document
+# обрывается, переменные окружения не выставляются. Поэтому только LF, даже
+# если дерево выложено на Windows (например, сборка идёт из WSL через /mnt/c).
+*.nix text eol=lf
+
+# flake.lock — JSON, который правит nix; пусть везде будет LF, как он его пишет.
+flake.lock text eol=lf

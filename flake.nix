@@ -148,7 +148,6 @@
         default = pkgs.mkShell {
           packages = [
             pkgs.dotnetCorePackages.sdk_10_0_1xx
-            pkgs.dotnetCorePackages.patchNupkgs # патчит ilc и прочие бинарники из NuGet
             pkgs.powershell
             pkgs.llvmPackages_22.lld # lld-link — им сшиваются ядро и приложения
             pkgs.qemu # прошивку UEFI (edk2-x86_64-code.fd) несёт он же
@@ -159,14 +158,13 @@
           shellHook = ''
             export SHARPOS_LLVM_BIN=${pkgs.llvmPackages_22.lld}/bin
             export DOTNET_ROOT=${pkgs.dotnetCorePackages.sdk_10_0_1xx}/share/dotnet
+            # ilc приезжает из NuGet обычным ELF и на nix не стартует. По этой
+            # переменной SharpOsNativeLink.props правит его сам — после restore
+            # и перед запуском (target SharpOsPatchNupkgs), вручную звать нечего.
+            export SHARPOS_PATCH_NUPKGS=${pkgs.lib.getExe pkgs.dotnetCorePackages.patchNupkgs}
             cat <<'EOF'
       SharpOS: ядро, приложения, образ.
 
-        patch-nupkgs .dotnet-home/.nuget/packages ~/.nuget/packages
-                                           после каждого restore: ilc из NuGet —
-                                           обычный ELF, без патча он не стартует
-                                           (run_build.ps1 держит кеш в репозитории,
-                                           остальные скрипты — в ~/.nuget)
         ./build_launcher.ps1               и остальные build_*.ps1
         ./run_build.ps1 -UsbOnly           ядро, образ, QEMU
 
