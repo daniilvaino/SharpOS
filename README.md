@@ -59,14 +59,12 @@ $env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly                       # без фо
 
 ```bash
 git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd SharpOS
-
-# по желанию: форк CoreCLR
-git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos.git
 ```
 
-Форк собирается в своей оболочке — его Arcade качает собственный SDK, поэтому ей нужен FHS. Первый вход требует splat MSVC; команду печатает сама оболочка, делается один раз:
+Форк по желанию, в своей оболочке — его Arcade качает собственный SDK, поэтому ей нужен FHS. Первый вход требует splat MSVC; команду печатает сама оболочка, делается один раз:
 
 ```bash
+git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos.git
 nix develop .#fork
 xwin --accept-license --cache-dir .xwin-cache --manifest-version 17 \
      --sdk-version 10.0.26100 --crt-version 14.44.17.14 --arch x86_64 \
