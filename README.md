@@ -8,9 +8,15 @@
 
 ## Как запустить
 
-### Окружение
+Два способа поставить зависимости: [mise](https://mise.jdx.dev) на Windows, macOS и Linux — или [`flake.nix`](flake.nix), если у вас nix. Каждый раздел ниже самодостаточен, выбирать нужно один.
 
-Зависимости ставит [mise](https://mise.jdx.dev) по [`mise.toml`](mise.toml), так что начать нужно с него:
+Две вещи общие и обе необязательные. **Payloads**: `payloads/DOOM1.WAD`, картриджи `.nes` и PowerShell для самой SharpOS в `payloads/pwsh/PowerShell-7.6.5-win-x64/` — что куда класть, написано в [`payloads/README.md`](payloads/README.md). **Форк CoreCLR** нужен только для [hosted-яруса](#три-яруса-исполнения), то есть для стоковых .NET-программ вроде PowerShell; без него ядро собирается с флагом `-SkipCoreClr`.
+
+Лог ядра (COM1) пишется в `last_build.log`, вывод программ (COM3) в `last_app.log`, их ошибки (COM4) в `last_err.log`.
+
+### Через mise
+
+Зависимости ставит mise по [`mise.toml`](mise.toml), так что начать нужно с него:
 
 ```bash
 winget install jdx.mise        # Windows
@@ -23,7 +29,7 @@ curl https://mise.run | sh     # Linux
 ```bash
 git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd SharpOS
 
-# по желанию: форк CoreCLR для hosted-яруса; без него сборка идёт с -SkipCoreClr
+# по желанию: форк CoreCLR
 git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos.git
 
 mise trust && mise bootstrap   # Linux со старым индексом apt: mise bootstrap --update
@@ -40,11 +46,28 @@ echo 'eval "$(mise activate zsh --shims)"'  >> ~/.zshrc    # zsh
 Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'
 ```
 
-### NixOS
+Сборка и запуск:
 
-На NixOS (и любом Linux с nix) mise не нужен: его установку и `mise bootstrap` заменяет [`flake.nix`](flake.nix) с двумя оболочками. Нужны включённые флейки (`nix-command flakes`), репозиторий клонируется так же, как выше.
+```powershell
+cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..   # если форк нужен
+./build_launcher.ps1
+$env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly                       # без форка: -SkipCoreClr
+```
 
-Форк CoreCLR (по желанию) собирается в своей оболочке — его Arcade качает собственный SDK, поэтому ей нужен FHS. Первый вход требует splat MSVC; команду печатает сама оболочка, делается один раз:
+`run_build.ps1` собирает ядро, делает образ и запускает QEMU. Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`. Из bash и zsh скрипты запускаются через `pwsh`: `SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly -SkipCoreClr`.
+
+### Через nix
+
+На NixOS и любом другом Linux с nix mise не нужен: инструменты даёт [`flake.nix`](flake.nix) двумя оболочками, версии закреплены в [`flake.lock`](flake.lock). Нужны включённые флейки (`nix-command flakes`).
+
+```bash
+git clone --recurse-submodules https://github.com/daniilvaino/SharpOS.git && cd SharpOS
+
+# по желанию: форк CoreCLR
+git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos.git
+```
+
+Форк собирается в своей оболочке — его Arcade качает собственный SDK, поэтому ей нужен FHS. Первый вход требует splat MSVC; команду печатает сама оболочка, делается один раз:
 
 ```bash
 nix develop .#fork
@@ -62,28 +85,7 @@ pwsh ./build_launcher.ps1
 SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly    # без форка добавить -SkipCoreClr
 ```
 
-### Сборка и запуск
-
-Payloads необязательны: `payloads/DOOM1.WAD`, картриджи `.nes` и PowerShell для самой SharpOS в `payloads/pwsh/PowerShell-7.6.5-win-x64/`. Что куда класть, написано в [`payloads/README.md`](payloads/README.md).
-
-Форк CoreCLR необязателен: он нужен только для [hosted-яруса](#три-яруса-исполнения), то есть для стоковых .NET-программ вроде PowerShell. Без него ядро собирается с флагом `-SkipCoreClr`:
-
-```powershell
-./build_launcher.ps1
-$env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly -SkipCoreClr
-```
-
-С форком сначала собирается он сам, а `-SkipCoreClr` не нужен:
-
-```powershell
-cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..
-./build_launcher.ps1
-$env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly
-```
-
-`run_build.ps1` собирает ядро, делает образ и запускает QEMU. Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`. Из bash и zsh скрипты запускаются через `pwsh`: `SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly -SkipCoreClr`.
-
-Лог ядра (COM1) пишется в `last_build.log`, вывод программ (COM3) в `last_app.log`, их ошибки (COM4) в `last_err.log`.
+`run_build.ps1` собирает ядро, делает образ и запускает QEMU (прошивку UEFI даёт он же). Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`. Первый заход тянет из кеша около 4.6 GiB для оболочки ядра и 2.6 GiB для оболочки форка.
 
 ## Архитектурные инварианты
 
