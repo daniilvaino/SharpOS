@@ -33,11 +33,11 @@ echo 'eval "$(mise activate zsh --shims)"'  >> ~/.zshrc                         
 Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'  # pwsh
 ```
 
-Форк по желанию. Его зависимости (cmake, ninja, python, splat MSVC, JWasm) mise ставит, только когда форк уже на месте, поэтому `bootstrap` повторяется:
+Форк по желанию:
 
 ```powershell
 git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-sharpos.git
-mise bootstrap
+mise bootstrap                                                    # зависимости форка
 cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..
 ```
 
