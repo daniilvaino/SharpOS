@@ -35,7 +35,7 @@ git clone -b sharpos/coreclr-port https://github.com/daniilvaino/dotnet-runtime-
 mise trust && mise bootstrap   # Linux со старым индексом apt: mise bootstrap --update
 ```
 
-Чтобы инструменты сами попадали в PATH внутри репозитория, mise нужно один раз включить в оболочке:
+Активация среды, один раз:
 
 ```
 echo 'eval "$(mise activate bash --shims)"' >> ~/.bashrc                            # bash
