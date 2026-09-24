@@ -8,11 +8,11 @@
 
 ## Как запустить
 
-Два способа поставить зависимости: [mise](https://mise.jdx.dev) на Windows, macOS и Linux — или [`flake.nix`](flake.nix), если у вас nix. Каждый раздел ниже самодостаточен, выбирать нужно один.
+Зависимости ставит [mise](https://mise.jdx.dev) либо [`flake.nix`](flake.nix) — разделы ниже независимы.
 
-Две вещи общие и обе необязательные. **Payloads**: `payloads/DOOM1.WAD`, картриджи `.nes` и PowerShell для самой SharpOS в `payloads/pwsh/PowerShell-7.6.5-win-x64/` — что куда класть, написано в [`payloads/README.md`](payloads/README.md). **Форк CoreCLR** нужен только для [hosted-яруса](#три-яруса-исполнения), то есть для стоковых .NET-программ вроде PowerShell; без него ядро собирается с флагом `-SkipCoreClr`.
+Необязательны [payloads](payloads/README.md) (`DOOM1.WAD`, картриджи `.nes`, PowerShell в `payloads/pwsh/PowerShell-7.6.5-win-x64/`) и форк CoreCLR: он нужен только для [hosted-яруса](#три-яруса-исполнения), без него сборка идёт с `-SkipCoreClr`.
 
-Лог ядра (COM1) пишется в `last_build.log`, вывод программ (COM3) в `last_app.log`, их ошибки (COM4) в `last_err.log`.
+Логи: ядро (COM1) — `last_build.log`, программы (COM3) — `last_app.log`, их ошибки (COM4) — `last_err.log`.
 
 ### Через mise
 
