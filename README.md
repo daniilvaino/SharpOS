@@ -8,10 +8,6 @@
 
 ## Как запустить
 
-Необязательны [payloads](payloads/README.md) (`DOOM1.WAD`, картриджи `.nes`, PowerShell в `payloads/pwsh/PowerShell-7.6.5-win-x64/`) и форк CoreCLR: он нужен только для [hosted-яруса](#три-яруса-исполнения), без него сборка идёт с `-SkipCoreClr`.
-
-Логи: ядро (COM1) — `last_build.log`, программы (COM3) — `last_app.log`, их ошибки (COM4) — `last_err.log`.
-
 ### Через mise
 
 Зависимости ставит mise по [`mise.toml`](mise.toml), так что начать нужно с него:
@@ -79,6 +75,14 @@ SHARPOS_GUI=1 pwsh ./run_build.ps1 -UsbOnly    # без форка добави�
 ```
 
 `run_build.ps1` собирает ядро, делает образ и запускает QEMU (прошивку UEFI даёт он же). Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`. Первый заход тянет из кеша около 4.6 GiB для оболочки ядра и 2.6 GiB для оболочки форка.
+
+### Payloads
+
+DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS кладутся в [`payloads/`](payloads/README.md).
+
+### Логи
+
+Ядро (COM1) — `last_build.log`, программы (COM3) — `last_app.log`, их ошибки (COM4) — `last_err.log`.
 
 ## Архитектурные инварианты
 
