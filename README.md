@@ -8,8 +8,6 @@
 
 ## Как запустить
 
-Зависимости ставит [mise](https://mise.jdx.dev) либо [`flake.nix`](flake.nix) — разделы ниже независимы.
-
 Необязательны [payloads](payloads/README.md) (`DOOM1.WAD`, картриджи `.nes`, PowerShell в `payloads/pwsh/PowerShell-7.6.5-win-x64/`) и форк CoreCLR: он нужен только для [hosted-яруса](#три-яруса-исполнения), без него сборка идёт с `-SkipCoreClr`.
 
 Логи: ядро (COM1) — `last_build.log`, программы (COM3) — `last_app.log`, их ошибки (COM4) — `last_err.log`.
