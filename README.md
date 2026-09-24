@@ -37,13 +37,10 @@ mise trust && mise bootstrap   # Linux со старым индексом apt: m
 
 Чтобы инструменты сами попадали в PATH внутри репозитория, mise нужно один раз включить в оболочке:
 
-```bash
-echo 'eval "$(mise activate bash --shims)"' >> ~/.bashrc   # bash
-echo 'eval "$(mise activate zsh --shims)"'  >> ~/.zshrc    # zsh
 ```
-
-```powershell
-Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'
+echo 'eval "$(mise activate bash --shims)"' >> ~/.bashrc                            # bash
+echo 'eval "$(mise activate zsh --shims)"'  >> ~/.zshrc                             # zsh
+Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expression'  # pwsh
 ```
 
 Сборка и запуск:
