@@ -66,6 +66,7 @@ namespace SharpOS.AppSdk
             // reason instead of running on into its first `new`.
             SharpOS.Std.NoRuntime.GcHeap.s_fatal = &Fatal;
             SharpOS.Std.NoRuntime.GcHeap.s_diagnostic = &OomDiagnostic;
+            SharpOS.Std.NoRuntime.GcHeap.s_heapTag = "app";
             if (!SharpOS.Std.NoRuntime.GcHeap.Init())
                 Fatal("app GC heap init failed");
 

@@ -53,7 +53,17 @@ namespace SharpOS.Std.NoRuntime
             ulong size64 = (ulong)mt->BaseSize + ((ulong)(uint)numElements * (ulong)mt->ComponentSize);
             size64 = (size64 + 7UL) & ~7UL;
             if (size64 > GcHeap.MaxAllocationSize)
+            {
+                // Say what was asked for before refusing. This path never
+                // reaches AllocateRaw, so without this the refusal report
+                // prints whatever the PREVIOUS allocation happened to be —
+                // and it did: a probe asking for an impossible array produced
+                // "request=192 ... largest=51936", which reads as an
+                // allocator that refused a block 270 times too large. It
+                // refused nothing; the number belonged to something else.
+                GcHeap.NoteRefusedRequest(size64);
                 throw GcHeap.OutOfMemory();
+            }
 
             void* obj = GcHeap.AllocateRaw((uint)size64);
             if (obj == null)

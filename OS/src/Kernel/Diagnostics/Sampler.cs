@@ -185,6 +185,83 @@ namespace OS.Kernel.Diagnostics
             }
         }
 
+        // What a suppressed window spent its time waiting on, as deltas.
+        //
+        // Printed only when something moved: a genuinely empty window says
+        // nothing and should cost nothing to read past.
+        private static ulong s_waitDiskLog, s_waitSerial, s_waitTerminal;
+        private static ulong s_waitLock, s_waitUsb, s_waitScreen, s_waitProgram;
+
+        // Takes the deltas without printing them, so the baseline always
+        // describes the window just ended and never a span of them.
+        private static void ConsumeIdleWaits()
+        {
+            s_waitDiskLog  = PerfCounters.Read(PerfCounter.SinkDiskLogTsc);
+            s_waitSerial   = PerfCounters.Read(PerfCounter.SinkSerialTsc);
+            s_waitTerminal = PerfCounters.Read(PerfCounter.SinkTerminalTsc);
+            s_waitLock     = PerfCounters.Read(PerfCounter.TerminalLockTsc);
+            s_waitUsb      = PerfCounters.Read(PerfCounter.UsbWaitTicks);
+            s_waitScreen   = PerfCounters.Read(PerfCounter.ScreenTicks);
+            s_waitProgram  = PerfCounters.Read(PerfCounter.ProgramWriteTicks);
+        }
+
+        private static void ReportIdleWaits()
+        {
+            ulong diskLog  = PerfCounters.Read(PerfCounter.SinkDiskLogTsc);
+            ulong serial   = PerfCounters.Read(PerfCounter.SinkSerialTsc);
+            ulong terminal = PerfCounters.Read(PerfCounter.SinkTerminalTsc);
+            ulong lockTsc  = PerfCounters.Read(PerfCounter.TerminalLockTsc);
+            ulong usb      = PerfCounters.Read(PerfCounter.UsbWaitTicks);
+            ulong screen   = PerfCounters.Read(PerfCounter.ScreenTicks);
+            ulong program  = PerfCounters.Read(PerfCounter.ProgramWriteTicks);
+
+            ulong dDisk = diskLog - s_waitDiskLog;
+            ulong dSer  = serial - s_waitSerial;
+            ulong dTerm = terminal - s_waitTerminal;
+            ulong dLock = lockTsc - s_waitLock;
+            ulong dUsb  = usb - s_waitUsb;
+            ulong dScr  = screen - s_waitScreen;
+            ulong dProg = program - s_waitProgram;
+
+            s_waitDiskLog = diskLog; s_waitSerial = serial; s_waitTerminal = terminal;
+            s_waitLock = lockTsc; s_waitUsb = usb; s_waitScreen = screen;
+            s_waitProgram = program;
+
+            if ((dDisk | dSer | dTerm | dLock | dUsb | dScr | dProg) == 0)
+                return;
+
+            PerfLine("[idlewait] disklog=");
+            WriteNumber(dDisk);
+            PerfLine(" serial=");
+            WriteNumber(dSer);
+            PerfLine(" term=");
+            WriteNumber(dTerm);
+            PerfLine(" lock=");
+            WriteNumber(dLock);
+            PerfLine(" usb=");
+            WriteNumber(dUsb);
+            PerfLine(" screen=");
+            WriteNumber(dScr);
+            PerfLine(" progwrite=");
+            WriteNumber(dProg);
+            PerfLine("\r\n");
+        }
+
+        private static void WriteNumber(ulong value)
+        {
+            char* digits = stackalloc char[20];
+            int count = 0;
+            do
+            {
+                digits[count++] = (char)('0' + (int)(value % 10UL));
+                value /= 10UL;
+            }
+            while (value != 0);
+
+            while (count > 0)
+                Platform.WriteChar(digits[--count], OutputChannel.Perf);
+        }
+
         private static void PerfLine(string text)
         {
             for (int i = 0; i < text.Length; i++)
@@ -313,10 +390,29 @@ namespace OS.Kernel.Diagnostics
                 // Idle is not always nothing: a hang that WAITS looks exactly
                 // like a prompt with nobody typing. Say where the threads are,
                 // since where the CPU is has no answer worth printing.
+                //
+                // And say what the window WAITED on. A profile by CPU time is
+                // blind here by construction — the CPU was in the halt — so a
+                // window that took fifteen seconds to answer a keystroke looks
+                // exactly like one where nobody touched the machine. The sinks
+                // below are where a paint can actually spend that time: the
+                // disk log (on the rig it is a USB stick), the serial ports,
+                // the terminal engine and the lock in front of it, and the USB
+                // waits underneath all of them.
+                ReportIdleWaits();
+
                 if (Probes.ThreadDumpWhenIdle)
                     ThreadDump.Print("idle window");
                 return;
             }
+
+            // A window that had work of its own reports through Report()
+            // below, and its sink deltas are not printed — but they must
+            // still be consumed, or the next suppressed window would show
+            // them as its own. The first version did not, and the first big
+            // number it produced covered six program runs while claiming to
+            // cover ten seconds.
+            ConsumeIdleWaits();
 
             Report();
 

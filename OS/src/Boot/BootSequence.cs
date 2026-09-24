@@ -133,6 +133,7 @@ namespace OS.Boot
             // it is least often: a swept heap that cannot meet one large
             // request looks identical from the exception alone.
             SharpOS.Std.NoRuntime.GcHeap.s_diagnostic = &OomDiagnostic;
+            SharpOS.Std.NoRuntime.GcHeap.s_heapTag = "kernel";
 
             Log.Write(LogLevel.Info, "on the kernel stack, installing the IDT");
             bool idtOk = Idt.Install(bootInfo);

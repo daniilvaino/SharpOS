@@ -346,7 +346,30 @@ namespace SharpOS.Std.NoRuntime
         // ask for a formatted string.
         public static delegate*<byte*, void> s_diagnostic;
 
+        /// <summary>Which heap this is, for the refusal report.</summary>
+        /// <remarks>
+        /// The kernel and every application run their own copy of this class
+        /// over their own memory, and both print through s_diagnostic to the
+        /// same log. Three refusals came back unlabelled and could not be told
+        /// apart: one of them had four segments and another two hundred and
+        /// fifty-six, which is the only reason it was obvious they were
+        /// different heaps at all.
+        /// </remarks>
+        public static string s_heapTag;
+
         private static uint s_lastRequest;
+
+        /// <summary>Records a size refused before the allocator was reached.</summary>
+        /// <remarks>
+        /// RhpNewArray rejects an impossible length without calling
+        /// AllocateRaw at all, so the size never reaches s_lastRequest and
+        /// the refusal report names the previous allocation instead. Clamped
+        /// rather than truncated: the number is for a human, and a 64-bit
+        /// request that does not fit in the field should read as enormous,
+        /// not as whatever the low half happens to be.
+        /// </remarks>
+        public static void NoteRefusedRequest(ulong size)
+            => s_lastRequest = size > uint.MaxValue ? uint.MaxValue : (uint)size;
 
         /// <summary>Shape of the free memory: how much, in how many pieces,
         /// and how big the biggest one is.</summary>
@@ -393,9 +416,11 @@ namespace SharpOS.Std.NoRuntime
 
             GetFreeStats(out ulong freeBytes, out uint blocks, out uint largest);
 
-            byte* line = stackalloc byte[160];
+            byte* line = stackalloc byte[224];
             int n = 0;
-            Put(line, ref n, "[oom] request=");
+            Put(line, ref n, "[oom] heap=");
+            Put(line, ref n, s_heapTag ?? "?");
+            Put(line, ref n, " request=");
             PutULong(line, ref n, s_lastRequest);
             Put(line, ref n, " free=");
             PutULong(line, ref n, freeBytes);
@@ -405,6 +430,17 @@ namespace SharpOS.Std.NoRuntime
             PutULong(line, ref n, largest);
             Put(line, ref n, " segments=");
             PutULong(line, ref n, s_segmentCount);
+
+            // Where the free memory sits, by size class, and which class the
+            // request needed. A refusal whose largest block dwarfs the request
+            // is not a shortage — it is a search that did not look, and these
+            // two numbers are what tell the two apart at a glance.
+            Put(line, ref n, " mask=0x");
+            PutHex(line, ref n, NonEmptyBucketMask());
+            Put(line, ref n, " wanted=");
+            PutULong(line, ref n, (ulong)BucketOf(
+                s_lastRequest < MinFreeBlockSize ? MinFreeBlockSize
+                : (s_lastRequest + (ObjectAlignment - 1)) & ~(ObjectAlignment - 1)));
             Put(line, ref n, "\n");
             line[n] = 0;
 
@@ -415,6 +451,19 @@ namespace SharpOS.Std.NoRuntime
         {
             for (int i = 0; i < text.Length && at < 158; i++)
                 buffer[at++] = (byte)text[i];
+        }
+
+        private static void PutHex(byte* buffer, ref int at, ulong value)
+        {
+            const string digits = "0123456789ABCDEF";
+            bool started = false;
+            for (int shift = 28; shift >= 0; shift -= 4)
+            {
+                int nibble = (int)((value >> shift) & 0xF);
+                if (nibble == 0 && !started && shift != 0) continue;
+                started = true;
+                if (at < 222) buffer[at++] = (byte)digits[nibble];
+            }
         }
 
         private static void PutULong(byte* buffer, ref int at, ulong value)
@@ -535,6 +584,17 @@ namespace SharpOS.Std.NoRuntime
                 allocated = AllocateRawCore(size);
                 if (s_leaveCritical != null) s_leaveCritical();
             }
+
+            // Re-stated here, and this is not redundant. The collection above
+            // runs arbitrary code, and anything it allocates comes back
+            // through this method and overwrites the remembered size. The
+            // refusal report then names that allocation instead of the one
+            // that failed — which is how a report came back reading
+            // "request=192 ... largest=51936" and looked like a search that
+            // refused a block 270 times larger than it needed. The search was
+            // fine; the label was wrong.
+            if (allocated == null)
+                s_lastRequest = size;
 
             return allocated;
         }

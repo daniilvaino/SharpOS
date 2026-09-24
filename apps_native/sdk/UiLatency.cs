@@ -59,7 +59,21 @@ namespace SharpOS.AppSdk
             s_pending = false;
 
             ulong now = System.Diagnostics.Stopwatch.ReadCounter();
-            if (now <= s_startTicks) return;
+
+            // A clock that did not move, or moved backwards, is not a reason
+            // to say nothing. This return used to be silent, and it made the
+            // whole meter silent with it: a frame that is not counted never
+            // reaches the report threshold, so "no [uilat] lines" read as
+            // "nobody pressed anything" when it meant "the clock is wrong".
+            // Thirty-two keystrokes on the rig produced not one line, and
+            // there was no way to tell which of the two it was.
+            if (now <= s_startTicks)
+            {
+                s_skipped++;
+                if (s_skipped == 1 || (s_skipped % ReportEvery) == 0)
+                    ReportStalled(now);
+                return;
+            }
 
             ulong elapsed = now - s_startTicks;
             s_sumTicks += elapsed;
@@ -77,11 +91,45 @@ namespace SharpOS.AppSdk
             s_cellsThisKey += cells;
         }
 
+        // Frames dropped because the clock did not advance. Not a BCL-style
+        // counter: it exists so that the meter can say why it is empty.
+        private static ulong s_skipped;
+
+        // Says the clock stood still, and shows both readings. One line, and
+        // only on the first skip and every thirty-second after: a broken
+        // clock repeats, and a report that repeats with it buries the log.
+        private static void ReportStalled(ulong now)
+        {
+            if (!AppHost.HasDiagnosticStream) return;
+
+            byte* line = stackalloc byte[128];
+            int n = 0;
+            Put(line, ref n, "[uilat] clock did not advance: start=");
+            PutULong(line, ref n, s_startTicks);
+            Put(line, ref n, " now=");
+            PutULong(line, ref n, now);
+            Put(line, ref n, " skipped=");
+            PutULong(line, ref n, s_skipped);
+            Put(line, ref n, " counted=");
+            PutULong(line, ref n, s_keys);
+            Put(line, ref n, "\n");
+            line[n] = 0;
+            AppHost.WriteDiagnostic(line);
+        }
+
         private static void Report()
         {
             ulong frequency = (ulong)System.Diagnostics.Stopwatch.Frequency;
+
+            // Both refusals named. The second one used to throw the report
+            // away and reset the counters, so the meter looked as though it
+            // had never reached the threshold at all.
             if (frequency == 0 || !AppHost.HasDiagnosticStream)
             {
+                if (AppHost.HasErrorStream)
+                    AppHost.WriteError(frequency == 0
+                        ? "[uilat] no clock frequency; measurement discarded\n"
+                        : "[uilat] no diagnostic stream; measurement discarded\n");
                 Reset();
                 return;
             }

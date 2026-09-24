@@ -114,6 +114,21 @@ namespace OS.Kernel.Diagnostics
         private struct Values { public fixed long V[Slots]; }
 
         private static Values s_values;
+
+        /// <summary>One counter's current value.</summary>
+        /// <remarks>
+        /// NoInlining, like the allocator's counters and for the same reason:
+        /// a caller that reads this either side of some work is measuring that
+        /// work, and two plain reads of a static around a call the compiler
+        /// believes writes nothing can be folded into one (limits doc §11).
+        /// </remarks>
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        public static ulong Read(PerfCounter counter)
+        {
+            fixed (long* v = s_values.V)
+                return (ulong)System.Threading.Interlocked.Add(ref v[(int)counter], 0);
+        }
         private static Values s_mark;
         private static ulong s_markCounter;
         private static ulong s_markTsc;
