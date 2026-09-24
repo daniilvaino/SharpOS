@@ -26,13 +26,17 @@ environment because its Arcade downloads its own .NET SDK and builds crossgen2
 and friends as ordinary binaries that expect `/lib64/ld-linux-x86-64.so.2`.
 `nix run .#fork -- -c "…"` runs one command in that environment, for scripts.
 
-Two things to know in the default shell. After a restore, run `patch-nupkgs
-.dotnet-home/.nuget/packages ~/.nuget/packages`: `ilc` and the other native
-tools come from NuGet as plain ELF binaries and do not start unpatched
-(`run_build.ps1` keeps its cache in the repo, the other scripts use `~/.nuget`).
-And make the xwin splat on the machine that will use it — the one xwin writes
-on Linux carries the lowercase symlinks (`kernel32.lib` → `kernel32.Lib`) that
-a case-sensitive filesystem needs, and a splat copied from Windows does not.
+`ilc` arrives from NuGet as a plain ELF binary and does not start on nix until
+patchelf has been over it. Nothing to do by hand: the `SharpOsPatchNupkgs`
+target in [`SharpOsNativeLink.props`](../SharpOsNativeLink.props) runs
+`patch-nupkgs` between the restore and `IlcCompile`, the way nixpkgs does it for
+its own imperative .NET build (`patch-restored-packages.proj`). The target is
+driven by `SHARPOS_PATCH_NUPKGS`, which only the nix shell sets.
+
+One thing does need care: make the xwin splat on the machine that will use it.
+The one xwin writes on Linux carries the lowercase symlinks (`kernel32.lib` →
+`kernel32.Lib`) that a case-sensitive filesystem needs; a splat copied from
+Windows does not.
 
 Optional: **Windows Debugging Tools** for `tools/symbolize.ps1` (needs
 `dbghelp.dll` from the Windows Kits Debuggers directory; only for diagnosing

@@ -46,8 +46,6 @@ Add-Content $PROFILE 'mise activate pwsh --shims | Out-String | Invoke-Expressio
 
 ```bash
 nix develop            # ядро, приложения, образ, QEMU
-patch-nupkgs .dotnet-home/.nuget/packages ~/.nuget/packages   # после каждого restore
-
 nix develop .#fork     # форк CoreCLR
 ```
 
