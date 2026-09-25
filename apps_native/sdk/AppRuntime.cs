@@ -1,4 +1,4 @@
-namespace SharpOS.AppSdk
+﻿namespace SharpOS.AppSdk
 {
     internal static unsafe class AppRuntime
     {
@@ -114,6 +114,17 @@ namespace SharpOS.AppSdk
             // from the static roots the step above just materialised — before
             // that there is nothing to keep alive and nothing to sweep.
             AppGC.Install();
+
+            // Who this actually is. Every app goes through here, so no app has
+            // to remember to say it, and it is said before the app can take
+            // over the screen. The kernel prints its own id in the banner; an
+            // app built from a different tree used to be indistinguishable
+            // from one built with it, and on 2026-09-24 that cost an evening.
+            AppHost.WriteString("[app] ");
+            AppHost.WriteString(AppBuildInfo.Name);
+            AppHost.WriteString(" build ");
+            AppHost.WriteString(AppBuildInfo.Id);
+            AppHost.WriteChar('\n');
         }
 
         // Exit code of an app stopped by a failure it cannot survive, the

@@ -1,4 +1,4 @@
-# run_linux_ref.ps1
+﻿# run_linux_ref.ps1
 # ----------------------------------------------------------------------------
 # Run apps_managed/Bench on stock Linux inside the same QEMU as SharpOS.
 #
@@ -62,7 +62,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"   # Invoke-WebRequest is ~10x slower with the bar
 
-$repoRoot = Split-Path -Parent $PSCommandPath
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $cache = Join-Path $repoRoot "OS\.qemu\linux-ref"
 $benchBin = Join-Path $repoRoot "apps_managed\Bench\bin\Release\net10.0"
 $benchHostBin = Join-Path $repoRoot "apps_managed\BenchHost\bin\Release\net10.0"

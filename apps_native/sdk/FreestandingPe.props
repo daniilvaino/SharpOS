@@ -1,4 +1,4 @@
-<Project>
+﻿<Project>
 
   <!-- Сшивание PE через lld-link + xwin из тулчейна SharpOS, на любом хосте. -->
   <Import Project="$(MSBuildThisFileDirectory)..\..\SharpOsNativeLink.props" />
@@ -269,6 +269,31 @@
       <LinkerArg Remove="&quot;$(IlcSdkPath)Runtime.VxsortEnabled$(LibrarySuffix)&quot;" />
       <NativeLibrary Remove="$(IlcSdkPath)bootstrapper$(ObjectSuffix)" />
       <LinkerArg Remove="&quot;$(IlcSdkPath)bootstrapper$(ObjectSuffix)&quot;" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Build id, same shape as the kernel's (OS.csproj GenerateBuildInfo) and
+       fed by the same helper: build.ps1 passes /p:BuildId=sha[+dirty][-tag].
+       Every app carries its own, because the kernel's WriteBuildId service
+       reports the KERNEL's id, and an app built three days earlier reported it
+       just as confidently. That is how the rig spent an evening running a
+       stale launcher against a fresh kernel. AppRuntime.Initialize prints this
+       one, so the first line an app writes says what it is.
+       NOTE: $(IntermediateOutputPath) is only set after SDK init, so compute
+       the path INSIDE the target. -->
+  <PropertyGroup>
+    <BuildId Condition="'$(BuildId)' == ''">local</BuildId>
+  </PropertyGroup>
+
+  <Target Name="GenerateAppBuildInfo" BeforeTargets="BeforeCompile">
+    <PropertyGroup>
+      <AppBuildInfoGeneratedFile>$(IntermediateOutputPath)AppBuildInfo.g.cs</AppBuildInfoGeneratedFile>
+      <AppBuildInfoFileContents>namespace SharpOS.AppSdk%0A{%0A    internal static class AppBuildInfo%0A    {%0A        internal const string Id = "$(BuildId)"%3B%0A        internal const string Name = "$(AssemblyName)"%3B%0A    }%0A}%0A</AppBuildInfoFileContents>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(AppBuildInfoGeneratedFile)" Lines="$(AppBuildInfoFileContents)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(AppBuildInfoGeneratedFile)" />
+      <FileWrites Include="$(AppBuildInfoGeneratedFile)" />
     </ItemGroup>
   </Target>
 

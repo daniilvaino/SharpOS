@@ -13,7 +13,7 @@
   Программная эмуляция сама по себе даёт примерно ×20 на обычном коде, поэтому
   `x host` мешает цену эмуляции с ценой SharpOS.
 - `linux qemu` — тот же `Bench.dll` на Debian в том же QEMU (TCG, тот же `-cpu`,
-  один процессор, 2 ГиБ): `run_linux_ref.ps1`, результат —
+  один процессор, 2 ГиБ): `tools/run_linux_ref.ps1`, результат —
   `tools/bench-qemu-linux-reference.log`. Эмуляция есть в обоих, так что
   `x linux` (последний столбец к нему) — то, что стоит сам SharpOS.
 - Строки `AOT …` — `apps_native/BenchAot` (`BENCHAOT.EXE` из лаунчера): та же

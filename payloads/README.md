@@ -12,7 +12,7 @@
 | `starling\*.dll` | `\sharpos\starling\` | `StarlingProbe.dll` |
 
 Starling — низ движка браузера (HTML, DOM, CSS, раскладка, display-list).
-Собирается скриптом `build_starling.ps1` из дерева Starling, клонированного
+Собирается скриптом `tools/build_starling.ps1` из дерева Starling, клонированного
 рядом с репозиторием; сам движок в гит не попадает. Верхние слои не берём:
 `Engine` и `Bindings` требуют net11, `Bindings` тянет нативный Wasmtime,
 `Paint` целиком — SixLabors и wgpu, `Net` — сокеты, которых у нас нет. Из

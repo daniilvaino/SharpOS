@@ -42,11 +42,11 @@ cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..
 Ядро, приложения и запуск:
 
 ```powershell
-./build_launcher.ps1
+./build.ps1 launcher
 $env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly    # без форка добавить -SkipCoreClr
 ```
 
-`run_build.ps1` собирает ядро, делает образ и запускает QEMU. Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`.
+`run_build.ps1` собирает ядро, делает образ и запускает QEMU. `build.ps1` собирает приложения: без аргумента — все, `./build.ps1 list` покажет цели.
 
 ### Через nix
 
@@ -71,11 +71,11 @@ cd dotnet-runtime-sharpos; ./build_clr_sharpos.ps1 -Clean; cd ..
 
 ```powershell
 nix develop --command pwsh
-./build_launcher.ps1
+./build.ps1 launcher
 $env:SHARPOS_GUI=1; ./run_build.ps1 -UsbOnly    # без форка добавить -SkipCoreClr
 ```
 
-`run_build.ps1` собирает ядро, делает образ и запускает QEMU (прошивку UEFI даёт он же). Остальные приложения собираются так же, как лаунчер: `build_fetch` / `aottests` / `benchaot` / `doom` / `shell` / `tricnes` / `fami`. Первый заход тянет из кеша около 4.6 GiB для оболочки ядра и 2.6 GiB для оболочки форка.
+`run_build.ps1` собирает ядро, делает образ и запускает QEMU (прошивку UEFI даёт он же). `build.ps1` собирает приложения: без аргумента — все, `./build.ps1 list` покажет цели. Первый заход тянет из кеша около 4.6 GiB для оболочки ядра и 2.6 GiB для оболочки форка.
 
 ### Payloads
 

@@ -123,7 +123,7 @@ None of this is needed to build or to run under QEMU — skip it on a first
 setup. It matters when you want an image to boot on real hardware, in
 VirtualBox, or to hand to someone else.
 
-### `build_media_xorriso.ps1` — VHD and ISO
+### `tools/build_media_xorriso.ps1` — VHD and ISO
 
 Builds a partitioned VHD and a bootable ISO out of the staged ESP. It shells
 out to five external tools, each resolved from `PATH` first and then from a
@@ -148,22 +148,28 @@ This is the one place where MSYS2 is genuinely the path of least resistance:
 QEMU alone has a self-contained installer, but mtools/xorriso/sfdisk do not. `mise bootstrap` installs MSYS2 and mtools on
 Windows for exactly this reason — the ESP image is built with `mformat`/`mcopy`.
 
-### `run_vbox.ps1` — VirtualBox
+### `tools/run_vbox.ps1` — VirtualBox
 
 Runs the produced media under VirtualBox instead of QEMU. Needs VirtualBox
 installed for `VBoxManage`; the path can be overridden with `-VBoxManagePath`.
 Useful as a second opinion when a failure smells like a QEMU quirk rather than
 a real bug.
 
-### Application build scripts
+### `build.ps1` — the applications
 
-`build_launcher.ps1`, `build_fetch.ps1`, `build_aottests.ps1`, `build_benchaot.ps1`,
-`build_doom.ps1`, `build_shell.ps1`, `build_tricnes.ps1`, `build_fami.ps1` build the
-freestanding PE apps under `apps_native/`. They need only the .NET SDK and `lld-link`
-— no MSVC, no Windows SDK libraries, no WSL — and `run_build.ps1` stages their output
-into the image if it is present.
+Builds the freestanding PE apps under `apps_native/`: `./build.ps1` for all of
+them, `./build.ps1 launcher` for one, `./build.ps1 list` for the targets. It
+needs only the .NET SDK and `lld-link` — no MSVC, no Windows SDK libraries, no
+WSL — and `run_build.ps1` stages the output into the image if it is there.
 
-The `probe_*.ps1` scripts are one-off analysis helpers for EH and unwind data,
+Targets are discovered, not listed: a project counts as an application when it
+imports `apps_native/sdk/FreestandingPe.props`. So a new app is built by
+existing, and the emulator cores beside them (which do not import it) are not
+mistaken for one. Tab completes the target from the same walk (`tools/Apps.ps1`,
+shared with the completer so the two cannot drift), including `.csproj` paths
+once the word looks like one.
+
+`tools/probes/probe_*.ps1` are one-off analysis helpers for EH and unwind data,
 not part of any build.
 
 ## Build order

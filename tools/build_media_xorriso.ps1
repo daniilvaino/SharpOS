@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     # CoreCLR fork build to link/ship (Debug|Release). Forwarded to
@@ -11,8 +11,8 @@ param(
     # symbol instead of saying what was actually skipped.
     [switch]$SkipCoreClr,
     [switch]$NoBuild,
-    [string]$EspSource = (Join-Path $PSScriptRoot "OS\.qemu\esp"),
-    [string]$OutputDir = (Join-Path $PSScriptRoot "OS\.qemu\media"),
+    [string]$EspSource = (Join-Path (Split-Path -Parent $PSScriptRoot) "OS\.qemu\esp"),
+    [string]$OutputDir = (Join-Path (Split-Path -Parent $PSScriptRoot) "OS\.qemu\media"),
     [int]$EspImageSizeMb = 512,
     [int]$VhdDiskSizeMb = 768,
     [int]$VhdEspStartLba = 2048,
@@ -371,7 +371,7 @@ Write-Host "sfdisk: $sfdiskExe"
 
 if (-not $NoBuild) {
     Write-Host "Building SharpOS (NoRun)..."
-    & (Join-Path $PSScriptRoot "run_build.ps1") -Configuration $Configuration -ForkConfig $ForkConfig -NoRun -SkipCoreClr:$SkipCoreClr
+    & (Join-Path (Split-Path -Parent $PSScriptRoot) "run_build.ps1") -Configuration $Configuration -ForkConfig $ForkConfig -NoRun -SkipCoreClr:$SkipCoreClr
     if ($LASTEXITCODE -ne 0) {
         throw "run_build.ps1 failed with exit code $LASTEXITCODE"
     }

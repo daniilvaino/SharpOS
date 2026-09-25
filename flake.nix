@@ -165,7 +165,7 @@
             cat <<'EOF'
       SharpOS: ядро, приложения, образ.
 
-        ./build_launcher.ps1               и остальные build_*.ps1
+        ./build.ps1                        приложения (list — цели)
         ./run_build.ps1 -UsbOnly           ядро, образ, QEMU
 
       Форк CoreCLR собирается в другой оболочке: nix develop .#fork

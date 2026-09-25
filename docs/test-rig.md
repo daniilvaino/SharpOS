@@ -23,7 +23,7 @@
 ## Как идёт прогон
 
 ```
-.\build_shell.ps1                    # если менялась оболочка
+.\build.ps1 shell                    # если менялась оболочка
 .\run_build.ps1 -Autorun             # кладёт батарею как \apps\AUTORUN.SH
 C:\android-home\rig\deploy.ps1       # шлёт изменившееся на телефон
 C:\android-home\rig\plug.ps1 pulse   # питание на минуту — ноутбук стартует

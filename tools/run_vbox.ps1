@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Fully-automated VirtualBox run for SharpOS.
 
@@ -68,10 +68,10 @@ param(
     [switch]$Stop,
 
     [string]$BuildImagesScript = (Join-Path $PSScriptRoot "build_media_xorriso.ps1"),
-    [string]$OutputDir         = (Join-Path $PSScriptRoot "OS\.qemu\media"),
+    [string]$OutputDir         = (Join-Path (Split-Path -Parent $PSScriptRoot) "OS\.qemu\media"),
     [string]$VhdPath,
     [string]$IsoPath,
-    [string]$VmBaseFolder      = (Join-Path $PSScriptRoot ".vbox"),
+    [string]$VmBaseFolder      = (Join-Path (Split-Path -Parent $PSScriptRoot) ".vbox"),
 
     [int]$MemoryMb = 2048,
     [int]$CpuCount = 1,

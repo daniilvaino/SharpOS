@@ -1,4 +1,4 @@
-# build_starling.ps1 -- собрать низ движка Starling в payloads\starling\.
+﻿# build_starling.ps1 -- собрать низ движка Starling в payloads\starling\.
 #
 # Starling (https://github.com/starling-browser/starling, Apache-2.0) — движок
 # браузера целиком на .NET. Берём только НИЖНИЕ слои: HTML -> DOM -> CSS ->
@@ -21,7 +21,7 @@ param(
     [string]$Configuration = "Release"
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = Split-Path -Parent $PSCommandPath
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 
 if ($StarlingRoot -eq "") { $StarlingRoot = Join-Path (Split-Path -Parent $repoRoot) "starling" }
 if (-not (Test-Path -LiteralPath (Join-Path $StarlingRoot "src/Starling.Layout"))) {

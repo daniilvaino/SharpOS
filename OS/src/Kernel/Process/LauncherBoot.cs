@@ -163,7 +163,7 @@ namespace OS.Kernel.Process
             UiText.WriteUInt(fileBuffer.Length);
             DebugLog.EndLine();
 
-            // Apps are freestanding win-x64 PEs (see build_launcher.ps1).
+            // Apps are freestanding win-x64 PEs (see build.ps1).
             // PeLoader flattens + maps the image at its ImageBase and yields
             // the LoadedImage the ProcessImageBuilder pipeline below consumes.
             if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out LoadedImage loadedImage, out int peStage))

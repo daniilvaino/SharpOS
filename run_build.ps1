@@ -289,23 +289,13 @@ $env:DOTNET_CLI_HOME = Join-Path $repoRoot ".dotnet-home"
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1"
 New-Item -ItemType Directory -Force -Path $env:DOTNET_CLI_HOME | Out-Null
 
-# Compose BuildId: <git-short-sha>[-<tag-from-build-tag.txt>]
-# Tag is a free-form label the user can put in build-tag.txt (in repo root);
-# leave the file empty to show only the SHA. If git is unavailable, fall back
-# to "local". The resulting value is passed into dotnet publish as
-# /p:BuildId=..., which OS.csproj turns into a generated BuildInfo.g.cs.
-$buildId = "local"
-$gitSha = (& git -C $repoRoot rev-parse --short HEAD 2>$null)
-if ($LASTEXITCODE -eq 0 -and $gitSha) {
-    $buildId = $gitSha.Trim()
-}
-$tagFile = Join-Path $repoRoot "build-tag.txt"
-if (Test-Path -LiteralPath $tagFile) {
-    $tag = (Get-Content -LiteralPath $tagFile -Raw).Trim()
-    if ($tag) {
-        $buildId = "$buildId-$tag"
-    }
-}
+# Compose BuildId: <git-short-sha>[+dirty][-<tag-from-build-tag.txt>]. Shared
+# with build.ps1 so the kernel and the apps in one image name the same state --
+# see tools/BuildId.ps1 for why "+dirty" is there. The value is passed into
+# dotnet publish as /p:BuildId=..., which OS.csproj turns into a generated
+# BuildInfo.g.cs.
+. (Join-Path $repoRoot "tools/BuildId.ps1")
+$buildId = Get-SharpOsBuildId -RepoRoot $repoRoot
 
 # CoffStub.Generator hosts an MSBuild task that OS.csproj imports through a
 # .targets file rather than a ProjectReference, so — unlike BootAsm.Generator —
@@ -618,7 +608,7 @@ if (Test-Path -LiteralPath (Join-Path $benchProj "Bench.csproj")) {
 
 # StarlingProbe: низ движка Starling (HTML/DOM/CSS/раскладка/display-list)
 # на hosted-ярусе. Сборки Starling лежат в payloads/starling/ — их кладёт
-# build_starling.ps1; в гит они не попадают, как WAD и pwsh. Верхние слои
+# tools/build_starling.ps1; в гит они не попадают, как WAD и pwsh. Верхние слои
 # движка (Engine, Bindings) не везём: им нужны net11, Wasmtime и сеть.
 $starlingLib  = Join-Path $repoRoot "payloads\starling"
 $starlingDest = Join-Path $espSharpOSDir "starling"
@@ -700,8 +690,8 @@ foreach ($staleElf in @("HELLO.ELF", "ABIINFO.ELF", "MARKER.ELF", "HELLOCS.ELF",
     if (Test-Path -LiteralPath "$stalePath.abi") { Remove-Item -LiteralPath "$stalePath.abi" -Force }
 }
 
-# step137/138: freestanding win-x64 PE apps (built by build_launcher.ps1 /
-# build_fetch.ps1 / build_aottests.ps1). Stage each to ESP as <NAME>.EXE; the
+# step137/138: freestanding win-x64 PE apps (built by build.ps1). Stage each
+# to ESP as <NAME>.EXE; the
 # kernel dispatches on the MZ magic to PeLoader. Absent build output just skips
 # (that app won't appear in the launcher).
 #
@@ -734,8 +724,8 @@ foreach ($peApp in $peApps) {
     }
     elseif ($peApp.Dest -eq "LAUNCHER.EXE") {
         # Без лаунчера образ грузится в пустоту. Так бывает, когда
-        # build_launcher.ps1 не запускали или ILC не смог стартовать (NixOS без nix-ld).
-        Write-Warning "LAUNCHER.EXE не собран ($peSrc) — запустите pwsh ./build_launcher.ps1"
+        # build.ps1 не запускали или ILC не смог стартовать (NixOS без nix-ld).
+        Write-Warning "LAUNCHER.EXE не собран ($peSrc) — запустите pwsh ./build.ps1 launcher"
     }
     if (Test-Path -LiteralPath "$peDst.abi") {
         Remove-Item -LiteralPath "$peDst.abi" -Force
