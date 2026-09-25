@@ -559,6 +559,14 @@
         // producing keys nobody typed.
         public const bool SerialInput = true;
 
+        // Say hello to a FIDO key: CTAPHID_INIT on the broadcast channel.
+        //
+        // The one command that proves the transport end to end without a
+        // credential, a user gesture or any state on the key — it hands over
+        // eight bytes and they must come back. Silent on a machine with no
+        // key, which is every machine but the rig with RS-Key plugged in.
+        public const bool CtapHidInit = true;
+
         // Stop the machine right after printing the USB list. On the test
         // hardware there is no serial, no log (the boot medium is USB and we
         // cannot read it post-EBS) and the screen scrolls past the answer

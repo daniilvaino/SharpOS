@@ -183,8 +183,118 @@ namespace OS.Kernel.Diagnostics
                 }
             }
 
+            if (Probes.CtapHidInit) ProbeCtapHid();
+
             ReportStorage();
             Summarise();
+        }
+
+        // Say hello to a security key, if one is plugged in.
+        //
+        // CTAPHID_INIT is the whole of it: eight bytes of nonce to the
+        // broadcast channel, and the key must send them back along with a
+        // channel of its own. Nothing else in the protocol can be checked
+        // without a credential or someone touching the key, and nothing else
+        // needs to be — if the nonce does not come back, the transport is not
+        // working and every command above it is guesswork.
+        private static void ProbeCtapHid()
+        {
+            if (!OS.Hal.Usb.UsbCtapHid.TryAttach())
+            {
+                // Silent about the ordinary case on purpose: most machines
+                // have no security key, and a line saying so every boot is
+                // noise. Only a key that is present and unusable is worth a
+                // word, and that is what TryAttach returning false after a
+                // FIDO interface was listed would mean.
+                return;
+            }
+
+            // Not random — there is no entropy source here worth the name, and
+            // the nonce is not a secret. It only has to be distinctive enough
+            // that an answer to someone else's INIT cannot be mistaken for
+            // ours, and a fixed pattern does that within one boot.
+            byte* nonce = stackalloc byte[8];
+            nonce[0] = 0x53; nonce[1] = 0x68; nonce[2] = 0x61; nonce[3] = 0x72;
+            nonce[4] = 0x70; nonce[5] = 0x4F; nonce[6] = 0x53; nonce[7] = 0x21;
+
+            Console.Write("[ctaphid] init frame=");
+            Console.WriteUInt(OS.Hal.Usb.UsbCtapHid.FrameSize);
+            Console.Write(" ");
+
+            if (!OS.Hal.Usb.UsbCtapHid.TryInit(nonce, out uint channel,
+                                               out byte version, out byte capabilities, 1000))
+            {
+                Console.WriteLine("NO ANSWER");
+                return;
+            }
+
+            Console.Write("channel=0x");
+            Console.WriteHex(channel, 8);
+            Console.Write(" protocol=");
+            Console.WriteUInt(version);
+            Console.Write(" caps=0x");
+            Console.WriteHex(capabilities, 2);
+            // The capability bits worth naming: WINK is a light, CBOR is
+            // CTAP2, and NMSG means CTAP1 is not there at all.
+            if ((capabilities & 0x01) != 0) Console.Write(" wink");
+            if ((capabilities & 0x04) != 0) Console.Write(" cbor");
+            if ((capabilities & 0x08) != 0) Console.Write(" no-msg");
+            Console.WriteLine(" PASS");
+
+            if ((capabilities & 0x04) != 0) ProbeGetInfo(channel);
+        }
+
+        // What the key says it can do, asked properly.
+        //
+        // authenticatorGetInfo needs no credential and no finger, and its
+        // answer runs to hundreds of bytes — so it is also the first thing
+        // that exercises the frame assembly in both directions, which is why
+        // it is worth asking before anything that needs a user.
+        //
+        // The answer is CBOR and is printed raw. Writing a decoder before
+        // seeing a single real byte of it would be inventing the shape of
+        // something we can simply look at, and the bytes are the record that
+        // outlives whatever decoder comes next.
+        private static void ProbeGetInfo(uint channel)
+        {
+            const int MaxInfo = 1024;
+            byte* info = stackalloc byte[MaxInfo];
+
+            Console.Write("[ctaphid] getInfo ");
+            if (!OS.Hal.Usb.UsbCtapHid.TryGetInfo(channel, info, MaxInfo,
+                                                  out int length, out byte status, 2000))
+            {
+                Console.Write("FAILED err=0x");
+                Console.WriteHex(OS.Hal.Usb.UsbCtapHid.LastError, 2);
+                Console.Write(" keepalives=");
+                Console.WriteUInt(OS.Hal.Usb.UsbCtapHid.LastKeepAlives);
+                Console.WriteLine("");
+                return;
+            }
+
+            Console.Write("status=0x");
+            Console.WriteHex(status, 2);
+            Console.Write(" cbor=");
+            Console.WriteUInt((uint)length);
+            Console.Write(" bytes keepalives=");
+            Console.WriteUInt(OS.Hal.Usb.UsbCtapHid.LastKeepAlives);
+            Console.WriteLine(status == 0 ? " PASS" : " (non-zero status)");
+
+            if (status != 0 || length <= 0) return;
+
+            // Sixteen to a line, so a log photographed off a screen is still
+            // countable.
+            for (int i = 0; i < length; i++)
+            {
+                if ((i & 15) == 0)
+                {
+                    if (i != 0) Console.WriteLine("");
+                    Console.Write("[ctaphid]   ");
+                }
+                Console.WriteHex(info[i], 2);
+                Console.Write(" ");
+            }
+            Console.WriteLine("");
         }
 
         // Read the serial port back for a few seconds and show what arrives.
@@ -360,6 +470,16 @@ namespace OS.Kernel.Diagnostics
                 {
                     Console.Write("none (stage=");
                     Console.WriteUInt(stage);
+                    // Stage 7 is the Configure Endpoint command, and the
+                    // controller says why it refused. Without the code the
+                    // line only reported that the endpoints did not come up.
+                    if (stage == 7)
+                    {
+                        Console.Write(" cmdCode=");
+                        Console.WriteUInt(hc.LastConfigureCode);
+                    }
+                    Console.Write(" lastCode=0x");
+                    Console.WriteHex(hc.LastCompletionCode);
                     Console.WriteLine(")");
                     continue;
                 }

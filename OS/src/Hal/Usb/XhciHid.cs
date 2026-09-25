@@ -93,6 +93,54 @@ namespace OS.Hal.Usb
             return true;
         }
 
+        /// <summary>
+        /// Send one report to this interface's interrupt OUT endpoint.
+        /// </summary>
+        /// <remarks>
+        /// The direction a keyboard never needed. CTAPHID is a conversation —
+        /// the host writes a command frame and the key answers on the IN
+        /// endpoint — so a transport that can only listen cannot start one.
+        /// </remarks>
+        public bool TryWriteReportOn(int function, byte* data, int length, uint timeoutMs)
+        {
+            if ((uint)function >= MaxHidFunctions || !_hid[function].InUse) return false;
+            if (_hid[function].EpOutRing == 0 || _hid[function].OutBuffer == 0) return false;
+            if (length <= 0 || length > _hid[function].EpOutMaxPacket) return false;
+
+            uint slotId = _hid[function].SlotId;
+
+            byte* dst = (byte*)_hid[function].OutBuffer;
+            for (int i = 0; i < length; i++) dst[i] = data[i];
+
+            uint* trb = (uint*)(_hid[function].EpOutRing + _hid[function].EpOutEnqueue * TrbSize);
+            trb[0] = (uint)_hid[function].OutBuffer;
+            trb[1] = (uint)(_hid[function].OutBuffer >> 32);
+            trb[2] = (uint)length;
+            trb[3] = (TRB_NORMAL << 10) | TRB_IOC | _hid[function].EpOutCycle;
+
+            _hid[function].EpOutEnqueue++;
+            if (_hid[function].EpOutEnqueue >= RingTrbs - 1)
+            {
+                uint* link = (uint*)(_hid[function].EpOutRing + (RingTrbs - 1) * TrbSize);
+                link[0] = (uint)_hid[function].EpOutRing;
+                link[1] = (uint)(_hid[function].EpOutRing >> 32);
+                link[2] = 0;
+                link[3] = (TRB_LINK << 10) | TRB_TOGGLE_CYCLE | _hid[function].EpOutCycle;
+                _hid[function].EpOutEnqueue = 0;
+                _hid[function].EpOutCycle ^= 1;
+            }
+
+            Write32(_doorbellBase + slotId * 4, _hid[function].EpOutDci);
+
+            if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, timeoutMs, out uint code, out _))
+            {
+                _lastCode = 0;
+                return false;
+            }
+            _lastCode = code;
+            return code == 1 || code == 13;
+        }
+
         // The slot-shaped calls, for callers that want whatever HID the device
         // has and have only ever met devices with one.
         public bool TryReadReport(uint slotId, byte* report, int max, uint timeoutMs)

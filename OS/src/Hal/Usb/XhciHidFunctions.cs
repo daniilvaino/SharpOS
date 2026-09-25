@@ -43,6 +43,18 @@ namespace OS.Hal.Usb
             public ulong ReportBuffer;
             public bool ReadOutstanding;
             public bool ReportPending;
+
+            // The other direction, when the interface declares one. A keyboard
+            // does not; CTAPHID does, because it is a conversation — the host
+            // sends a command frame and the key answers on the IN endpoint.
+            public byte EpOutAddress;
+            public ushort EpOutMaxPacket;
+            public byte EpOutInterval;
+            public uint EpOutDci;
+            public ulong EpOutRing;
+            public uint EpOutEnqueue;
+            public uint EpOutCycle;
+            public ulong OutBuffer;
         }
 
         private readonly HidFunction[] _hid = new HidFunction[MaxHidFunctions];
@@ -85,6 +97,14 @@ namespace OS.Hal.Usb
 
         public ushort HidReportDescLengthAt(int index)
             => (uint)index < MaxHidFunctions && _hid[index].InUse ? _hid[index].ReportDescLength : (ushort)0;
+
+        /// <summary>Packet size of the interface's IN endpoint — the frame size.</summary>
+        public ushort HidMaxPacketAt(int index)
+            => (uint)index < MaxHidFunctions && _hid[index].InUse ? _hid[index].EpMaxPacket : (ushort)0;
+
+        /// <summary>Can the host send to this interface, or only listen?</summary>
+        public bool HidHasOutAt(int index)
+            => (uint)index < MaxHidFunctions && _hid[index].InUse && _hid[index].EpOutRing != 0;
 
         /// <summary>
         /// Find a HID interface by what its report descriptor says it is.

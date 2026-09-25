@@ -30,6 +30,7 @@
         private const uint EPTYPE_BULK_OUT = 2;
         private const uint EPTYPE_BULK_IN = 6;
         private const uint EPTYPE_INTERRUPT_IN = 7;
+        private const uint EPTYPE_INTERRUPT_OUT = 3;
 
         private struct Functions
         {
@@ -223,6 +224,12 @@
 
                 _hid[i].ReportBuffer = DmaMemory.AllocPages(1);
                 if (_hid[i].ReportBuffer == 0) { failStage = 8; return false; }
+
+                if (_hid[i].EpOutAddress != 0)
+                {
+                    _hid[i].OutBuffer = DmaMemory.AllocPages(1);
+                    if (_hid[i].OutBuffer == 0) { failStage = 8; return false; }
+                }
             }
 
             // And now, with the device configured, ask each of them what it is
@@ -241,6 +248,40 @@
 
             d.Configured = true;
             return true;
+        }
+
+        /// <summary>Completion code of the last Configure Endpoint command.</summary>
+        public uint LastConfigureCode => _lastConfigureCode;
+        private uint _lastConfigureCode;
+
+        // bInterval means different things at different speeds, and the xHCI
+        // Interval field means a third thing: 125 microseconds shifted left by
+        // its value, always.
+        //
+        // High speed states the period logarithmically already, so it passes
+        // through minus one. Full and low speed state it in frames — whole
+        // milliseconds — so it has to be converted, and a frame is eight of
+        // the controller's units: Interval = 3 + log2(bInterval).
+        //
+        // Passing bInterval through unconverted is what this used to do, and
+        // it went unnoticed because every device the stack had met was high
+        // speed. The first full-speed one asked for a 250-microsecond period
+        // that full speed cannot offer, and Configure Endpoint refused the
+        // whole command — taking the other interfaces of that device with it.
+        private static uint EncodeInterval(uint speed, byte bInterval)
+        {
+            // 3 = high speed, 4 = super speed and above.
+            if (speed >= 3)
+            {
+                uint hs = bInterval == 0 ? 1u : bInterval;
+                if (hs > 16) hs = 16;
+                return hs - 1;
+            }
+
+            uint ms = bInterval == 0 ? 1u : bInterval;
+            uint log = 0;
+            while ((1u << (int)(log + 1)) <= ms && log < 7) log++;
+            return 3 + log;        // 3..10, the range full speed can express
         }
 
         // Device context index: endpoint number doubled, plus one for IN.
@@ -346,6 +387,18 @@
 
                         if (f.HidEpAddress == 0) f.HidEpAddress = address;
                     }
+                    else if (current == 1 && interrupt && !directionIn && hidIndex >= 0)
+                    {
+                        // The way in. A keyboard has none and never needed
+                        // one; CTAPHID does, because the host speaks first.
+                        if (_hid[hidIndex].EpOutAddress == 0)
+                        {
+                            _hid[hidIndex].EpOutAddress = address;
+                            _hid[hidIndex].EpOutMaxPacket = max;
+                            _hid[hidIndex].EpOutInterval = p[offset + 6];
+                            _hid[hidIndex].EpOutDci = DciOf(address);
+                        }
+                    }
                     else if (current == 2 && bulk)
                     {
                         if (directionIn) { f.MsdInAddress = address; f.MsdInMaxPacket = max; }
@@ -393,6 +446,17 @@
 
                 addFlags |= 1u << (int)_hid[i].EpDci;
                 if (_hid[i].EpDci > highest) highest = _hid[i].EpDci;
+
+                if (_hid[i].EpOutAddress != 0)
+                {
+                    _hid[i].EpOutRing = DmaMemory.AllocPages(1);
+                    if (_hid[i].EpOutRing == 0) return false;
+                    _hid[i].EpOutEnqueue = 0;
+                    _hid[i].EpOutCycle = 1;
+
+                    addFlags |= 1u << (int)_hid[i].EpOutDci;
+                    if (_hid[i].EpOutDci > highest) highest = _hid[i].EpOutDci;
+                }
             }
 
             if (d.HasMsd)
@@ -431,11 +495,21 @@
                 if (!_hid[i].InUse || _hid[i].SlotId != slotId) continue;
 
                 uint* ep = (uint*)(input + cs * (_hid[i].EpDci + 1));
-                ep[0] = (uint)_hid[i].EpInterval << 16;
+                ep[0] = EncodeInterval(d.Speed, _hid[i].EpInterval) << 16;
                 ep[1] = ((uint)_hid[i].EpMaxPacket << 16) | (EPTYPE_INTERRUPT_IN << 3) | (3u << 1);
                 ep[2] = (uint)(_hid[i].EpRing | 1UL);
                 ep[3] = (uint)(_hid[i].EpRing >> 32);
                 ep[4] = _hid[i].EpMaxPacket;
+
+                if (_hid[i].EpOutRing == 0) continue;
+
+                uint* epOut = (uint*)(input + cs * (_hid[i].EpOutDci + 1));
+                epOut[0] = EncodeInterval(d.Speed, _hid[i].EpOutInterval) << 16;
+                epOut[1] = ((uint)_hid[i].EpOutMaxPacket << 16)
+                         | (EPTYPE_INTERRUPT_OUT << 3) | (3u << 1);
+                epOut[2] = (uint)(_hid[i].EpOutRing | 1UL);
+                epOut[3] = (uint)(_hid[i].EpOutRing >> 32);
+                epOut[4] = _hid[i].EpOutMaxPacket;
             }
             if (d.HasMsd)
             {
@@ -461,7 +535,9 @@
             AdvanceCommandRing();
             Write32(_doorbellBase, 0);
 
-            return TryWaitEvent(TRB_CMD_COMPLETE, 1000, out uint code, out _) && code == 1;
+            bool ok = TryWaitEvent(TRB_CMD_COMPLETE, 1000, out uint code, out _);
+            _lastConfigureCode = ok ? code : 0;
+            return ok && code == 1;
         }
 
         private bool TryOpenBulk(ref BulkEp ep)
