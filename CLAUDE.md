@@ -100,13 +100,25 @@ dotnet/runtime», только источник шире. Самописный �
 
 ## Частые ловушки
 
-### ClassConstructorRunner trap
+### ClassConstructorRunner — закрыт, осталось одно ограничение
 
-**Запрещено:** lazy-init static reference fields. Любая форма — `static T s_x = new T();`, `if (s == null) s = new T();`, `static readonly T[] Shellcode = new T[] {...};`. ILC вставляет cctor-check через `ClassConstructorRunner.CheckStaticClassConstruction*` helpers которые у нас не работают → `#GP` с `RAX = 0xF000000...`.
+**Работает:** `static readonly T[] x = new T[N]`, массивы с инициализатором, явный
+`static C() {...}`, lazy-init статиков. В ядре так сделано в полутора десятках мест
+(`ScancodeSource`, `Pci`, `UsbKeyboard`, `BootMedium`, …). Закрыто тремя частями:
+порт `ClassConstructorRunner`, снятый флаг ILC `--resilient`, материализация
+GC-статики (`GcStaticsMaterializer`).
 
-**Workaround:** factory property без кеширования (`public static T Default => new T();`), или inline данные прямо в методе (`target[0] = 0x48; target[1] = ...;`).
+**Что осталось:** материализация идёт **поздно**, после ACPI/HPET. Поэтому в коде,
+исполняющемся на самом раннем boot'е (баннер, heap init, exec-стабы), статиков
+с инициализацией по-прежнему нельзя — там факт-property (`public static T Default
+=> new T();`) или данные inline в методе. В приложениях то же делает
+`GcStaticsInit.Materialize()` из `AppRuntime.Initialize`.
 
-Задокументировано в `docs/nativeaot-nostd-kernel-limits.md` §1.
+Подробности и три части решения — `docs/nativeaot-nostd-kernel-limits.md` §1.
+
+(Раздел до 2026-09-25 гласил «запрещено в любой форме» и разошёлся с
+limits-таблицей на несколько месяцев. Расхождение стоило лишней осторожности:
+код писался под несуществующее ограничение.)
 
 ### Roslyn iterator / state-machine rewriter нужен типы по имени
 

@@ -1,4 +1,4 @@
-namespace OS.Hal.Usb
+﻿namespace OS.Hal.Usb
 {
     // One pass over the configuration descriptor, every function it declares.
     //
@@ -17,6 +17,10 @@ namespace OS.Hal.Usb
         private const byte DESC_INTERFACE = 4;
         private const byte DESC_ENDPOINT = 5;
 
+        // Sits between a HID interface and its endpoints, and states how long
+        // that interface's report descriptor is.
+        private const byte DESC_HID = 0x21;
+
         private const byte CLASS_HID = 3;
         private const byte CLASS_CDC_COMM = 0x02;
         private const byte SUBCLASS_ACM = 0x02;
@@ -33,8 +37,6 @@ namespace OS.Hal.Usb
             public byte HidInterface;
             public byte HidProtocol;
             public byte HidEpAddress;
-            public ushort HidEpMaxPacket;
-            public byte HidEpInterval;
 
             public bool HasMsd;
             public byte MsdInterface;
@@ -74,6 +76,37 @@ namespace OS.Hal.Usb
         {
             int i = IndexOfSlot(slotId);
             return i >= 0 && _devices[i].Configured;
+        }
+
+        /// <summary>
+        /// Does this device have a HID interface we claimed?
+        /// </summary>
+        /// <remarks>
+        /// Separate from HidProtocolOf, and the difference is not pedantry.
+        /// bInterfaceProtocol is 0 for any HID without a boot protocol, so
+        /// "protocol != 0" reads such a device as having no HID at all — and
+        /// that is exactly the shape RS-Key presents, and the shape the rig
+        /// phone turned out to present too. Asking the wrong question there
+        /// would have hidden both.
+        /// </remarks>
+        public bool IsHid(uint slotId)
+        {
+            int i = IndexOfSlot(slotId);
+            return i >= 0 && _devices[i].HasHid;
+        }
+
+        /// <summary>Did SET_PROTOCOL(boot) go through? False also when no HID.</summary>
+        public bool HidSetProtocolOk(uint slotId)
+        {
+            int i = IndexOfSlot(slotId);
+            return i >= 0 && _devices[i].HidSetProtocolOk;
+        }
+
+        /// <summary>Did SET_CONTROL_LINE_STATE go through? False also when no CDC.</summary>
+        public bool CdcLineStateOk(uint slotId)
+        {
+            int i = IndexOfSlot(slotId);
+            return i >= 0 && _devices[i].CdcLineStateOk;
         }
 
         /// <summary>
@@ -130,7 +163,7 @@ namespace OS.Hal.Usb
             if (!TryControlIn(slotId, 0x80, 6, 0x0200, 0, (void*)buf, total, out _))
             { failStage = 4; return false; }
 
-            Functions f = ParseFunctions(p, total);
+            Functions f = ParseFunctions(slotId, p, total);
             if (!f.HasHid && !f.HasMsd && !f.HasCdc) { failStage = 5; return false; }
 
             ref Device d = ref _devices[di];
@@ -138,10 +171,6 @@ namespace OS.Hal.Usb
             d.HasHid = f.HasHid;
             d.HidInterface = f.HidInterface;
             d.HidProtocol = f.HidProtocol;
-            d.EpAddress = f.HidEpAddress;
-            d.EpMaxPacket = f.HidEpMaxPacket;
-            d.EpInterval = f.HidEpInterval;
-            d.EpDci = DciOf(f.HidEpAddress);
 
             d.HasMsd = f.HasMsd;
             d.MsdInterface = f.MsdInterface;
@@ -171,11 +200,35 @@ namespace OS.Hal.Usb
             {
                 // Boot protocol, so reports arrive in the fixed 8-byte layout.
                 // Some devices answer only after the interface is configured.
-                TryControlOut(slotId, 0x21, 0x0B, 0, d.HidInterface);
-
-                d.ReportBuffer = DmaMemory.AllocPages(1);
-                if (d.ReportBuffer == 0) { failStage = 8; return false; }
+                //
+                // The answer is kept now instead of being thrown away. A
+                // refusal here is allowed — a device without a boot protocol
+                // must refuse — but it halts the control endpoint, and while
+                // nobody recorded it, the halt looked like the endpoint dying
+                // of its own accord.
+                d.HidSetProtocolOk = TryControlOut(slotId, 0x21, 0x0B, 0, d.HidInterface);
             }
+
+            // Every HID interface gets its own somewhere to be read into, and
+            // its own answer to SET_PROTOCOL. A device may implement it on one
+            // interface and refuse it on another, and a refusal is allowed —
+            // what is not allowed is leaving the control endpoint halted
+            // afterwards, which TryControlOut now takes care of.
+            for (int i = 0; i < MaxHidFunctions; i++)
+            {
+                if (!_hid[i].InUse || _hid[i].SlotId != slotId) continue;
+
+                if (_hid[i].Subclass == 1)
+                    TryControlOut(slotId, 0x21, 0x0B, 0, _hid[i].Interface);
+
+                _hid[i].ReportBuffer = DmaMemory.AllocPages(1);
+                if (_hid[i].ReportBuffer == 0) { failStage = 8; return false; }
+            }
+
+            // And now, with the device configured, ask each of them what it is
+            // for. Before configuration an interface does not exist yet and
+            // the request is refused — see ReadHidUsages.
+            ReadHidUsages(slotId);
 
             if (d.HasCdc)
             {
@@ -183,7 +236,7 @@ namespace OS.Hal.Usb
                 // modem would raise the lines; a Linux gadget uses it to tell
                 // userspace the port has a reader, so without it the other end
                 // may sit waiting for us.
-                TryControlOut(slotId, 0x21, 0x22, 0x0003, d.CdcCommInterface);
+                d.CdcLineStateOk = TryControlOut(slotId, 0x21, 0x22, 0x0003, d.CdcCommInterface);
             }
 
             d.Configured = true;
@@ -199,9 +252,16 @@ namespace OS.Hal.Usb
         // records: each interface owns the endpoints that follow it until the
         // next interface. Alternate settings other than 0 are skipped — they
         // would need SET_INTERFACE, which nothing here issues.
-        private Functions ParseFunctions(byte* p, ushort total)
+        private Functions ParseFunctions(uint slotId, byte* p, ushort total)
         {
             Functions f = default;
+
+            // Every HID interface, not the first. They go straight into the
+            // per-interface table; storage and serial stay in the struct,
+            // because a device has one of each and this walk is the only
+            // place that would ever say otherwise.
+            ReleaseHidFunctions(slotId);
+            int hidIndex = -1;
 
             int current = 0;            // 1 HID, 2 storage, 3 CDC data
             int offset = 0;
@@ -222,12 +282,20 @@ namespace OS.Hal.Usb
                     current = 0;
                     if (alternate == 0)
                     {
-                        if (cls == CLASS_HID && !f.HasHid)
+                        if (cls == CLASS_HID)
                         {
-                            current = 1;
-                            f.HasHid = true;
-                            f.HidInterface = number;
-                            f.HidProtocol = protocol;
+                            hidIndex = AllocateHidFunction(slotId, number, subclass, protocol);
+                            current = hidIndex >= 0 ? 1 : 0;
+
+                            // The first one also fills the old fields, so the
+                            // callers that ask a slot for "its" HID keep
+                            // working while they are taught to ask for one.
+                            if (hidIndex >= 0 && !f.HasHid)
+                            {
+                                f.HasHid = true;
+                                f.HidInterface = number;
+                                f.HidProtocol = protocol;
+                            }
                         }
                         else if (cls == CLASS_MSD && subclass == SUBCLASS_SCSI
                                  && protocol == PROTOCOL_BOT && !f.HasMsd)
@@ -249,6 +317,11 @@ namespace OS.Hal.Usb
                         }
                     }
                 }
+                else if (type == DESC_HID && len >= 9 && current == 1 && hidIndex >= 0)
+                {
+                    _hid[hidIndex].ReportDescLength =
+                        (ushort)(p[offset + 7] | (p[offset + 8] << 8));
+                }
                 else if (type == DESC_ENDPOINT && len >= 7 && current != 0)
                 {
                     byte address = p[offset + 2];
@@ -258,11 +331,20 @@ namespace OS.Hal.Usb
                     bool interrupt = (attributes & 0x3) == 0x3;
                     bool directionIn = (address & 0x80) != 0;
 
-                    if (current == 1 && interrupt && directionIn && f.HidEpAddress == 0)
+                    if (current == 1 && interrupt && directionIn && hidIndex >= 0)
                     {
-                        f.HidEpAddress = address;
-                        f.HidEpMaxPacket = max;
-                        f.HidEpInterval = p[offset + 6];
+                        // Only the first IN endpoint of the interface: some
+                        // declare an OUT one beside it, which nothing here
+                        // sends on.
+                        if (_hid[hidIndex].EpAddress == 0)
+                        {
+                            _hid[hidIndex].EpAddress = address;
+                            _hid[hidIndex].EpMaxPacket = max;
+                            _hid[hidIndex].EpInterval = p[offset + 6];
+                            _hid[hidIndex].EpDci = DciOf(address);
+                        }
+
+                        if (f.HidEpAddress == 0) f.HidEpAddress = address;
                     }
                     else if (current == 2 && bulk)
                     {
@@ -280,6 +362,10 @@ namespace OS.Hal.Usb
             }
 
             // A function without its endpoints is not a function.
+            for (int i = 0; i < MaxHidFunctions; i++)
+                if (_hid[i].InUse && _hid[i].SlotId == slotId && _hid[i].EpAddress == 0)
+                    _hid[i] = default;
+
             f.HasHid = f.HasHid && f.HidEpAddress != 0;
             f.HasMsd = f.HasMsd && f.MsdInAddress != 0 && f.MsdOutAddress != 0;
             f.HasCdc = f.CdcInAddress != 0 && f.CdcOutAddress != 0;
@@ -291,15 +377,24 @@ namespace OS.Hal.Usb
             uint addFlags = 1;            // slot context always
             uint highest = 0;
 
-            if (d.HasHid)
+            // One ring per HID interface. They all go up in this single
+            // command on purpose: each Configure Endpoint re-applies the input
+            // context, so a second command would drop what the first added —
+            // which is how a composite device used to come up with only the
+            // function that happened to be probed first.
+            for (int i = 0; i < MaxHidFunctions; i++)
             {
-                d.EpRing = DmaMemory.AllocPages(1);
-                if (d.EpRing == 0) return false;
-                d.EpEnqueue = 0;
-                d.EpCycle = 1;
-                addFlags |= 1u << (int)d.EpDci;
-                if (d.EpDci > highest) highest = d.EpDci;
+                if (!_hid[i].InUse || _hid[i].SlotId != slotId) continue;
+
+                _hid[i].EpRing = DmaMemory.AllocPages(1);
+                if (_hid[i].EpRing == 0) return false;
+                _hid[i].EpEnqueue = 0;
+                _hid[i].EpCycle = 1;
+
+                addFlags |= 1u << (int)_hid[i].EpDci;
+                if (_hid[i].EpDci > highest) highest = _hid[i].EpDci;
             }
+
             if (d.HasMsd)
             {
                 if (!TryOpenBulk(ref d.BulkIn) || !TryOpenBulk(ref d.BulkOut)) return false;
@@ -331,14 +426,16 @@ namespace OS.Hal.Usb
             slotCtx[0] = (highest << 27) | (d.Speed << 20);
             slotCtx[1] = (d.Port + 1) << 16;
 
-            if (d.HasHid)
+            for (int i = 0; i < MaxHidFunctions; i++)
             {
-                uint* ep = (uint*)(input + cs * (d.EpDci + 1));
-                ep[0] = (uint)d.EpInterval << 16;
-                ep[1] = ((uint)d.EpMaxPacket << 16) | (EPTYPE_INTERRUPT_IN << 3) | (3u << 1);
-                ep[2] = (uint)(d.EpRing | 1UL);
-                ep[3] = (uint)(d.EpRing >> 32);
-                ep[4] = d.EpMaxPacket;
+                if (!_hid[i].InUse || _hid[i].SlotId != slotId) continue;
+
+                uint* ep = (uint*)(input + cs * (_hid[i].EpDci + 1));
+                ep[0] = (uint)_hid[i].EpInterval << 16;
+                ep[1] = ((uint)_hid[i].EpMaxPacket << 16) | (EPTYPE_INTERRUPT_IN << 3) | (3u << 1);
+                ep[2] = (uint)(_hid[i].EpRing | 1UL);
+                ep[3] = (uint)(_hid[i].EpRing >> 32);
+                ep[4] = _hid[i].EpMaxPacket;
             }
             if (d.HasMsd)
             {

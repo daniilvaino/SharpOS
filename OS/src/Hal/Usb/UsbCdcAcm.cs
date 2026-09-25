@@ -20,6 +20,8 @@ namespace OS.Hal.Usb
         private static bool s_present;
         private static ulong s_txBuffer;      // DMA-visible staging
         private static uint s_txSize;
+        private static ulong s_rxBuffer;      // and one for the other direction
+        private static uint s_rxSize;
 
         public static bool IsPresent => s_present;
 
@@ -32,9 +34,13 @@ namespace OS.Hal.Usb
             s_txBuffer = DmaMemory.AllocPages(1);
             if (s_txBuffer == 0) return false;
 
+            s_rxBuffer = DmaMemory.AllocPages(1);
+            if (s_rxBuffer == 0) return false;
+
             s_hc = hc;
             s_slot = slot;
             s_txSize = 4096;
+            s_rxSize = 4096;
             s_present = true;
             return true;
         }
@@ -76,11 +82,47 @@ namespace OS.Hal.Usb
             }
         }
 
-        // Reading is deliberately absent. A bulk IN returns fewer bytes than
-        // asked whenever the other end sent less, and the length lives in the
-        // transfer event's residue field, which TryWaitEvent does not hand
-        // back — so a read could only guess how much of the buffer is real.
-        // Input from the rig arrives as keystrokes over HID instead; when a
-        // command channel is wanted, plumb the residue first.
+        /// <summary>
+        /// Read whatever the other end has sent, up to <paramref name="max"/>
+        /// bytes. Returns 0 when nothing arrived within the timeout, which is
+        /// the ordinary case for an idle port.
+        /// </summary>
+        /// <remarks>
+        /// This used to be absent, and the reason given was that the length of
+        /// a short read lives in the transfer event's residue, which
+        /// TryWaitEvent threw away. It now hands it back, so `asked - residue`
+        /// is the answer.
+        ///
+        /// It exists because HID turned out to be a dead end on the test rig:
+        /// the phone's f_hid stores the report descriptor written to configfs
+        /// and presents its own placeholder instead, proven against four
+        /// independent readers on 2026-09-25. A serial port needs nothing from
+        /// the phone's kernel beyond bytes, so the input side of the rig moved
+        /// here.
+        /// </remarks>
+        public static int Read(byte* destination, int max, uint timeoutMs)
+        {
+            if (!s_present || max <= 0 || s_rxBuffer == 0) return 0;
+
+            uint want = (uint)(max < (int)s_rxSize ? max : (int)s_rxSize);
+
+            // Same reason the writer suppresses: one enqueue index per ring,
+            // and nothing distinguishes two completions.
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
+            {
+                if (!s_hc.TryCdcRead(s_slot, (void*)s_rxBuffer, want, timeoutMs, out uint got))
+                    return 0;
+
+                int n = (int)(got < want ? got : want);
+                byte* src = (byte*)s_rxBuffer;
+                for (int i = 0; i < n; i++) destination[i] = src[i];
+                return n;
+            }
+            finally
+            {
+                OS.Kernel.Threading.Preemption.Allow();
+            }
+        }
     }
 }

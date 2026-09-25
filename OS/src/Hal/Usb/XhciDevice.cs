@@ -1,4 +1,4 @@
-namespace OS.Hal.Usb
+﻿namespace OS.Hal.Usb
 {
     // Addressing a device and talking to its default control endpoint.
     //
@@ -43,18 +43,13 @@ namespace OS.Hal.Usb
 
             public byte HidProtocol;      // 1 keyboard, 2 mouse, 0 neither
             public byte HidInterface;
-            public byte EpAddress;
-            public ushort EpMaxPacket;
-            public byte EpInterval;
-            public uint EpDci;
-            public ulong EpRing;
-            public uint EpEnqueue;
-            public uint EpCycle;
-            public ulong ReportBuffer;
             public bool Configured;
-            public bool ReadOutstanding;
-            // Set when someone else's wait absorbed this device's completion.
-            public bool ReportPending;
+
+            // The endpoint, ring, buffer and in-flight flags that used to live
+            // here are in the per-interface table now (XhciHidFunctions): a
+            // slot can have several HID interfaces, and one set of fields
+            // could only ever describe the first. What stayed here is what a
+            // caller asking "does this device have a HID" still needs.
 
             // Mass storage: two bulk endpoints instead of one interrupt one.
             public byte MsdInterface;
@@ -68,6 +63,12 @@ namespace OS.Hal.Usb
             public byte CdcDataInterface;
             public BulkEp CdcIn;
             public BulkEp CdcOut;
+
+            // Results of the two class requests made at the end of
+            // configuration. Kept because they used to be discarded, and one
+            // of them was halting the control endpoint unseen.
+            public bool HidSetProtocolOk;
+            public bool CdcLineStateOk;
         }
 
         internal struct BulkEp
@@ -287,11 +288,16 @@ namespace OS.Hal.Usb
             if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, 1000, out uint code, out _))
             {
                 _lastCode = 0;              // no event at all
+                RecoverControlEndpoint(slotId);
                 return false;
             }
             if (code != 1 && code != 13)     // 13 = short packet, still data
             {
                 _lastCode = code;
+                // A refusal is a normal answer, but on xHCI it halts the
+                // endpoint. Clear it here or every later request on this
+                // device dies without an event — see XhciRecovery.
+                RecoverControlEndpoint(slotId);
                 return false;
             }
 
@@ -328,8 +334,18 @@ namespace OS.Hal.Usb
             Write32(_doorbellBase + slotId * 4, 1);
 
             if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, 1000, out uint code, out _))
+            {
+                _lastCode = 0;
+                RecoverControlEndpoint(slotId);
                 return false;
-            return code == 1 || code == 13;
+            }
+            if (code != 1 && code != 13)
+            {
+                _lastCode = code;
+                RecoverControlEndpoint(slotId);
+                return false;
+            }
+            return true;
         }
 
         private void AdvanceTransferRing(ref Device d)
@@ -354,8 +370,18 @@ namespace OS.Hal.Usb
         {
             int i = IndexOfSlot(slotId);
             if (i < 0) return;
-            _devices[i].ReadOutstanding = false;
-            _devices[i].ReportPending = true;
+            // Every HID interface of that slot, because the event says which
+            // slot it came from and not which endpoint. Marking all of them is
+            // the same approximation the single-HID version made, only now it
+            // is visible: a reader that finds nothing in its buffer simply
+            // queues another read, so the cost of guessing wide is one wasted
+            // poll rather than a lost report.
+            for (int h = 0; h < MaxHidFunctions; h++)
+            {
+                if (!_hid[h].InUse || _hid[h].SlotId != slotId) continue;
+                _hid[h].ReadOutstanding = false;
+                _hid[h].ReportPending = true;
+            }
         }
 
         private int IndexOfSlot(uint slotId)

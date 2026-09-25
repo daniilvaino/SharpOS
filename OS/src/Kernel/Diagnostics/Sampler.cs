@@ -401,6 +401,13 @@ namespace OS.Kernel.Diagnostics
                 // waits underneath all of them.
                 ReportIdleWaits();
 
+                // Whether anything is arriving on the serial line, said out
+                // loud. Without it, "the machine ignored what I typed" and
+                // "nothing reached the machine" look identical from here, and
+                // the first attempt at serial input was diagnosed by sending
+                // forty keystrokes and inferring from silence.
+                if (Probes.SerialInput) OS.Hal.SerialInput.Report();
+
                 if (Probes.ThreadDumpWhenIdle)
                     ThreadDump.Print("idle window");
                 return;

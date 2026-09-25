@@ -48,7 +48,18 @@
             if (Ps2Keyboard.IsPresent() && Ps2Keyboard.TryReadScancode(out scancode))
                 return true;
 
-            return Usb.UsbKeyboard.TryReadScancode(out scancode);
+            if (Usb.UsbKeyboard.TryReadScancode(out scancode))
+                return true;
+
+            // Last, and on the test rig the only one that answers: typing sent
+            // down the USB serial port, translated to the same set-1 codes.
+            // Polled on its own clock, so asking costs nothing between polls.
+            if (OS.Kernel.Diagnostics.Probes.SerialInput
+                && SerialInput.TryReadScancode(out scancode))
+                return true;
+
+            scancode = 0;
+            return false;
         }
 
         public static bool TryReadScancode(out byte scancode)

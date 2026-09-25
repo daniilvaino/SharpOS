@@ -172,6 +172,7 @@ namespace OS.Kernel.Diagnostics
                 {
                     Console.WriteLine("attached as log sink");
                     OS.Hal.BootLog.AttachSerial();
+                    if (Probes.UsbSerialEcho) EchoSerial();
                 }
                 else
                 {
@@ -184,6 +185,50 @@ namespace OS.Kernel.Diagnostics
 
             ReportStorage();
             Summarise();
+        }
+
+        // Read the serial port back for a few seconds and show what arrives.
+        //
+        // The first thing that proves the input half works at all: the length
+        // of a short read comes from the transfer event's residue, which was
+        // discarded until now, so a read could only ever guess. Typing from
+        // the build machine (rig/kb.ps1 writes to the phone's /dev/ttyGS*)
+        // should appear here byte for byte.
+        //
+        // Bounded on purpose. This runs during boot, and a probe that waits
+        // for input nobody sends would hold the machine at the same spot every
+        // time — the failure would look like a hang, which is the one thing a
+        // diagnostic must never imitate.
+        private static void EchoSerial()
+        {
+            const int Windows = 20;          // 20 x 100 ms
+            byte* buffer = stackalloc byte[128];
+            int total = 0;
+
+            for (int i = 0; i < Windows; i++)
+            {
+                int n = OS.Hal.Usb.UsbCdcAcm.Read(buffer, 128, 100);
+                if (n <= 0) continue;
+
+                Console.Write("[cdc] in ");
+                Console.WriteUInt((uint)n);
+                Console.Write(" bytes: ");
+                for (int j = 0; j < n; j++)
+                {
+                    byte b = buffer[j];
+                    // Printable as itself, everything else as its number: a
+                    // terminal that swallowed a control byte would hide the
+                    // very thing being measured.
+                    if (b >= 0x20 && b < 0x7F) Console.WriteChar((char)b);
+                    else { Console.Write("<"); Console.WriteUInt(b); Console.Write(">"); }
+                }
+                Console.WriteLine("");
+                total += n;
+            }
+
+            Console.Write("[cdc] echo window closed, bytes=");
+            Console.WriteUInt((uint)total);
+            Console.WriteLine(total == 0 ? " (nothing was sent)" : "");
         }
 
         private static void Enumerate(XhciController hc)
@@ -300,6 +345,12 @@ namespace OS.Kernel.Diagnostics
 
                 if (Probes.UsbDescriptorDump) DumpDescriptor(hc, slot);
 
+                // Taken twice, on purpose: once here and once after the
+                // endpoints are configured. A single reading says nothing —
+                // the question is what the Configure Endpoint command changes
+                // about the endpoint the census then cannot talk to.
+                if (Probes.UsbCensusDeep) DumpControlEndpoint(hc, slot, "before configure");
+
                 // One device can be several things at once, so this lists what
                 // it turned out to be rather than picking the first match.
                 Console.Write("[xhci] slot ");
@@ -314,11 +365,67 @@ namespace OS.Kernel.Diagnostics
                 }
 
                 byte proto = hc.HidProtocolOf(slot);
-                if (proto != 0)
-                    Console.Write(proto == 1 ? "keyboard " : proto == 2 ? "mouse " : "hid ");
+                // A HID with protocol 0 is still a HID — it just has no boot
+                // protocol. Keying this line on the protocol alone printed
+                // such a device as having no HID function at all, which is how
+                // the rig phone looked for as long as anyone had been reading
+                // this line.
+                if (hc.IsHid(slot))
+                    Console.Write(proto == 1 ? "keyboard " : proto == 2 ? "mouse " : "hid(no-boot) ");
                 if (hc.IsMassStorage(slot)) Console.Write("storage ");
                 if (hc.IsCdcAcm(slot)) Console.Write("serial ");
                 Console.WriteLine("configured");
+
+                // Only now: see DeepCensus for why nothing that costs a
+                // transfer may run before the device is configured.
+                if (Probes.UsbCensusDeep)
+                {
+                    // The two class requests whose answers used to be dropped.
+                    // One of them halts the control endpoint on a device that
+                    // does not implement it, which is allowed — and used to
+                    // end every later transfer without saying so.
+                    Console.Write("[xhci] class requests: setProtocol=");
+                    Console.Write(hc.HidSetProtocolOk(slot) ? "ok" : (hc.IsHid(slot) ? "REFUSED" : "n/a"));
+                    Console.Write(" lineState=");
+                    Console.Write(hc.CdcLineStateOk(slot) ? "ok" : (hc.IsCdcAcm(slot) ? "REFUSED" : "n/a"));
+                    Console.Write(" ep0 halts=");
+                    Console.WriteUInt(hc.ControlHaltsSeen);
+                    Console.Write(" recovered=");
+                    Console.WriteUInt(hc.ControlHaltsRecovered);
+                    Console.WriteLine("");
+
+                    DumpControlEndpoint(hc, slot, "after configure");
+
+                    // Every HID interface the slot declared, with what its
+                    // report descriptor says it is for. The line the previous
+                    // enumerator could not print: it kept one HID per slot and
+                    // dropped the rest, so a device with two looked like a
+                    // device with one.
+                    int hidCount = hc.HidCountOf(slot);
+                    for (int h = 0; h < hidCount; h++)
+                    {
+                        int fn = hc.HidIndexOf(slot, h);
+                        if (fn < 0) continue;
+
+                        Console.Write("[xhci]   hid function ");
+                        Console.WriteUInt((uint)h);
+                        Console.Write(" interface=");
+                        Console.WriteUInt(hc.HidInterfaceAt(fn));
+                        Console.Write(" proto=");
+                        Console.WriteUInt(hc.HidProtocolAt(fn));
+                        Console.Write(" reportLen=");
+                        Console.WriteUInt(hc.HidReportDescLengthAt(fn));
+                        Console.Write(" usage-page=0x");
+                        Console.WriteHex(hc.HidUsagePageAt(fn), 4);
+                        Console.Write(" usage=0x");
+                        Console.WriteHex(hc.HidUsageAt(fn), 4);
+                        Console.Write(" (");
+                        Console.Write(UsageName(hc.HidUsagePageAt(fn), hc.HidUsageAt(fn)));
+                        Console.WriteLine(")");
+                    }
+
+                    DeepCensus(hc, slot);
+                }
 
                 if (Probes.UsbHidPoll && proto != 0)
                     PollReports(hc, slot, proto);
@@ -330,6 +437,12 @@ namespace OS.Kernel.Diagnostics
         // interfaces are there and which endpoints hang off them", and
         // counting bytes by hand in a log photographed off a screen is how
         // that question stayed open for a day.
+        //
+        // Read-only from end to end. Nothing here claims an interface or
+        // changes a configuration, so a device that appears in this list and
+        // then goes undriven is a decision we made rather than a transfer that
+        // failed — which is the distinction the one-driver-per-slot enumerator
+        // could not report.
         private static void DumpDescriptor(XhciController hc, uint slot)
         {
             byte* d = stackalloc byte[512];
@@ -350,7 +463,25 @@ namespace OS.Kernel.Diagnostics
                 byte type = d[offset + 1];
                 if (recordLength == 0) { Console.WriteLine("[xhci]   zero-length record, stopping"); break; }
 
-                if (type == 4 && recordLength >= 9)
+                if (type == 11 && recordLength >= 8)
+                {
+                    // Interface Association: the descriptor that says "these N
+                    // interfaces are one function". Printed because on a
+                    // composite device it is the only statement of intent —
+                    // without it, two HID interfaces are just two interfaces.
+                    Console.Write("[xhci]   assoc first=");
+                    Console.WriteUInt(d[offset + 2]);
+                    Console.Write(" count=");
+                    Console.WriteUInt(d[offset + 3]);
+                    Console.Write(" class=0x");
+                    Console.WriteHex(d[offset + 4], 2);
+                    Console.Write(" sub=0x");
+                    Console.WriteHex(d[offset + 5], 2);
+                    Console.Write(" proto=0x");
+                    Console.WriteHex(d[offset + 6], 2);
+                    Console.WriteLine("");
+                }
+                else if (type == 4 && recordLength >= 9)
                 {
                     Console.Write("[xhci]   interface ");
                     Console.WriteUInt(d[offset + 2]);
@@ -359,27 +490,57 @@ namespace OS.Kernel.Diagnostics
                     Console.Write(" eps=");
                     Console.WriteUInt(d[offset + 4]);
                     Console.Write(" class=0x");
-                    Console.WriteHex(d[offset + 5]);
+                    Console.WriteHex(d[offset + 5], 2);
                     Console.Write(" sub=0x");
-                    Console.WriteHex(d[offset + 6]);
+                    Console.WriteHex(d[offset + 6], 2);
                     Console.Write(" proto=0x");
-                    Console.WriteHex(d[offset + 7]);
+                    Console.WriteHex(d[offset + 7], 2);
+                    // Subclass 1 is the Boot Interface Subclass, and its
+                    // absence is not cosmetic: without it there is no fixed
+                    // report layout, and the report descriptor stops being an
+                    // improvement and becomes the only source.
+                    if (d[offset + 5] == 3)
+                        Console.Write(d[offset + 6] == 1 ? " (hid boot)" : " (hid, no boot protocol)");
+                    Console.WriteLine("");
+                }
+                else if (type == 0x21 && recordLength >= 9)
+                {
+                    // HID descriptor: sits between the interface and its
+                    // endpoints and carries the length of the report
+                    // descriptor, which has to be known before it can be asked
+                    // for — devices stall an over-long request.
+                    Console.Write("[xhci]     hid ver=0x");
+                    Console.WriteHex((ulong)(d[offset + 2] | (d[offset + 3] << 8)), 4);
+                    Console.Write(" country=");
+                    Console.WriteUInt(d[offset + 4]);
+                    Console.Write(" descriptors=");
+                    Console.WriteUInt(d[offset + 5]);
+                    Console.Write(" reportType=0x");
+                    Console.WriteHex(d[offset + 6], 2);
+                    Console.Write(" reportLen=");
+                    Console.WriteUInt((uint)(d[offset + 7] | (d[offset + 8] << 8)));
                     Console.WriteLine("");
                 }
                 else if (type == 5 && recordLength >= 7)
                 {
+                    byte address = d[offset + 2];
+                    byte attributes = d[offset + 3];
+
                     Console.Write("[xhci]     endpoint 0x");
-                    Console.WriteHex(d[offset + 2]);
-                    Console.Write(" attr=0x");
-                    Console.WriteHex(d[offset + 3]);
+                    Console.WriteHex(address, 2);
+                    Console.Write(" ");
+                    Console.Write(TransferTypeName(attributes));
+                    Console.Write((address & 0x80) != 0 ? " in" : " out");
                     Console.Write(" max=");
                     Console.WriteUInt((uint)(d[offset + 4] | (d[offset + 5] << 8)));
+                    Console.Write(" interval=");
+                    Console.WriteUInt(d[offset + 6]);
                     Console.WriteLine("");
                 }
                 else
                 {
                     Console.Write("[xhci]   record type=0x");
-                    Console.WriteHex(type);
+                    Console.WriteHex(type, 2);
                     Console.Write(" len=");
                     Console.WriteUInt(recordLength);
                     Console.WriteLine("");
@@ -387,6 +548,267 @@ namespace OS.Kernel.Diagnostics
 
                 offset += recordLength;
             }
+        }
+
+        // Where the default control endpoint stands, in the controller's words
+        // and in ours. Costs nothing: it reads the device context and two of
+        // our own fields.
+        private static void DumpControlEndpoint(XhciController hc, uint slot, string when)
+        {
+            Console.Write("[xhci] ep0 ");
+            Console.Write(when);
+            Console.Write(": ");
+
+            if (!hc.TryReadControlEndpointState(slot, out uint slotState, out uint epState,
+                                                out ulong dequeue, out bool epCycle,
+                                                out ulong ringBase, out uint enqueue,
+                                                out uint ourCycle))
+            {
+                Console.WriteLine("unreadable");
+                return;
+            }
+
+            Console.Write("slotState=");
+            Console.WriteUInt(slotState);
+            Console.Write(" epState=");
+            Console.WriteUInt(epState);
+            Console.Write(EndpointStateName(epState));
+            Console.Write(" hwDequeue=0x");
+            Console.WriteHex(dequeue);
+            Console.Write(" dcs=");
+            Console.WriteUInt(epCycle ? 1u : 0u);
+            Console.Write(" ring=0x");
+            Console.WriteHex(ringBase);
+            Console.Write(" ourEnqueue=");
+            Console.WriteUInt(enqueue);
+            Console.Write(" ourCycle=");
+            Console.WriteUInt(ourCycle);
+            // On both readings, so the difference between them is readable.
+            // Printed once at the end it was cumulative for the whole
+            // controller and attributable to nothing: the first run said
+            // "halts=1" beside "lineState=ok" and left no way to tell which
+            // request had caused it.
+            Console.Write(" halts=");
+            Console.WriteUInt(hc.ControlHaltsSeen);
+            // The controller's dequeue index on our ring, so the two numbers
+            // are comparable without arithmetic in the reader's head.
+            if (ringBase != 0 && dequeue >= ringBase && dequeue - ringBase < 4096)
+            {
+                Console.Write(" hwIndex=");
+                Console.WriteUInt((uint)((dequeue - ringBase) / 16));
+            }
+            Console.WriteLine("");
+        }
+
+        private static string EndpointStateName(uint state)
+            => state switch
+            {
+                0 => "(disabled)",
+                1 => "(running)",
+                2 => "(HALTED)",
+                3 => "(STOPPED)",
+                4 => "(ERROR)",
+                _ => "(?)",
+            };
+
+        // The half of the census that asks the device more questions, rather
+        // than re-reading bytes already in hand.
+        //
+        // Runs AFTER the device is configured, and that ordering is the whole
+        // point. It first ran before, alongside the descriptor dump, and cost
+        // the test rig its boot disk: a report descriptor belongs to an
+        // INTERFACE, and an unconfigured device has no interfaces, so a
+        // correct device stalls the request. The stall halts the control
+        // endpoint, nothing here resets it, and every later transfer on that
+        // slot fails — including the SET_CONFIGURATION that brings up mass
+        // storage. On the rig, storage, keyboard and serial are one composite
+        // device on one slot, so asking the keyboard an early question took
+        // the disk down with it, and the machine came up saying it had booted
+        // from USB and could find no USB disk.
+        //
+        // Diagnostics do not get to break what they observe. Everything that
+        // needs only the bytes already fetched stays in DumpDescriptor, where
+        // it costs nothing; everything that needs a transfer waits until the
+        // device is in a state that owes an answer.
+        private static void DeepCensus(XhciController hc, uint slot)
+        {
+            DumpDeviceAndStrings(hc, slot);
+
+            // The configuration is re-fetched rather than carried over from
+            // DumpDescriptor: one control transfer against holding parsed
+            // state in statics, which in this environment means either a
+            // class constructor we cannot run or a fixed-size table in .bss.
+            byte* d = stackalloc byte[512];
+            if (!hc.TryFetchConfigDescriptor(slot, d, 512, out int len))
+            {
+                // Silence here would be indistinguishable from a device with
+                // no HID interfaces at all.
+                Console.Write("[xhci] deep census: configuration unreadable code=0x");
+                Console.WriteHex(hc.LastCompletionCode);
+                Console.WriteLine("");
+                return;
+            }
+
+            byte iface = 0;
+            bool isHid = false;
+
+            int offset = 0;
+            while (offset + 2 <= len)
+            {
+                byte recordLength = d[offset];
+                if (recordLength == 0) break;
+                byte type = d[offset + 1];
+
+                if (type == 4 && recordLength >= 9)
+                {
+                    iface = d[offset + 2];
+                    isHid = d[offset + 5] == 3 && d[offset + 3] == 0;   // alt 0 only
+                }
+                else if (type == 0x21 && recordLength >= 9 && isHid)
+                {
+                    ushort reportLength = (ushort)(d[offset + 7] | (d[offset + 8] << 8));
+                    if (reportLength != 0) DumpReportDescriptor(hc, slot, iface, reportLength);
+                    isHid = false;
+                }
+
+                offset += recordLength;
+            }
+        }
+
+        private static string TransferTypeName(byte attributes)
+            => (attributes & 0x3) switch
+            {
+                0 => "control",
+                1 => "iso",
+                2 => "bulk",
+                _ => "interrupt",
+            };
+
+        // The device descriptor in full, plus the three strings a human reads
+        // a device by. The enumeration line above prints vid/pid because that
+        // is what enumeration needs; this prints what a device manager shows.
+        private static void DumpDeviceAndStrings(XhciController hc, uint slot)
+        {
+            byte* d = stackalloc byte[18];
+            if (!hc.TryFetchDeviceDescriptor(slot, d, 18, out int len) || len < 18)
+            {
+                // Named, not just reported. "unreadable" covered a device that
+                // refused, a transfer that timed out and a page we could not
+                // allocate, and the first run of this census hit one of them
+                // without saying which.
+                Console.Write("[xhci] device descriptor unreadable: ");
+                Console.Write(hc.LastDescriptorFailureName);
+                Console.Write(" code=0x");
+                Console.WriteHex(hc.LastCompletionCode);
+                Console.Write(" len=");
+                Console.WriteUInt((uint)len);
+                Console.WriteLine("");
+                return;
+            }
+
+            Console.Write("[xhci] device usb=0x");
+            Console.WriteHex((ulong)(d[2] | (d[3] << 8)), 4);
+            Console.Write(" class=0x"); Console.WriteHex(d[4], 2);
+            Console.Write(" sub=0x"); Console.WriteHex(d[5], 2);
+            Console.Write(" proto=0x"); Console.WriteHex(d[6], 2);
+            Console.Write(" rev=0x"); Console.WriteHex((ulong)(d[12] | (d[13] << 8)), 4);
+            Console.Write(" configs="); Console.WriteUInt(d[17]);
+            // Class 0 at the device level means "the interfaces decide" —
+            // the standard way of saying composite.
+            if (d[4] == 0) Console.Write(" (composite)");
+            Console.WriteLine("");
+
+            ushort lang = hc.FirstLanguageId(slot);
+            if (lang == 0)
+            {
+                Console.WriteLine("[xhci]   no string descriptors");
+                return;
+            }
+
+            WriteStringDescriptor(hc, slot, "manufacturer", d[14], lang);
+            WriteStringDescriptor(hc, slot, "product", d[15], lang);
+            WriteStringDescriptor(hc, slot, "serial", d[16], lang);
+        }
+
+        private static void WriteStringDescriptor(XhciController hc, uint slot,
+                                                  string label, byte index, ushort lang)
+        {
+            if (index == 0) return;          // the device declares none
+
+            byte* s = stackalloc byte[256];
+            Console.Write("[xhci]   ");
+            Console.Write(label);
+            Console.Write("=");
+            if (!hc.TryFetchStringDescriptor(slot, index, lang, s, 256, out int len) || len < 4)
+            {
+                Console.WriteLine("<unreadable>");
+                return;
+            }
+
+            // UTF-16LE after the two-byte header. Anything outside printable
+            // ASCII becomes a question mark: this goes to a serial log and to
+            // a framebuffer with no font for the rest, and a mangled byte here
+            // would read as a transfer fault rather than as a character we
+            // cannot draw.
+            Console.WriteChar('"');
+            for (int i = 2; i + 1 < len; i += 2)
+            {
+                ushort ch = (ushort)(s[i] | (s[i + 1] << 8));
+                Console.WriteChar(ch >= 0x20 && ch < 0x7F ? (char)ch : '?');
+            }
+            Console.WriteChar('"');
+            Console.WriteLine("");
+        }
+
+        // A HID interface report descriptor: how long it is, what it says it
+        // is, and the bytes themselves.
+        //
+        // The top-level usage page and usage are pulled out because they are
+        // the discriminator. On a device with no boot protocol two HID
+        // interfaces can be identical down to the byte, and only this tells a
+        // keyboard (page 0x01, usage 0x06) from a FIDO transport (page
+        // 0xF1D0). The raw bytes are printed too: the parser that will read
+        // them properly does not exist yet, and until it does the log is where
+        // the answer lives.
+        private static void DumpReportDescriptor(XhciController hc, uint slot,
+                                                 byte interfaceNumber, ushort reportLength)
+        {
+            byte* r = stackalloc byte[512];
+            Console.Write("[xhci]     report interface=");
+            Console.WriteUInt(interfaceNumber);
+            Console.Write(" ");
+
+            if (!hc.TryFetchReportDescriptor(slot, interfaceNumber, reportLength, r, 512, out int len)
+                || len <= 0)
+            {
+                Console.Write("UNREADABLE: ");
+                Console.Write(hc.LastDescriptorFailureName);
+                Console.Write(" code=0x");
+                Console.WriteHex(hc.LastCompletionCode);
+                Console.WriteLine("");
+                return;
+            }
+
+            Console.Write("bytes=");
+            Console.WriteUInt((uint)len);
+            Console.WriteLine("");
+
+            Console.Write("[xhci]     report");
+            for (int i = 0; i < len; i++)
+            {
+                Console.Write(" ");
+                Console.WriteHex(r[i], 2);
+            }
+            Console.WriteLine("");
+        }
+
+        private static string UsageName(uint page, uint usage)
+        {
+            if (page == 0xF1D0) return "fido/ctap";
+            if (page == 0x01 && usage == 0x06) return "keyboard";
+            if (page == 0x01 && usage == 0x02) return "mouse";
+            if (page == 0x0C) return "consumer";
+            return "unknown";
         }
 
         // One line that says everything needed to diagnose a machine we

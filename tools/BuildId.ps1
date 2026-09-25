@@ -8,6 +8,12 @@
 # поиск несуществующей разницы между двумя сборками. Суффикс `+dirty` ставится
 # по изменениям **отслеживаемых** файлов: неотслеживаемое в корне — это логи и
 # образы, они к собранному коду отношения не имеют.
+#
+# К `+dirty` добавляется время сборки, и это не украшение. Одного слова «грязно»
+# хватило ровно на день: 2026-09-25 два прогона подряд шли под одним и тем же
+# `a6b3b48+dirty-usb-stack`, хотя между ними была правка и бинарники отличались.
+# А рабочий цикл со стендом весь состоит из некоммиченных сборок — то есть
+# именно тот случай, который идентификатор и должен различать.
 
 function Get-SharpOsBuildId {
     param([string]$RepoRoot)
@@ -17,7 +23,9 @@ function Get-SharpOsBuildId {
     if ($LASTEXITCODE -eq 0 -and $sha) { $id = $sha.Trim() }
 
     $dirty = (& git -C $RepoRoot status --porcelain --untracked-files=no 2>$null)
-    if ($LASTEXITCODE -eq 0 -and $dirty) { $id = "$id+dirty" }
+    if ($LASTEXITCODE -eq 0 -and $dirty) {
+        $id = "$id+dirty." + (Get-Date -Format "MMdd-HHmm")
+    }
 
     # Свободная метка прогона: build-tag.txt в корне. Пустой файл — только SHA.
     $tagFile = Join-Path $RepoRoot "build-tag.txt"

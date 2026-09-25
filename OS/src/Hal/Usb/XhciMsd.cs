@@ -23,9 +23,13 @@ namespace OS.Hal.Usb
             if (di < 0) return false;
 
             ref Device d = ref _devices[di];
+            // Actually filled now. It was declared from the start, set to zero
+            // and never written, because the event's residue was discarded
+            // before it reached here — so every caller that asked how much of
+            // its buffer was real was told "all of it" whatever happened.
             return directionIn
-                ? TryBulkOn(slotId, ref d.BulkIn, buffer, length, 5000)
-                : TryBulkOn(slotId, ref d.BulkOut, buffer, length, 5000);
+                ? TryBulkOn(slotId, ref d.BulkIn, buffer, length, 5000, out residue)
+                : TryBulkOn(slotId, ref d.BulkOut, buffer, length, 5000, out residue);
         }
 
         /// <summary>
@@ -46,8 +50,55 @@ namespace OS.Hal.Usb
                 : TryBulkOn(slotId, ref d.CdcOut, buffer, length, timeoutMs);
         }
 
-        private bool TryBulkOn(uint slotId, ref BulkEp ep,
-                                      void* buffer, uint length, uint timeoutMs)
+        /// <summary>
+        /// Bulk IN that reports how much actually arrived, and takes the
+        /// transfer back if nothing does.
+        /// </summary>
+        /// <remarks>
+        /// The length comes from the event's residue: one TRB per TD here, so
+        /// `asked - residue` is exactly what the device sent. On a timeout the
+        /// queued TRB is withdrawn rather than left in flight — see
+        /// AbortEndpointTransfer for why that is not optional on a device that
+        /// is also a disk.
+        /// </remarks>
+        public bool TryCdcRead(uint slotId, void* buffer, uint length,
+                               uint timeoutMs, out uint received)
+        {
+            received = 0;
+            int di = IndexOfSlot(slotId);
+            if (di < 0) return false;
+
+            ref Device d = ref _devices[di];
+            if (!d.HasCdc || d.CdcIn.Ring == 0) return false;
+
+            ulong ring = d.CdcIn.Ring;
+            uint enqueueBefore = d.CdcIn.Enqueue;
+            uint cycleBefore = d.CdcIn.Cycle;
+
+            if (!TryQueueBulk(slotId, ref d.CdcIn, buffer, length)) return false;
+
+            if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, timeoutMs,
+                              out uint code, out _, out uint residue))
+            {
+                _lastCode = 0;
+                AbortEndpointTransfer(slotId, d.CdcIn.Dci, ring, enqueueBefore, cycleBefore);
+                d.CdcIn.Enqueue = enqueueBefore;
+                d.CdcIn.Cycle = cycleBefore;
+                return false;
+            }
+
+            _lastCode = code;
+            if (code != 1 && code != 13) return false;
+
+            received = residue <= length ? length - residue : 0;
+            return true;
+        }
+
+        // One Normal TRB on a bulk ring, and the doorbell. Split out of
+        // TryBulkOn so a read can queue without committing to wait for it
+        // forever: the reader needs to know where the ring stood beforehand,
+        // in case it has to take the transfer back.
+        private bool TryQueueBulk(uint slotId, ref BulkEp ep, void* buffer, uint length)
         {
             if (ep.Ring == 0) return false;
 
@@ -72,10 +123,24 @@ namespace OS.Hal.Usb
             }
 
             Write32(_doorbellBase + slotId * 4, ep.Dci);
+            return true;
+        }
+
+        private bool TryBulkOn(uint slotId, ref BulkEp ep,
+                                      void* buffer, uint length, uint timeoutMs)
+            => TryBulkOn(slotId, ref ep, buffer, length, timeoutMs, out _);
+
+        private bool TryBulkOn(uint slotId, ref BulkEp ep,
+                                      void* buffer, uint length, uint timeoutMs,
+                                      out uint residue)
+        {
+            residue = 0;
+            if (!TryQueueBulk(slotId, ref ep, buffer, length)) return false;
 
             // Filtered by slot: an unfiltered wait here would be completed by
             // a keypress and return with a half-filled buffer.
-            if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, timeoutMs, out uint code, out _))
+            if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, timeoutMs,
+                              out uint code, out _, out residue))
             {
                 // No event at all. Recorded as 0 so a timeout is told apart
                 // from a device that answered with a refusal.

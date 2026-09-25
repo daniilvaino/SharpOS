@@ -1,4 +1,4 @@
-namespace OS.Kernel.Diagnostics
+﻿namespace OS.Kernel.Diagnostics
 {
     // Single source of truth for which boot-time probes/smoke-tests run.
     // BootSequence consults these flags before invoking each probe; flip
@@ -521,12 +521,43 @@ namespace OS.Kernel.Diagnostics
         // device" from "we misread its descriptor".
         public const bool UsbDescriptorDump = true;
 
+        // The deep half of the census: string descriptors (manufacturer,
+        // product, serial) and, for every HID interface, its report
+        // descriptor. Separate from UsbDescriptorDump because it costs extra
+        // control transfers per device on a path the machine boots through --
+        // if some device chokes on being asked, this is the one switch to
+        // throw, and the interface/endpoint list above still prints.
+        //
+        // The report descriptors are the point. RS-Key declares two HID
+        // interfaces whose descriptors are byte-for-byte identical, with no
+        // boot protocol, so what they are can be read nowhere else.
+        public const bool UsbCensusDeep = true;
+
         // Mirror the boot log out a USB serial port when the machine has one.
         // Costs one bulk transfer per line, buys a log readable from the other
         // end while the run is happening — including runs that hang. The test
         // rig phone is the only thing that answers; after the first timeout
         // the sink switches itself off, so a machine without one pays once.
         public const bool UsbSerialLog = true;
+
+        // Read back from that same serial port and echo what arrives.
+        //
+        // The rig has no other way in: its laptop has no PS/2, and the
+        // phone's HID gadget presents a placeholder descriptor whatever is
+        // written to configfs (2026-09-25, four independent readers agreed).
+        // A serial port needs nothing from the phone's kernel but bytes.
+        //
+        // One line per burst, so a run that nobody types into stays silent.
+        public const bool UsbSerialEcho = true;
+
+        // Treat what arrives on that port as keystrokes: translated to set-1
+        // scancodes and fed to the same ring the keyboards feed, so everything
+        // above — launcher, shell, DOOM — reads them without knowing.
+        //
+        // This is the rig's only way in. Off turns the machine deaf again, and
+        // is worth reaching for only if serial input is ever suspected of
+        // producing keys nobody typed.
+        public const bool SerialInput = true;
 
         // Stop the machine right after printing the USB list. On the test
         // hardware there is no serial, no log (the boot medium is USB and we

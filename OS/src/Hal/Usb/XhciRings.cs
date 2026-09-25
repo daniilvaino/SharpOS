@@ -280,9 +280,32 @@ namespace OS.Hal.Usb
         /// </summary>
         private bool TryWaitEvent(uint wantType, uint wantSlot, uint timeoutMs,
                                          out uint completionCode, out uint eventControl)
+            => TryWaitEvent(wantType, wantSlot, timeoutMs,
+                            out completionCode, out eventControl, out _);
+
+        /// <summary>
+        /// As above, and also hands back the event's residue: how much of the
+        /// buffer the device did NOT fill.
+        /// </summary>
+        /// <remarks>
+        /// It was always being read — dword 2 of the event TRB carries the
+        /// completion code in its top byte and the residue in the remaining
+        /// twenty-four bits — and the shift that extracted the code threw the
+        /// rest away. A bulk IN returns fewer bytes than asked whenever the
+        /// other end sent less, so without this a read can only guess how much
+        /// of its buffer is real, which is why UsbCdcAcm had no read at all.
+        ///
+        /// Meaningful for a TD of one TRB, which is what the bulk paths queue.
+        /// For a control transfer the interrupt sits on the status stage, so
+        /// the event describes that stage and not the data — see TryControlIn.
+        /// </remarks>
+        private bool TryWaitEvent(uint wantType, uint wantSlot, uint timeoutMs,
+                                         out uint completionCode, out uint eventControl,
+                                         out uint residue)
         {
             completionCode = 0;
             eventControl = 0;
+            residue = 0;
             ulong deadline = Deadline(timeoutMs);
             ulong started = timeoutMs != 0 ? OS.Kernel.Diagnostics.PerfCounters.Now() : 0;
             int spins = 0;
@@ -313,6 +336,7 @@ namespace OS.Hal.Usb
                     if (type == wantType && (wantSlot == 0 || eventSlotId == wantSlot))
                     {
                         completionCode = status >> 24;
+                        residue = status & 0xFFFFFF;
                         eventControl = control;
                         CountWait(started, spins);
                         return true;

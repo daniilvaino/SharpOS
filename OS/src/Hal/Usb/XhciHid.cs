@@ -1,14 +1,15 @@
 namespace OS.Hal.Usb
 {
-    // Keystrokes: poll the interrupt endpoint XhciInterfaces claimed for the
-    // HID function and hand back the reports it delivers.
+    // Reading reports, from one HID interface at a time.
     //
-    // Boot protocol is used deliberately. A HID device's report layout is
-    // otherwise described by a report descriptor that has to be parsed —
-    // a small language of its own — whereas boot protocol fixes the layout:
-    // 8 bytes for a keyboard, 3+ for a mouse. That is the whole reason the
-    // BIOS can drive a USB keyboard without a HID parser, and it is enough
-    // for arrow keys and DOOM.
+    // Boot protocol is still what the keyboard path relies on: it fixes the
+    // report layout at 8 bytes, which is why a BIOS can drive a USB keyboard
+    // without a HID parser, and it is enough for arrow keys and DOOM. What has
+    // changed is that a slot no longer has "a" HID. RS-Key presents two
+    // interfaces with byte-identical descriptors and no boot protocol at all,
+    // so reading is addressed to a function — found by usage, see
+    // FindHidByUsage — and the slot-shaped calls below are a thin shim over
+    // the first one for the callers that have not needed to care yet.
     internal sealed unsafe partial class XhciController
     {
         private const uint TRB_CONFIGURE_ENDPOINT = 12;
@@ -19,77 +20,88 @@ namespace OS.Hal.Usb
         /// sent into <paramref name="report"/>; false on timeout, which for an
         /// idle keyboard is the normal case.
         /// </summary>
-        public bool TryReadReport(uint slotId, byte* report, int max, uint timeoutMs)
+        public bool TryReadReportOn(int function, byte* report, int max, uint timeoutMs)
         {
-            if (!TryQueueReport(slotId)) return false;
-            return TryCollectReport(slotId, report, max, timeoutMs);
+            if (!TryQueueReportOn(function)) return false;
+            return TryCollectReportOn(function, report, max, timeoutMs);
         }
 
         /// <summary>
-        /// Hand the endpoint one buffer to fill. Exactly one read may be
-        /// outstanding per device: queueing again before the first completes
-        /// stacks up requests that all fire at once on the next keypress.
+        /// Hand this interface's endpoint one buffer to fill. Exactly one read
+        /// may be outstanding per function: queueing again before the first
+        /// completes stacks up requests that all fire at once on the next
+        /// keypress.
         /// </summary>
-        public bool TryQueueReport(uint slotId)
+        public bool TryQueueReportOn(int function)
         {
-            int di = IndexOfSlot(slotId);
-            if (di < 0) return false;
+            if ((uint)function >= MaxHidFunctions || !_hid[function].InUse) return false;
+            if (_hid[function].ReadOutstanding) return false;
+            if (_hid[function].EpRing == 0) return false;
 
-            ref Device d = ref _devices[di];
-            if (!d.Configured || d.ReadOutstanding) return false;
+            uint slotId = _hid[function].SlotId;
 
-            uint* trb = (uint*)(d.EpRing + d.EpEnqueue * TrbSize);
-            trb[0] = (uint)d.ReportBuffer;
-            trb[1] = (uint)(d.ReportBuffer >> 32);
-            trb[2] = d.EpMaxPacket;
-            trb[3] = (TRB_NORMAL << 10) | TRB_IOC | d.EpCycle;
+            uint* trb = (uint*)(_hid[function].EpRing + _hid[function].EpEnqueue * TrbSize);
+            trb[0] = (uint)_hid[function].ReportBuffer;
+            trb[1] = (uint)(_hid[function].ReportBuffer >> 32);
+            trb[2] = _hid[function].EpMaxPacket;
+            trb[3] = (TRB_NORMAL << 10) | TRB_IOC | _hid[function].EpCycle;
 
-            d.EpEnqueue++;
-            if (d.EpEnqueue >= RingTrbs - 1)
+            _hid[function].EpEnqueue++;
+            if (_hid[function].EpEnqueue >= RingTrbs - 1)
             {
-                uint* link = (uint*)(d.EpRing + (RingTrbs - 1) * TrbSize);
-                link[0] = (uint)d.EpRing;
-                link[1] = (uint)(d.EpRing >> 32);
+                uint* link = (uint*)(_hid[function].EpRing + (RingTrbs - 1) * TrbSize);
+                link[0] = (uint)_hid[function].EpRing;
+                link[1] = (uint)(_hid[function].EpRing >> 32);
                 link[2] = 0;
-                link[3] = (TRB_LINK << 10) | TRB_TOGGLE_CYCLE | d.EpCycle;
-                d.EpEnqueue = 0;
-                d.EpCycle ^= 1;
+                link[3] = (TRB_LINK << 10) | TRB_TOGGLE_CYCLE | _hid[function].EpCycle;
+                _hid[function].EpEnqueue = 0;
+                _hid[function].EpCycle ^= 1;
             }
 
-            Write32(_doorbellBase + slotId * 4, d.EpDci);
-            d.ReadOutstanding = true;
+            Write32(_doorbellBase + slotId * 4, _hid[function].EpDci);
+            _hid[function].ReadOutstanding = true;
             return true;
         }
 
         /// <summary>
         /// Collect a queued read. timeoutMs = 0 polls without blocking.
         /// </summary>
-        public bool TryCollectReport(uint slotId, byte* report, int max, uint timeoutMs)
+        public bool TryCollectReportOn(int function, byte* report, int max, uint timeoutMs)
         {
-            int di = IndexOfSlot(slotId);
-            if (di < 0) return false;
+            if ((uint)function >= MaxHidFunctions || !_hid[function].InUse) return false;
 
-            ref Device d = ref _devices[di];
+            uint slotId = _hid[function].SlotId;
 
             // A report someone else's wait absorbed is already sitting in our
             // buffer — take it rather than waiting for another one.
-            if (d.ReportPending)
+            if (_hid[function].ReportPending)
             {
-                d.ReportPending = false;
+                _hid[function].ReportPending = false;
             }
             else
             {
-                if (!d.ReadOutstanding) return false;
+                if (!_hid[function].ReadOutstanding) return false;
                 if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, timeoutMs, out uint code, out _))
                     return false;
-                d.ReadOutstanding = false;
+                _hid[function].ReadOutstanding = false;
                 if (code != 1 && code != 13) return false;
             }
 
-            byte* src = (byte*)d.ReportBuffer;
-            int n = d.EpMaxPacket < max ? d.EpMaxPacket : max;
+            byte* src = (byte*)_hid[function].ReportBuffer;
+            int n = _hid[function].EpMaxPacket < max ? _hid[function].EpMaxPacket : max;
             for (int i = 0; i < n; i++) report[i] = src[i];
             return true;
         }
+
+        // The slot-shaped calls, for callers that want whatever HID the device
+        // has and have only ever met devices with one.
+        public bool TryReadReport(uint slotId, byte* report, int max, uint timeoutMs)
+            => TryReadReportOn(HidIndexOf(slotId, 0), report, max, timeoutMs);
+
+        public bool TryQueueReport(uint slotId)
+            => TryQueueReportOn(HidIndexOf(slotId, 0));
+
+        public bool TryCollectReport(uint slotId, byte* report, int max, uint timeoutMs)
+            => TryCollectReportOn(HidIndexOf(slotId, 0), report, max, timeoutMs);
     }
 }
