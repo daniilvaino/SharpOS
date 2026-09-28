@@ -149,6 +149,31 @@
         /// draws with this; FbTty keeps the 8x8 font, since it runs before
         /// anything has decided what a cell is.
         /// </summary>
+        // Two pixels per store, built in registers.
+        //
+        // Measured, and measured twice, because the first answer was wrong.
+        // The same fill written four, eight and sixteen bytes at a time runs
+        // at 267, 533 and 918 MiB/s here (`[fbperf] store width`): the cost is
+        // per store, not per byte. So the obvious move was sixteen bytes at a
+        // time — build a glyph row in a scratch buffer, send it in two wide
+        // writes. That made a full repaint twice as SLOW (18.5 ms to 38.6),
+        // because the only way to build a vector here is through memory:
+        // Vector128.Create broadcasts one value, there is no four-element
+        // form, so every row went out to a scratch array and was read straight
+        // back — a load that overlaps four just-issued stores, which is the
+        // one thing a CPU cannot forward.
+        //
+        // Eight bytes needs no such round trip: two pixels shifted together in
+        // registers. Half the stores of the original, none of the stalls.
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private static ulong PixelPair(byte bits, int col, uint fg, uint bg)
+        {
+            ulong low = (bits & (1 << col)) != 0 ? fg : bg;
+            ulong high = (bits & (1 << (col + 1))) != 0 ? fg : bg;
+            return low | (high << 32);
+        }
+
         public static void DrawCellFast(int px, int py, int glyph, uint fg, uint bg)
         {
             uint stride = Framebuffer.Stride;
@@ -157,9 +182,11 @@
             for (int row = 0; row < FontCp437.CharHeight; row++)
             {
                 byte bits = FontCp437.Row(glyph, row);
-                uint* line = fb + (ulong)row * stride;
-                for (int col = 0; col < FontCp437.CharWidth; col++)
-                    line[col] = (bits & (1 << col)) != 0 ? fg : bg;
+                ulong* line = (ulong*)(fb + (ulong)row * stride);
+                line[0] = PixelPair(bits, 0, fg, bg);
+                line[1] = PixelPair(bits, 2, fg, bg);
+                line[2] = PixelPair(bits, 4, fg, bg);
+                line[3] = PixelPair(bits, 6, fg, bg);
             }
         }
 
@@ -171,9 +198,11 @@
             for (int row = 0; row < Font8x8.CharHeight; row++)
             {
                 byte bits = Font8x8.Row(ch, row);
-                uint* line = fb + (ulong)row * stride;
-                for (int col = 0; col < Font8x8.CharWidth; col++)
-                    line[col] = (bits & (1 << col)) != 0 ? fg : bg;
+                ulong* line = (ulong*)(fb + (ulong)row * stride);
+                line[0] = PixelPair(bits, 0, fg, bg);
+                line[1] = PixelPair(bits, 2, fg, bg);
+                line[2] = PixelPair(bits, 4, fg, bg);
+                line[3] = PixelPair(bits, 6, fg, bg);
             }
         }
 

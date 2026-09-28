@@ -89,6 +89,40 @@ namespace OS.Hal
 
         public static bool IsReady => s_ready;
 
+        /// <summary>Is a full-screen program drawing right now?</summary>
+        /// <remarks>
+        /// The alternate buffer is the question. A program that switches to it
+        /// (ESC [ ? 1049 h - every curses-shaped interface does, ours included)
+        /// is saying it owns the display until it switches back, and a line the
+        /// kernel prints over that interface is not a message: the program's
+        /// next repaint erases it, usually within a frame. It was read as
+        /// flicker, which is the most it could ever be.
+        ///
+        /// Asked on every character written, so nothing here may allocate,
+        /// write, or take a lock.
+        /// </remarks>
+        public static bool ProgramOwnsScreen
+        {
+            get
+            {
+                // s_ready first, and the order is the whole point. This is
+                // asked on every character the kernel writes, including the
+                // earliest boot output, and s_terminal is a GC static - the
+                // area those live in is materialized late (limits section 1).
+                // Reading it before that stopped the boot dead right after the
+                // [uefi] lines, which go straight to ConOut and so were the
+                // last thing anyone saw. s_ready is a plain bool: it lives in
+                // the image and is safe to ask at any time.
+                if (!s_ready) return false;
+
+                var terminal = s_terminal;
+                if (terminal == null) return false;
+
+                var buffers = terminal.Buffers;
+                return buffers != null && buffers.IsAlternateBuffer;
+            }
+        }
+
         public static Terminal Engine => s_terminal;
 
         /// <summary>
@@ -121,6 +155,7 @@ namespace OS.Hal
             s_cols = cols;
             s_rows = rows;
             s_bgR = br; s_bgG = bg; s_bgB = bb;
+            InvalidatePaletteCache();      // the defaults are built from these
 
             int cells = cols * rows;
             s_shadowChar = new char[cells];
@@ -304,11 +339,19 @@ namespace OS.Hal
             // a stale block rode up the screen at the end (or the start) of
             // the line it had been parked on.
             EraseCursor(buffer);
+
+            ulong phase = OS.Kernel.Diagnostics.PerfCounters.Now();
             ApplyScroll(buffer);
+            OS.Kernel.Diagnostics.PerfCounters.Add(
+                OS.Kernel.Diagnostics.PerfCounter.ScreenScrollTicks,
+                (long)(OS.Kernel.Diagnostics.PerfCounters.Now() - phase));
 
             s_terminal.GetUpdateRange(out int startY, out int endY);
             s_terminal.ClearUpdateRange();
 
+            phase = OS.Kernel.Diagnostics.PerfCounters.Now();
+            long switches = OS.Kernel.Diagnostics.PerfCounters.Value(
+                OS.Kernel.Diagnostics.PerfCounter.SchedSwitches);
             if (startY <= endY)
             {
                 if (startY < 0) startY = 0;
@@ -316,8 +359,28 @@ namespace OS.Hal
                 for (int y = startY; y <= endY; y++)
                     DrawRow(buffer, y);
             }
+            long elapsed = (long)(OS.Kernel.Diagnostics.PerfCounters.Now() - phase);
+            OS.Kernel.Diagnostics.PerfCounters.Add(
+                OS.Kernel.Diagnostics.PerfCounter.ScreenRowTicks, elapsed);
 
+            // Counted separately when nothing else got the processor in the
+            // meantime. This phase is wall clock inside a preempted thread, so
+            // during the census — four stress threads, fifty thousand context
+            // switches a second — it charges other threads' work to the paint.
+            if (OS.Kernel.Diagnostics.PerfCounters.Value(
+                    OS.Kernel.Diagnostics.PerfCounter.SchedSwitches) == switches)
+            {
+                OS.Kernel.Diagnostics.PerfCounters.Add(
+                    OS.Kernel.Diagnostics.PerfCounter.ScreenRowCleanPaints, 1);
+                OS.Kernel.Diagnostics.PerfCounters.Add(
+                    OS.Kernel.Diagnostics.PerfCounter.ScreenRowCleanTicks, elapsed);
+            }
+
+            phase = OS.Kernel.Diagnostics.PerfCounters.Now();
             DrawCursor(buffer);
+            OS.Kernel.Diagnostics.PerfCounters.Add(
+                OS.Kernel.Diagnostics.PerfCounter.ScreenCursorTicks,
+                (long)(OS.Kernel.Diagnostics.PerfCounters.Now() - phase));
 
             s_rendering = false;
             s_lastPaint = OS.Hal.Timer.Hpet.ReadCounter();
@@ -465,9 +528,19 @@ namespace OS.Hal
             int py = Margin + y * CellH;
             int rowBase = y * s_cols;
 
+            // Tallied per row, not per cell: PerfCounters.Add is an interlocked
+            // add, and a paint walks thirteen thousand cells.
+            int drawn = 0, skipped = 0;
+
+            // Hoisted: Length is a property over the line's array, and
+            // CharData.Null is a static on a type that has a class constructor,
+            // so reading it per cell pays a class-constructor check per cell.
+            int lineLength = line.Length;
+            var empty = CharData.Null;
+
             for (int x = 0; x < s_cols; x++)
             {
-                var cell = x < line.Length ? line[x] : CharData.Null;
+                var cell = x < lineLength ? line[x] : empty;
 
                 // The trailing half of a wide glyph carries width 0 and no code of its
                 // own; the leading half already painted both columns' worth.
@@ -494,8 +567,12 @@ namespace OS.Hal
                     && s_shadowChar[slot] == glyph
                     && s_shadowFg[slot] == fg
                     && s_shadowBg[slot] == bg)
+                {
+                    skipped++;
                     continue;
+                }
 
+                drawn++;
                 FbConsole.DrawCellFast(Margin + x * CellW, py, GlyphOf(glyph), fg, bg);
 
                 s_shadowChar[slot] = glyph;
@@ -503,21 +580,87 @@ namespace OS.Hal
                 s_shadowBg[slot] = bg;
                 s_shadowValid[slot] = true;
             }
+
+            OS.Kernel.Diagnostics.PerfCounters.Add(
+                OS.Kernel.Diagnostics.PerfCounter.ScreenCellsDrawn, drawn);
+            OS.Kernel.Diagnostics.PerfCounters.Add(
+                OS.Kernel.Diagnostics.PerfCounter.ScreenCellsSkipped, skipped);
         }
 
-        private static uint PaletteColor(int index, bool isForeground)
+        // Every colour the grid can hold, worked out once.
+        //
+        // Called twice per cell, so twenty-seven thousand times a paint. What
+        // makes that expensive is invisible here: Color is a class whose
+        // palette lives in a static field behind a class constructor, so every
+        // read of it carries a construction check, and every colour then costs
+        // a list indexer and three field loads through a reference. Two hundred
+        // and fifty-eight entries, done once, replace all of it with an array
+        // read.
+        //
+        // Not claimed to be where the paint's time goes. At 1920x1080 a paint
+        // spends 16.6 ms in the row loop and draws 3052 of the 13430 cells it
+        // walks, which reads two ways — 1.3 us deciding per cell, or 5.5 us
+        // writing per cell drawn — and the phase counters cannot separate them.
+        // The `cell8x16` rate in [fbperf] is what settles it.
+        private const int PaletteSlots = 258;          // 0..255 plus the two defaults
+
+        // Allocated in BuildPaletteCache rather than by a field initializer, and
+        // that is not a style choice. This class has no static constructor, so
+        // every static it reads — the cell shadow, the column count — is a plain
+        // load. One field initializer anywhere in the class would give it one,
+        // and then each of those reads carries a class-constructor check: the
+        // very cost being removed here, spread over the whole row loop instead.
+        private static uint[] s_paletteFg;
+        private static uint[] s_paletteBg;
+        private static bool s_paletteCached;
+
+        // The engine materializes its palette only after Phase 2, and the
+        // background is settable, so the cache is built on demand and dropped
+        // when either changes rather than assumed to be ready.
+        private static void InvalidatePaletteCache() => s_paletteCached = false;
+
+        private static void BuildPaletteCache()
+        {
+            if (s_paletteFg == null)
+            {
+                s_paletteFg = new uint[PaletteSlots];
+                s_paletteBg = new uint[PaletteSlots];
+            }
+
+            var palette = Color.DefaultAnsiColors;
+
+            for (int i = 0; i < PaletteSlots; i++)
+            {
+                s_paletteFg[i] = ComputePaletteColor(i, true, palette);
+                s_paletteBg[i] = ComputePaletteColor(i, false, palette);
+            }
+
+            // Left uncached while the palette is still absent: caching the
+            // fallback would freeze the screen into grey-on-background for the
+            // rest of the boot.
+            s_paletteCached = palette != null;
+        }
+
+        private static uint ComputePaletteColor(int index, bool isForeground,
+                                                System.Collections.Generic.List<Color> palette)
         {
             // 256 = default foreground, 257 = inverted default. Anything else indexes
             // the engine's palette, which is only materialized after Phase 2.
-            if (index >= 256)
-                return isForeground ? FbConsole.Pack(200, 200, 200) : FbConsole.Pack(s_bgR, s_bgG, s_bgB);
-
-            var palette = Color.DefaultAnsiColors;
-            if (palette == null || index < 0 || index >= palette.Count)
+            if (index >= 256 || palette == null || index < 0 || index >= palette.Count)
                 return isForeground ? FbConsole.Pack(200, 200, 200) : FbConsole.Pack(s_bgR, s_bgG, s_bgB);
 
             var color = palette[index];
             return FbConsole.Pack(color.Red, color.Green, color.Blue);
+        }
+
+        private static uint PaletteColor(int index, bool isForeground)
+        {
+            if (!s_paletteCached) BuildPaletteCache();
+
+            if ((uint)index < PaletteSlots)
+                return isForeground ? s_paletteFg[index] : s_paletteBg[index];
+
+            return isForeground ? FbConsole.Pack(200, 200, 200) : FbConsole.Pack(s_bgR, s_bgG, s_bgB);
         }
 
         private static int EncodeUtf8(char ch, byte[] destination)

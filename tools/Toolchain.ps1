@@ -66,7 +66,13 @@ function Assert-SharpOsToolchain {
     param([Parameter(Mandatory)][string[]]$Components)
     $spec = Get-SharpOsToolchainSpec
     $bad = New-Object System.Collections.Generic.List[string]
-    $found = [ordered]@{}
+
+    # Одна и та же форма результата, какие компоненты ни спроси. Раньше ключ
+    # появлялся только у запрошенного компонента, и вызывающий под
+    # Set-StrictMode падал на пробе отсутствующего свойства: run_vbox.ps1 —
+    # единственный, кто строгий режим включает, — умер на `$t.Jwasm` с
+    # "property cannot be found", хотя сам не менялся месяцами.
+    $found = [ordered]@{ LlvmBin = $null; Jwasm = $null; XwinSplat = $null }
 
     if ($Components -contains 'llvm' -or $Components -contains 'lld') {
         $want = $spec.llvm.version

@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 using OS.Hal.Acpi;
 using OS.Hal.Idt;
 using OS.Kernel;
@@ -1051,6 +1051,23 @@ namespace OS.Boot
             Log.EndLine();
         }
 
+        /// <summary>DateTime ticks from the PAL's file time.</summary>
+        /// <remarks>
+        /// A FILETIME counts 100 ns from 1601-01-01 and DateTime counts the
+        /// same unit from 0001-01-01, so the two differ by a constant: the
+        /// 584388 days between those dates.
+        ///
+        /// Goes through GetUtcFileTime rather than around it, so a kernel-side
+        /// DateTime read is counted in `clock.*` like every other. That widens
+        /// what the counter means from "hosted clock" to "any clock", which is
+        /// the honest reading of it.
+        /// </remarks>
+        private static long UtcTicks()
+        {
+            const long TicksTo1601 = 504_911_232_000_000_000L;   // 584388 days
+            return OS.PAL.SharpOSHost.SharpOSHostClock.GetUtcFileTime() + TicksTo1601;
+        }
+
         private static void InitializeHpet()
         {
             if (!HpetTimer.Init())
@@ -1069,6 +1086,21 @@ namespace OS.Boot
             Console.Write(" 64bit=");
             Console.Write(HpetTimer.Is64BitCounter ? "yes" : "no");
             Log.EndLine();
+
+            // System.DateTime now has somewhere to get "now" from.
+            //
+            // Nothing installed a source before, in the kernel or anywhere
+            // else, so DateTime.UtcNow answered the start of the epoch for the
+            // whole life of the tree. It went unnoticed because the kernel asks
+            // Hpet directly and the hosted tier has its own clock through the
+            // PAL - the one place it mattered was the application tier, where
+            // it silently disabled every Terminal.Gui timeout (step182).
+            //
+            // The source is the PAL's wall clock: the RTC read once and carried
+            // forward by the HPET, so this is a real date rather than uptime.
+            // Installed here because that clock needs the HPET, and here is
+            // where the HPET starts.
+            System.DateTime.Clock.Install(&UtcTicks);
 
             ulong t0 = HpetTimer.ReadCounter();
             for (int i = 0; i < 100_000; i++) { /* burn cycles */ }

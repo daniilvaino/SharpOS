@@ -92,6 +92,26 @@
                     System.Diagnostics.Stopwatch.s_latchAddress = s_services->HpetLatchAddress;
                     System.Diagnostics.Stopwatch.s_counterIsNarrow = true;
                 }
+
+                // And into DateTime, which had no source at all: Clock.Install
+                // was called from nowhere in the tree, so UtcNow answered
+                // MinValue forever.
+                //
+                // A constant clock is not a cosmetic fault. Terminal.Gui times
+                // its timeouts by comparing UtcNow.Ticks against a deadline
+                // computed from UtcNow.Ticks, so with a clock that never moves
+                // the deadline is never reached and *no* timeout in any program
+                // here has ever fired - which is how a security key's
+                // registration came to send nothing at all while the button
+                // that started it reported success.
+                //
+                // Monotonic, not correct: the epoch is MinValue plus uptime,
+                // because nothing hands an application the real date. That is
+                // deliberate - year one plus twenty minutes is obviously not a
+                // date, where a plausible wrong one would be believed. Anything
+                // that measures an interval works; anything that wants today
+                // still needs a service that does not exist yet.
+                System.DateTime.Clock.Install(&UtcTicks);
             }
 
             // Materialize the app image's GCStaticRegion (lazy `static readonly`
@@ -126,6 +146,35 @@
             AppHost.WriteString(AppBuildInfo.Id);
             AppHost.WriteChar('\n');
         }
+
+        /// <summary>Ticks of 100 ns since DateTime.MinValue, from the HPET.</summary>
+        /// <remarks>
+        /// Uptime wearing a date's clothes. Every consumer of DateTime here
+        /// measures an interval - a timeout, an elapsed time, a rate - and an
+        /// interval only needs the difference to be right.
+        ///
+        /// The division is by (frequency / 10_000_000) rather than a multiply
+        /// first, because the HPET counter is already tens of billions of ticks
+        /// a few hours in and multiplying by ten million overflows long long
+        /// before that.
+        /// </remarks>
+        private static long UtcTicks()
+        {
+            ulong hz = System.Diagnostics.Stopwatch.s_frequencyHz;
+            if (hz == 0) return 0;
+
+            ulong counter = System.Diagnostics.Stopwatch.ReadCounter();
+
+            // 10 MHz is DateTime's own unit. A faster counter divides down; a
+            // slower one (the 14.3 MHz HPETs are faster, but a 1 MHz virtual
+            // timer is not) multiplies up, and doing it in that order keeps
+            // both from losing the whole value to integer truncation.
+            const ulong TicksPerSecond = 10_000_000;
+            return hz >= TicksPerSecond
+                ? (long)(counter / (hz / TicksPerSecond))
+                : (long)(counter * (TicksPerSecond / hz));
+        }
+
 
         // Exit code of an app stopped by a failure it cannot survive, the
         // number an aborted process gets on Unix.

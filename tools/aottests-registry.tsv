@@ -1,0 +1,97 @@
+﻿# tools/aottests-registry.tsv
+# Ожидаемый состав батареи AOTTESTS: имя проверки <TAB> статус на момент
+# фиксации. probe_report.ps1 сверяет прогон с этим списком и сообщает про
+# MISSING (проверка исчезла), NEW (появилась), REGRESSED и FIXED.
+#
+# Зачем список, а не число пройденных: упавшая проверка видна и по итогу
+# "N/M passed", а вот исчезнувшая — нет. Тест, переставший вызываться,
+# превращает 83/83 в 82/82, и это снова выглядит как «всё зелено». Ровно так
+# может тихо пропасть проверка, ради которой её и писали.
+#
+# Расхождение — сигнал, а не шум: обновлять осознанно, вместе с объяснением
+# в done/stepNN.md. Повторяющиеся имена помечены ' #N'.
+# Зафиксировано на step182: 83/83.
+
+new object()	OK
+new int[5] + index	OK
+new string(char[])	OK
+GC walker offered	OK
+GC.Collect ran	OK
+alloc churn 4096x64B	OK
+live array survives churn	OK
+live string survives churn	OK
+reference identity kept	OK
+256 KiB allocation	OK
+live data survives collect	OK
+collect reclaimed something	OK
+sweep joins adjacent free blocks	OK
+free memory is in few pieces, not thousands	OK
+a large request is served from freed memory	OK
+finding a block does not walk the whole heap	OK
+an address outside the heap is rejected without a scan	OK
+a heap address is found without rescanning the segment list	OK
+live objects between dead ones leave many small blocks	OK
+the bucket table is one table, not one per call site	OK
+a large request is served from the free list, not by bumping	OK
+a request skips the classes that cannot hold it	OK
+a guarded counter read is taken again after an allocation	OK
+byte[,] rank/lengths	OK
+byte[,] corner elements	OK
+byte[,] zero-initialised	OK
+int[,] round-trip	OK
+jagged array	OK
+Vector128 accelerated	OK
+Vector128 lane mask	OK
+string concat	OK
+string equality	OK
+string PadRight	OK
+List<int> add/count	OK
+List<int> indexer	OK
+List<int> Contains	OK
+List<int>.ToArray	OK
+Dictionary add/count	OK
+Dictionary TryGetValue	OK
+Dictionary missing key	OK
+EqualityComparer<int>	OK
+throw/catch	OK
+try/finally	OK
+finally-on-unwind	OK
+catch-by-base	OK
+exception message	OK
+multi-catch select	OK
+threads available (abi v3)	OK
+task backend installs	OK
+task ran on its own thread	OK
+task wait returns	OK
+async method starts	OK
+await resumes	OK
+async runs to completion	OK
+async task completes	OK
+dictionary keeps insertion order	OK
+dictionary survives remove+add	OK
+removed key is gone	OK
+re-added key is found	OK
+string.ToString() is itself	OK
+object.ToString() is not null	OK
+compare-and-swap is atomic	OK
+thread ids are per-thread	OK
+threads have distinct ids	OK
+lock keeps updates	OK
+waits block in the kernel	OK
+event set on another thread wakes its waiter	OK
+event timed wait times out	OK
+100 tasks at once all run	OK
+holder thread parked and reported	OK
+other thread's stack roots survive collect	OK
+stopwatch survives a 32-bit counter wrap	OK
+elapsed across a wrap is never negative	OK
+wraps accumulate rather than reset	OK
+a reading behind the epoch is not a wrap	OK
+stack trace is text, not a marker	OK
+stack trace lines name a frame each	OK
+every recorded frame produced a line	OK
+trace buffer exists	OK
+trace buffer lives in the app heap	OK
+a cut-off trace says it was cut off	OK
+rethrow appends frames rather than stopping	OK
+error stream published	OK

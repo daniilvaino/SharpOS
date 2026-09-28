@@ -1,4 +1,4 @@
-namespace OS.Hal
+﻿namespace OS.Hal
 {
     /// <summary>
     /// Where a piece of output comes from.
@@ -123,8 +123,26 @@ namespace OS.Hal
                 case OutputChannel.Perf:
                     return OutputSink.Com1 | OutputSink.DiskLog;
 
-                default:
+                // Whatever the routing says, and whatever is on the screen.
+                case OutputChannel.Panic:
                     return KernelLog;
+
+                default:
+                    // The kernel's own log, minus the screen while a program
+                    // owns it.
+                    //
+                    // Everything here still reaches the serial port and the
+                    // disk, so nothing is lost; what stops is painting over a
+                    // full-screen interface. That is not a cosmetic worry -
+                    // "[heapcensus]" and "heap grow pages" appeared in black
+                    // across a Terminal.Gui program and vanished on its next
+                    // repaint, which reads as the program glitching and tells
+                    // nobody anything. Suppressing the class beats finding each
+                    // writer: the next one to be added would otherwise have to
+                    // be found the same way.
+                    return TerminalConsole.ProgramOwnsScreen
+                        ? KernelLog & ~OutputSink.Screen
+                        : KernelLog;
             }
         }
 

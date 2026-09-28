@@ -1,4 +1,4 @@
-namespace OS.Hal.Usb
+﻿namespace OS.Hal.Usb
 {
     // Bringing the default control endpoint back after a device refuses
     // something.
@@ -79,8 +79,16 @@ namespace OS.Hal.Usb
         /// written, and the Stopped event the controller posts for the aborted
         /// TD is drained here rather than left for a stranger.
         /// </remarks>
+        // Nothing calls this today, and that is the fix rather than an
+        // oversight: the serial read was cancelling its own transfer on every
+        // empty poll, which is where the machine's idle time was going. Kept
+        // because taking a transfer back is a real operation with no other
+        // implementation - an unplug, or a caller that genuinely has to reclaim
+        // its buffer, needs exactly this - and because writing it again from the
+        // specification would be worse than reading it here.
         private void AbortEndpointTransfer(uint slotId, uint dci, ulong ring, uint enqueue, uint cycle)
         {
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
             uint epid = dci << 16;
 
             uint* trb = (uint*)(_cmdRing + _cmdEnqueue * TrbSize);
@@ -103,6 +111,10 @@ namespace OS.Hal.Usb
             AdvanceCommandRing();
             Write32(_doorbellBase, 0);
             TryWaitEvent(TRB_CMD_COMPLETE, 1000, out _, out _);
+
+            OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                OS.Kernel.Diagnostics.PerfCounter.UsbAborts,
+                OS.Kernel.Diagnostics.PerfCounter.UsbAbortTicks, started);
         }
 
         private bool TryResetControlEndpoint(uint slotId)

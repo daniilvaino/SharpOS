@@ -91,6 +91,10 @@ namespace OS.Hal.Usb
         public byte Slot => _pci.Slot;
         public byte Func => _pci.Func;
 
+        // Who made the controller, for a device manager that has to name it.
+        public ushort VendorId => _pci.VendorId;
+        public ushort DeviceId => _pci.DeviceId;
+
         /// <summary>Bring up one specific controller. Which one to drive is
         /// the registry's decision, not this object's.</summary>
         public bool Init(UsbHost.Controller c)

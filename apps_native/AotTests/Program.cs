@@ -1,4 +1,4 @@
-using SharpOS.AppSdk;
+﻿using SharpOS.AppSdk;
 using System;
 using System.Collections.Generic;
 using System.Runtime;
@@ -233,6 +233,7 @@ namespace AotTests
 
             CheckThreadsAndTasks();
             CheckClockWrap();
+            CheckClockAdvances();
             CheckStackTraceText();
             CheckStackTraceOwnership();
 
@@ -755,6 +756,41 @@ namespace AotTests
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static void TraceLevel3()
             => throw new InvalidOperationException("trace-text");
+
+        /// <summary>That DateTime.UtcNow moves, and moves at the right rate.</summary>
+        /// <remarks>
+        /// The battery had a clock test before this one and it did not cover
+        /// this: CheckClockWrap exercises Stopwatch, with a counter of its own
+        /// making, and never touches DateTime. So a DateTime whose source was
+        /// never installed - UtcNow answering the start of the epoch on every
+        /// call, for the whole life of the tree - passed every test there was.
+        ///
+        /// What it cost: Terminal.Gui times its timeouts by comparing UtcNow
+        /// against a deadline computed from UtcNow, so with a clock that never
+        /// moves no timeout in any program here ever fired. Silently - the
+        /// callback is simply not called.
+        ///
+        /// The rate is checked, not just the direction. A source installed with
+        /// the wrong scale still advances, and "it moves" would pass while every
+        /// deadline in the system came out a hundred times too long.
+        /// </remarks>
+        private static void CheckClockAdvances()
+        {
+            Check("DateTime has a time source", System.DateTime.Clock.IsRealClock);
+
+            System.DateTime first = System.DateTime.UtcNow;
+            AppThreads.Sleep(20);
+            System.DateTime second = System.DateTime.UtcNow;
+
+            Check("DateTime.UtcNow advances", second.Ticks > first.Ticks);
+
+            // Generous at the top because a sleep here is quantised by the
+            // timer tick and the thread may wait behind others; tight enough
+            // at the bottom to catch a scale that is off by any factor.
+            long elapsedMs = (second.Ticks - first.Ticks) / System.TimeSpan.TicksPerMillisecond;
+            Check("DateTime.UtcNow advances at about a millisecond per millisecond",
+                  elapsedMs >= 10 && elapsedMs < 2000);
+        }
 
         private static unsafe void CheckClockWrap()
         {

@@ -1,4 +1,4 @@
-namespace OS.Hal.Usb
+﻿namespace OS.Hal.Usb
 {
     // USB mass storage over bulk endpoints: the transport half.
     //
@@ -51,15 +51,17 @@ namespace OS.Hal.Usb
         }
 
         /// <summary>
-        /// Bulk IN that reports how much actually arrived, and takes the
-        /// transfer back if nothing does.
+        /// Bulk IN that reports how much arrived, and leaves the transfer in
+        /// flight when nothing has yet.
         /// </summary>
         /// <remarks>
         /// The length comes from the event's residue: one TRB per TD here, so
-        /// `asked - residue` is exactly what the device sent. On a timeout the
-        /// queued TRB is withdrawn rather than left in flight — see
-        /// AbortEndpointTransfer for why that is not optional on a device that
-        /// is also a disk.
+        /// `asked - residue` is exactly what the device sent.
+        ///
+        /// One read is outstanding at a time and it survives between calls, so
+        /// a poll that finds the port silent costs a look at the event ring and
+        /// nothing else. It used to withdraw the TRB instead, which is two
+        /// command-ring round trips per empty poll; see the timeout branch.
         /// </remarks>
         public bool TryCdcRead(uint slotId, void* buffer, uint length,
                                uint timeoutMs, out uint received)
@@ -69,29 +71,65 @@ namespace OS.Hal.Usb
             if (di < 0) return false;
 
             ref Device d = ref _devices[di];
-            if (!d.HasCdc || d.CdcIn.Ring == 0) return false;
+            if (!d.HasCdc || d.CdcIn.Ring == 0 || d.CdcIn.ReadBuffer == 0) return false;
 
-            ulong ring = d.CdcIn.Ring;
-            uint enqueueBefore = d.CdcIn.Enqueue;
-            uint cycleBefore = d.CdcIn.Cycle;
+            // A completion somebody else's wait absorbed: the data is already
+            // in our page, and waiting again would be waiting for a second
+            // packet that may never come.
+            if (d.CdcIn.ReadPending)
+            {
+                d.CdcIn.ReadPending = false;
+                received = CopyFromReadBuffer(ref d.CdcIn, buffer, length);
+                return received != 0;
+            }
 
-            if (!TryQueueBulk(slotId, ref d.CdcIn, buffer, length)) return false;
+            if (!d.CdcIn.ReadOutstanding)
+            {
+                uint want = d.CdcIn.MaxPacket;
+                if (!TryQueueBulk(slotId, ref d.CdcIn, (void*)d.CdcIn.ReadBuffer, want))
+                    return false;
+
+                d.CdcIn.ReadOutstanding = true;
+                d.CdcIn.ReadLength = want;
+            }
 
             if (!TryWaitEvent(TRB_TRANSFER_EVENT, slotId, timeoutMs,
                               out uint code, out _, out uint residue))
             {
+                // Left queued on purpose, and this is the point of the rewrite.
+                // Cancelling here cost a Stop Endpoint and a Set TR Dequeue -
+                // two command-ring round trips, each with its own wait - on
+                // every poll that found nothing. With the serial pump asking
+                // twenty-five times a second and the port usually silent, that
+                // was the machine's whole idle time: [idlewait] read
+                // usb=1.07e9 ticks a window with screen and progwrite at zero,
+                // and a Terminal.Gui program looked like it was repainting in
+                // slow motion because it only got the processor in between.
+                //
+                // A queued interrupt-in transfer nobody is waiting for costs
+                // nothing. It is how the keyboard has always worked.
                 _lastCode = 0;
-                AbortEndpointTransfer(slotId, d.CdcIn.Dci, ring, enqueueBefore, cycleBefore);
-                d.CdcIn.Enqueue = enqueueBefore;
-                d.CdcIn.Cycle = cycleBefore;
                 return false;
             }
 
+            d.CdcIn.ReadOutstanding = false;
             _lastCode = code;
             if (code != 1 && code != 13) return false;
 
-            received = residue <= length ? length - residue : 0;
-            return true;
+            uint queued = d.CdcIn.ReadLength;
+            d.CdcIn.ReadLength = residue <= queued ? queued - residue : 0;
+            received = CopyFromReadBuffer(ref d.CdcIn, buffer, length);
+            return received != 0;
+        }
+
+        /// <summary>What the last completion left in the endpoint's page.</summary>
+        private static uint CopyFromReadBuffer(ref BulkEp ep, void* destination, uint capacity)
+        {
+            uint n = ep.ReadLength < capacity ? ep.ReadLength : capacity;
+            byte* src = (byte*)ep.ReadBuffer;
+            byte* dst = (byte*)destination;
+            for (uint i = 0; i < n; i++) dst[i] = src[i];
+            return n;
         }
 
         // One Normal TRB on a bulk ring, and the doorbell. Split out of

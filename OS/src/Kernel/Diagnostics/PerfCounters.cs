@@ -1,4 +1,4 @@
-using OS.Hal;
+﻿using OS.Hal;
 
 namespace OS.Kernel.Diagnostics
 {
@@ -18,6 +18,46 @@ namespace OS.Kernel.Diagnostics
         Com4Chars,
         ScreenPaints,
         ScreenTicks,
+
+        // Where a paint's time goes. One number for the whole paint said a
+        // full repaint costs 16 ms and nothing about which part: making the
+        // glyph blitter twice as fast moved it by a sixth, which means most of
+        // it was never glyphs. Scrolling moves pixels inside the framebuffer —
+        // a read and a write of most of the screen — and that is the first
+        // suspect, but a suspect is not a measurement.
+        ScreenScrollTicks,
+        ScreenRowTicks,
+        ScreenCursorTicks,
+
+        // Cells the row loop drew, and cells the shadow let it skip.
+        //
+        // The phase counters said all of a paint's fifteen milliseconds is in
+        // the row loop and none in scrolling. That leaves two readings which
+        // the timing cannot tell apart: the screen genuinely changed in full,
+        // in which case the loop is already running at the framebuffer's
+        // measured speed and only drawing less can help; or most cells were
+        // unchanged and the time went on deciding that — two palette lookups
+        // and a shadow compare per cell, fifteen thousand times.
+        //
+        // The answer came back 3052 drawn against 10378 skipped, which does not
+        // settle it either: that is 1.3 us per cell walked, or 5.5 us per cell
+        // drawn, and 512 bytes in 5.5 us is a sixth of the framebuffer's
+        // measured rate. A glyph writes half a cache line at a time, sixteen
+        // scanlines apart, so the shape of the write is the third reading —
+        // measured separately as `cell8x16` in [fbperf].
+        ScreenCellsDrawn,
+        ScreenCellsSkipped,
+
+        // The row phase again, counting only the paints that ran start to
+        // finish without the scheduler taking the processor away.
+        //
+        // Wall clock is the wrong ruler for a phase inside a preempted thread,
+        // and by exactly how much is not small: the census runs four-thread
+        // stress tests, 650000 context switches across twelve seconds, and it
+        // reported a paint at 14 ms while the same code during single-threaded
+        // boot output reported 0.49 ms. The difference was other threads.
+        ScreenRowCleanPaints,
+        ScreenRowCleanTicks,
 
         // A program's writes as the kernel serves them, whichever tier made
         // them: the NativeAOT services and the hosted console handles. Time
@@ -50,6 +90,16 @@ namespace OS.Kernel.Diagnostics
         UsbWaits,
         UsbWaitTicks,
         UsbWaitSpins,
+
+        // Transfers taken back off an endpoint, and what that cost.
+        //
+        // Separate from the waits because cancelling is not waiting: a Stop
+        // Endpoint and a Set TR Dequeue are two command-ring round trips, and
+        // they hid inside usb.wait where nothing distinguished them from a
+        // device being slow. The serial pump was doing one per empty poll,
+        // twenty-five times a second, and it read as "USB is busy".
+        UsbAborts,
+        UsbAbortTicks,
 
         // Exceptions: RaiseException calls, function-table lookups (and which
         // table answered), R2R tables walked past before one did, and
@@ -166,6 +216,16 @@ namespace OS.Kernel.Diagnostics
             if (started == 0)
                 return;
             Add(ticks, (long)(Tsc() - started));
+        }
+
+        /// <summary>The counter's running total, for phases that want to know
+        /// whether something interfered rather than how long it took.</summary>
+        public static long Value(PerfCounter counter)
+        {
+            // A plain load: an aligned 64-bit read is atomic on x64, and a
+            // counter read for "did anything interfere" does not need ordering.
+            fixed (long* v = s_values.V)
+                return v[(int)counter];
         }
 
         public static void Add(PerfCounter counter, long amount)
@@ -333,6 +393,12 @@ namespace OS.Kernel.Diagnostics
             Line(scope, "com3.chars", Get(ref delta, PerfCounter.Com3Chars));
             Line(scope, "com4.chars", Get(ref delta, PerfCounter.Com4Chars));
             Timed(scope, "screen", ref delta, PerfCounter.ScreenPaints, PerfCounter.ScreenTicks);
+            Timed(scope, "screen.scroll", ref delta, PerfCounter.ScreenPaints, PerfCounter.ScreenScrollTicks);
+            Timed(scope, "screen.rows", ref delta, PerfCounter.ScreenPaints, PerfCounter.ScreenRowTicks);
+            Timed(scope, "screen.cursor", ref delta, PerfCounter.ScreenPaints, PerfCounter.ScreenCursorTicks);
+            Line(scope, "screen.cells.drawn", Get(ref delta, PerfCounter.ScreenCellsDrawn));
+            Line(scope, "screen.cells.skipped", Get(ref delta, PerfCounter.ScreenCellsSkipped));
+            Timed(scope, "screen.rows.clean", ref delta, PerfCounter.ScreenRowCleanPaints, PerfCounter.ScreenRowCleanTicks);
             Timed(scope, "write", ref delta, PerfCounter.ProgramWrites, PerfCounter.ProgramWriteTicks);
             Line(scope, "write.chars", Get(ref delta, PerfCounter.ProgramWriteChars));
             if (TimeSinks)
@@ -347,6 +413,7 @@ namespace OS.Kernel.Diagnostics
             Timed(scope, "kgc", ref delta, PerfCounter.KernelGcs, PerfCounter.KernelGcTicks);
             Timed(scope, "usb.wait", ref delta, PerfCounter.UsbWaits, PerfCounter.UsbWaitTicks);
             Line(scope, "usb.wait.spins", Get(ref delta, PerfCounter.UsbWaitSpins));
+            Timed(scope, "usb.abort", ref delta, PerfCounter.UsbAborts, PerfCounter.UsbAbortTicks);
             Line(scope, "seh.raises", Get(ref delta, PerfCounter.SehRaises));
             Timed(scope, "seh.lookup", ref delta, PerfCounter.SehLookups, PerfCounter.SehLookupTicks);
             Line(scope, "seh.lookup.image", Get(ref delta, PerfCounter.SehLookupImage));

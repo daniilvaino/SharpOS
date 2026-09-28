@@ -708,7 +708,8 @@ $peApps = @(
     @{ Src = "apps_native\TriCNES\bin\Release\out-win-x64\TriCNESApp.exe";        Dest = "TRICNES.EXE" },
     @{ Src = "apps_native\Fami\bin\Release\out-win-x64\FamiApp.exe";              Dest = "FAMI.EXE" },
     @{ Src = "apps_native\Launcher\bin\Release\out-win-x64\Launcher.exe";         Dest = "LAUNCHER.EXE" },
-    @{ Src = "apps_native\Shell\bin\Release\out-win-x64\Shell.exe";               Dest = "SHELL.EXE" }
+    @{ Src = "apps_native\Shell\bin\Release\out-win-x64\Shell.exe";               Dest = "SHELL.EXE" },
+    @{ Src = "apps_native\UsbTest\bin\Release\out-win-x64\UsbTest.exe";           Dest = "USBTEST.EXE" }
 )
 foreach ($peApp in $peApps) {
     $peSrc = Join-Path $repoRoot $peApp.Src

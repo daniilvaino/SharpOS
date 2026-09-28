@@ -26,6 +26,7 @@ param(
     # Ожидаемый состав census. Сверка с ним ловит то, чего автодетект не может:
     # исчезнувшую пробу. Пустая строка отключает сверку.
     [string]$CensusRegistry = (Join-Path $PSScriptRoot 'census-registry.tsv'),
+    [string]$AotRegistry = (Join-Path $PSScriptRoot 'aottests-registry.tsv'),
     # Куда складывать машинный срез прогона (JSON + CSV). Срез пишется всегда;
     # параметр только переносит его в другое место.
     [string]$ReportDir = (Join-Path (Join-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'OS') '.qemu') 'reports'),
@@ -765,7 +766,13 @@ if ($mCensusBegin.Success -and $mCensusEnd.Success -and $mCensusEnd.Index -gt $m
             if ($line.Trim() -and -not $isNoise -and $looksLikeProbe) { $pending = $line }
             continue
         }
-        if ($isNoise) { continue }   # [OK] внутри строки форка — не проба
+        # [OK] внутри строки форка — не проба. Но строка, начинающаяся со
+        # скобки И несущая статус, — проба: "[ModuleInitializer] ran before
+        # Main   [OK]". Различает именно статус на той же строке, не отступ:
+        # блок "[os] IsLinux=False ... [os] RID=unknown" — это детали пробы
+        # "OS identity dump", её [OK] уехал на следующую строку, и если счесть
+        # их именами, последняя перебьёт настоящее имя.
+        if ($isNoise -and $line -notmatch '^\s{2,6}\[') { continue }
         $head = $line.Substring(0, $m.Index)
         if (-not $head.Trim()) { $head = $pending }   # деталь перенесена на след. строку
         $name = ([regex]::Split($head.Trim(), '\s{2,}'))[0].Trim()
@@ -773,8 +780,20 @@ if ($mCensusBegin.Success -and $mCensusEnd.Success -and $mCensusEnd.Index -gt $m
         # throw ..."), и без отсечения по тегу имя уезжает в полстроки лога —
         # таблица разъезжается, а сверка с реестром промахивается.
         # Тег может приклеиться и без пробела ("Null MethodInfo.I[info] heap
-        # grow pages: 65"), поэтому режем по первой скобке, которая не статус.
-        $name = ([regex]::Split($name, '\[(?!OK\]|FAIL\]|DEG\]|SKIP\])'))[0].Trim()
+        # grow pages: 65"), поэтому режем по скобке.
+        #
+        # Но только по той, что начинает ТЕГ, и только не в начале имени.
+        # Резать по любой скобке — значит резать и сами пробы: имена
+        # "covariant array -> Base[] = Derived[]", "[ModuleInitializer] ran
+        # before Main" и "[os] RID=unknown" содержат скобки по делу. Первое
+        # обрезалось до "covariant array -> Base", два других начинались со
+        # скобки, давали пустое имя и выбрасывались целиком — в отчёте это
+        # выглядело как три пропавшие пробы и одна новая, то есть как
+        # изменение возможностей там, где менялся только разбор строки.
+        #
+        # Тег лога — строчное слово в скобках ([info], [seh], [xhci], [ebs]);
+        # статусы заглавные и под это не подходят сами по себе.
+        $name = ([regex]::Split($name, '(?<!^)\[(?=[a-z][a-z0-9_-]*\])'))[0].Trim()
         $pending = ''
         if (-not $name) { continue }
         if ($seen.ContainsKey($name)) { $seen[$name]++; $name = "$name #$($seen[$name])" } else { $seen[$name] = 1 }
@@ -789,28 +808,38 @@ if ($mCensusBegin.Success -and $mCensusEnd.Success -and $mCensusEnd.Index -gt $m
 # стоит "Math.Atan(1) == ?/4", а в реестре — настоящая "π". Без нормализации
 # ни одно такое имя не совпадает, и каждое даёт пару «пропало» + «новое»:
 # полсотни мнимых расхождений, за которыми не видно настоящих.
-function Get-CensusKey([string]$name) {
+function Get-ProbeKey([string]$name) {
     return -join ($name.ToCharArray() | ForEach-Object { if ([int]$_ -lt 128) { $_ } else { '?' } })
 }
 
-$censusDiff = @()
-if ($censusRows.Count -gt 0 -and $CensusRegistry -and (Test-Path -LiteralPath $CensusRegistry)) {
+# Сверка списка проб с реестром: помечает NEW / FIXED / REGRESSED прямо в
+# строках и возвращает то, что из реестра пропало.
+#
+# Одна на перепись и на батарею AOT, потому что вопрос у них один: изменился
+# ли состав и статусы с прошлого раза. Две копии разошлись бы — и разошлась бы
+# та, которую реже читают.
+function Compare-WithRegistry($rows, [string]$path) {
+    $missing = @()
+    if (-not $rows -or $rows.Count -eq 0) { return $missing }
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) { return $missing }
+
     $expected = @{}
     $expectedName = @{}
-    foreach ($line in Get-Content -LiteralPath $CensusRegistry) {
+    foreach ($line in Get-Content -LiteralPath $path) {
         if ($line -match '^\s*#' -or -not $line.Trim()) { continue }
         $parts = $line -split "`t"
         if ($parts.Count -ge 2) {
-            $key = Get-CensusKey $parts[0]
+            $key = Get-ProbeKey $parts[0]
             $expected[$key] = $parts[1].Trim()
             $expectedName[$key] = $parts[0]
         }
     }
-    $actual = @{}
-    foreach ($r in $censusRows) { $actual[(Get-CensusKey $r.Name)] = $r.Status }
 
-    foreach ($r in $censusRows) {
-        $key = Get-CensusKey $r.Name
+    $actual = @{}
+    foreach ($r in $rows) { $actual[(Get-ProbeKey $r.Name)] = $r.Status }
+
+    foreach ($r in $rows) {
+        $key = Get-ProbeKey $r.Name
         if (-not $expected.ContainsKey($key)) { $r.Delta = 'NEW'; continue }
         $was = $expected[$key]
         if ($was -eq $r.Status) { continue }
@@ -818,9 +847,13 @@ if ($censusRows.Count -gt 0 -and $CensusRegistry -and (Test-Path -LiteralPath $C
     }
     foreach ($key in $expected.Keys) {
         if ($actual.ContainsKey($key)) { continue }
-        $censusDiff += [PSCustomObject]@{ Name = $expectedName[$key]; Status = 'MISSING'; Detail = "был $($expected[$key])"; Delta = 'MISSING' }
+        $missing += [PSCustomObject]@{ Name = $expectedName[$key]; Status = 'MISSING'; Detail = "был $($expected[$key])"; Delta = 'MISSING' }
     }
+
+    return $missing
 }
+
+$censusDiff = Compare-WithRegistry $censusRows $CensusRegistry
 
 if ($censusRows.Count -gt 0) {
     $censusBad = @($censusRows | Where-Object { $_.Status -ne 'OK' -or $_.Delta }) + $censusDiff
@@ -838,6 +871,87 @@ if ($censusRows.Count -gt 0) {
     $moved = @($censusRows | Where-Object { $_.Delta }) + $censusDiff
     if ($moved.Count -gt 0) {
         Write-Host ("  сдвигов относительно реестра: {0}" -f $moved.Count) -ForegroundColor Yellow
+    }
+    Write-Host ""
+}
+
+# --- батарея AOT -----------------------------------------------------
+# AOTTESTS печатает каждую проверку ("  ok   имя" / "  FAIL имя") и итог
+# "==== N/M passed ====", а кодом возврата отдаёт число пройденных.
+#
+# До step182 отчёт не читал ни того, ни другого, и это две разные дыры.
+# Упавшая проверка меняла код возврата с 83 на 82 — приложение всё равно
+# отрабатывало «успешно», и отчёт оставался зелёным. Пропавшая проверка не
+# оставляла следа вовсе: 83/83 превращалось в 82/82, что снова «всё зелено».
+# Вторая дыра опаснее: тест, переставший вызываться, молчит так же, как тест,
+# которого никогда не было, — а ровно на этом прожили стоячие часы.
+#
+# Поэтому сверка по составу, а не по числу: тот же реестр имён и статусов,
+# что у переписи, и та же функция.
+$aotRows = @()
+$aotSummary = $null
+$aotStarts = [regex]::Matches($programText, '==== AOT app test battery ====')
+if ($aotStarts.Count -gt 0) {
+    # Последний прогон: батарея запускается за загрузку не один раз.
+    $tail = $programText.Substring($aotStarts[$aotStarts.Count - 1].Index)
+    $mSum = [regex]::Match($tail, '====\s+(\d+)/(\d+)\s+passed\s+====')
+    $body = if ($mSum.Success) { $tail.Substring(0, $mSum.Index) } else { $tail }
+    if ($mSum.Success) {
+        $aotSummary = [PSCustomObject]@{
+            Passed = [int]$mSum.Groups[1].Value
+            Total  = [int]$mSum.Groups[2].Value
+        }
+    }
+
+    $seenAot = @{}
+    foreach ($line in ($body -split "`r?`n")) {
+        $m = [regex]::Match($line, '^\s{2}(ok|FAIL)\s+(\S.*?)\s*$')
+        if (-not $m.Success) { continue }
+        # Тот же срез приклеившегося тега, что и у переписи.
+        $name = ([regex]::Split($m.Groups[2].Value, '(?<!^)\[(?=[a-z][a-z0-9_-]*\])'))[0].Trim()
+        if (-not $name) { continue }
+        if ($seenAot.ContainsKey($name)) { $seenAot[$name]++; $name = "$name #$($seenAot[$name])" }
+        else { $seenAot[$name] = 1 }
+        $status = if ($m.Groups[1].Value -eq 'ok') { 'OK' } else { 'FAIL' }
+        $aotRows += [PSCustomObject]@{ Name = $name; Status = $status; Detail = ''; Delta = '' }
+    }
+}
+
+$aotDiff = Compare-WithRegistry $aotRows $AotRegistry
+
+if ($aotRows.Count -gt 0) {
+    $aotBad = @($aotRows | Where-Object { $_.Status -ne 'OK' -or $_.Delta }) + $aotDiff
+    Write-Host "--- батарея AOT: не-OK и расхождения с реестром ---" -ForegroundColor White
+    if ($aotBad.Count -eq 0) {
+        Write-Host "  (пусто)" -ForegroundColor Green
+    } else {
+        $aotBad |
+            Select-Object @{n='Проверка';e={$_.Name}},
+                          @{n='Статус';e={$_.Status}},
+                          @{n='Дельта';e={$_.Delta}},
+                          @{n='Деталь';e={$_.Detail}} |
+            Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+    }
+
+    if ($aotSummary) {
+        $summaryLine = "  итог батареи: {0}/{1}" -f $aotSummary.Passed, $aotSummary.Total
+        if ($aotSummary.Passed -ne $aotSummary.Total) {
+            Write-Host ($summaryLine + " - есть упавшие") -ForegroundColor Red
+        } else {
+            Write-Host $summaryLine -ForegroundColor Green
+        }
+        # Итог и разобранный список должны сходиться: если нет, разбор
+        # потерял строки, и «всё зелено» ниже ничего не значит.
+        if ($aotSummary.Total -ne $aotRows.Count) {
+            Write-Host ("  разобрано {0} проверок против {1} в итоге - разбор неполон" -f $aotRows.Count, $aotSummary.Total) -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  итог батареи не найден - прогон оборван?" -ForegroundColor Yellow
+    }
+
+    $movedAot = @($aotRows | Where-Object { $_.Delta }) + $aotDiff
+    if ($movedAot.Count -gt 0) {
+        Write-Host ("  сдвигов относительно реестра: {0}" -f $movedAot.Count) -ForegroundColor Yellow
     }
     Write-Host ""
 }

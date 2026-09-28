@@ -79,6 +79,24 @@
             public uint Cycle;
             public ushort MaxPacket;
             public byte Address;
+
+            // A read left in flight between polls, and a completion somebody
+            // else's wait absorbed. The same pair a HID function keeps, and for
+            // the same reason: a listener that has nothing to say yet should
+            // cost nothing to ask.
+            public bool ReadOutstanding;
+            public bool ReadPending;
+
+            // The driver's own page, and how much of it the last completion
+            // filled.
+            //
+            // Not the caller's buffer, which is the whole reason this exists: a
+            // read that stays queued between polls is a controller holding a
+            // pointer, and the serial pump's buffer was a stackalloc that stops
+            // existing when the poll returns. A page of our own, copied out on
+            // completion, and callers can pass whatever they like.
+            public ulong ReadBuffer;
+            public uint ReadLength;
         }
 
         private readonly Device[] _devices = new Device[MaxDevices];
@@ -96,6 +114,48 @@
 
         public uint SlotIdAt(int index)
             => index >= 0 && index < _deviceCount ? _devices[index].SlotId : 0;
+
+        /// <summary>Is this interface number driven by one of our drivers?</summary>
+        /// <remarks>
+        /// Asked by the device manager, which until now could only see the HID
+        /// functions and so reported the boot disk's own mass-storage interface
+        /// as unclaimed — on a machine booted from that disk. Every driver that
+        /// takes an interface records its number somewhere; this is the one
+        /// place that looks in all of them.
+        /// </remarks>
+        public bool IsInterfaceClaimed(uint slotId, byte interfaceNumber)
+        {
+            int index = IndexOfSlot(slotId);
+            if (index < 0) return false;
+
+            ref Device d = ref _devices[index];
+
+            if (d.HasMsd && d.MsdInterface == interfaceNumber) return true;
+            if (d.HasCdc && (d.CdcCommInterface == interfaceNumber ||
+                             d.CdcDataInterface == interfaceNumber)) return true;
+
+            int functions = HidCountOf(slotId);
+            for (int i = 0; i < functions; i++)
+            {
+                int fn = HidIndexOf(slotId, i);
+                if (fn >= 0 && HidInterfaceAt(fn) == interfaceNumber) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>The speed this slot was addressed at, or 0 if it is not ours.</summary>
+        /// <remarks>
+        /// Read from the slot's own record rather than from its port, because
+        /// the port's field is what the reset negotiated and the slot's is what
+        /// the controller was actually told — and a caller showing the bus to a
+        /// person should show the second.
+        /// </remarks>
+        public uint SpeedOf(uint slotId)
+        {
+            int index = IndexOfSlot(slotId);
+            return index >= 0 ? _devices[index].Speed : 0;
+        }
 
         private uint ContextSize => _contextSize64 ? 64u : 32u;
 
@@ -366,7 +426,7 @@
         // A transfer completed for a device other than the one being waited
         // on. Its buffer is already filled, so record that and let its owner
         // pick the data up on its next poll.
-        private void StashTransferEvent(uint slotId)
+        private void StashTransferEvent(uint slotId, uint residue)
         {
             int i = IndexOfSlot(slotId);
             if (i < 0) return;
@@ -381,6 +441,25 @@
                 if (!_hid[h].InUse || _hid[h].SlotId != slotId) continue;
                 _hid[h].ReadOutstanding = false;
                 _hid[h].ReportPending = true;
+            }
+
+            // And the serial port, which keeps a read in flight the same way.
+            // Missed here, its completion would be absorbed by whoever was
+            // waiting and the reader would sit on an outstanding transfer that
+            // had already finished - the port would go quiet for good.
+            //
+            // With the length, unlike the HID case above. A keyboard report is
+            // a fixed eight bytes and copying the whole packet is right; a
+            // serial read of three bytes into a 512-byte packet would hand the
+            // reader 509 bytes of whatever was there before.
+            if (_devices[i].CdcIn.ReadOutstanding)
+            {
+                _devices[i].CdcIn.ReadOutstanding = false;
+                _devices[i].CdcIn.ReadPending = true;
+                _devices[i].CdcIn.ReadLength =
+                    residue <= _devices[i].CdcIn.ReadLength
+                        ? _devices[i].CdcIn.ReadLength - residue
+                        : 0;
             }
         }
 
