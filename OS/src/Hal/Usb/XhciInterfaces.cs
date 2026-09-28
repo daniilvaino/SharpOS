@@ -469,6 +469,15 @@
             if (d.HasCdc)
             {
                 if (!TryOpenBulk(ref d.CdcIn) || !TryOpenBulk(ref d.CdcOut)) return false;
+
+                // The page the IN endpoint fills. Allocated here because a read
+                // outlives the call that queued it, so the buffer has to
+                // outlive it too.
+                if (d.CdcIn.ReadBuffer == 0)
+                {
+                    d.CdcIn.ReadBuffer = DmaMemory.AllocPages(1);
+                    if (d.CdcIn.ReadBuffer == 0) return false;
+                }
                 addFlags |= (1u << (int)d.CdcIn.Dci) | (1u << (int)d.CdcOut.Dci);
                 if (d.CdcIn.Dci > highest) highest = d.CdcIn.Dci;
                 if (d.CdcOut.Dci > highest) highest = d.CdcOut.Dci;

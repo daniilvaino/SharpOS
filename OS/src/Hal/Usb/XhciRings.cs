@@ -1,4 +1,4 @@
-namespace OS.Hal.Usb
+﻿namespace OS.Hal.Usb
 {
     // xHCI DMA structures and controller start: device context array, command
     // ring, event ring, scratchpad, then run.
@@ -345,7 +345,7 @@ namespace OS.Hal.Usb
                     // Not ours: give it back to whoever queued it, so the
                     // report is not lost and its endpoint can be re-armed.
                     if (type == TRB_TRANSFER_EVENT)
-                        StashTransferEvent(eventSlotId);
+                        StashTransferEvent(eventSlotId, status & 0xFFFFFF);
 
                     continue;   // port change and friends fall through here
                 }

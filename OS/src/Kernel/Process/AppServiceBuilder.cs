@@ -98,7 +98,11 @@ namespace OS.Kernel.Process
         private static ulong s_win64WriteErrorThunk;
         private static ulong s_systemVWriteErrorThunk;
         private static ulong s_win64WriteDiagnosticThunk;
+        private static ulong s_win64UsbEnumerateThunk;
+        private static ulong s_win64UsbCtapThunk;
         private static ulong s_systemVWriteDiagnosticThunk;
+        private static ulong s_systemVUsbEnumerateThunk;
+        private static ulong s_systemVUsbCtapThunk;
 
         public static bool TryBuild(
             ulong serviceVirtual,
@@ -131,6 +135,8 @@ namespace OS.Kernel.Process
             delegate* managed<uint> consoleSizeAddress = &ConsoleSize;
             delegate* managed<ulong, void> writeErrorAddress = &WriteError;
             delegate* managed<ulong, void> writeDiagnosticAddress = &WriteDiagnostic;
+            delegate* managed<ulong, uint> usbEnumerateAddress = &UsbEnumerate;
+            delegate* managed<ulong, uint> usbCtapAddress = &UsbCtap;
 
             ulong tableWriteStringAddress = (ulong)writeStringAddress;
             ulong tableWriteUIntAddress = (ulong)writeUIntAddress;
@@ -151,6 +157,8 @@ namespace OS.Kernel.Process
             ulong tableConsoleSizeAddress = 0;
             ulong tableWriteErrorAddress = 0;
             ulong tableWriteDiagnosticAddress = 0;
+            ulong tableUsbEnumerateAddress = 0;
+            ulong tableUsbCtapAddress = 0;
 
             if (!EnsureServiceThunks(
                 (ulong)writeStringAddress,
@@ -171,7 +179,9 @@ namespace OS.Kernel.Process
                 (ulong)currentThreadIdAddress,
                 (ulong)consoleSizeAddress,
                 (ulong)writeErrorAddress,
-                (ulong)writeDiagnosticAddress))
+                (ulong)writeDiagnosticAddress,
+                (ulong)usbEnumerateAddress,
+                (ulong)usbCtapAddress))
             {
                 return false;
             }
@@ -187,6 +197,8 @@ namespace OS.Kernel.Process
                 tableWriteBuildIdAddress = s_systemVWriteBuildIdThunk;
                 tableWriteErrorAddress = s_systemVWriteErrorThunk;
                 tableWriteDiagnosticAddress = s_systemVWriteDiagnosticThunk;
+                tableUsbEnumerateAddress = s_systemVUsbEnumerateThunk;
+                tableUsbCtapAddress = s_systemVUsbCtapThunk;
                 if (publishedAbiVersion >= AppServiceTable.AbiVersionV2)
                 {
                     tableFileExistsAddress = s_systemVFileExistsThunk;
@@ -215,6 +227,8 @@ namespace OS.Kernel.Process
                 tableWriteBuildIdAddress = s_win64WriteBuildIdThunk;
                 tableWriteErrorAddress = s_win64WriteErrorThunk;
                 tableWriteDiagnosticAddress = s_win64WriteDiagnosticThunk;
+                tableUsbEnumerateAddress = s_win64UsbEnumerateThunk;
+                tableUsbCtapAddress = s_win64UsbCtapThunk;
                 if (publishedAbiVersion >= AppServiceTable.AbiVersionV2)
                 {
                     tableFileExistsAddress = s_win64FileExistsThunk;
@@ -255,6 +269,8 @@ namespace OS.Kernel.Process
             table.ConsoleSizeAddress = tableConsoleSizeAddress;
             table.WriteErrorAddress = tableWriteErrorAddress;
             table.WriteDiagnosticAddress = tableWriteDiagnosticAddress;
+            table.UsbEnumerateAddress = tableUsbEnumerateAddress;
+            table.UsbCtapAddress = tableUsbCtapAddress;
 
             // Hand the app the kernel's interface-dispatch bridge entry so it
             // can trampoline its RhpInitialDynamicInterfaceDispatch into our
@@ -347,7 +363,9 @@ namespace OS.Kernel.Process
             ulong currentThreadIdTarget,
             ulong consoleSizeTarget,
             ulong writeErrorTarget,
-            ulong writeDiagnosticTarget)
+            ulong writeDiagnosticTarget,
+            ulong usbEnumerateTarget,
+            ulong usbCtapTarget)
         {
             if (s_serviceThunksInitialized)
                 return true;
@@ -562,6 +580,28 @@ namespace OS.Kernel.Process
 
                 s_systemVWriteDiagnosticThunk = thunkPageVirtual + cursor;
                 if (!TryWriteSystemVOneArgThunk(page + cursor, writeDiagnosticTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                // The bus, and a security key on it. Same one-argument shape as
+                // everything above: the request structure carries the rest.
+                s_win64UsbEnumerateThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64OneArgThunk(page + cursor, usbEnumerateTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVUsbEnumerateThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVOneArgThunk(page + cursor, usbEnumerateTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_win64UsbCtapThunk = thunkPageVirtual + cursor;
+                if (!TryWriteWin64OneArgThunk(page + cursor, usbCtapTarget))
+                    return false;
+                cursor += ServiceThunkSlotSize;
+
+                s_systemVUsbCtapThunk = thunkPageVirtual + cursor;
+                if (!TryWriteSystemVOneArgThunk(page + cursor, usbCtapTarget))
                     return false;
                 cursor += ServiceThunkSlotSize;
 

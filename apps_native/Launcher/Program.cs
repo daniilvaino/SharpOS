@@ -96,29 +96,11 @@ namespace Launcher
             return 0;
         }
 
-        // The theme lives here, not in the driver: the driver's job is to report
-        // the library's colours faithfully, and a look imposed down there could
-        // never be overridden from up here.
-        private static void ApplyTheme(SharpOSDriver driver)
-        {
-            Colors.Base.Normal = driver.MakeColor(Color.Gray, Color.Black);
-            Colors.Base.Focus = driver.MakeColor(Color.Black, Color.Gray);
-            Colors.Base.HotNormal = driver.MakeColor(Color.BrightCyan, Color.Black);
-            Colors.Base.HotFocus = driver.MakeColor(Color.BrightBlue, Color.Gray);
-            Colors.Base.Disabled = driver.MakeColor(Color.DarkGray, Color.Black);
-
-            Colors.Menu.Normal = driver.MakeColor(Color.Gray, Color.Black);
-            Colors.Menu.Focus = driver.MakeColor(Color.Black, Color.Gray);
-            Colors.Menu.HotNormal = driver.MakeColor(Color.BrightCyan, Color.Black);
-            Colors.Menu.HotFocus = driver.MakeColor(Color.BrightBlue, Color.Gray);
-            Colors.Menu.Disabled = driver.MakeColor(Color.DarkGray, Color.Black);
-
-            Colors.Dialog.Normal = driver.MakeColor(Color.Black, Color.Gray);
-            Colors.Dialog.Focus = driver.MakeColor(Color.Gray, Color.Black);
-            Colors.Dialog.HotNormal = driver.MakeColor(Color.BrightBlue, Color.Gray);
-            Colors.Dialog.HotFocus = driver.MakeColor(Color.BrightCyan, Color.Black);
-            Colors.Dialog.Disabled = driver.MakeColor(Color.DarkGray, Color.Gray);
-        }
+        // Shared with every other full-screen program here, and the reason it
+        // moved out of this file is in SharpOSTheme: overriding Base, Menu and
+        // Dialog and leaving TopLevel alone left half the screen in the
+        // library's default blue.
+        private static void ApplyTheme(SharpOSDriver driver) => SharpOSTheme.Apply(driver);
 
         private static MenuBar BuildMenu()
         {

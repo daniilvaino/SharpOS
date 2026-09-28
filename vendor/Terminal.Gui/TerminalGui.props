@@ -26,6 +26,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)SharpOS\SharpOSDriver.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)SharpOS\SharpOSMainLoop.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)SharpOS\SharpOSKeyMap.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SharpOS\SharpOSTheme.cs" />
 
     <!-- The library itself. Core + Types + Windows + Views. -->
     <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui\Core\**\*.cs"

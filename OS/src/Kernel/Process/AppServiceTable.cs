@@ -190,6 +190,108 @@
         public uint HpetCounterBits;
         public uint HpetReserved;
         public ulong HpetLatchAddress;
+
+        // The USB bus, for an application that wants to look at it.
+        //
+        // Added at the tail and the ABI version left alone: a service is
+        // present when its address is not zero, which is what an app has to
+        // check anyway, and bumping the version would make every existing app
+        // refuse to start on a kernel that gained a feature they do not use.
+        //
+        // Enumerate fills a caller's array with one node per controller,
+        // device, interface and endpoint — a tree flattened into parent
+        // indices. Ctap runs one CTAPHID exchange, framing and all.
+        public ulong UsbEnumerateAddress;
+        public ulong UsbCtapAddress;
+    }
+
+    /// <summary>
+    /// One node of the USB tree. Kind decides which fields mean anything.
+    /// </summary>
+    /// <remarks>
+    /// A flat array with parent indices rather than a real tree, because it
+    /// crosses an ABI boundary: pointers between nodes would have to be
+    /// rewritten for the app's address space, and an index does not care where
+    /// the array lives.
+    ///
+    ///   Kind 0 controller: Number = index, Vendor/Product = PCI ids
+    ///   Kind 1 device:     Number = slot, Class/Subclass/Protocol, Vendor,
+    ///                      Product, Speed, Flags bit 0 = configured,
+    ///                      bit 1 = the device descriptor did not come back
+    ///                      (so Class/Vendor/Product are unknown, not zero),
+    ///                      ManufacturerName/ProductName/SerialNumber as far
+    ///                      as the device names itself (empty when it does not)
+    ///   Kind 2 interface:  Number = interface number, Class/Subclass/Protocol,
+    ///                      UsagePage/Usage when it is a HID we read,
+    ///                      Flags bit 0 = a driver claimed it
+    ///   Kind 3 endpoint:   Number = address, EndpointType, MaxPacket, Interval
+    /// </remarks>
+    internal unsafe struct AppUsbNode
+    {
+        public uint Kind;
+        public uint Parent;          // index in the same array, 0xFFFFFFFF at a root
+        public uint Number;
+        public uint Class;
+        public uint Subclass;
+        public uint Protocol;
+        public ushort Vendor;
+        public ushort Product;
+        public uint Speed;
+        public ushort UsagePage;
+        public ushort Usage;
+        public ushort MaxPacket;
+        public byte EndpointType;    // 0 control, 1 iso, 2 bulk, 3 interrupt
+        public byte Interval;
+        public uint Flags;
+
+        /// <summary>Room for a name, ASCII, NUL-terminated.</summary>
+        /// <remarks>
+        /// Inline rather than a second service returning strings, because the
+        /// listing wants them beside the numbers and a per-string call would
+        /// mean one round trip per device per field. Thirty-two bytes fits the
+        /// names devices actually carry, and a longer one is truncated rather
+        /// than refused.
+        ///
+        /// ASCII, not UTF-16 as the wire carries it: the console drops what its
+        /// font has no glyph for, so a name that arrived as anything else would
+        /// print as holes. Folded at the source, where the bytes are.
+        /// </remarks>
+        public const int NameBytes = 32;
+
+        public fixed byte ManufacturerName[NameBytes];
+        public fixed byte ProductName[NameBytes];
+        public fixed byte SerialNumber[NameBytes];
+    }
+
+    internal unsafe struct AppUsbEnumerateRequest
+    {
+        public ulong BufferAddress;  // AppUsbNode[]
+        public uint Capacity;        // in nodes
+        public uint Count;           // filled in: nodes written
+        public uint Status;
+        public uint Reserved;
+    }
+
+    /// <summary>One CTAPHID exchange with a security key.</summary>
+    /// <remarks>
+    /// Channel 0 on the way in means "introduce us" — the service runs
+    /// CTAPHID_INIT and hands back the channel the key allocated. Any other
+    /// value sends Command on that channel.
+    /// </remarks>
+    internal unsafe struct AppUsbCtapRequest
+    {
+        public uint Channel;         // in: 0 = INIT; out: the channel to use
+        public uint Command;         // CTAPHID command, ignored when Channel is 0
+        public ulong PayloadAddress;
+        public uint PayloadLength;
+        public uint TimeoutMs;
+        public ulong ResponseAddress;
+        public uint ResponseCapacity;
+        public uint ResponseLength;
+        public uint Status;
+        public uint KeepAlives;      // how long the key made us wait
+        public uint Error;           // CTAPHID error code, when it refused
+        public uint Reserved;
     }
 
     internal unsafe struct AppFileExistsRequest

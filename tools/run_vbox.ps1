@@ -35,11 +35,14 @@ param(
     [string]$Configuration = "Release",
 
     # CoreCLR fork build to link/ship (Debug|Release). Forwarded through
-    # build_media_xorriso.ps1 -> run_build.ps1. Default Debug; pass Release
-    # to ship the Release CoreCLR (must be built first via
-    # dotnet-runtime-sharpos\build_clr_sharpos.ps1 -Configuration Release).
+    # build_media_xorriso.ps1 -> run_build.ps1. Release, like everywhere else:
+    # it is what runs and what gets measured, and the Debug artifacts are not
+    # built by default. Pass Debug only with both the Debug CoreCLR and its
+    # System.Private.CoreLib built first
+    # (dotnet-runtime-sharpos\build_clr_sharpos.ps1 -Configuration Debug),
+    # or the link dies on symbols the stale objects predate.
     [ValidateSet("Debug", "Release")]
-    [string]$ForkConfig = "Debug",
+    [string]$ForkConfig = "Release",
 
     # Kernel-only image (no CoreCLR host). Forwarded through
     # build_media_xorriso.ps1 to run_build.ps1.

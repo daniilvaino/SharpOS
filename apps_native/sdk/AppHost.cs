@@ -382,6 +382,66 @@
             return TryReadFile(pathBuffer, buffer, bufferCapacity, out bytesRead);
         }
 
+        /// <summary>
+        /// The whole USB tree, flattened into the caller's array: one node per
+        /// controller, device, interface and endpoint, linked by parent index.
+        /// </summary>
+        /// <remarks>
+        /// Checked by address, not by ABI version. These services were added at
+        /// the tail of the table without moving anything, so an app that runs
+        /// on an older kernel gets a zero here and can say so, instead of
+        /// refusing to start over a feature it may not even use.
+        /// </remarks>
+        public static AppServiceStatus TryUsbEnumerate(AppUsbNode* nodes, uint capacity,
+                                                       out uint count)
+        {
+            count = 0;
+
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null) return AppServiceStatus.Unsupported;
+            if (nodes == null || capacity == 0) return AppServiceStatus.InvalidParameter;
+
+            delegate* unmanaged<ulong, uint> enumerate =
+                (delegate* unmanaged<ulong, uint>)services->UsbEnumerateAddress;
+            if (enumerate == null) return AppServiceStatus.Unsupported;
+
+            AppUsbEnumerateRequest request = default;
+            request.BufferAddress = (ulong)nodes;
+            request.Capacity = capacity;
+
+            uint status = enumerate((ulong)(&request));
+            count = request.Count;
+            return (AppServiceStatus)status;
+        }
+
+        /// <summary>
+        /// One CTAPHID exchange. Channel 0 asks the key to introduce itself and
+        /// hands back the channel it allocated, along with its protocol version
+        /// and capabilities packed into <paramref name="request"/>.Command.
+        /// </summary>
+        public static AppServiceStatus TryUsbCtap(ref AppUsbCtapRequest request)
+        {
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null) return AppServiceStatus.Unsupported;
+
+            delegate* unmanaged<ulong, uint> ctap =
+                (delegate* unmanaged<ulong, uint>)services->UsbCtapAddress;
+            if (ctap == null) return AppServiceStatus.Unsupported;
+
+            fixed (AppUsbCtapRequest* p = &request)
+                return (AppServiceStatus)ctap((ulong)p);
+        }
+
+        /// <summary>Does this kernel hand over the USB bus at all?</summary>
+        public static bool HasUsbServices
+        {
+            get
+            {
+                AppServiceTable* services = AppRuntime.Services;
+                return services != null && services->UsbEnumerateAddress != 0;
+            }
+        }
+
         public static AppServiceStatus TryReadDirEntry(
             byte* directoryPath,
             uint entryIndex,

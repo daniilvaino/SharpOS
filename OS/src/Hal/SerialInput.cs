@@ -1,4 +1,4 @@
-namespace OS.Hal
+﻿namespace OS.Hal
 {
     // Typing that arrives over the USB serial port, turned into set-1
     // scancodes so it is indistinguishable from a keyboard.
@@ -26,17 +26,26 @@ namespace OS.Hal
         private static int s_head;
         private static int s_tail;
 
-        // Bytes are asked for on a clock, not on demand. The input pump calls
-        // the source up to sixty-four times per ten-millisecond pass, and an
-        // empty read costs a transfer plus two ring commands to take back —
-        // that would be hundreds of commands a second to learn that nobody is
-        // typing. Forty milliseconds is invisible to a typist and cheap.
-        private const uint PollIntervalMs = 40;
+        // Bytes are asked for on a clock, not on demand, because the input pump
+        // calls the source up to sixty-four times per ten-millisecond pass.
+        //
+        // Five milliseconds rather than forty: an empty poll now costs a look at
+        // the event ring, so the interval is a latency choice instead of a
+        // budget. It was forty because a poll cost a transfer plus two ring
+        // commands to take back, and at that price asking often was what made
+        // the machine unusable.
+        private const uint PollIntervalMs = 5;
 
-        // How long one poll may hold the CPU. UsbCdcAcm.Read suppresses
-        // preemption for its duration, so this is two milliseconds of every
-        // forty — five per cent, paid only while the port exists.
-        private const uint ReadTimeoutMs = 2;
+        // Zero: the read stays queued between polls, so there is nothing to wait
+        // for. A byte that arrives between two polls is found by the next one
+        // with the data already in the driver's buffer.
+        //
+        // This was two milliseconds, and before that zero, and zero was wrong
+        // then for a reason that no longer holds: the read used to be queued and
+        // withdrawn inside one call, so a zero deadline expired before the
+        // controller had any chance at all and forty keystrokes arrived as
+        // nothing. Now nothing is withdrawn.
+        private const uint ReadTimeoutMs = 0;
         private static ulong s_nextPoll;
 
         // Escape-sequence state: 0 nothing, 1 saw ESC, 2 saw ESC [.
@@ -111,12 +120,8 @@ namespace OS.Hal
             if (!Usb.UsbCdcAcm.IsPresent) return false;
             if (!DuePoll()) return false;
 
-            // A real timeout, not zero. Zero means "check the deadline on the
-            // first turn", which is before the controller has had any chance
-            // at all — the transfer was queued and taken back in the same
-            // breath, and forty keystrokes arrived as nothing. Two
-            // milliseconds is far longer than a bulk IN with data waiting
-            // needs, and it is spent at most once per poll interval.
+            // A stack buffer is safe again: the driver reads into a page of its
+            // own and copies out, so nothing the controller holds points here.
             byte* buffer = stackalloc byte[32];
             int n = Usb.UsbCdcAcm.Read(buffer, 32, ReadTimeoutMs);
             if (n <= 0)

@@ -2,9 +2,16 @@
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     # CoreCLR fork build to link/ship (Debug|Release). Forwarded to
-    # run_build.ps1; default Debug. See run_build.ps1 -ForkConfig.
+    # run_build.ps1.
+    #
+    # Release, like everywhere else. This said Debug for three months after
+    # step169 moved the default, and nothing noticed because only the media and
+    # VirtualBox paths come through here: they asked for a fork nobody builds,
+    # and the link died on symbols the June Debug artifacts predate
+    # (SharpOSHost_AttachCurrentThread). Debug needs its own CoreCLR AND its
+    # own System.Private.CoreLib built first — see run_build.ps1 -ForkConfig.
     [ValidateSet("Debug", "Release")]
-    [string]$ForkConfig = "Debug",
+    [string]$ForkConfig = "Release",
     # Kernel-only image: forwarded to run_build.ps1, which turns it into
     # -p:SkipCoreClr=true. Without forwarding, the flag was accepted here and
     # silently dropped, and the build died at link with an unresolved CoreCLR

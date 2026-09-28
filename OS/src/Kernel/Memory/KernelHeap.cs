@@ -278,10 +278,17 @@ namespace OS.Kernel.Memory
             s_heapPages += pageCount;
             s_growCount++;
 
-            Log.Begin(LogLevel.Info);
-            Console.Write("heap grow pages: ");
-            Console.WriteUInt(pageCount);
-            Log.EndLine();
+            // On the measurement channel, not the log's: this is a number for
+            // whoever compares runs, and it was being painted over a
+            // full-screen program. A Terminal.Gui redraw makes the terminal
+            // engine allocate, the heap grows sixty-five pages at a time, and
+            // the notice appeared and vanished under the next repaint - forty
+            // eight times in one session of it. Same argument OutputRouting
+            // already makes for [perf]: drawing a measurement is one more cost
+            // inside the thing being measured.
+            PerfLine("[info] heap grow pages: ");
+            PerfUInt(pageCount);
+            PerfLine("\r\n");
 
             // Periodically, what the heap is full OF. Growth alone says only
             // that it is filling; a machine left at a prompt produced 502 of
@@ -293,6 +300,26 @@ namespace OS.Kernel.Memory
 
             MergeWithPrevious(block);
             return true;
+        }
+
+        private static void PerfLine(string text)
+        {
+            for (int i = 0; i < text.Length; i++)
+                OS.Hal.Platform.WriteChar(text[i], OS.Hal.OutputChannel.Perf);
+        }
+
+        private static void PerfUInt(uint value)
+        {
+            char* digits = stackalloc char[10];
+            int count = 0;
+            do
+            {
+                digits[count++] = (char)('0' + (int)(value % 10u));
+                value /= 10u;
+            } while (value != 0);
+
+            while (count > 0)
+                OS.Hal.Platform.WriteChar(digits[--count], OS.Hal.OutputChannel.Perf);
         }
 
         private static HeapBlock* MergeWithPrevious(HeapBlock* block)
