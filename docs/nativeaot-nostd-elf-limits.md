@@ -1,4 +1,4 @@
-> **⚠️ ИСТОРИЧЕСКИЙ ДОКУМЕНТ.** ELF-tier удалён: приложения собираются
+﻿> **⚠️ ИСТОРИЧЕСКИЙ ДОКУМЕНТ.** ELF-tier удалён: приложения собираются
 > как freestanding **win-x64 PE** (`apps_native/`, общий
 > `apps_native/sdk/FreestandingPe.props`) и компилят **тот же std, что и
 > ядро** — актуальная карта ограничений PE-приложений =
@@ -135,7 +135,7 @@ EH stack полностью наследуется от kernel — никаки�
 |---|---|---|
 | `System.Threading.Thread.Start()` | ⏳ E8 | std/no-runtime `Thread` — single-thread stub; AppSDK bridge deferred |
 | `Task.Run` / async-await | ⏳ | Roslyn yield (state machine) работает; полноценный async ещё не делали |
-| `Interlocked.CompareExchange` | 🟡 | naive single-thread impl (см. `std/no-runtime/shared/Threading.cs`) |
+| `Interlocked.CompareExchange` | 🟡 | naive single-thread impl (см. `std-no-runtime/Threading.cs`) |
 | `lock { }` (Monitor) | ⏳ | нужны kernel hooks через AppService — отложено |
 | `Mutex` / `Semaphore` / `Event` | ⏳ | в ядре есть (E5), в AppSDK не выставлено (E8 deferred) |
 | `Sleep(ms)` | ⏳ | в ядре есть (`Scheduler.Sleep`), в AppSDK не выставлено |
@@ -186,11 +186,11 @@ Reflection — главное ограничение NativeAOT. Если нуж�
 
 | Функция | Статус |
 |---|---|
-| `List<T>`, `Dictionary<K,V>`, `Queue<T>`, `Stack<T>` | ✅ ported в `std/no-runtime/shared/` |
+| `List<T>`, `Dictionary<K,V>`, `Queue<T>`, `Stack<T>` | ✅ ported в `std-no-runtime/` |
 | `IEnumerable<T>` / `IEnumerator<T>` (`yield return`) | ✅ (через Roslyn state machine; см. memory `roslyn-iterator-needs-`) |
 | `IComparable<T>`, `IEquatable<T>` для primitives | ✅ |
 | LINQ extension methods (`Where`, `Select`, `ToArray`) | 🟡 partial — то что не зовёт `IEnumerable<T>` через reflection |
-| `string.Split` / `string.Replace` / `string.Contains` | ✅ (в `std/no-runtime/shared/StringAlgorithms.cs`) |
+| `string.Split` / `string.Replace` / `string.Contains` | ✅ (в `std-no-runtime/StringAlgorithms.cs`) |
 | `StringBuilder` | ✅ |
 | `Encoding.UTF8.GetBytes/GetString` | 🟡 partial |
 

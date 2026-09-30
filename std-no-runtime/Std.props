@@ -1,0 +1,156 @@
+<!--
+  std-no-runtime: общая часть. Берут оба яруса.
+
+  Всё, что одинаково для ядра и приложений. Новый файл в std-no-runtime
+  попадает сюда, если у него нет ярусной пары.
+
+  Пути относительно этого файла, поэтому список одинаково читается и из
+  OS/OS.csproj, и из apps_native/sdk/FreestandingPe.props. Правило и таблица
+  ярусных пар — в README.md рядом.
+-->
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\ArraySegment.cs" Link="std\Bcl\ArraySegment.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\BinaryPrimitives.ReadBigEndian.cs" Link="std\Bcl\BinaryPrimitives.ReadBigEndian.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\BinaryPrimitives.ReadLittleEndian.cs" Link="std\Bcl\BinaryPrimitives.ReadLittleEndian.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\BinaryPrimitives.ReverseEndianness.cs" Link="std\Bcl\BinaryPrimitives.ReverseEndianness.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\BinaryPrimitives.WriteBigEndian.cs" Link="std\Bcl\BinaryPrimitives.WriteBigEndian.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\BinaryPrimitives.WriteLittleEndian.cs" Link="std\Bcl\BinaryPrimitives.WriteLittleEndian.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\BitArray.cs" Link="std\Bcl\BitArray.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\BitConverter.cs" Link="std\Bcl\BitConverter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Comparer.cs" Link="std\Bcl\Comparer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\DebuggerAttributes.cs" Link="std\Bcl\DebuggerAttributes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Dictionary.Storage.cs" Link="std\Bcl\Dictionary.Storage.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Dictionary.cs" Link="std\Bcl\Dictionary.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\EqualityComparer.cs" Link="std\Bcl\EqualityComparer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Guid.cs" Link="std\Bcl\Guid.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\HashCode.cs" Link="std\Bcl\HashCode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\HashSet.cs" Link="std\Bcl\HashSet.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Interfaces.cs" Link="std\Bcl\Interfaces.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\LinkedList.cs" Link="std\Bcl\LinkedList.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\List.cs" Link="std\Bcl\List.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Memory.cs" Link="std\Bcl\Memory.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Path.cs" Link="std\Bcl\Path.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Queue.cs" Link="std\Bcl\Queue.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\ReadOnlyCollection.cs" Link="std\Bcl\ReadOnlyCollection.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\ReadOnlyDictionary.cs" Link="std\Bcl\ReadOnlyDictionary.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\SortedDictionary.cs" Link="std\Bcl\SortedDictionary.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\SortedList.cs" Link="std\Bcl\SortedList.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Stack.cs" Link="std\Bcl\Stack.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\TimeSpan.cs" Link="std\Bcl\TimeSpan.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Tuple.cs" Link="std\Bcl\Tuple.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\ArrayPool.cs" Link="std\Buffers\ArrayPool.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SpanAction.cs" Link="std\Buffers\SpanAction.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Char.Statics.cs" Link="std\Char.Statics.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)CharHelpers.cs" Link="std\CharHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ComponentModel.cs" Link="std\ComponentModel.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ConsoleTypes.cs" Link="std\ConsoleTypes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)DateTime.cs" Link="std\DateTime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)DefaultMemberAttribute.cs" Link="std\DefaultMemberAttribute.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)EventHandling.cs" Link="std\EventHandling.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exception.cs" Link="std\Exception.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exceptions.Derived.cs" Link="std\Exceptions.Derived.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborConformanceLevel.cs" Link="std\Formats\Cbor\CborConformanceLevel.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborContentException.cs" Link="std\Formats\Cbor\CborContentException.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborHelpers.cs" Link="std\Formats\Cbor\CborHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborInitialByte.cs" Link="std\Formats\Cbor\CborInitialByte.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborReader.Array.cs" Link="std\Formats\Cbor\CborReader.Array.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborReader.Integer.cs" Link="std\Formats\Cbor\CborReader.Integer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborReader.Map.cs" Link="std\Formats\Cbor\CborReader.Map.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborReader.PeekState.cs" Link="std\Formats\Cbor\CborReader.PeekState.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborReader.Simple.cs" Link="std\Formats\Cbor\CborReader.Simple.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborReader.SkipValue.cs" Link="std\Formats\Cbor\CborReader.SkipValue.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborReader.String.cs" Link="std\Formats\Cbor\CborReader.String.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborReader.Tag.cs" Link="std\Formats\Cbor\CborReader.Tag.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborReader.cs" Link="std\Formats\Cbor\CborReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborReaderState.cs" Link="std\Formats\Cbor\CborReaderState.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborTag.cs" Link="std\Formats\Cbor\CborTag.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborWriter.Array.cs" Link="std\Formats\Cbor\CborWriter.Array.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborWriter.Integer.cs" Link="std\Formats\Cbor\CborWriter.Integer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborWriter.Map.cs" Link="std\Formats\Cbor\CborWriter.Map.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborWriter.Simple.cs" Link="std\Formats\Cbor\CborWriter.Simple.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborWriter.String.cs" Link="std\Formats\Cbor\CborWriter.String.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborWriter.Tag.cs" Link="std\Formats\Cbor\CborWriter.Tag.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborWriter.cs" Link="std\Formats\Cbor\CborWriter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\SR.cs" Link="std\Formats\Cbor\SR.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GC.cs" Link="std\GC\GC.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcDescSeries.cs" Link="std\GC\GcDescSeries.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcHeap.cs" Link="std\GC\GcHeap.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcMark.cs" Link="std\GC\GcMark.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcObject.cs" Link="std\GC\GcObject.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcRoots.cs" Link="std\GC\GcRoots.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcRuntimeExports.cs" Link="std\GC\GcRuntimeExports.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcSegment.cs" Link="std\GC\GcSegment.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcSweep.cs" Link="std\GC\GcSweep.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\MethodTable.cs" Link="std\GC\MethodTable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\NativeFormatDecoder.cs" Link="std\GC\NativeFormatDecoder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\OptionalFieldsReader.cs" Link="std\GC\OptionalFieldsReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Globalization.DateTimeFormat.cs" Link="std\Globalization.DateTimeFormat.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Globalization.NumberStyles.cs" Link="std\Globalization.NumberStyles.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Globalization.cs" Link="std\Globalization.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\IOException.cs" Link="std\IO\IOException.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\MemoryStream.cs" Link="std\IO\MemoryStream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Stream.cs" Link="std\IO\Stream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\StreamReader.cs" Link="std\IO\StreamReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Linq\Enumerable.cs" Link="std\Linq\Enumerable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)MemoryPrimitives.cs" Link="std\MemoryPrimitives.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)NumberFormatting.cs" Link="std\NumberFormatting.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)NumberParsing.cs" Link="std\NumberParsing.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Numerics\Vector3.cs" Link="std\Numerics\Vector3.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ActionFunc.cs" Link="std\Runtime\ActionFunc.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Array.cs" Link="std\Runtime\Array.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ArrayHelpers.cs" Link="std\Runtime\ArrayHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ArrayT.cs" Link="std\Runtime\ArrayT.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Buffer.cs" Link="std\Runtime\Buffer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ByReference.cs" Link="std\Runtime\ByReference.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ClassConstructorRunner.cs" Link="std\Runtime\ClassConstructorRunner.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CodeAnalysisAttributes.cs" Link="std\Runtime\CodeAnalysisAttributes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerFeatures.cs" Link="std\Runtime\CompilerFeatures.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ConditionalWeakTable.cs" Link="std\Runtime\ConditionalWeakTable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Delegate.cs" Link="std\Runtime\Delegate.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Diagnostics.cs" Link="std\Runtime\Diagnostics.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ExceptionIDs.cs" Link="std\Runtime\ExceptionIDs.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ExceptionServices.cs" Link="std\Runtime\ExceptionServices.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\FunctionPointerOps.cs" Link="std\Runtime\FunctionPointerOps.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\GC.cs" Link="std\Runtime\GC.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector128.cs" Link="std\Runtime\Intrinsics\Vector128.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector128_1.cs" Link="std\Runtime\Intrinsics\Vector128_1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector256.cs" Link="std\Runtime\Intrinsics\Vector256.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector256_1.cs" Link="std\Runtime\Intrinsics\Vector256_1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Math.Double.cs" Link="std\Runtime\Math.Double.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Math.cs" Link="std\Runtime\Math.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemoryExtensions.cs" Link="std\Runtime\MemoryExtensions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemoryMarshal.cs" Link="std\Runtime\MemoryMarshal.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\MulticastDelegate.cs" Link="std\Runtime\MulticastDelegate.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ReadOnlySpan.cs" Link="std\Runtime\ReadOnlySpan.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\RuntimeAttributes.cs" Link="std\Runtime\RuntimeAttributes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\RuntimeImports.Delegate.cs" Link="std\Runtime\RuntimeImports.Delegate.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Span.cs" Link="std\Runtime\Span.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\UnboxHelpers.cs" Link="std\Runtime\UnboxHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Unsafe.cs" Link="std\Runtime\Unsafe.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ValueTuple.cs" Link="std\Runtime\ValueTuple.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Sha256.cs" Link="std\Security\Sha256.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringAlgorithms.cs" Link="std\StringAlgorithms.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringComparer.cs" Link="std\StringComparer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringComparison.cs" Link="std\StringComparison.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringFormat.cs" Link="std\StringFormat.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringManipulation.cs" Link="std\StringManipulation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringQueries.cs" Link="std\StringQueries.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringSplitOptions.cs" Link="std\StringSplitOptions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringTransforms.cs" Link="std\StringTransforms.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SynchronizationContext.cs" Link="std\SynchronizationContext.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SystemString.Enumerator.cs" Link="std\SystemString.Enumerator.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SystemString.Span.cs" Link="std\SystemString.Span.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SystemString.cs" Link="std\SystemString.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Encoding.cs" Link="std\Text\Encoding.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\FallbackExceptions.cs" Link="std\Text\FallbackExceptions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\StringBuilder.cs" Link="std\Text\StringBuilder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Atomics.cs" Link="std\Threading.Atomics.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.ManagedThreadId.cs" Link="std\Threading.ManagedThreadId.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Monitor.cs" Link="std\Threading.Monitor.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.Await.cs" Link="std\Threading.Tasks.Await.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.cs" Link="std\Threading.Tasks.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Thread.cs" Link="std\Threading.Thread.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.cs" Link="std\Threading.cs" />
+  </ItemGroup>
+</Project>

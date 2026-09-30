@@ -150,13 +150,13 @@ namespace System.Threading
         // worse than saying so: a Wait that returned immediately would turn
         // every waiting loop into a spin, silently.
         public static void Pulse(object obj) => throw new NotSupportedException(
-            "Monitor.Pulse is not implemented — see std/no-runtime/shared/Threading.Monitor.cs.");
+            "Monitor.Pulse is not implemented — see std-no-runtime/Threading.Monitor.cs.");
 
         public static void PulseAll(object obj) => throw new NotSupportedException(
-            "Monitor.PulseAll is not implemented — see std/no-runtime/shared/Threading.Monitor.cs.");
+            "Monitor.PulseAll is not implemented — see std-no-runtime/Threading.Monitor.cs.");
 
         public static bool Wait(object obj) => throw new NotSupportedException(
-            "Monitor.Wait is not implemented — see std/no-runtime/shared/Threading.Monitor.cs.");
+            "Monitor.Wait is not implemented — see std-no-runtime/Threading.Monitor.cs.");
 
         /// <summary>
         /// Finds this object's slot, claiming a free one if it has none.
@@ -218,7 +218,7 @@ namespace System.Threading
 
             throw new InvalidOperationException(
                 "Monitor: no free lock slots. The table is a fixed 64 entries — " +
-                "see std/no-runtime/shared/Threading.Monitor.cs.");
+                "see std-no-runtime/Threading.Monitor.cs.");
         }
 
         private static int CurrentThreadId() => ManagedThreadIds.Current;

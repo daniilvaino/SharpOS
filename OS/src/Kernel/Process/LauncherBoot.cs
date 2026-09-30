@@ -228,6 +228,7 @@ namespace OS.Kernel.Process
             }
 
             DebugLog.Write(LogLevel.Info, "jump start");
+            OS.Kernel.Diagnostics.Sampler.ReportScreenState();
             ProcessManager.SetCurrent(ref processImage, ref loadedImage);
             bool jumpOk = false;
             int returnExitCode = 0;

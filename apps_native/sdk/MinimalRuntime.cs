@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -87,7 +87,7 @@ namespace System
 
     // Partial so the BCL-shaped statics (char.IsDigit, char.ToUpper, the
     // surrogate helpers) can live in shared std rather than being duplicated
-    // per tier — see std/no-runtime/shared/Char.Statics.cs.
+    // per tier — see std-no-runtime/Char.Statics.cs.
     public partial struct Char : IEquatable<char>, IComparable<char>, IComparable
     {
         public const char MaxValue = (char)0xFFFF;
@@ -602,7 +602,7 @@ namespace System
     // MethodTable pointer) by RhpNewArray and read here via managed field
     // access. Layout matches NativeAOT's convention; same pattern as String.
     //
-    // `partial` so std/no-runtime/shared/Runtime/Array.cs can add Copy,
+    // `partial` so std-no-runtime/Runtime/Array.cs can add Copy,
     // Empty<T>() and other BCL-compat statics without editing this file.
     [StructLayout(LayoutKind.Sequential)]
     public abstract partial class Array
@@ -610,7 +610,7 @@ namespace System
         public readonly int Length;
     }
 
-    // Delegate / MulticastDelegate come from std/no-runtime/shared/Runtime/
+    // Delegate / MulticastDelegate come from std-no-runtime/Runtime/
     // (Delegate.cs / MulticastDelegate.cs / ActionFunc.cs), same files the
     // kernel compiles — the ILC field-layout/Initialize* contract lives there.
 
@@ -798,7 +798,7 @@ namespace System
             public RuntimeImportAttribute(string dllName, string entryPoint) { }
         }
 
-        // `partial` — std/no-runtime/shared/Runtime/RuntimeImports.Delegate.cs
+        // `partial` — std-no-runtime/Runtime/RuntimeImports.Delegate.cs
         // contributes RhNewObject (backed by our GcHeap) for MulticastDelegate.
         internal static unsafe partial class RuntimeImports
         {
@@ -815,7 +815,7 @@ namespace System
     }
 
     // System.Array<T> — the SZ-array interface template — lives in
-    // std/no-runtime/shared/Runtime/ArrayT.cs (step142; port of the upstream
+    // std-no-runtime/Runtime/ArrayT.cs (step142; port of the upstream
     // NativeAOT class). The empty placeholder that used to sit here left
     // array MTs with NumInterfaces=0 (limits doc §4).
 }
@@ -880,7 +880,7 @@ namespace Internal.Runtime.CompilerHelpers
         // covariant-store lowering; a missing one is a hard "Code generation
         // failed for method ..." at ILC time (surfaced step143 on the first
         // conv.ovf instantiation). Keep the set a superset of what codegen
-        // can emit — mirrors std/no-runtime/shared/ThrowHelpers.cs.
+        // can emit — mirrors std-no-runtime/ThrowHelpers.cs.
         //
         // Every one of these was `while (true) ;`. In an app that is the worst
         // possible failure mode: the app runs with interrupts masked (JumpStub

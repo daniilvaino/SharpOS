@@ -1,0 +1,19 @@
+<!--
+  std-no-runtime: ярусная часть приложений.
+
+  Реализации, которые у приложений свои. Пары — в Std.Kernel.props;
+  GcStaticsInit пары не имеет: у ядра своя материализация статик в OS/src.
+
+  Пути относительно этого файла, поэтому список одинаково читается и из
+  OS/OS.csproj, и из apps_native/sdk/FreestandingPe.props. Правило и таблица
+  ярусных пар — в README.md рядом.
+-->
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcMemorySource.AppStatic.cs" Link="std\GC\GcMemorySource.AppStatic.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcStaticsInit.cs" Link="std\GC\GcStaticsInit.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Diagnostics.Output.AppHost.cs" Link="std\Runtime\Diagnostics.Output.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringRuntime.RhNewString.cs" Link="std\StringRuntime.RhNewString.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.AppServices.cs" Link="std\Threading.Tasks.AppServices.cs" />
+  </ItemGroup>
+</Project>

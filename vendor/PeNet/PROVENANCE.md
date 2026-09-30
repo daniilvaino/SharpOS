@@ -1,4 +1,4 @@
-# PeNet — vendored cut
+﻿# PeNet — vendored cut
 
 **Upstream:** https://github.com/secana/PeNet (`PeNet-main/`, snapshot 2026-07-15)
 **License:** Apache-2.0 (see [LICENSE](LICENSE)) — © 2017-2026 Stefan Hausotte
@@ -7,7 +7,7 @@ first step of the ELF→PE app-migration (donext.md workstream 2).
 
 This is **not** the full PeNet. It is a milestone-1 *native-PE* subset compiled
 directly into the kernel image (`OS.csproj` glob-include, like `vendor/Iced/`). It runs
-against our own std (`std/no-runtime/shared/`), not the BCL.
+against our own std (`std-no-runtime/`), not the BCL.
 
 ## Included
 

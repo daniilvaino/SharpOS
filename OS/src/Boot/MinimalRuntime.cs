@@ -110,7 +110,7 @@ namespace System
 
     // Partial so the BCL-shaped statics (char.IsDigit, char.ToUpper, the
     // surrogate helpers) can live in shared std rather than being duplicated
-    // per tier — see std/no-runtime/shared/Char.Statics.cs.
+    // per tier — see std-no-runtime/Char.Statics.cs.
     public partial struct Char : IEquatable<char>, IComparable<char>, IComparable
     {
         // Canonical BCL values.
@@ -493,7 +493,7 @@ namespace System
     // MethodTable pointer) by RhpNewArray and read here via managed field
     // access. Layout matches NativeAOT's convention; same pattern as String.
     //
-    // `partial` so std/no-runtime/shared/Runtime/Array.cs can add Copy,
+    // `partial` so std-no-runtime/Runtime/Array.cs can add Copy,
     // Empty<T>() and other BCL-compat statics without editing this file.
     [StructLayout(LayoutKind.Sequential)]
     public abstract partial class Array
@@ -733,7 +733,7 @@ namespace System
     }
 
     // System.Array<T> — the SZ-array interface template — lives in
-    // std/no-runtime/shared/Runtime/ArrayT.cs (step142; port of the upstream
+    // std-no-runtime/Runtime/ArrayT.cs (step142; port of the upstream
     // NativeAOT class). The empty placeholder that used to sit here left
     // array MTs with NumInterfaces=0 (limits doc §4).
 }

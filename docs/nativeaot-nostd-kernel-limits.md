@@ -27,7 +27,7 @@ public static T Default => s_default;
 
 Работает напрямую на нашей сборке. Полное решение собрано из трёх частей:
 
-1. **`System.Runtime.CompilerServices.ClassConstructorRunner` port** — `std/no-runtime/shared/Runtime/ClassConstructorRunner.cs`. Methods: `CheckStaticClassConstructionReturnGCStaticBase`, `CheckStaticClassConstructionReturnNonGCStaticBase`, `CheckStaticClassConstruction`. Без recursion fix (state==2 → return immediately) на single-thread депозит deadlock'ит — мы добавили early-return.
+1. **`System.Runtime.CompilerServices.ClassConstructorRunner` port** — `std-no-runtime/Runtime/ClassConstructorRunner.cs`. Methods: `CheckStaticClassConstructionReturnGCStaticBase`, `CheckStaticClassConstructionReturnNonGCStaticBase`, `CheckStaticClassConstruction`. Без recursion fix (state==2 → return immediately) на single-thread депозит deadlock'ит — мы добавили early-return.
 2. **Drop `--resilient` ILC flag** — без этого ILC молча подставляет fallback stub'ы (sentinel `0xFFFFF0000000000E`) вместо нашего runner'а. CSproj `DropResilient` MSBuild target пере-эмитит `OS.ilc.rsp` без флага между `WriteIlcRspFileForCompilation` и `IlcCompile`.
 3. **GC statics materialization** — `OS/src/Kernel/Memory/GcStaticsMaterializer.cs`. Port `StartupCodeHelpers.InitializeStatics`: walks `ReadyToRunSectionType.GCStaticRegion` (id=201), для каждого Uninitialized entry аллоцирует объект через `RhpNewFast`-equivalent, копирует preInit blob в raw data, заменяет tagged pointer на object reference. Без неё canonical pattern с implicit cctor крашится с `#GP` (sentinel `0xFFFF000000000010`) — ILC's TypePreinit interpreter эмитит descriptor cell, но без runtime materialization она остаётся unresolved.
 
@@ -145,7 +145,7 @@ Probe `shared-gen iface call: ok val=808` подтверждает end-to-end р
 
 **Инфраструктура готова и работает:**
 - ✅ **Структуры** (`OS/src/Kernel/Memory/InterfaceDispatch.cs`): `InterfaceDispatchCell`, `InterfaceDispatchCache`, `InterfaceDispatchCacheEntry`, `DispatchCellInfo`, `InterfaceDispatchCacheHeader` — layout copy из `rhbinder.h` + `CachedInterfaceDispatch.h`.
-- ✅ **`GcMethodTable` расширен** (`std/no-runtime/shared/GC/MethodTable.cs`): `NumVtableSlots`, `NumInterfaces`, `HashCode`, `GetSlot(int)`, `GetInterfaceMap()`, `EEInterfaceInfo` с IAT-aware `GetInterfaceEEType()`.
+- ✅ **`GcMethodTable` расширен** (`std-no-runtime/GC/MethodTable.cs`): `NumVtableSlots`, `NumInterfaces`, `HashCode`, `GetSlot(int)`, `GetInterfaceMap()`, `EEInterfaceInfo` с IAT-aware `GetInterfaceEEType()`.
 - ✅ **Shellcode** (`OS/src/Kernel/Memory/InterfaceDispatchBridge.cs`): 195-байтный byte-emitter в C#, живёт в exec-stub buffer по offset 128 (буфер расширен с 128 до 512 байт в `UefiBootInfoBuilder.cs`). Fast path: null-check + single-slot cache check + tail-jmp. Slow path: spill (0xA8 stack) + call resolver + restore + jmp rax.
 - ✅ **Managed wrapper** (`OS/src/Boot/InterfaceDispatchStub.cs`): `[RuntimeExport("RhpInitialDynamicInterfaceDispatch")]` + `[UnmanagedCallersOnly]`. Body: `Panic.Fail(...)` — выполняется только если patcher не сработал (noisy fallback вместо silent spin).
 - ✅ **Patcher** (`OS/src/Kernel/Memory/InterfaceDispatchPatcher.cs`): в kernel boot (до `NativeAotProbe`, под firmware CR3) пишет `E9 rel32` в первые 5 байт managed wrapper, JMP на шеллкод. OVMF по умолчанию держит kernel image RWX, прямая запись проходит. Readback check. Для real HW с W^X — alias-mapping через pager root + CR3 switch (TODO).
@@ -159,7 +159,7 @@ Probe `shared-gen iface call: ok val=808` подтверждает end-to-end р
 
 **Дополнительно реализовано (step 32):**
 - `DispatchCellInfo` декодер (`InterfaceDispatchCell.GetDispatchCellInfo`) — walk forward до terminator, handle tag 0x1/0x2/0x3 (direct ptr, rel32, indirected rel32).
-- `NativeFormatDecoder` + `OptionalFieldsReader` в `std/no-runtime/shared/GC/` — 7/14/21/28/32-bit VLQ decoder + tag-value stream walker.
+- `NativeFormatDecoder` + `OptionalFieldsReader` в `std-no-runtime/GC/` — 7/14/21/28/32-bit VLQ decoder + tag-value stream walker.
 - `GcMethodTable` расширение: `HasOptionalFields`, `GetOptionalFieldsPtr`, `GetTypeManagerDispatchMapTable`, `HasDispatchMap`, `GetDispatchMap`, `GetBaseType`, `GetSealedVirtualSlot`.
 - `NativeAotModuleInit` — одноразовая инициализация модуля: сканирует `.rdata` на signature `0x00525452` ('RTR'), находит ReadyToRunHeader, выделяет 56-байтный TypeManager в KernelHeap, заполняет `m_pDispatchMapTable` из секции `InterfaceDispatchTable` (id=203), записывает указатель на TypeManager в каждый слот секции `TypeManagerIndirection` (id=204). Lazy-init на первом вызове Resolve (anchor — `thisMT`).
 - `DispatchMap` struct + walker по `(InterfaceIndex, InterfaceMethodSlot)` → `ImplMethodSlot`. Walk inheritance chain через `GetBaseType`.
@@ -206,7 +206,7 @@ OS.obj : error LNK2001: unresolved external symbol RhTypeCast_IsInstanceOf
 OS.obj : error LNK2001: unresolved external symbol RhTypeCast_CheckCast
 ```
 
-**Корень:** в `std/no-runtime/shared/GC/GcRuntimeExports.cs` реализованы только конкретные варианты — `RhTypeCast_IsInstanceOfClass` / `RhTypeCast_IsInstanceOfException` / `RhTypeCast_IsInstanceOfInterface`. Они вызываются когда тип на месте каста известен ILC статически (`obj is Foo`, `(Foo)obj` где Foo — конкретный type-ref). При **generic** параметре (`as T` / `(T)x` в `Method<T>`) ILC эмитит лоупер на generic-helper'ы — а их у нас нет.
+**Корень:** в `std-no-runtime/GC/GcRuntimeExports.cs` реализованы только конкретные варианты — `RhTypeCast_IsInstanceOfClass` / `RhTypeCast_IsInstanceOfException` / `RhTypeCast_IsInstanceOfInterface`. Они вызываются когда тип на месте каста известен ILC статически (`obj is Foo`, `(Foo)obj` где Foo — конкретный type-ref). При **generic** параметре (`as T` / `(T)x` в `Method<T>`) ILC эмитит лоупер на generic-helper'ы — а их у нас нет.
 
 **Workaround:** если в API можно подставить конкретный тип, используем pattern matching:
 ```csharp
@@ -260,7 +260,7 @@ ILC переводит `newobj` на массиве в `Internal.Runtime.Compile
 всего метода, а в сообщении назван метод-владелец, а не отсутствующий помощник
 (инициализатор поля `byte[2,1024]` читался как «Code generation failed for
 `Ppu..ctor`»). Порт upstream-помощника —
-`std/no-runtime/shared/Runtime/ArrayHelpers.cs`, плюс `Rank`/`GetLength`/
+`std-no-runtime/Runtime/ArrayHelpers.cs`, плюс `Rank`/`GetLength`/
 `GetLowerBound` в `Runtime/Array.cs`.
 
 Раскладка: `[MethodTable*][длина][границы 2×rank][элементы]`. Блок границ лежит
@@ -283,7 +283,7 @@ ILC переводит `newobj` на массиве в `Internal.Runtime.Compile
 
 ### ⚠️ Array covariance — silent UB на wrong-type store (нет ArrayTypeMismatchException)
 
-`RhpStelemRef` в нашем std (`std/no-runtime/shared/GC/GcRuntimeExports.cs`)
+`RhpStelemRef` в нашем std (`std-no-runtime/GC/GcRuntimeExports.cs`)
 **skipped все checks**: null/bounds/**covariance**/write barrier. Кернел-
 код trusted, а GC non-generational. Эффект:
 
@@ -315,7 +315,7 @@ dispatch map array-MT из этого класса, а `this` внутри ег�
 интерфейсный вызов на массиве умирал в диспатче (в т.ч. с corrupted-`this`
 джампами через мусорную мапу — ManagedDoom KeyBinding, done/step142).
 
-Порт upstream `Array<T>` (`std/no-runtime/shared/Runtime/ArrayT.cs`:
+Порт upstream `Array<T>` (`std-no-runtime/Runtime/ArrayT.cs`:
 IEnumerable<T>/ICollection<T>/IList<T>/IReadOnlyList<T> + ArrayEnumerator)
 делает массивы честными интерфейсными источниками на обоих тирах: LINQ по
 массиву, `T[]` в `IEnumerable<T>`/`IReadOnlyList<T>`-параметр — работают.
@@ -353,7 +353,7 @@ public static class MyInit
 ```
 
 C# 9 `[ModuleInitializer]` — атрибут добавлен в std step 119
-(`std/no-runtime/shared/Runtime/RuntimeAttributes.cs`), Roslyn находит
+(`std-no-runtime/Runtime/RuntimeAttributes.cs`), Roslyn находит
 тип по имени и компилирует. Но **до пользовательского кода дело не
 доходит**: `NativeAotProbe.Probe_ModuleInit` красная, флаг к моменту
 прогона всё ещё false.
@@ -381,7 +381,7 @@ IEnumerable<int> Foo() { yield return 1; yield return 2; }
 отсутствующем получал `Sequence contains no elements` — то есть падал сам
 компилятор, до ILC. Не хватало трёх: `Interlocked.CompareExchange`,
 `Environment.CurrentManagedThreadId`, `InvalidOperationException(string)`.
-Все три лежат в `std/no-runtime/shared/Threading.cs`, и с ними `yield`
+Все три лежат в `std-no-runtime/Threading.cs`, и с ними `yield`
 компилируется и исполняется обычным порядком (generic-итераторы тоже —
 на них стоит mini-LINQ, step134).
 
@@ -441,7 +441,7 @@ done/step141.md).
 
 `Task.Run`, `Task.Delay`, `Wait(token)` и полноценный `async`/`await` собираются
 и исполняются на обоих AOT-ярусах (проба ядра `TaskProbe` → `async=3/3`,
-батарея приложения `AotTests` 42/42). Поддержка — `std/no-runtime/shared/`:
+батарея приложения `AotTests` 42/42). Поддержка — `std-no-runtime/`:
 `Threading.Tasks.cs` (задачи), `Threading.Tasks.Await.cs` (`TaskAwaiter`,
 `AsyncTaskMethodBuilder`, `IAsyncStateMachine`), плюс подложка потоков на ярус
 (`KernelScheduler` / `AppServices`).

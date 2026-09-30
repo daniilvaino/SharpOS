@@ -1,4 +1,4 @@
-# ShellSyntaxTree
+﻿# ShellSyntaxTree
 
 Разбор командной строки bash в дерево: кавычки, склейка слов, `&&` `||` `;` `|`,
 перенаправления, подстановка переменных и путей.
@@ -33,7 +33,7 @@
   из 29. Нам не нужен, и только он тянет `System.Text.RegularExpressions`,
   которых на ярусе приложений нет.
 - **`Properties/IsExternalInit.cs`** — этот тип объявляет наша std
-  (`std/no-runtime/shared/Runtime/CompilerFeatures.cs`), два объявления в одной
+  (`std-no-runtime/Runtime/CompilerFeatures.cs`), два объявления в одной
   сборке не собираются. Сам файл std в рецепт приложений до этого не входил —
   без него `init` и `record` не компилируются вовсе, и первая же сборка дала
   больше сотни `CS0518`; добавлен в `FreestandingPe.props`.

@@ -3,6 +3,13 @@
   <!-- Сшивание PE через lld-link + xwin из тулчейна SharpOS, на любом хосте. -->
   <Import Project="$(MSBuildThisFileDirectory)..\SharpOsNativeLink.props" />
 
+  <!-- std-no-runtime: общая часть плюс ярусная часть ядра. Списка ровно три,
+       правило и таблица ярусных пар — в std-no-runtime/README.md. Раньше этот
+       список жил здесь же, вперемешку с файлами ядра, а его близнец — внутри
+       FreestandingPe.props; они разошлись на 49 файлов. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\std-no-runtime\Std.props" />
+  <Import Project="$(MSBuildThisFileDirectory)..\std-no-runtime\Std.Kernel.props" />
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
@@ -381,7 +388,6 @@ detach vdisk
   </Target>
 
   <ItemGroup>
-    <Compile Include="..\std\no-runtime\shared\MemoryPrimitives.cs" Link="src\Std\MemoryPrimitives.cs" />
     <!-- Internal.Runtime.CompilerHelpers.ThrowHelpers is NOT taken from std:
          ILC looks the type up by fixed name, so exactly one copy may be
          compiled per image. The kernel's lives in src/Boot/ThrowHelpers.cs and
@@ -389,115 +395,11 @@ detach vdisk
          sdk/MinimalRuntime.cs. A third copy used to sit in std and was
          compiled by nobody — deleted 2026-09-20 after two edits landed in it
          and changed nothing. -->
-    <Compile Include="..\std\no-runtime\shared\DefaultMemberAttribute.cs" Link="src\Std\DefaultMemberAttribute.cs" />
-    <Compile Include="..\std\no-runtime\shared\SystemString.cs" Link="src\Std\SystemString.cs" />
-    <Compile Include="..\std\no-runtime\shared\SystemString.Enumerator.cs" Link="src\Std\SystemString.Enumerator.cs" />
-    <Compile Include="..\std\no-runtime\shared\SystemString.Span.cs" Link="src\Std\SystemString.Span.cs" />
-    <Compile Include="..\std\no-runtime\shared\StringManipulation.cs" Link="src\Std\StringManipulation.cs" />
-    <Compile Include="..\std\no-runtime\shared\StringSplitOptions.cs" Link="src\Std\StringSplitOptions.cs" />
-    <Compile Include="..\std\no-runtime\shared\StringComparison.cs" Link="src\Std\StringComparison.cs" />
-    <Compile Include="..\std\no-runtime\shared\StringAlgorithms.cs" Link="src\Std\StringAlgorithms.cs" />
-    <Compile Include="..\std\no-runtime\shared\CharHelpers.cs" Link="src\Std\CharHelpers.cs" />
-    <Compile Include="..\std\no-runtime\shared\StringQueries.cs" Link="src\Std\StringQueries.cs" />
-    <Compile Include="..\std\no-runtime\shared\StringTransforms.cs" Link="src\Std\StringTransforms.cs" />
-    <Compile Include="..\std\no-runtime\shared\StringFormat.cs" Link="src\Std\StringFormat.cs" />
-    <Compile Include="..\std\no-runtime\shared\NumberFormatting.cs" Link="src\Std\NumberFormatting.cs" />
-    <Compile Include="..\std\no-runtime\shared\NumberParsing.cs" Link="src\Std\NumberParsing.cs" />
-    <Compile Include="..\std\no-runtime\shared\Threading.cs" Link="src\Std\Threading.cs" />
-    <Compile Include="..\std\no-runtime\shared\Exception.cs" Link="src\Std\Exception.cs" />
-    <Compile Include="..\std\no-runtime\shared\Exceptions.Derived.cs" Link="src\Std\Exceptions.Derived.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\ExceptionIDs.cs" Link="src\Std\Runtime\ExceptionIDs.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\RuntimeAttributes.cs" Link="src\Std\Runtime\RuntimeAttributes.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\CodeAnalysisAttributes.cs" Link="src\Std\Runtime\CodeAnalysisAttributes.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\ByReference.cs" Link="src\Std\Runtime\ByReference.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Unsafe.cs" Link="src\Std\Runtime\Unsafe.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\CompilerFeatures.cs" Link="src\Std\Runtime\CompilerFeatures.cs" />
-    <Compile Include="..\std\no-runtime\shared\Buffers\ArrayPool.cs" Link="src\Std\Buffers\ArrayPool.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Intrinsics\Vector128_1.cs" Link="src\Std\Runtime\Intrinsics\Vector128_1.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Intrinsics\Vector128.cs" Link="src\Std\Runtime\Intrinsics\Vector128.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Intrinsics\Vector256_1.cs" Link="src\Std\Runtime\Intrinsics\Vector256_1.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Intrinsics\Vector256.cs" Link="src\Std\Runtime\Intrinsics\Vector256.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\ValueTuple.cs" Link="src\Std\Runtime\ValueTuple.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Span.cs" Link="src\Std\Runtime\Span.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\ReadOnlySpan.cs" Link="src\Std\Runtime\ReadOnlySpan.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\MemoryExtensions.cs" Link="src\Std\Runtime\MemoryExtensions.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Math.cs" Link="src\Std\Runtime\Math.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Math.Double.cs" Link="src\Std\Runtime\Math.Double.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Buffer.cs" Link="src\Std\Runtime\Buffer.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\ArrayHelpers.cs" Link="src\Std\Runtime\ArrayHelpers.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\GC.cs" Link="src\Std\Runtime\GC.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Array.cs" Link="src\Std\Runtime\Array.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\ArrayT.cs" Link="src\Std\Runtime\ArrayT.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\MemoryMarshal.cs" Link="src\Std\Runtime\MemoryMarshal.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Diagnostics.cs" Link="src\Std\Runtime\Diagnostics.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Diagnostics.Output.KernelConsole.cs" Link="src\Std\Runtime\Diagnostics.Output.KernelConsole.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\ClassConstructorRunner.cs" Link="src\Std\Runtime\ClassConstructorRunner.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\FunctionPointerOps.cs" Link="src\Std\Runtime\FunctionPointerOps.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\RuntimeImports.Delegate.cs" Link="src\Std\Runtime\RuntimeImports.Delegate.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\Delegate.cs" Link="src\Std\Runtime\Delegate.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\MulticastDelegate.cs" Link="src\Std\Runtime\MulticastDelegate.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\ActionFunc.cs" Link="src\Std\Runtime\ActionFunc.cs" />
-    <Compile Include="..\std\no-runtime\shared\Text\StringBuilder.cs" Link="src\Std\Text\StringBuilder.cs" />
-    <Compile Include="..\std\no-runtime\shared\Text\Encoding.cs" Link="src\Std\Text\Encoding.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\NativeFormatDecoder.cs" Link="src\Std\GC\NativeFormatDecoder.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="src\Std\GC\OptionalFieldsReader.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\MethodTable.cs" Link="src\Std\GC\MethodTable.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\GcDescSeries.cs" Link="src\Std\GC\GcDescSeries.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\GcObject.cs" Link="src\Std\GC\GcObject.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\GcSegment.cs" Link="src\Std\GC\GcSegment.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\GcHeap.cs" Link="src\Std\GC\GcHeap.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\GcMemorySource.KernelHeap.cs" Link="src\Std\GC\GcMemorySource.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\GcRuntimeExports.cs" Link="src\Std\GC\GcRuntimeExports.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\GcMark.cs" Link="src\Std\GC\GcMark.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\GcSweep.cs" Link="src\Std\GC\GcSweep.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\GcRoots.cs" Link="src\Std\GC\GcRoots.cs" />
-    <Compile Include="..\std\no-runtime\shared\GC\GC.cs" Link="src\Std\GC\GC.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\Guid.cs" Link="src\Std\Bcl\Guid.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\Path.cs" Link="src\Std\Bcl\Path.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\Interfaces.cs" Link="src\Std\Bcl\Interfaces.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\DebuggerAttributes.cs" Link="src\Std\Bcl\DebuggerAttributes.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\EqualityComparer.cs" Link="src\Std\Bcl\EqualityComparer.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\Comparer.cs" Link="src\Std\Bcl\Comparer.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\List.cs" Link="src\Std\Bcl\List.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\Dictionary.cs" Link="src\Std\Bcl\Dictionary.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\Dictionary.Storage.cs" Link="src\Std\Bcl\Dictionary.Storage.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\BitArray.cs" Link="src\Std\Bcl\BitArray.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\HashSet.cs" Link="src\Std\Bcl\HashSet.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\Stack.cs" Link="src\Std\Bcl\Stack.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\Memory.cs" Link="src\Std\Bcl\Memory.cs" />
-    <Compile Include="..\std\no-runtime\shared\Security\Sha256.cs" Link="src\Std\Security\Sha256.cs" />
 
-    <Compile Include="..\std\no-runtime\shared\Bcl\Queue.cs" Link="src\Std\Bcl\Queue.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\LinkedList.cs" Link="src\Std\Bcl\LinkedList.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\ReadOnlyCollection.cs" Link="src\Std\Bcl\ReadOnlyCollection.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\ReadOnlyDictionary.cs" Link="src\Std\Bcl\ReadOnlyDictionary.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\ArraySegment.cs" Link="src\Std\Bcl\ArraySegment.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\SortedList.cs" Link="src\Std\Bcl\SortedList.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\SortedDictionary.cs" Link="src\Std\Bcl\SortedDictionary.cs" />
-    <Compile Include="..\std\no-runtime\shared\Linq\Enumerable.cs" Link="src\Std\Linq\Enumerable.cs" />
-    <Compile Include="..\std\no-runtime\shared\StringRuntime.KernelHeap.cs" Link="src\Std\StringRuntime.cs" />
 
     <!-- Tasks: the shared surface plus the kernel's thread backend. Terminal.Gui
          needs Task.Run for background loops, and the kernel is where threads
          already exist — so the shape gets exercised here before apps get them. -->
-    <Compile Include="..\std\no-runtime\shared\Threading.Tasks.cs" Link="src\Std\Threading.Tasks.cs" />
-    <Compile Include="..\std\no-runtime\shared\Threading.Tasks.KernelScheduler.cs" Link="src\Std\Threading.Tasks.KernelScheduler.cs" />
-    <Compile Include="..\std\no-runtime\shared\Threading.Tasks.Await.cs" Link="src\Std\Threading.Tasks.Await.cs" />
-    <Compile Include="..\std\no-runtime\shared\ConsoleTypes.cs" Link="src\Std\ConsoleTypes.cs" />
-    <Compile Include="..\std\no-runtime\shared\Runtime\UnboxHelpers.cs" Link="src\Std\Runtime\UnboxHelpers.cs" />
-    <Compile Include="..\std\no-runtime\shared\Globalization.DateTimeFormat.cs" Link="src\Std\Globalization.DateTimeFormat.cs" />
-    <Compile Include="..\std\no-runtime\shared\Bcl\TimeSpan.cs" Link="src\Std\Bcl\TimeSpan.cs" />
-    <Compile Include="..\std\no-runtime\shared\DateTime.cs" Link="src\Std\DateTime.cs" />
-    <Compile Include="..\std\no-runtime\shared\Threading.Thread.cs" Link="src\Std\Threading.Thread.cs" />
-    <Compile Include="..\std\no-runtime\shared\Char.Statics.cs" Link="src\Std\Char.Statics.cs" />
-    <Compile Include="..\std\no-runtime\shared\Threading.Monitor.cs" Link="src\Std\Threading.Monitor.cs" />
-    <Compile Include="..\std\no-runtime\shared\Threading.ManagedThreadId.cs" Link="src\Std\Threading.ManagedThreadId.cs" />
-    <Compile Include="..\std\no-runtime\shared\Threading.Atomics.cs" Link="src\Std\Threading.Atomics.cs" />
-    <Compile Include="..\std\no-runtime\shared\SynchronizationContext.cs" Link="src\Std\SynchronizationContext.cs" />
-    <Compile Include="..\std\no-runtime\shared\EventHandling.cs" Link="src\Std\EventHandling.cs" />
-    <Compile Include="..\std\no-runtime\shared\ComponentModel.cs" Link="src\Std\ComponentModel.cs" />
-    <Compile Include="..\std\no-runtime\shared\Globalization.cs" Link="src\Std\Globalization.cs" />
-    <Compile Include="..\std\no-runtime\shared\StringComparer.cs" Link="src\Std\StringComparer.cs" />
   </ItemGroup>
 
 </Project>

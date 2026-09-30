@@ -1,6 +1,6 @@
-// App-tier backend for System.Diagnostics.Debug output: routes to the
+﻿// App-tier backend for System.Diagnostics.Debug output: routes to the
 // kernel console through the AppHost service table. Counterpart of the
-// kernel-tier backend in std/no-runtime/shared/Runtime/
+// kernel-tier backend in std-no-runtime/Runtime/
 // Diagnostics.Output.KernelConsole.cs — each csproj compiles exactly one.
 
 using SharpOS.AppSdk;

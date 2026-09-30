@@ -523,7 +523,7 @@ Two passes:
 
 | ID | Location | Issue | Fix |
 |---|---|---|---|
-| R1 | `std/no-runtime/shared/Threading.cs` | `Interlocked.CompareExchange` non-atomic | `lock cmpxchg` byte-shellcode |
+| R1 | `std-no-runtime/Threading.cs` | `Interlocked.CompareExchange` non-atomic | `lock cmpxchg` byte-shellcode |
 | R2 | `Runtime/ClassConstructorRunner.cs` | CAS-spin early-return | Restore full CAS-loop |
 | R3 | `OS/src/Boot/EH/ExInfo.cs` | `s_pExInfoHead` static | Per-thread via TEB |
 | R5 | `KernelHeap.cs` | Alloc without lock | Scheduler-aware blocking lock |

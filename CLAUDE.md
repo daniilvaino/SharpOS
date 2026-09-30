@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 ## Что это за проект
 
@@ -55,7 +55,7 @@ SharpOS — **experimental unikernel целиком на C#**, собирает�
 
 ### Для новой строковой/numeric/utility операции
 
-1. **Сначала в `std/no-runtime/shared/`** как managed C# с BCL-идентичным API.
+1. **Сначала в `std-no-runtime/`** как managed C# с BCL-идентичным API.
 2. **Потом использовать в ядре/SDK** — старый inline unsafe код мигрируется на вызов std.
 3. Inline unsafe оставляем только где managed реально нельзя (ABI-граница, шеллкод, обход heap в `HeapDiagnostics` который не может аллоцировать).
 
@@ -122,7 +122,7 @@ limits-таблицей на несколько месяцев. Расхожде
 
 ### Roslyn iterator / state-machine rewriter нужен типы по имени
 
-`yield return` / `async-await` требуют от Roslyn найти ctor'ы конкретных типов по сигнатуре через `.Single()`. Без них компилятор крашит с `Sequence contains no elements`. Нужны: `Interlocked.CompareExchange`, `Environment.CurrentManagedThreadId`, `InvalidOperationException(string)`. Работает и для `yield` (`std/no-runtime/shared/Threading.cs`), и для `async/await` (`Threading.Tasks.Await.cs`, step160): построитель и машина состояний — структуры, поэтому всё общее состояние держится за одной ссылкой, иначе возобновляется копия.
+`yield return` / `async-await` требуют от Roslyn найти ctor'ы конкретных типов по сигнатуре через `.Single()`. Без них компилятор крашит с `Sequence contains no elements`. Нужны: `Interlocked.CompareExchange`, `Environment.CurrentManagedThreadId`, `InvalidOperationException(string)`. Работает и для `yield` (`std-no-runtime/Threading.cs`), и для `async/await` (`Threading.Tasks.Await.cs`, step160): построитель и машина состояний — структуры, поэтому всё общее состояние держится за одной ссылкой, иначе возобновляется копия.
 
 ### Shared-generic interface dispatch работает
 
@@ -130,7 +130,7 @@ limits-таблицей на несколько месяцев. Расхожде
 
 ### Managed GC (non-moving mark-sweep) работает
 
-`new object()`, `new T[n]`, `new string(...)` идут через [RuntimeExport]-ed allocators (`RhpNewFast` / `RhpNewArray` / `RhNewString`) → `GcHeap.AllocateRaw`. Сборка — mark-and-sweep. Корни со стека находит **точный** обход по `gcInfo` от ILC (step110, по умолчанию); консервативный путь через register-spill trampoline (`GcStackSpill`) остался для ранней загрузки и для `CollectConservative`. Живёт в `std/no-runtime/shared/GC/`.
+`new object()`, `new T[n]`, `new string(...)` идут через [RuntimeExport]-ed allocators (`RhpNewFast` / `RhpNewArray` / `RhNewString`) → `GcHeap.AllocateRaw`. Сборка — mark-and-sweep. Корни со стека находит **точный** обход по `gcInfo` от ILC (step110, по умолчанию); консервативный путь через register-spill trampoline (`GcStackSpill`) остался для ранней загрузки и для `CollectConservative`. Живёт в `std-no-runtime/GC/`.
 
 ### EH работает — `throw`/`catch`/`finally`/filter/HW-fault полный конвейер
 
@@ -141,7 +141,7 @@ Phase D закрыта (step 90 done/step081 + последующие). Сего
 - `Exception.StackTrace` через `.pdata`-walker + funclet-aware codeOffset.
 - ILC `BoxedEnumerator` thunks работают (step 115 — `Object.m_pEEType` + `RawData` declared).
 
-Когда пишешь port из BCL — **бросай по-настоящему**, не подменяй `Halt()`. Catch'ями тоже пользоваться можно. Limits: `GC.WaitForPendingFinalizers` зависает (`SYM-003`). SIMD: `Vector128` работает на всех трёх ярусах (step165, порт в `std/no-runtime/shared/Runtime/Intrinsics/`), `Vector256` объявлен, но не ускоряется — AVX не в целевом наборе и его регистры не сохраняются через переключение контекста.
+Когда пишешь port из BCL — **бросай по-настоящему**, не подменяй `Halt()`. Catch'ями тоже пользоваться можно. Limits: `GC.WaitForPendingFinalizers` зависает (`SYM-003`). SIMD: `Vector128` работает на всех трёх ярусах (step165, порт в `std-no-runtime/Runtime/Intrinsics/`), `Vector256` объявлен, но не ускоряется — AVX не в целевом наборе и его регистры не сохраняются через переключение контекста.
 
 ## Коммит-протокол
 

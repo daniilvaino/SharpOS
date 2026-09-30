@@ -1,0 +1,18 @@
+<!--
+  std-no-runtime: ярусная часть ядра.
+
+  Реализации, которые у ядра свои. У каждой есть пара в Std.App.props —
+  одно и то же, сделанное по-разному, потому что ярусы разные.
+
+  Пути относительно этого файла, поэтому список одинаково читается и из
+  OS/OS.csproj, и из apps_native/sdk/FreestandingPe.props. Правило и таблица
+  ярусных пар — в README.md рядом.
+-->
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcMemorySource.KernelHeap.cs" Link="std\GC\GcMemorySource.KernelHeap.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Diagnostics.Output.KernelConsole.cs" Link="std\Runtime\Diagnostics.Output.KernelConsole.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StringRuntime.KernelHeap.cs" Link="std\StringRuntime.KernelHeap.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.KernelScheduler.cs" Link="std\Threading.Tasks.KernelScheduler.cs" />
+  </ItemGroup>
+</Project>

@@ -1,4 +1,4 @@
-using OS.Boot.EH;
+﻿using OS.Boot.EH;
 using OS.Hal;
 
 namespace OS.Kernel.Diagnostics
@@ -247,6 +247,65 @@ namespace OS.Kernel.Diagnostics
             PerfLine("\r\n");
         }
 
+        // The screen's own state, said out loud at every idle window.
+        //
+        // [idlewait] says how long a paint took; it says nothing when no paint
+        // ran, and it returns early when every delta is zero — which is exactly
+        // the state a frame that never reached the screen leaves behind.
+        //
+        // bailpaint is the one to watch. A paint that got preempted used to
+        // leave s_rendering set, and every character the next thread wrote was
+        // dropped by the guard at the top of Putc: the launcher's first frame
+        // went that way whole, 16266 characters, while the log still had them
+        // because the disk and serial sinks are written before the screen
+        // branch. It reads 0 now and any other value is that bug returning.
+        //
+        // Reported from the launch path as well, not only from the idle window:
+        // the window fires once the program is already waiting, so both of its
+        // reports are after the frame, and the question was what changed across
+        // it.
+        public static void ReportScreenState()
+        {
+            OS.Hal.TerminalConsole.ReadPaintState(out int rangeStart, out int rangeEnd,
+                                                  out int skips, out int fed, out bool alternate,
+                                                  out int bailRendering, out int bailFeeding);
+
+            PerfLine("[screen] pending=");
+            WriteNumber(OS.Hal.TerminalConsole.HasPendingOutput ? 1UL : 0UL);
+            PerfLine(" alt=");
+            WriteNumber(alternate ? 1UL : 0UL);
+            PerfLine(" range=");
+            WriteSigned(rangeStart);
+            PerfLine("..");
+            WriteSigned(rangeEnd);
+            PerfLine(" skips=");
+            WriteNumber((ulong)(uint)skips);
+            PerfLine(" fed=");
+            WriteNumber((ulong)(uint)fed);
+            PerfLine(" bailpaint=");
+            WriteNumber((ulong)(uint)bailRendering);
+            PerfLine(" bailfeed=");
+            WriteNumber((ulong)(uint)bailFeeding);
+            PerfLine(" paints=");
+            WriteNumber(PerfCounters.Read(PerfCounter.ScreenPaints));
+            PerfLine(" drawn=");
+            WriteNumber(PerfCounters.Read(PerfCounter.ScreenCellsDrawn));
+            PerfLine(" skipped=");
+            WriteNumber(PerfCounters.Read(PerfCounter.ScreenCellsSkipped));
+            PerfLine("\r\n");
+        }
+
+        private static void WriteSigned(int value)
+        {
+            if (value < 0)
+            {
+                PerfLine("-");
+                WriteNumber((ulong)(-(long)value));
+                return;
+            }
+            WriteNumber((ulong)value);
+        }
+
         private static void WriteNumber(ulong value)
         {
             char* digits = stackalloc char[20];
@@ -400,6 +459,7 @@ namespace OS.Kernel.Diagnostics
                 // the terminal engine and the lock in front of it, and the USB
                 // waits underneath all of them.
                 ReportIdleWaits();
+                ReportScreenState();
 
                 // Whether anything is arriving on the serial line, said out
                 // loud. Without it, "the machine ignored what I typed" and

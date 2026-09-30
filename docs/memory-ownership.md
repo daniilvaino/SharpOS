@@ -1,4 +1,4 @@
-# SharpOS Memory Ownership Map
+﻿# SharpOS Memory Ownership Map
 
 Цель документа: зафиксировать, кто владеет какой памятью, какие GC имеют
 право ее видеть, и где сейчас есть временные пересечения. Это карта для
@@ -272,10 +272,10 @@ M5. Проверить, можно ли снова включить kernel GC sw
 | Physical page allocator | `OS/src/Kernel/PhysicalMemory.cs` |
 | UEFI memory type mapping | `OS/src/Boot/UefiMemoryMapBuilder.cs` |
 | Kernel block heap | `OS/src/Kernel/Memory/KernelHeap.cs` |
-| Kernel NativeAOT GC heap | `std/no-runtime/shared/GC/GcHeap.cs` |
-| Kernel GC source | `std/no-runtime/shared/GC/GcMemorySource.KernelHeap.cs` |
-| App static GC source | `std/no-runtime/shared/GC/GcMemorySource.AppStatic.cs` |
-| GC reclamation gate | `std/no-runtime/shared/GC/GC.cs` |
+| Kernel NativeAOT GC heap | `std-no-runtime/GC/GcHeap.cs` |
+| Kernel GC source | `std-no-runtime/GC/GcMemorySource.KernelHeap.cs` |
+| App static GC source | `std-no-runtime/GC/GcMemorySource.AppStatic.cs` |
+| GC reclamation gate | `std-no-runtime/GC/GC.cs` |
 | CoreCLR VM host exports | `OS/src/PAL/SharpOSHost/VirtualMemoryHost.cs` |
 | VM window manager | `OS/src/Kernel/Memory/VirtualMemory.cs` |
 | CoreCLR CRT heap stubs | `OS/src/PAL/SharpOSHost/CrtHeapStubs.cs` |

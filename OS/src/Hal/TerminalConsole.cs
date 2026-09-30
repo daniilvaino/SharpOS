@@ -71,6 +71,22 @@ namespace OS.Hal
         // the lock so an idle reader can skip Flush entirely instead of taking
         // the lock on every poll and starving the thread doing the writing.
         private static volatile bool s_dirty;
+
+        // The damage range the last paint consumed, and the paints it could not
+        // start because the engine lock was held. A frame that reached the
+        // engine and never reached the screen is one or the other: a range that
+        // did not cover it, or a paint that never ran. Read by the idle report,
+        // which fires while that frame is still the only thing on the screen.
+        // No initialisers: one would give this class a static constructor, and
+        // this class runs before the area GC statics live in is materialized
+        // (limits §1). Before the first paint the range reads 0..0, which
+        // paints= tells apart from a real one.
+        private static int s_lastRangeStart;
+        private static int s_lastRangeEnd;
+        private static int s_paintSkips;
+        private static int s_fed;
+        private static int s_bailRendering;
+        private static int s_bailFeeding;
         private static byte[] s_encode;               // reused UTF-8 scratch
         private static byte s_bgR, s_bgG, s_bgB;
 
@@ -180,7 +196,9 @@ namespace OS.Hal
         /// <summary>Feeds one character; nothing is drawn until Flush.</summary>
         public static void Putc(char ch)
         {
-            if (!s_ready || s_rendering || s_feeding) return;
+            if (!s_ready) return;
+            if (s_rendering) { s_bailRendering++; return; }
+            if (s_feeding) { s_bailFeeding++; return; }
             // Text must not be dropped: a lost character desynchronises whatever
             // wrote it from what it later reads back, and PSReadLine answers that
             // by redrawing forever. Painting may be skipped, feeding may not.
@@ -199,6 +217,7 @@ namespace OS.Hal
             s_feeding = false;
             OS.Kernel.Diagnostics.PerfCounters.CountTsc(OS.Kernel.Diagnostics.PerfCounter.TerminalFeedTsc, feedStarted);
             s_dirty = true;
+            s_fed++;
 
             // Callers that go through Platform.WriteChar one character at a time (Log's
             // Begin/EndLine pair, for instance) never reach Platform.Write's flush, so a
@@ -302,6 +321,20 @@ namespace OS.Hal
         /// <summary>True when characters were fed but not yet painted.</summary>
         public static bool HasPendingOutput => s_dirty;
 
+        /// <summary>The paint state the idle report prints.</summary>
+        public static void ReadPaintState(out int rangeStart, out int rangeEnd, out int skips,
+                                          out int fed, out bool alternate,
+                                          out int bailRendering, out int bailFeeding)
+        {
+            rangeStart = s_lastRangeStart;
+            rangeEnd = s_lastRangeEnd;
+            skips = s_paintSkips;
+            fed = s_fed;
+            alternate = IsAlternateScreen;
+            bailRendering = s_bailRendering;
+            bailFeeding = s_bailFeeding;
+        }
+
         public static void Puts(string text)
         {
             if (!s_ready || text == null) return;
@@ -316,9 +349,27 @@ namespace OS.Hal
         public static void Flush()
         {
             if (!s_ready || s_rendering) return;
-            if (!TryEnter()) return;
-            Paint();
-            Exit();
+
+            // Preemption off across the whole critical section, as it already is
+            // for the paint Putc does — Putc runs inside Platform.WriteChar,
+            // which suppresses, and this path had nothing.
+            //
+            // Enter is a bounded spin that gives up rather than wait, on the
+            // stated assumption that a holder finishes within its own slice. A
+            // paint that can be preempted breaks it, and the cost is not a
+            // skipped paint but lost text: s_rendering stays set while another
+            // thread runs, and every character that thread writes is dropped by
+            // the guard at the top of Putc. The launcher's first frame went that
+            // way whole — 16266 characters, none of them fed, while the paint
+            // interrupted in its row phase belonged to another thread.
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
+            {
+                if (!TryEnter()) { s_paintSkips++; return; }
+                Paint();
+                Exit();
+            }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
         }
 
         // Callers hold the engine lock.
@@ -347,6 +398,8 @@ namespace OS.Hal
                 (long)(OS.Kernel.Diagnostics.PerfCounters.Now() - phase));
 
             s_terminal.GetUpdateRange(out int startY, out int endY);
+            s_lastRangeStart = startY;
+            s_lastRangeEnd = endY;
             s_terminal.ClearUpdateRange();
 
             phase = OS.Kernel.Diagnostics.PerfCounters.Now();
@@ -391,21 +444,29 @@ namespace OS.Hal
         public static void Redraw()
         {
             if (!s_ready || s_rendering) return;
-            if (!TryEnter()) return;
 
-            s_rendering = true;
-            FbConsole.Clear(s_bgR, s_bgG, s_bgB);
-            for (int i = 0; i < s_shadowValid.Length; i++)
-                s_shadowValid[i] = false;
+            // Suppressed for the same reason as Flush: this holds the engine
+            // lock across a full-screen repaint.
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
+            {
+                if (!TryEnter()) { s_paintSkips++; return; }
 
-            var buffer = s_terminal.Buffer;
-            for (int y = 0; y < s_rows; y++)
-                DrawRow(buffer, y);
+                s_rendering = true;
+                FbConsole.Clear(s_bgR, s_bgG, s_bgB);
+                for (int i = 0; i < s_shadowValid.Length; i++)
+                    s_shadowValid[i] = false;
 
-            s_lastYBase = buffer.YBase;
-            s_rendering = false;
-            s_terminal.ClearUpdateRange();
-            Exit();
+                var buffer = s_terminal.Buffer;
+                for (int y = 0; y < s_rows; y++)
+                    DrawRow(buffer, y);
+
+                s_lastYBase = buffer.YBase;
+                s_rendering = false;
+                s_terminal.ClearUpdateRange();
+                Exit();
+            }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
         }
 
         // The engine does not announce scrolls, but YBase counts the lines that left

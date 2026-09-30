@@ -1,4 +1,4 @@
-# TurboXml — vendored cut
+﻿# TurboXml — vendored cut
 
 **Upstream:** https://github.com/xoofx/TurboXml (snapshot 2026-08-21)
 **License:** BSD-2-Clause (see [LICENSE](LICENSE)) — © Alexandre Mutel
@@ -34,7 +34,7 @@ TurboXml/XmlThrowHelper.cs       error reporting
 ## Not cut: the SIMD paths
 
 The parser scans with `Vector128`/`Vector256`, and those blocks are **kept as
-written**. Vector types now live in our std (`std/no-runtime/shared/Runtime/
+written**. Vector types now live in our std (`std-no-runtime/Runtime/
 Intrinsics/`, ported from dotnet/runtime v8.0), and ILC turns them into real
 instructions — confirmed on all three tiers before this library was brought in.
 

@@ -43,6 +43,13 @@
        this .props ($(MSBuildThisFileDirectory)); std/* are two levels up. The
        app csproj adds only its Program.cs and any app-specific extras (e.g. a
        richer std slice for the test battery). -->
+  <!-- std-no-runtime: общая часть плюс ярусная часть приложений. Списка ровно
+       три, правило и таблица ярусных пар — в std-no-runtime/README.md. Здесь
+       остаётся только SDK приложений: то, что знает про таблицу служб и
+       контракты процесса. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\..\std-no-runtime\Std.props" />
+  <Import Project="$(MSBuildThisFileDirectory)..\..\std-no-runtime\Std.App.props" />
+
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)MinimalRuntime.cs"       Link="sdk\MinimalRuntime.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppStartupBlock.cs"      Link="sdk\AppStartupBlock.cs" />
@@ -67,42 +74,18 @@
     <Compile Include="$(MSBuildThisFileDirectory)StringAlgorithms.cs"     Link="sdk\StringAlgorithms.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)KeyInfo.cs"              Link="sdk\KeyInfo.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileEntry.cs"            Link="sdk\FileEntry.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)DebugOutput.AppHost.cs"  Link="sdk\DebugOutput.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)SystemConsole.cs"        Link="sdk\SystemConsole.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ProcessStub.cs"          Link="sdk\ProcessStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Stopwatch.AppStub.cs"    Link="sdk\Stopwatch.AppStub.cs" />
 
-    <!-- std surface mirrors OS/OS.csproj's std/no-runtime/shared list (step141:
-         app runtime upgraded from a minimal slice to full-std for ManagedDoom).
-         Tier-specific swaps vs the kernel list: GcMemorySource.AppStatic (not
-         .KernelHeap), StringRuntime.RhNewString (not .KernelHeap), Debug output
-         via sdk/DebugOutput.AppHost.cs (not Diagnostics.Output.KernelConsole),
-         and Internal.Runtime.CompilerHelpers.ThrowHelpers is the copy inside
-         sdk/MinimalRuntime.cs — ILC resolves the type by fixed name, so one
-         per image; the kernel has its own in OS/src/Boot/ThrowHelpers.cs. -->
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\MemoryPrimitives.cs"        Link="std\MemoryPrimitives.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\DefaultMemberAttribute.cs"  Link="std\DefaultMemberAttribute.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\SystemString.cs"            Link="std\SystemString.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\SystemString.Enumerator.cs" Link="std\SystemString.Enumerator.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\SystemString.Span.cs"       Link="std\SystemString.Span.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringManipulation.cs"      Link="std\StringManipulation.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringSplitOptions.cs"      Link="std\StringSplitOptions.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringComparison.cs"        Link="std\StringComparison.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringAlgorithms.cs"        Link="std\StringAlgorithms.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\CharHelpers.cs"             Link="std\CharHelpers.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringQueries.cs"           Link="std\StringQueries.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringTransforms.cs"        Link="std\StringTransforms.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringFormat.cs"            Link="std\StringFormat.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\NumberFormatting.cs"        Link="std\NumberFormatting.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\NumberParsing.cs"           Link="std\NumberParsing.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.cs"               Link="std\Threading.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ExceptionIDs.cs"    Link="std\Runtime\ExceptionIDs.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ExceptionServices.cs" Link="std\Runtime\ExceptionServices.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\RuntimeAttributes.cs" Link="std\Runtime\RuntimeAttributes.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\CodeAnalysisAttributes.cs" Link="std\Runtime\CodeAnalysisAttributes.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ByReference.cs"     Link="std\Runtime\ByReference.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Unsafe.cs"          Link="std\Runtime\Unsafe.cs" />
+    <!-- Internal.Runtime.CompilerHelpers.ThrowHelpers is the copy inside
+         sdk/MinimalRuntime.cs: ILC resolves the type by fixed name, so there is
+         exactly one per image. The kernel has its own in
+         OS/src/Boot/ThrowHelpers.cs.
+
+         Ярусные пары std переехали в std-no-runtime/README.md — здесь их
+         перечисление было второй копией, и она уже начала расходиться. -->
     <!-- What ILC's `ldtoken` lowering looks up by name in the system module —
          which for a freestanding app is the app. Needed since apps started
          using `typeof`, by way of record types. System.Type itself lives in
@@ -112,142 +95,14 @@
          `init` accessor — and therefore every `record` — fails to compile;
          apps did without it until one of them vendored a library built out of
          records. -->
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\CompilerFeatures.cs" Link="std\Runtime\CompilerFeatures.cs" />
     <!-- Keys are held strongly, not weakly: no weak handles in either
          collector. See the file's header and limits §8. -->
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ConditionalWeakTable.cs" Link="std\Runtime\ConditionalWeakTable.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ValueTuple.cs"      Link="std\Runtime\ValueTuple.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Span.cs"            Link="std\Runtime\Span.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ReadOnlySpan.cs"    Link="std\Runtime\ReadOnlySpan.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\MemoryExtensions.cs" Link="std\Runtime\MemoryExtensions.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Math.cs"            Link="std\Runtime\Math.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Math.Double.cs"     Link="std\Runtime\Math.Double.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Buffer.cs"          Link="std\Runtime\Buffer.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\GC.cs"              Link="std\Runtime\GC.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Array.cs"           Link="std\Runtime\Array.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ArrayHelpers.cs"    Link="std\Runtime\ArrayHelpers.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ArrayT.cs"          Link="std\Runtime\ArrayT.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\MemoryMarshal.cs"   Link="std\Runtime\MemoryMarshal.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Diagnostics.cs"     Link="std\Runtime\Diagnostics.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ClassConstructorRunner.cs" Link="std\Runtime\ClassConstructorRunner.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\FunctionPointerOps.cs" Link="std\Runtime\FunctionPointerOps.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\RuntimeImports.Delegate.cs" Link="std\Runtime\RuntimeImports.Delegate.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Intrinsics\Vector128_1.cs" Link="std\Runtime\Intrinsics\Vector128_1.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Intrinsics\Vector128.cs" Link="std\Runtime\Intrinsics\Vector128.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Intrinsics\Vector256_1.cs" Link="std\Runtime\Intrinsics\Vector256_1.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Intrinsics\Vector256.cs" Link="std\Runtime\Intrinsics\Vector256.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\Delegate.cs"        Link="std\Runtime\Delegate.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\MulticastDelegate.cs" Link="std\Runtime\MulticastDelegate.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\ActionFunc.cs"      Link="std\Runtime\ActionFunc.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Text\StringBuilder.cs"      Link="std\Text\StringBuilder.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Text\Encoding.cs"           Link="std\Text\Encoding.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\MethodTable.cs"          Link="std\GC\MethodTable.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\OptionalFieldsReader.cs" Link="std\GC\OptionalFieldsReader.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\NativeFormatDecoder.cs"  Link="std\GC\NativeFormatDecoder.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcDescSeries.cs"         Link="std\GC\GcDescSeries.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcObject.cs"             Link="std\GC\GcObject.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcSegment.cs"            Link="std\GC\GcSegment.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcHeap.cs"               Link="std\GC\GcHeap.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcMemorySource.AppStatic.cs" Link="std\GC\GcMemorySource.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcRuntimeExports.cs"     Link="std\GC\GcRuntimeExports.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcMark.cs"               Link="std\GC\GcMark.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcSweep.cs"              Link="std\GC\GcSweep.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcRoots.cs"              Link="std\GC\GcRoots.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GcStaticsInit.cs"        Link="std\GC\GcStaticsInit.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\GC\GC.cs"                   Link="std\GC\GC.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Exception.cs"               Link="std\Exception.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Exceptions.Derived.cs"      Link="std\Exceptions.Derived.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Guid.cs"                Link="std\Bcl\Guid.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Path.cs"                Link="std\Bcl\Path.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Interfaces.cs"          Link="std\Bcl\Interfaces.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\DebuggerAttributes.cs"  Link="std\Bcl\DebuggerAttributes.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\EqualityComparer.cs"    Link="std\Bcl\EqualityComparer.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Comparer.cs"            Link="std\Bcl\Comparer.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\List.cs"                Link="std\Bcl\List.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Dictionary.cs"          Link="std\Bcl\Dictionary.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Dictionary.Storage.cs"          Link="std\Bcl\Dictionary.Storage.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BitArray.cs"            Link="std\Bcl\BitArray.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\HashSet.cs"             Link="std\Bcl\HashSet.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Stack.cs"               Link="std\Bcl\Stack.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Memory.cs"              Link="std\Bcl\Memory.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Security\Sha256.cs"         Link="std\Security\Sha256.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Buffers\ArrayPool.cs"        Link="std\Buffers\ArrayPool.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BinaryPrimitives.ReadBigEndian.cs" Link="std\Bcl\BinaryPrimitives.ReadBigEndian.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BinaryPrimitives.ReadLittleEndian.cs" Link="std\Bcl\BinaryPrimitives.ReadLittleEndian.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BinaryPrimitives.ReverseEndianness.cs" Link="std\Bcl\BinaryPrimitives.ReverseEndianness.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BinaryPrimitives.WriteBigEndian.cs" Link="std\Bcl\BinaryPrimitives.WriteBigEndian.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BinaryPrimitives.WriteLittleEndian.cs" Link="std\Bcl\BinaryPrimitives.WriteLittleEndian.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Buffers\SpanAction.cs"       Link="std\Buffers\SpanAction.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\HashCode.cs" Link="std\Bcl\HashCode.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Text\FallbackExceptions.cs" Link="std\Text\FallbackExceptions.cs" />
 
-    <!-- System.Formats.Cbor, порт из dotnet/runtime 8.0 (MIT). Нужен для CTAP2:
-         ответ аппаратного ключа на getInfo - это карта CBOR. Вырезы (Half,
-         BigInteger, decimal, DateTimeOffset) перечислены в заголовке каждого
-         файла и в docs/nativeaot-nostd-kernel-limits.md. -->
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\SR.cs" Link="std\Formats\Cbor\SR.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborConformanceLevel.cs" Link="std\Formats\Cbor\CborConformanceLevel.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborContentException.cs" Link="std\Formats\Cbor\CborContentException.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborHelpers.cs" Link="std\Formats\Cbor\CborHelpers.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborInitialByte.cs" Link="std\Formats\Cbor\CborInitialByte.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.Array.cs" Link="std\Formats\Cbor\CborReader.Array.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.Integer.cs" Link="std\Formats\Cbor\CborReader.Integer.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.Map.cs" Link="std\Formats\Cbor\CborReader.Map.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.PeekState.cs" Link="std\Formats\Cbor\CborReader.PeekState.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.Simple.cs" Link="std\Formats\Cbor\CborReader.Simple.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.SkipValue.cs" Link="std\Formats\Cbor\CborReader.SkipValue.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.String.cs" Link="std\Formats\Cbor\CborReader.String.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.Tag.cs" Link="std\Formats\Cbor\CborReader.Tag.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.cs" Link="std\Formats\Cbor\CborReader.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReaderState.cs" Link="std\Formats\Cbor\CborReaderState.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborTag.cs" Link="std\Formats\Cbor\CborTag.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.Array.cs" Link="std\Formats\Cbor\CborWriter.Array.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.Integer.cs" Link="std\Formats\Cbor\CborWriter.Integer.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.Map.cs" Link="std\Formats\Cbor\CborWriter.Map.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.Simple.cs" Link="std\Formats\Cbor\CborWriter.Simple.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.String.cs" Link="std\Formats\Cbor\CborWriter.String.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.Tag.cs" Link="std\Formats\Cbor\CborWriter.Tag.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.cs" Link="std\Formats\Cbor\CborWriter.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Queue.cs"               Link="std\Bcl\Queue.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\LinkedList.cs"          Link="std\Bcl\LinkedList.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\ReadOnlyCollection.cs"  Link="std\Bcl\ReadOnlyCollection.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\ReadOnlyDictionary.cs"  Link="std\Bcl\ReadOnlyDictionary.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\ArraySegment.cs"        Link="std\Bcl\ArraySegment.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\SortedList.cs"          Link="std\Bcl\SortedList.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\SortedDictionary.cs"          Link="std\Bcl\SortedDictionary.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Tuple.cs"               Link="std\Bcl\Tuple.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\TimeSpan.cs"            Link="std\Bcl\TimeSpan.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BitConverter.cs"        Link="std\Bcl\BitConverter.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\IO\Stream.cs"               Link="std\IO\Stream.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\IO\IOException.cs"          Link="std\IO\IOException.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\IO\MemoryStream.cs"         Link="std\IO\MemoryStream.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\IO\StreamReader.cs"         Link="std\IO\StreamReader.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Numerics\Vector3.cs"        Link="std\Numerics\Vector3.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Linq\Enumerable.cs"         Link="std\Linq\Enumerable.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringRuntime.RhNewString.cs" Link="std\StringRuntime.cs" />
     <!-- Tasks: shared surface plus the app's thread backend (service table V3).
          Terminal.Gui keeps input decoding and the resize watch on background
          loops, so without threads it does not run slowly — it does not run. -->
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Tasks.cs" Link="std\Threading.Tasks.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Tasks.AppServices.cs" Link="std\Threading.Tasks.AppServices.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Tasks.Await.cs" Link="std\Threading.Tasks.Await.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\ConsoleTypes.cs" Link="std\ConsoleTypes.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Runtime\UnboxHelpers.cs" Link="std\Runtime\UnboxHelpers.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Globalization.DateTimeFormat.cs" Link="std\Globalization.DateTimeFormat.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\DateTime.cs" Link="std\DateTime.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Thread.cs" Link="std\Threading.Thread.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Char.Statics.cs" Link="std\Char.Statics.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Monitor.cs" Link="std\Threading.Monitor.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.ManagedThreadId.cs" Link="std\Threading.ManagedThreadId.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Threading.Atomics.cs" Link="std\Threading.Atomics.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\SynchronizationContext.cs" Link="std\SynchronizationContext.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\EventHandling.cs" Link="std\EventHandling.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\ComponentModel.cs" Link="std\ComponentModel.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Globalization.cs" Link="std\Globalization.cs" />
     <!-- Declared for BCL-shaped parse calls; the values are real, nothing
          honours them. See the file header. -->
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Globalization.NumberStyles.cs" Link="std\Globalization.NumberStyles.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\StringComparer.cs" Link="std\StringComparer.cs" />
   </ItemGroup>
 
   <!-- Freestanding CRT stubs (__security_cookie via CoffStub.Generator,

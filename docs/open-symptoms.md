@@ -1,4 +1,4 @@
-# Open symptoms (under investigation)
+﻿# Open symptoms (under investigation)
 
 Trail of observations that don't yet justify a step / commit but should
 not be lost. Each entry: short title, date, exact log line(s) or repro,
@@ -233,7 +233,7 @@ InvokeKeybindings            ← стрелка
 бы так же. Значит копится состояние самого приложения.
 
 **Корень.** Куча приложения — фиксированные 64 МБ в `.bss` образа
-(`std/no-runtime/shared/GC/GcMemorySource.AppStatic.cs`), выдаются сдвигом
+(`std-no-runtime/GC/GcMemorySource.AppStatic.cs`), выдаются сдвигом
 курсора и **никогда не возвращаются**. Сборщик приложения исправен
 (`AppGC.Collect`: статические корни, обход стеков через службу ядра,
 подметание), но освобождать может только **внутри уже взятых сегментов**;

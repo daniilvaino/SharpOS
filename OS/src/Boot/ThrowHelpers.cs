@@ -1,4 +1,4 @@
-// Kernel ThrowHelpers. Replaces std/no-runtime/shared/ThrowHelpers.cs for the
+﻿// Kernel ThrowHelpers. Replaces std-no-runtime/ThrowHelpers.cs for the
 // OS project (see OS.csproj); apps keep their own copy in MinimalRuntime.cs.
 //
 // ILC emits calls here for implicit bounds / overflow / null / div-by-zero
