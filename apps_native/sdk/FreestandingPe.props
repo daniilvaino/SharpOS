@@ -169,6 +169,45 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BitArray.cs"            Link="std\Bcl\BitArray.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\HashSet.cs"             Link="std\Bcl\HashSet.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Stack.cs"               Link="std\Bcl\Stack.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Memory.cs"              Link="std\Bcl\Memory.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Security\Sha256.cs"         Link="std\Security\Sha256.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Buffers\ArrayPool.cs"        Link="std\Buffers\ArrayPool.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BinaryPrimitives.ReadBigEndian.cs" Link="std\Bcl\BinaryPrimitives.ReadBigEndian.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BinaryPrimitives.ReadLittleEndian.cs" Link="std\Bcl\BinaryPrimitives.ReadLittleEndian.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BinaryPrimitives.ReverseEndianness.cs" Link="std\Bcl\BinaryPrimitives.ReverseEndianness.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BinaryPrimitives.WriteBigEndian.cs" Link="std\Bcl\BinaryPrimitives.WriteBigEndian.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\BinaryPrimitives.WriteLittleEndian.cs" Link="std\Bcl\BinaryPrimitives.WriteLittleEndian.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Buffers\SpanAction.cs"       Link="std\Buffers\SpanAction.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\HashCode.cs" Link="std\Bcl\HashCode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Text\FallbackExceptions.cs" Link="std\Text\FallbackExceptions.cs" />
+
+    <!-- System.Formats.Cbor, порт из dotnet/runtime 8.0 (MIT). Нужен для CTAP2:
+         ответ аппаратного ключа на getInfo - это карта CBOR. Вырезы (Half,
+         BigInteger, decimal, DateTimeOffset) перечислены в заголовке каждого
+         файла и в docs/nativeaot-nostd-kernel-limits.md. -->
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\SR.cs" Link="std\Formats\Cbor\SR.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborConformanceLevel.cs" Link="std\Formats\Cbor\CborConformanceLevel.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborContentException.cs" Link="std\Formats\Cbor\CborContentException.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborHelpers.cs" Link="std\Formats\Cbor\CborHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborInitialByte.cs" Link="std\Formats\Cbor\CborInitialByte.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.Array.cs" Link="std\Formats\Cbor\CborReader.Array.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.Integer.cs" Link="std\Formats\Cbor\CborReader.Integer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.Map.cs" Link="std\Formats\Cbor\CborReader.Map.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.PeekState.cs" Link="std\Formats\Cbor\CborReader.PeekState.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.Simple.cs" Link="std\Formats\Cbor\CborReader.Simple.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.SkipValue.cs" Link="std\Formats\Cbor\CborReader.SkipValue.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.String.cs" Link="std\Formats\Cbor\CborReader.String.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.Tag.cs" Link="std\Formats\Cbor\CborReader.Tag.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReader.cs" Link="std\Formats\Cbor\CborReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborReaderState.cs" Link="std\Formats\Cbor\CborReaderState.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborTag.cs" Link="std\Formats\Cbor\CborTag.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.Array.cs" Link="std\Formats\Cbor\CborWriter.Array.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.Integer.cs" Link="std\Formats\Cbor\CborWriter.Integer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.Map.cs" Link="std\Formats\Cbor\CborWriter.Map.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.Simple.cs" Link="std\Formats\Cbor\CborWriter.Simple.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.String.cs" Link="std\Formats\Cbor\CborWriter.String.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.Tag.cs" Link="std\Formats\Cbor\CborWriter.Tag.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Formats\Cbor\CborWriter.cs" Link="std\Formats\Cbor\CborWriter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\Queue.cs"               Link="std\Bcl\Queue.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\LinkedList.cs"          Link="std\Bcl\LinkedList.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\..\std\no-runtime\shared\Bcl\ReadOnlyCollection.cs"  Link="std\Bcl\ReadOnlyCollection.cs" />

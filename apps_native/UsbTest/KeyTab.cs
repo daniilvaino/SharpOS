@@ -19,6 +19,7 @@ namespace UsbTest
         private const uint CmdCbor = 0x90;
 
         // CTAP2 command bytes, which travel as the first byte of a CBOR payload.
+        private const byte AuthenticatorMakeCredential = 0x01;
         private const byte AuthenticatorGetInfo = 0x04;
 
         // What a key says it can do, in the capabilities byte INIT returns.
@@ -29,6 +30,11 @@ namespace UsbTest
 
         /// <summary>Generous: a key that wants a finger will take its time.</summary>
         private const uint TimeoutMs = 5000;
+
+        // Waiting for a touch is a different kind of waiting: the key holds the
+        // exchange open and keeps it alive, so the limit is a person's patience
+        // rather than a device's.
+        private const uint TouchTimeoutMs = 30000;
 
         private const int ResponseCapacity = 2048;
 
@@ -41,6 +47,13 @@ namespace UsbTest
         private static uint s_channel;
 
         private static System.Text.StringBuilder s_text = null!;
+
+        // The last getInfo reply, kept so the raw bytes stay reachable after
+        // they have been decoded. The decoded view is what anyone wants to
+        // read; the bytes are what settles an argument about whether the
+        // decoder is right.
+        private static byte[] s_lastInfo;
+        private static int s_lastInfoLength;
 
         public static View Build()
         {
@@ -61,7 +74,9 @@ namespace UsbTest
             var ping = MakeButton("_PING", Ping, info);
             var wink = MakeButton("_WINK", Wink, ping);
             var register = MakeButton("_Register", Register, wink);
-            var clear = MakeButton("C_lear", Clear, register);
+            var credential = MakeButton("_MakeCred", MakeCredential, register);
+            var raw = MakeButton("Ra_w", ShowRaw, credential);
+            var clear = MakeButton("C_lear", Clear, raw);
 
             s_state = new Label("No channel yet. INIT asks the key for one.")
             {
@@ -88,7 +103,7 @@ namespace UsbTest
             };
 
             output.Add(s_log);
-            page.Add(init, info, ping, wink, register, clear, s_state, output);
+            page.Add(init, info, ping, wink, register, credential, raw, clear, s_state, output);
             return page;
         }
 
@@ -234,10 +249,15 @@ namespace UsbTest
                     head += ", " + request.KeepAlives.ToString() + " keepalives";
                 Say(head);
 
-                // Raw, because there is no decoder yet. Printing the bytes is
-                // what makes writing one possible: a parser built against a
-                // specification and no sample is a guess with tests.
-                Say(Format.Dump(responsePin + 1, (int)request.ResponseLength - 1));
+                // Kept before anything is printed: Describe can throw on a
+                // reply this decoder does not handle, and the bytes should
+                // survive that rather than be lost with it.
+                int cborLength = (int)request.ResponseLength - 1;
+                s_lastInfo = new byte[cborLength];
+                for (int i = 0; i < cborLength; i++) s_lastInfo[i] = responsePin[1 + i];
+                s_lastInfoLength = cborLength;
+
+                Say(CtapInfo.Describe(s_lastInfo, s_lastInfoLength));
             }
         }
 
@@ -325,6 +345,114 @@ namespace UsbTest
                 // command and have no indicator to light.
                 Say("WINK answered, " + request.ResponseLength.ToString() + " bytes back.");
                 Say("If nothing lit up, use Register: that has to ask for a finger.");
+            }
+        }
+
+        /// <summary>authenticatorMakeCredential: a credential, the CTAP2 way.</summary>
+        /// <remarks>
+        /// One blocking exchange, unlike the U2F registration next to it. A
+        /// CTAP2 authenticator holds the request open while it waits for the
+        /// finger, sending keepalive frames, so there is no status to poll for
+        /// and nothing to drive from the main loop - the call simply does not
+        /// return until the key is touched or gives up.
+        ///
+        /// That freezes the interface for as long as it takes, which is why the
+        /// instruction is written and the screen forced to repaint *before* the
+        /// call rather than after: a frozen program with no message on it is
+        /// the same picture as a crashed one.
+        /// </remarks>
+        private static void MakeCredential()
+        {
+            Say("MakeCred");
+            if (!HaveChannel()) return;
+
+            byte[] request;
+            try
+            {
+                request = CtapCredential.BuildRequest();
+            }
+            catch (Exception e)
+            {
+                // The writer refused our own request. Worth its own message:
+                // it means the bug is here, not in the key.
+                Say("could not build the request: " + e.Message);
+                return;
+            }
+
+            // Command byte first, then the map: that is what a CTAP2 payload is.
+            byte[] payload = new byte[request.Length + 1];
+            payload[0] = AuthenticatorMakeCredential;
+            for (int i = 0; i < request.Length; i++) payload[i + 1] = request[i];
+
+            Say(payload.Length.ToString() + " byte request. Touch the key.");
+            Terminal.Gui.Application.Refresh();
+
+            byte[] response = new byte[ResponseCapacity];
+
+            fixed (byte* payloadPin = payload)
+            fixed (byte* responsePin = response)
+            {
+                AppUsbCtapRequest request2 = default;
+                request2.Channel = s_channel;
+                request2.Command = CmdCbor;
+                request2.PayloadAddress = (ulong)payloadPin;
+                request2.PayloadLength = (uint)payload.Length;
+                request2.ResponseAddress = (ulong)responsePin;
+                request2.ResponseCapacity = ResponseCapacity;
+                request2.TimeoutMs = TouchTimeoutMs;
+
+                AppServiceStatus status = AppHost.TryUsbCtap(ref request2);
+                if (status != AppServiceStatus.Ok)
+                {
+                    Say("makeCredential failed: " + Failure(status, ref request2));
+                    return;
+                }
+
+                if (request2.ResponseLength == 0)
+                {
+                    Say("makeCredential returned nothing");
+                    return;
+                }
+
+                byte ctapStatus = responsePin[0];
+                if (ctapStatus != 0)
+                {
+                    Say("CTAP2 status 0x" + Format.Hex2(ctapStatus) + Ctap2Error(ctapStatus));
+                    return;
+                }
+
+                string head = "credential made, " + (request2.ResponseLength - 1).ToString() + " bytes";
+                if (request2.KeepAlives != 0)
+                    head += ", " + request2.KeepAlives.ToString() + " keepalives";
+                Say(head);
+
+                int cborLength = (int)request2.ResponseLength - 1;
+                byte[] body = new byte[cborLength];
+                for (int i = 0; i < cborLength; i++) body[i] = responsePin[1 + i];
+
+                Say(CtapCredential.Describe(body, cborLength));
+            }
+        }
+
+        /// <summary>The CTAP2 statuses this path actually produces.</summary>
+        /// <remarks>
+        /// Short on purpose. A full table would be the specification copied
+        /// into a switch; these are the four a credential request comes back
+        /// with, and the two about PINs are the ones that say "this key wants
+        /// a protocol we have not built" rather than "something went wrong".
+        /// </remarks>
+        private static string Ctap2Error(byte status)
+        {
+            switch (status)
+            {
+                case 0x27: return " (credential already exists for this user)";
+                case 0x2D: return " (operation denied)";
+                case 0x2E: return " (key store full)";
+                case 0x31: return " (PIN required - needs the clientPIN protocol)";
+                case 0x33: return " (PIN blocked)";
+                case 0x36: return " (PIN/uv auth token required)";
+                case 0x3E: return " (user action timeout - no touch)";
+                default: return "";
             }
         }
 
@@ -516,6 +644,20 @@ namespace UsbTest
                 case 0x6F00: return " (execution error - an unprovisioned key answers this)";
                 default: return "";
             }
+        }
+
+        /// <summary>The bytes behind the last decoded reply.</summary>
+        private static void ShowRaw()
+        {
+            if (s_lastInfo == null)
+            {
+                Say("No reply to show yet - ask for getInfo first.");
+                return;
+            }
+
+            Say(s_lastInfoLength.ToString() + " bytes of CBOR:");
+            fixed (byte* bytes = s_lastInfo)
+                Say(Format.Dump(bytes, s_lastInfoLength));
         }
 
         private static bool HaveChannel()

@@ -980,6 +980,39 @@ post-EBS это развёртка. `bochs-display` + EDID.
 
 ---
 
+## 19. CBOR и поверхность, которую он потребовал (step 183)
+
+- **`System.Formats.Cbor` есть**, порт из dotnet/runtime 8.0 в родном
+  пространстве имён. Читает и пишет; `Ctap2Canonical` работает — ответ
+  аппаратного ключа на `getInfo` прошёл строгий режим с первого захода.
+  **Запись ни разу не исполнялась**: собирается, первым потребителем будет
+  `makeCredential`.
+- **Вырезано** (перечислено в заголовке каждого файла): `Read/WriteHalf` и
+  `HalfHelpers` — нет `System.Half`; `Read/Write` для `BigInteger`, `decimal`,
+  `DateTimeOffset` — нет этих типов; конструктор сериализации у
+  `CborContentException`. Механизм тегов оставлен: он от вырезанного не зависит.
+  Половинная точность **читается** — разбор binary16 написан руками, без типа.
+- **Появилось в std** ради этого порта и годится всем: `Memory<T>` /
+  `ReadOnlyMemory<T>` (только на массиве — ни строк, ни `MemoryManager`),
+  `SpanAction<T,TArg>`, `HashCode` (FNV-1a, **не** xxHash, зерно не случайное),
+  `MemoryExtensions.SequenceCompareTo`, биты `BitConverter`
+  (`Int32BitsToSingle` и три парных), `Interlocked.Exchange<T>`,
+  `HashSet.RemoveWhere`, `ArrayPool.Create`, `DecoderFallbackException` и
+  `EncoderFallbackException`, четыре перегрузки `Encoding` со спанами.
+- **`UTF8Encoding` умеет строгий режим**: конструкторы с флагами и настоящая
+  проверка — сверхдлинные формы, суррогаты, выход за последнюю плоскость,
+  обрывы. По умолчанию по-прежнему подмена на U+FFFD, как в BCL.
+- **SHA-256 переехал в std** (`Security/Sha256.cs`): потоковое
+  `SharpOS.Std.Security.Sha256` для моста к форку и
+  `System.Security.Cryptography.SHA256.HashData` для всех остальных. В ядре
+  прежнего файла больше нет.
+- **P-256 нет вообще.** Из-за этого недоступны: проверка подписи аттестации и
+  протокол clientPIN (ему нужен ECDH). Ключ с установленным PIN ответит на
+  `makeCredential` кодом `0x31` или `0x36`, и это не поломка, а отсутствующая
+  возможность.
+
+---
+
 ## Быстрый протокол при встрече новой проблемы
 
 1. Добавить минимальный repro в `NativeAotProbe.cs`.

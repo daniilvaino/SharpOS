@@ -72,6 +72,22 @@ namespace System.Threading
             return original;
         }
 
+        /// <summary>Ссылочный обмен, которого не хватало рядом с CompareExchange&lt;T&gt;.</summary>
+        /// <remarks>
+        /// Через цикл на CompareExchange, а не отдельной инструкцией: она бы
+        /// понадобилась ровно та же, а расхождение двух реализаций одного
+        /// обмена — не та цена, которую стоит платить за один такт.
+        /// </remarks>
+        public static T Exchange<T>(ref T location1, T value) where T : class
+        {
+            while (true)
+            {
+                T current = location1;
+                if (CompareExchange(ref location1, value, current) == current)
+                    return current;
+            }
+        }
+
         public static int Exchange(ref int location1, int value)
         {
             // Built from compare-and-swap rather than an exchange instruction:

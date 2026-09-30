@@ -1,4 +1,4 @@
-// System.BitConverter — minimal subset ported from dotnet/runtime.
+﻿// System.BitConverter — minimal subset ported from dotnet/runtime.
 // BCL version is large (float/double bit-casts, ToString hex-pretty,
 // GetBytes overloads). Kernel-tier currently needs only IsLittleEndian
 // (BinaryPrimitives uses it as a compile-time const branch).
@@ -19,6 +19,17 @@ namespace System
     public static class BitConverter
     {
         public const bool IsLittleEndian = true;
+
+        // Переливание битов между целым и плавающим, без арифметики.
+        //
+        // Нужно всему, что читает числа из потока: сначала приходит целое в
+        // нужном порядке байтов, и только потом оно объявляется float. Через
+        // указатель, а не через Unsafe: так короче и не зависит от того, какая
+        // часть System.Runtime.CompilerServices у нас есть.
+        public static unsafe float Int32BitsToSingle(int value) => *(float*)&value;
+        public static unsafe int SingleToInt32Bits(float value) => *(int*)&value;
+        public static unsafe double Int64BitsToDouble(long value) => *(double*)&value;
+        public static unsafe long DoubleToInt64Bits(double value) => *(long*)&value;
 
         // byte[]-reader subset (step141: ManagedDoom WAD/lump parsing).
         // Little-endian composition, bounds via the array indexer.

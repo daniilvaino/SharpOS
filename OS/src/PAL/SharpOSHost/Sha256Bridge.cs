@@ -1,13 +1,13 @@
-using System.Runtime;
+﻿using System.Runtime;
 using System.Runtime.InteropServices;
-using OS.Kernel.Crypto;
+using SharpOS.Std.Security;
 using OS.Kernel.Memory;
 
 namespace OS.PAL.SharpOSHost
 {
     // step 99 pass 7 -- SHA-256 hash bridge. Forked CoreCLR's PAL no
     // longer contains the SHA-256 algorithm; it forwards through these
-    // exports to the kernel-side OS.Kernel.Crypto.Sha256 implementation
+    // exports to SharpOS.Std.Security.Sha256 in the shared std
     // (CLAUDE.md invariant: no algorithmic code in PAL).
     //
     // Surface:

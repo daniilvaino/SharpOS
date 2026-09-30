@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Сшивание PE через lld-link + xwin из тулчейна SharpOS, на любом хосте. -->
   <Import Project="$(MSBuildThisFileDirectory)..\SharpOsNativeLink.props" />
@@ -464,6 +464,9 @@ detach vdisk
     <Compile Include="..\std\no-runtime\shared\Bcl\BitArray.cs" Link="src\Std\Bcl\BitArray.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\HashSet.cs" Link="src\Std\Bcl\HashSet.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\Stack.cs" Link="src\Std\Bcl\Stack.cs" />
+    <Compile Include="..\std\no-runtime\shared\Bcl\Memory.cs" Link="src\Std\Bcl\Memory.cs" />
+    <Compile Include="..\std\no-runtime\shared\Security\Sha256.cs" Link="src\Std\Security\Sha256.cs" />
+
     <Compile Include="..\std\no-runtime\shared\Bcl\Queue.cs" Link="src\Std\Bcl\Queue.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\LinkedList.cs" Link="src\Std\Bcl\LinkedList.cs" />
     <Compile Include="..\std\no-runtime\shared\Bcl\ReadOnlyCollection.cs" Link="src\Std\Bcl\ReadOnlyCollection.cs" />

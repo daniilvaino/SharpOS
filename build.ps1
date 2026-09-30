@@ -100,8 +100,21 @@ function Build-SharpOsApp {
     $projectName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectFile)
     $outDir = Join-Path $projectDir "bin/$Configuration/out-$RuntimeIdentifier"
 
-    & dotnet publish $ProjectFile -c $Configuration -r $RuntimeIdentifier --output $outDir "/p:BuildId=$script:BuildId" /v:minimal
-    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
+    # Вывод сборки уходит и на экран, и в файл рядом с приложением.
+    #
+    # Out-Host в конце обязателен, а не для красоты: функция возвращает путь к
+    # собранному PE, и всё, что попало в её конвейер, стало бы частью этого
+    # возвращаемого значения вместо того, чтобы показаться. Именно так первая
+    # версия этой правки и погасила вывод компилятора целиком — ошибки шли в
+    # файл, а на экране оставалась одна строка "СБОЙ".
+    #
+    # Путь к логу абсолютный: Tee-Object разрешает относительный от текущего
+    # каталога в момент первой записи, а не в момент вызова.
+    $publishLog = Join-Path (Resolve-Path -LiteralPath $projectDir).Path "publish.log"
+
+    & dotnet publish $ProjectFile -c $Configuration -r $RuntimeIdentifier --output $outDir "/p:BuildId=$script:BuildId" /v:minimal |
+        Tee-Object -FilePath $publishLog | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE) - подробности в $publishLog" }
 
     $exe = Join-Path $outDir "$projectName.exe"
     if (-not (Test-Path -LiteralPath $exe)) { throw "PE not produced: $exe" }

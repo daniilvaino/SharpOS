@@ -153,3 +153,6 @@ sharpos.map
 # nix build: симлинк на результат в /nix/store
 /result
 /result-*
+
+# Логи сборки приложений (build.ps1 пишет рядом с проектом).
+publish.log

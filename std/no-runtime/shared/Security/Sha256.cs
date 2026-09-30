@@ -1,14 +1,24 @@
-namespace OS.Kernel.Crypto
+// SHA-256 (FIPS 180-4) in managed C#.
+//
+// Moved here from OS/src/Kernel/Crypto/Sha256.cs when an application needed it
+// too: a program computing a WebAuthn clientDataHash needs the same hash the
+// kernel already had, and the one thing not to do about that is to have two of
+// them. Shared std is where a thing both tiers use belongs.
+//
+// Two faces on one implementation:
+//   * SharpOS.Std.Security.Sha256 - the streaming, pointer-shaped API the
+//     forked CoreCLR's incremental hashing maps onto through
+//     PAL/SharpOSHost/Sha256Bridge.cs. Not a BCL shape, so not a BCL name.
+//   * System.Security.Cryptography.SHA256.HashData - the BCL's own one-shot,
+//     under its own name, because a faithful hash is faithful: real code that
+//     calls it compiles here unchanged.
+
+namespace SharpOS.Std.Security
 {
-    // SHA-256 (FIPS 180-4) in managed C#. Lives kernel-side per the
-    // SharpOS invariant: PAL is a thin forwarder, implementations stay
-    // in C#. Exposed to forked CoreCLR through SharpOSHost_Sha256_*
-    // exports in PAL/SharpOSHost/Sha256Bridge.cs.
-    //
-    // State layout: 8 H-words + 64-byte buffer + bufLen + total byte
-    // count = 8*4 + 64 + 4 + 8 = 108 bytes. Kept inline in a struct so
-    // callers can choose stack or heap allocation; the bridge layer
-    // hands out heap-allocated boxes as Win32-style handles.
+    // State layout: 8 H-words + 64-byte buffer + bufLen + total byte count =
+    // 8*4 + 64 + 4 + 8 = 108 bytes. Kept inline in a struct so callers can
+    // choose stack or heap allocation; the bridge layer hands out
+    // heap-allocated boxes as Win32-style handles.
     internal unsafe struct Sha256State
     {
         public fixed uint H[8];
@@ -21,12 +31,12 @@ namespace OS.Kernel.Crypto
     {
         public const uint DigestBytes = 32;
 
-        // K table inlined into Compress via stackalloc-with-initializer to
-        // avoid the class-constructor trap (static readonly uint[] would
-        // trigger ClassConstructorRunner.CheckStaticClassConstruction*
-        // which is unimplemented in the NoStdLib kernel environment; see
-        // CLAUDE.md "ClassConstructorRunner trap"). One re-fill per
-        // compression block; negligible cost.
+        // K table inlined into Compress via stackalloc-with-initializer rather
+        // than a static readonly uint[]. That was written for the era when the
+        // class-constructor path did not exist here; it still holds for the
+        // earliest boot code, and the cost - one re-fill per compression block
+        // - is not worth the churn of finding out where this ends up called
+        // from next.
 
         private static uint Rotr(uint x, int n) => (x >> n) | (x << (32 - n));
 
@@ -131,13 +141,60 @@ namespace OS.Kernel.Crypto
             Final(&s, out32);
         }
 
-        // Snapshot the current state and finalize the copy. Used by
-        // BCL's HashAlgorithm.GetCurrentHash without mutating the
-        // running context.
+        // Snapshot the current state and finalize the copy. Used by BCL's
+        // HashAlgorithm.GetCurrentHash without mutating the running context.
         public static void Snapshot(Sha256State* s, byte* out32)
         {
             Sha256State copy = *s;
             Final(&copy, out32);
+        }
+    }
+}
+
+namespace System.Security.Cryptography
+{
+    /// <summary>SHA-256, the one-shot half of the BCL's surface.</summary>
+    /// <remarks>
+    /// Only the static HashData members: the instance HashAlgorithm shape
+    /// brings streams, disposal and a base class hierarchy with it, and nothing
+    /// here has asked for any of that. Adding them later changes nothing about
+    /// these.
+    /// </remarks>
+    public static unsafe class SHA256
+    {
+        public const int HashSizeInBits = 256;
+        public const int HashSizeInBytes = 32;
+
+        public static byte[] HashData(byte[] source)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            return HashData(new ReadOnlySpan<byte>(source));
+        }
+
+        public static byte[] HashData(ReadOnlySpan<byte> source)
+        {
+            byte[] digest = new byte[HashSizeInBytes];
+            HashData(source, digest);
+            return digest;
+        }
+
+        public static int HashData(ReadOnlySpan<byte> source, Span<byte> destination)
+        {
+            if (destination.Length < HashSizeInBytes)
+                throw new ArgumentException("Destination is too short.", nameof(destination));
+
+            // Both spans are pinned for the length of one hash. The empty
+            // source is not a special case for the algorithm - SHA-256 of
+            // nothing is a defined value - but it is one for taking the address
+            // of an empty span, so it gets a length of zero and a pointer that
+            // is never read.
+            fixed (byte* input = source)
+            fixed (byte* output = destination)
+            {
+                SharpOS.Std.Security.Sha256.OneShot(input, (uint)source.Length, output);
+            }
+
+            return HashSizeInBytes;
         }
     }
 }

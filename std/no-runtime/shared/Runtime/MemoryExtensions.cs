@@ -1,4 +1,4 @@
-// System.MemoryExtensions — subset ported from dotnet/runtime:
+﻿// System.MemoryExtensions — subset ported from dotnet/runtime:
 //   src/libraries/System.Private.CoreLib/src/System/MemoryExtensions.cs
 //
 // BCL version is 3200+ lines with IndexOf / SequenceEqual / SearchValues /
@@ -135,6 +135,29 @@ namespace System
             }
             return -1;
         }
+
+        // ---- SequenceCompareTo ----
+        //
+        // Лексикографическое сравнение: первый различающийся элемент решает,
+        // а при общем префиксе решает длина. Нужно там, где порядок ключей
+        // сам по себе часть формата — например каноническому CBOR, который
+        // требует отсортированных ключей и обязан уметь это проверить.
+
+        public static int SequenceCompareTo<T>(this ReadOnlySpan<T> span, ReadOnlySpan<T> other)
+            where T : IComparable<T>
+        {
+            int shorter = span.Length < other.Length ? span.Length : other.Length;
+            for (int i = 0; i < shorter; i++)
+            {
+                int order = span[i].CompareTo(other[i]);
+                if (order != 0) return order;
+            }
+            return span.Length - other.Length;
+        }
+
+        public static int SequenceCompareTo<T>(this Span<T> span, ReadOnlySpan<T> other)
+            where T : IComparable<T>
+            => SequenceCompareTo((ReadOnlySpan<T>)span, other);
 
         // ---- SequenceEqual ----
 

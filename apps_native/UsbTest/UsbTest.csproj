@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IlcSystemModule>UsbTest</IlcSystemModule>
     <!-- C# 14: the library's RuneCount / ConsoleWidth are extension properties.
@@ -18,5 +18,7 @@
     <Compile Include="UsbSnapshot.cs" />
     <Compile Include="BusTab.cs" />
     <Compile Include="KeyTab.cs" />
+    <Compile Include="CtapInfo.cs" />
+    <Compile Include="CtapCredential.cs" />
   </ItemGroup>
 </Project>

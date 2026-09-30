@@ -184,6 +184,8 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `Vector128<T>` (SSE) | ✅ | ✅ | ✅ | `Vector256` объявлен, но не ускорен |
 | Разбор XML | ✅ | ⏳ | ✅ | TurboXml; ядро читает им манифесты приложений |
 | Коллекции `Concurrent.*` и `Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`, `Regex`, `ValueTuple`, `DateTimeOffset` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple<T1,T2>` есть |
+| CBOR (`System.Formats.Cbor`) | 🔴 | ✅ | ✅ | порт из dotnet/runtime; без `Half`, `BigInteger`, `decimal` и `DateTimeOffset` — теги при этом читаются. Разбор проверен на ответе аппаратного ключа, запись пока нет |
+| SHA-256 | ✅ | ✅ | ✅ | `System.Security.Cryptography.SHA256.HashData`, своя реализация в std. Других алгоритмов нет: ни P-256, ни AES, ни HMAC |
 
 ### Потоки и синхронизация
 

@@ -1,4 +1,4 @@
-// Partial System.Text.Encoding for the NoStdLib kernel/std environment.
+﻿// Partial System.Text.Encoding for the NoStdLib kernel/std environment.
 //
 // This is NOT the full BCL Encoding hierarchy. It provides the concrete
 // encodings and the GetString/GetBytes surface that real BCL-consuming code
@@ -44,6 +44,56 @@ namespace System.Text
 
         public byte[] GetBytes(char[] chars)
             => GetBytes(new string(chars));
+
+        // --- spans ------------------------------------------------------
+        //
+        // Built on the members above rather than declared abstract, so that
+        // adding them costs no subclass a line: every encoding here already
+        // knows how to turn a string into bytes and bytes into a string, and
+        // these are that, with the copy the caller asked for.
+        //
+        // They allocate where the BCL's do not - a string in the middle of
+        // what should be a straight conversion. Said out loud rather than
+        // hidden: the callers that exist (System.Formats.Cbor) convert short
+        // keys and text strings, and an honest extra allocation beats a
+        // hand-rolled second decoder that can disagree with the first.
+
+        public virtual int GetByteCount(ReadOnlySpan<char> chars)
+            => GetByteCount(StringOf(chars));
+
+        public virtual int GetBytes(ReadOnlySpan<char> source, Span<byte> destination)
+        {
+            byte[] bytes = GetBytes(StringOf(source));
+            if (bytes.Length > destination.Length)
+                throw new ArgumentException("Destination too short.", nameof(destination));
+
+            new ReadOnlySpan<byte>(bytes).CopyTo(destination);
+            return bytes.Length;
+        }
+
+        public virtual int GetCharCount(ReadOnlySpan<byte> bytes)
+            => GetString(bytes).Length;
+
+        public virtual int GetChars(ReadOnlySpan<byte> source, Span<char> destination)
+        {
+            string text = GetString(source);
+            if (text.Length > destination.Length)
+                throw new ArgumentException("Destination too short.", nameof(destination));
+
+            for (int i = 0; i < text.Length; i++)
+                destination[i] = text[i];
+
+            return text.Length;
+        }
+
+        private static string StringOf(ReadOnlySpan<char> chars)
+        {
+            if (chars.Length == 0) return "";
+
+            char[] buffer = new char[chars.Length];
+            chars.CopyTo(buffer);
+            return new string(buffer, 0, buffer.Length);
+        }
     }
 
     public sealed class ASCIIEncoding : Encoding
@@ -149,6 +199,32 @@ namespace System.Text
 
     public sealed class UTF8Encoding : Encoding
     {
+        // Whether malformed input is an error or a replacement character.
+        //
+        // Added for System.Formats.Cbor, which asks for a strict decoder on
+        // every conformance mode but Lax: a CBOR text string carrying invalid
+        // UTF-8 is a malformed document, and a decoder that quietly substitutes
+        // U+FFFD turns "this data is wrong" into "this data says a question
+        // mark" - a silence exactly like the ones that cost this project its
+        // longest evenings.
+        private readonly bool _throwOnInvalidBytes;
+
+        public UTF8Encoding() { }
+
+        public UTF8Encoding(bool encoderShouldEmitUTF8Identifier)
+        {
+            // The byte-order mark is the caller's business at write time, and
+            // nothing here emits one; kept so the BCL's three constructors all
+            // exist rather than only the shapes we happen to call.
+            _ = encoderShouldEmitUTF8Identifier;
+        }
+
+        public UTF8Encoding(bool encoderShouldEmitUTF8Identifier, bool throwOnInvalidBytes)
+        {
+            _ = encoderShouldEmitUTF8Identifier;
+            _throwOnInvalidBytes = throwOnInvalidBytes;
+        }
+
         public override string GetString(ReadOnlySpan<byte> bytes)
         {
             int n = bytes.Length;
@@ -164,35 +240,68 @@ namespace System.Text
                 {
                     chars[ci++] = (char)b0;
                     i += 1;
+                    continue;
                 }
-                else if ((b0 & 0xE0) == 0xC0 && i + 1 < n)
+
+                // Length from the lead byte, then the continuation bytes and
+                // the code point together - because every way a sequence can
+                // be wrong has to be caught in one place if strict mode is to
+                // mean anything.
+                int need;
+                int cp;
+                if ((b0 & 0xE0) == 0xC0) { need = 2; cp = b0 & 0x1F; }
+                else if ((b0 & 0xF0) == 0xE0) { need = 3; cp = b0 & 0x0F; }
+                else if ((b0 & 0xF8) == 0xF0) { need = 4; cp = b0 & 0x07; }
+                else { if (!Bad(ref ci, chars)) return Throw(); i += 1; continue; }
+
+                if (i + need > n) { if (!Bad(ref ci, chars)) return Throw(); i += 1; continue; }
+
+                bool ok = true;
+                for (int k = 1; k < need; k++)
                 {
-                    int cp = ((b0 & 0x1F) << 6) | (bytes[i + 1] & 0x3F);
+                    byte bk = bytes[i + k];
+                    if ((bk & 0xC0) != 0x80) { ok = false; break; }
+                    cp = (cp << 6) | (bk & 0x3F);
+                }
+
+                // Overlong forms, the surrogate range and anything past the
+                // last plane are all malformed, and all of them decode to a
+                // plausible character if nobody checks.
+                if (ok)
+                {
+                    if (need == 2 && cp < 0x80) ok = false;
+                    else if (need == 3 && cp < 0x800) ok = false;
+                    else if (need == 4 && cp < 0x10000) ok = false;
+                    else if (cp >= 0xD800 && cp <= 0xDFFF) ok = false;
+                    else if (cp > 0x10FFFF) ok = false;
+                }
+
+                if (!ok) { if (!Bad(ref ci, chars)) return Throw(); i += 1; continue; }
+
+                if (cp < 0x10000)
+                {
                     chars[ci++] = (char)cp;
-                    i += 2;
-                }
-                else if ((b0 & 0xF0) == 0xE0 && i + 2 < n)
-                {
-                    int cp = ((b0 & 0x0F) << 12) | ((bytes[i + 1] & 0x3F) << 6) | (bytes[i + 2] & 0x3F);
-                    chars[ci++] = (char)cp;
-                    i += 3;
-                }
-                else if ((b0 & 0xF8) == 0xF0 && i + 3 < n)
-                {
-                    int cp = ((b0 & 0x07) << 18) | ((bytes[i + 1] & 0x3F) << 12)
-                             | ((bytes[i + 2] & 0x3F) << 6) | (bytes[i + 3] & 0x3F);
-                    cp -= 0x10000;
-                    chars[ci++] = (char)(0xD800 + (cp >> 10));
-                    chars[ci++] = (char)(0xDC00 + (cp & 0x3FF));
-                    i += 4;
                 }
                 else
                 {
-                    chars[ci++] = '�';
-                    i += 1;
+                    cp -= 0x10000;
+                    chars[ci++] = (char)(0xD800 + (cp >> 10));
+                    chars[ci++] = (char)(0xDC00 + (cp & 0x3FF));
                 }
+                i += need;
             }
             return new string(chars, 0, ci);
+
+            // Writes the replacement character and says whether decoding may
+            // continue; false means the strict decoder has to give up.
+            bool Bad(ref int at, char[] buffer)
+            {
+                if (_throwOnInvalidBytes) return false;
+                buffer[at++] = '�';
+                return true;
+            }
+
+            string Throw() => throw new ArgumentException("Invalid UTF-8 byte sequence.", "bytes");
         }
 
         public override int GetByteCount(string s)

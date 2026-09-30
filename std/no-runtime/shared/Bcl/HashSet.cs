@@ -1,4 +1,4 @@
-// System.Collections.Generic.HashSet<T> — BCL-compat surface.
+﻿// System.Collections.Generic.HashSet<T> — BCL-compat surface.
 //
 // Separate chaining hash set: `_buckets` is an array of head-of-chain
 // Entry refs, each Entry holds one value + a `m_next` pointer to the
@@ -64,6 +64,24 @@ namespace System.Collections.Generic
         {
             if (item == null) Halt();
             return Find(item) != null;
+        }
+
+        /// <summary>Убирает всё, что подошло условию; возвращает сколько убрал.</summary>
+        public int RemoveWhere(Predicate<T> match)
+        {
+            if (match == null) throw new ArgumentNullException(nameof(match));
+
+            // Сначала собрать, потом удалять: удаление во время обхода —
+            // способ пропустить половину набора и не узнать об этом.
+            var doomed = new List<T>();
+            foreach (T item in this)
+                if (match(item)) doomed.Add(item);
+
+            int removed = 0;
+            for (int i = 0; i < doomed.Count; i++)
+                if (Remove(doomed[i])) removed++;
+
+            return removed;
         }
 
         public bool Remove(T item)

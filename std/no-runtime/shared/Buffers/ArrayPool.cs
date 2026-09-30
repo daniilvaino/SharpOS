@@ -1,4 +1,4 @@
-// A pool that does not pool.
+﻿// A pool that does not pool.
 //
 // Shaped after dotnet/runtime v8.0 (MIT),
 //   src/libraries/System.Private.CoreLib/src/System/Buffers/ArrayPool.cs
@@ -24,6 +24,24 @@ namespace System.Buffers
         // for one does not work here (limits §1). Each access allocates a small
         // object, which is nothing beside the arrays it hands out.
         public static ArrayPool<T> Shared => new ArrayPool<T>();
+
+        /// <summary>A pool of one's own.</summary>
+        /// <remarks>
+        /// The BCL's Create hands back a pool that does not share its buffers
+        /// with anyone else's. This one is the same object Shared is, because
+        /// this pool keeps nothing between calls - Rent allocates and Return
+        /// drops. The distinction Create exists to make therefore does not
+        /// exist here, and the method is present so that code written against
+        /// the real one compiles rather than so that it behaves differently.
+        /// </remarks>
+        public static ArrayPool<T> Create() => new ArrayPool<T>();
+
+        public static ArrayPool<T> Create(int maxArrayLength, int maxArraysPerBucket)
+        {
+            _ = maxArrayLength;
+            _ = maxArraysPerBucket;
+            return new ArrayPool<T>();
+        }
 
         public T[] Rent(int minimumLength)
         {
