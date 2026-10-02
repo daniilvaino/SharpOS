@@ -139,7 +139,7 @@ namespace OS.Hal
         // an MBR-partitioned disk. The MBR type byte is unreliable
         // across VVFAT versions, so partitions are accepted by a valid
         // BPB at their start LBA, not by type.
-        public static bool Mount(Disk disk)
+        private static bool MountLocked(Disk disk)
         {
             if (s_mounted) return true;
             s_disk = disk;
@@ -406,7 +406,7 @@ namespace OS.Hal
             return any;
         }
 
-        public static bool Exists(string path)
+        private static bool ExistsLocked(string path)
             => Resolve(path, out _, out _, out _);
 
         // Cheap existence + metadata probe: walks the directory chain
@@ -417,7 +417,7 @@ namespace OS.Hal
         // probes per assembly load; using ReadFile here is catastrophic
         // (slurps tens of MiB per probe, blows NativeArena, drives the
         // AHCI queue, runs us into physical OOM).
-        public static bool Stat(string path, out uint size, out bool isDir)
+        private static bool StatLocked(string path, out uint size, out bool isDir)
         {
             isDir = false; size = 0;
             if (!Resolve(path, out _, out uint sz, out bool dir)) return false;
@@ -477,7 +477,7 @@ namespace OS.Hal
             return h;
         }
 
-        public static bool EnumDir(string path, uint index,
+        private static bool EnumDirLocked(string path, uint index,
             char* nameOut, uint nameCap, out uint nameLen, out ulong attrs)
         {
             nameLen = 0; attrs = 0;
@@ -665,7 +665,7 @@ namespace OS.Hal
         // the flat arithmetic silently write into whatever else owns those
         // clusters, so a fragmented one is refused outright and the caller
         // loses logging rather than the filesystem losing data.
-        public static bool TryOpenLinear(string path, out ulong startLba, out uint sectors)
+        private static bool TryOpenLinearLocked(string path, out ulong startLba, out uint sectors)
         {
             startLba = 0;
             sectors = 0;
@@ -696,7 +696,7 @@ namespace OS.Hal
 
         /// <summary>Write one sector. The source is copied into the DMA scratch
         /// first, so callers may pass ordinary memory.</summary>
-        public static bool WriteSectorAt(ulong lba, byte* src)
+        private static bool WriteSectorAtLocked(ulong lba, byte* src)
         {
             if (!s_mounted || s_disk == null || src == null) return false;
             for (uint i = 0; i < s_bps; i++) s_sec[i] = src[i];
@@ -706,7 +706,7 @@ namespace OS.Hal
         // Blank a run of sectors. Multi-sector writes rather than a loop of
         // single ones: over USB every command is a three-phase round trip, so
         // clearing anything meaningful one sector at a time is unusably slow.
-        public static bool BlankSectors(ulong lba, uint count)
+        private static bool BlankSectorsLocked(ulong lba, uint count)
         {
             if (!s_mounted || s_disk == null || count == 0) return false;
 
@@ -739,7 +739,7 @@ namespace OS.Hal
         //
         // Returns bytes written, or -1 when the file is missing, is a
         // directory, or `len` exceeds its current size.
-        public static int WriteFileInPlace(string path, byte* src, int len)
+        private static int WriteFileInPlaceLocked(string path, byte* src, int len)
         {
             if (!s_mounted || s_disk == null || src == null || len < 0) return -1;
             if (!Resolve(path, out uint clus, out uint size, out bool isDir) || isDir) return -1;
@@ -776,7 +776,7 @@ namespace OS.Hal
             return written;
         }
 
-        public static int ReadFile(string path, byte* dst, int cap, out uint fileSize)
+        private static int ReadFileLocked(string path, byte* dst, int cap, out uint fileSize)
         {
             fileSize = 0;
             if (!Resolve(path, out uint clus, out uint size, out bool isDir) || isDir)

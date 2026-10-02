@@ -231,7 +231,9 @@ namespace AotTests
             catch (FormatException) { which = 2; }
             Check("multi-catch select", which == 2);
 
+            CheckStelem();
             CheckThreadsAndTasks();
+            CheckPreemption();
             CheckClockWrap();
             CheckClockAdvances();
             CheckStackTraceText();
@@ -249,8 +251,212 @@ namespace AotTests
             AppHost.WriteUInt(s_total);
             AppHost.WriteString(" passed ====\n");
 
+            // After the summary: a fault nobody catches stops the machine, and
+            // the battery's results must already be in the log by then.
+            if (HwFaultProbe != 0)
+                RunHwFaultProbe();
+
             // Exit code = pass count (all-green => equals total).
             return (int)s_pass;
+        }
+
+        // Preemption (pipe_plan.md, item 9). Each check fails rather than hangs
+        // without it: the busy wait is bounded by the clock, and the waits that
+        // follow block in the kernel, which lets the other thread run anyway.
+        private static volatile int s_spinCount;
+        private static volatile int s_stopSpin;
+        private static volatile int s_allocErrors;
+        private static volatile int s_throwErrors;
+
+        private static void CheckPreemption()
+        {
+            // A thread that never yields, and a main thread that never yields
+            // either: under cooperative scheduling the worker never runs.
+            s_spinCount = 0;
+            s_stopSpin = 0;
+            var spinner = System.Threading.Tasks.Task.Run(() =>
+            {
+                while (s_stopSpin == 0)
+                    s_spinCount++;
+            });
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (s_spinCount == 0 && clock.ElapsedMilliseconds < 2000) { }
+            bool workerRan = s_spinCount != 0;
+            int seen = s_spinCount;
+            long until = clock.ElapsedMilliseconds + 50;
+            while (clock.ElapsedMilliseconds < until) { }
+            bool workerKeptRunning = s_spinCount > seen;
+            s_stopSpin = 1;
+            spinner.Wait();
+            Check("a busy thread does not starve another (preemption)", workerRan && workerKeptRunning);
+
+            // Two threads allocating at once, with collections, each checking
+            // that what it holds is still what it put there: the allocator and
+            // the collector are critical sections against preemption.
+            s_allocErrors = 0;
+            var allocator = System.Threading.Tasks.Task.Run(() => AllocateAndVerify('w'));
+            AllocateAndVerify('m');
+            allocator.Wait();
+            Check("two threads allocate and collect under preemption", s_allocErrors == 0);
+
+            // Two threads throwing and catching at once: the exception chain
+            // has to follow its thread, not stay with the CPU.
+            s_throwErrors = 0;
+            var thrower = System.Threading.Tasks.Task.Run(() => ThrowAndCatch("w"));
+            ThrowAndCatch("m");
+            thrower.Wait();
+            Check("two threads throw and catch under preemption", s_throwErrors == 0);
+        }
+
+        private static void AllocateAndVerify(char tag)
+        {
+            object[] keep = new object[64];
+            for (int i = 0; i < 20000; i++)
+            {
+                int[] numbers = new int[16];
+                numbers[0] = i;
+                numbers[15] = i;
+                keep[i % 64] = numbers;
+                keep[(i + 32) % 64] = (tag == 'w' ? "w" : "m") + i;
+
+                if (keep[(i + 1) % 64] is int[] older && older[0] != older[15])
+                    s_allocErrors++;
+                if (keep[(i + 33) % 64] is string text && text[0] != tag)
+                    s_allocErrors++;
+
+                if (tag == 'm' && i % 2500 == 0)
+                    GC.Collect();
+            }
+        }
+
+        private static void ThrowAndCatch(string tag)
+        {
+            for (int i = 0; i < 2000; i++)
+            {
+                try
+                {
+                    throw new InvalidOperationException(tag);
+                }
+                catch (InvalidOperationException e)
+                {
+                    if (e.Message != tag)
+                        s_throwErrors++;
+                }
+            }
+        }
+
+        // Reference-array stores (pipe_plan.md, item 1). The exceptions here
+        // are created by this image's own copy of std, so their types are the
+        // app's: a catch that misses them is an EH problem, not a type-identity
+        // one. That is the contrast for the hardware-fault probe below.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static object[] StelemObjects(int n) => n < 0 ? null : new object[n];
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static object[] StelemStrings(int n) => new string[n];
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int StelemIndex(int i) => i;
+
+        private static void CheckStelem()
+        {
+            object[] arr = StelemObjects(3);
+
+            bool pastEnd = false;
+            try { arr[StelemIndex(3)] = "x"; }
+            catch (IndexOutOfRangeException) { pastEnd = true; }
+            Check("stelem past end throws", pastEnd);
+
+            bool negative = false;
+            try { arr[StelemIndex(-1)] = "x"; }
+            catch (IndexOutOfRangeException) { negative = true; }
+            Check("stelem negative index throws", negative);
+
+            object[] none = StelemObjects(-1);
+            bool nullArray = false;
+            try { none[StelemIndex(0)] = "x"; }
+            catch (NullReferenceException) { nullArray = true; }
+            Check("stelem into null array throws", nullArray);
+
+            arr[StelemIndex(2)] = "in";
+            Check("stelem in range", (string)arr[2] == "in" && arr[0] == null);
+
+            object[] strings = StelemStrings(1);
+            bool mismatch = false;
+            try { strings[StelemIndex(0)] = (object)42; }
+            catch (ArrayTypeMismatchException) { mismatch = true; }
+            Check("stelem wrong element type throws", mismatch && strings[0] == null);
+
+            strings[StelemIndex(0)] = "same type";
+            Check("stelem matching element type stored", (string)strings[0] == "same type");
+        }
+
+        // Hardware fault in app code (pipe_plan.md, item 3).
+        //   0 — off;
+        //   1 — fault inside try { } catch (Exception) { } catch { };
+        //   2 — fault with no handler at all;
+        //   3 — a managed throw with no handler (the app's own exception type).
+        // Each mode ends this app, so one mode per run. The address is a pipe
+        // region's type key: odd, non-canonical, so the CPU raises #GP and the
+        // kernel asks this app's factory for the AccessViolationException, so
+        // the type is the app's own (pipe_plan.md, items 3 and 4a). Expected:
+        // mode 1 — "caught by catch (Exception)" and the sleep after it
+        // returning; modes 2 and 3 — "[app] unhandled exception: app ended,
+        // exit code 134" in the kernel log and the launcher carrying on.
+        private const int HwFaultProbe = 0;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static ulong FaultAddress() => 0xfbfbbc32146b4e5bUL;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static ulong ReadAt(ulong address) => *(ulong*)address;
+
+        private static void RunHwFaultProbe()
+        {
+            AppHost.WriteString("[hwfault] mode ");
+            AppHost.WriteUInt((uint)HwFaultProbe);
+            AppHost.WriteString(HwFaultProbe == 3 ? ": throwing with no handler\n" : ": reading a non-canonical address\n");
+
+            if (HwFaultProbe == 3)
+                throw new InvalidOperationException("unhandled on purpose (HwFaultProbe = 3)");
+
+            if (HwFaultProbe == 2)
+            {
+                ulong value = ReadAt(FaultAddress());
+                AppHost.WriteString("[hwfault] read returned, no fault: ");
+                AppHost.WriteUInt((uint)value);
+                AppHost.WriteString("\n");
+                return;
+            }
+
+            int how = 0;
+            try
+            {
+                ulong value = ReadAt(FaultAddress());
+                AppHost.WriteString("[hwfault] read returned, no fault: ");
+                AppHost.WriteUInt((uint)value);
+                AppHost.WriteString("\n");
+            }
+            catch (Exception)
+            {
+                how = 1;
+            }
+            catch
+            {
+                how = 2;
+            }
+
+            // No virtual call on the caught object: if it is the kernel's, its
+            // slots are not ours.
+            AppHost.WriteString(how == 1 ? "[hwfault] caught by catch (Exception)\n"
+                              : how == 2 ? "[hwfault] caught by catch-all only\n"
+                              : "[hwfault] not caught, execution continued\n");
+
+            // After a caught fault the code must still be able to wait: a
+            // handler left with interrupts off never sees the timer again
+            // (pipe_plan.md, item 5).
+            System.Threading.Thread.Sleep(50);
+            AppHost.WriteString("[hwfault] a sleep after the catch returned\n");
         }
 
         // Threads and tasks in an app (ABI V3).

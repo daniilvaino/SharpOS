@@ -107,9 +107,13 @@ namespace OS.Kernel.Threading
                 sLen  = OS.Boot.BootStackSwitch.OwnedStackBytes;
             }
 
+            Preemption.Suppress();
+            int id = s_nextId++;
+            Preemption.Allow();
+
             Thread t = new Thread
             {
-                Id = s_nextId++,
+                Id = id,
                 State = ThreadState.Running,
                 ContextBlock = ctx,
                 StackBase = sBase,
@@ -205,12 +209,13 @@ namespace OS.Kernel.Threading
             };
 
             // Link into the process thread list (head insert -- O(1)).
-            // Cooperative single-CPU; no lock needed today.
             if (owner != null)
             {
+                Preemption.Suppress();
                 t.NextInProcess = owner.FirstThread;
                 owner.FirstThread = t;
                 owner.ThreadCount++;
+                Preemption.Allow();
             }
 
             RegisterThread(t);
@@ -229,10 +234,15 @@ namespace OS.Kernel.Threading
         public static bool MakeRunnable(Thread t)
         {
             if (t == null) return false;
-            if (t.State != ThreadState.New) return false;
-            t.State = ThreadState.Runnable;
-            EnqueueRunnable(t);
-            return true;
+            Preemption.Suppress();
+            bool made = t.State == ThreadState.New;
+            if (made)
+            {
+                t.State = ThreadState.Runnable;
+                EnqueueRunnable(t);
+            }
+            Preemption.Allow();
+            return made;
         }
 
         // ─── app thread lifetime ─────────────────────────────────────────
@@ -499,6 +509,7 @@ namespace OS.Kernel.Threading
             s_current = next;
             s_switchCount++;
             OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.SchedSwitches);
+            SwapExceptionChain(curr, next);
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
             s_switching = false;
             // CoopSwitch returns here when SOMEBODY switches back to curr.
@@ -559,9 +570,13 @@ namespace OS.Kernel.Threading
         public static void WakeFromWait(Thread t)
         {
             if (t == null) return;
-            if (t.State != ThreadState.Waiting) return;
-            t.State = ThreadState.Runnable;
-            EnqueueRunnable(t);
+            Preemption.Suppress();
+            if (t.State == ThreadState.Waiting)
+            {
+                t.State = ThreadState.Runnable;
+                EnqueueRunnable(t);
+            }
+            Preemption.Allow();
         }
 
         private static void DrainExpiredTimers()
@@ -586,14 +601,24 @@ namespace OS.Kernel.Threading
         public static uint ThreadsCreated => s_threadsCreated;
         public static uint ThreadsExited => s_threadsExited;
 
+        // The registry, the ready queue and the id counter are shared by every
+        // thread, and their callers (Spawn, MakeRunnable, WakeFromWait, Exit)
+        // run in ordinary code that a tick can preempt. Each helper is its own
+        // critical section; Yield's own s_switching covered only the calls
+        // made from inside Yield.
         private static void RegisterThread(Thread t)
         {
+            Preemption.Suppress();
             s_threadsLive++;
             s_threadsCreated++;
             t.AllNext = null;
-            if (s_allTail == null) { s_allHead = t; s_allTail = t; return; }
-            s_allTail.AllNext = t;
-            s_allTail = t;
+            if (s_allTail == null) { s_allHead = t; s_allTail = t; }
+            else
+            {
+                s_allTail.AllNext = t;
+                s_allTail = t;
+            }
+            Preemption.Allow();
         }
 
         // Unlink on exit. Leaving exited threads in the registry would point
@@ -601,17 +626,20 @@ namespace OS.Kernel.Threading
         // it would read whatever now lives there and treat it as roots.
         private static void UnregisterThread(Thread t)
         {
+            Preemption.Suppress();
             if (s_threadsLive > 0) s_threadsLive--;
             s_threadsExited++;
             Thread? prev = null;
             Thread? c = s_allHead;
             while (c != null && c != t) { prev = c; c = c.AllNext; }
-            if (c == null) return;
-
-            if (prev == null) s_allHead = c.AllNext;
-            else prev.AllNext = c.AllNext;
-            if (s_allTail == c) s_allTail = prev;
-            c.AllNext = null;
+            if (c != null)
+            {
+                if (prev == null) s_allHead = c.AllNext;
+                else prev.AllNext = c.AllNext;
+                if (s_allTail == c) s_allTail = prev;
+                c.AllNext = null;
+            }
+            Preemption.Allow();
         }
 
         // First code a new thread executes. Runs on its own stack, with the
@@ -716,28 +744,52 @@ namespace OS.Kernel.Threading
             s_current = next;
             s_switchCount++;
             OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.SchedSwitches);
+            SwapExceptionChain(curr, next);
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
             s_switching = false;
             // Unreachable — curr is Exited, no one re-enters its frame.
+        }
+
+        // The exception-dispatch chain (ExInfoHead.s_head) is one variable,
+        // patched by address into the throw and catch shellcode, but its
+        // contents belong to the thread: each ExInfo lives on the stack of
+        // the thread that threw. It goes with the thread. Without this, a
+        // thread switched out inside a catch funclet left its ExInfo at the
+        // head, and the next thread to throw linked onto it — the single
+        // s_head the limits table listed as "concurrent throw" (pipe_plan.md
+        // item 9: preemption makes that ordinary rather than rare).
+        private static void SwapExceptionChain(Thread curr, Thread next)
+        {
+            curr.SavedExInfoHead = OS.Boot.EH.ExInfoHead.s_head;
+            OS.Boot.EH.ExInfoHead.s_head = next.SavedExInfoHead;
         }
 
         // ─── internal helpers ────────────────────────────────────────────
 
         private static void EnqueueRunnable(Thread t)
         {
+            Preemption.Suppress();
             t.Next = null;
-            if (s_runnableHead == null) { s_runnableHead = t; return; }
-            Thread c = s_runnableHead;
-            while (c.Next != null) c = c.Next;
-            c.Next = t;
+            if (s_runnableHead == null) s_runnableHead = t;
+            else
+            {
+                Thread c = s_runnableHead;
+                while (c.Next != null) c = c.Next;
+                c.Next = t;
+            }
+            Preemption.Allow();
         }
 
         private static Thread? DequeueRunnable()
         {
+            Preemption.Suppress();
             Thread? t = s_runnableHead;
-            if (t == null) return null;
-            s_runnableHead = t.Next;
-            t.Next = null;
+            if (t != null)
+            {
+                s_runnableHead = t.Next;
+                t.Next = null;
+            }
+            Preemption.Allow();
             return t;
         }
 

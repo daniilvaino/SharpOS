@@ -165,6 +165,17 @@
         // indices. Ctap runs one CTAPHID exchange, framing and all.
         public ulong UsbEnumerateAddress;
         public ulong UsbCtapAddress;
+
+        // Registers this image's factory for hardware-fault exceptions, so a
+        // fault in app code raises an exception of the app's own type (see
+        // AppRuntime.CreateHardwareException). Zero: an older kernel, and a
+        // fault raises the kernel's type, which no catch here matches.
+        public ulong SetHwExceptionFactoryAddress;
+
+        // The kernel's preemption-suppression depth (a uint). The app's
+        // allocator and collector bump it around their critical sections
+        // (AppPreemption). Zero: an older kernel, which never preempts apps.
+        public ulong PreemptionDepthAddress;
     }
 
     /// <summary>

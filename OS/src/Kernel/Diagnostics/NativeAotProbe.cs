@@ -1269,6 +1269,12 @@ namespace OS.Kernel.Diagnostics
                                                  // register-root marking (step131).
             bool ok = h.Field == "alive-after-gc";
             ReportProbe("write barrier (ref field + GC.Collect)", ok, ok ? 1u : 0u);
+
+            // Which collector ran: frames walked is zero on the conservative
+            // fallback, so a pass there says nothing about the precise walk.
+            ReportProbe("  collect was precise (frames walked)",
+                        global::OS.Kernel.Memory.KernelGcPreciseWalk.IsAvailable,
+                        (uint)global::OS.Kernel.Memory.KernelGcPreciseWalk.LastFramesWalked);
         }
 
         // --- GC roots through EH unwind ---
@@ -1432,7 +1438,54 @@ namespace OS.Kernel.Diagnostics
             Log.Write(LogLevel.Info, "---- nativeaot probe (late) begin ----");
             Probe_ThreadHandoffWithGc();
             Probe_OomDeterministic();
+            Probe_StelemChecks();
             Log.Write(LogLevel.Info, "---- nativeaot probe (late) end ----");
+        }
+
+        // --- Reference-array store checks (pipe_plan.md, item 1) ---
+        // Opaque factories and index: ILC must not see the array or the index,
+        // or it folds the store and the helper is never called.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static object[] StelemObjects(int n) => n < 0 ? null : new object[n];
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static object[] StelemStrings(int n) => new string[n];
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int StelemIndex(int i) => i;
+
+        private static void Probe_StelemChecks()
+        {
+            object[] arr = StelemObjects(3);
+
+            bool pastEnd = false;
+            try { arr[StelemIndex(3)] = "x"; }
+            catch (IndexOutOfRangeException) { pastEnd = true; }
+            ReportProbe("stelem past end throws", pastEnd, 0);
+
+            bool negative = false;
+            try { arr[StelemIndex(-1)] = "x"; }
+            catch (IndexOutOfRangeException) { negative = true; }
+            ReportProbe("stelem negative index throws", negative, 0);
+
+            object[] none = StelemObjects(-1);
+            bool nullArray = false;
+            try { none[StelemIndex(0)] = "x"; }
+            catch (NullReferenceException) { nullArray = true; }
+            ReportProbe("stelem into null array throws", nullArray, 0);
+
+            arr[StelemIndex(2)] = "in";
+            ReportProbe("stelem in range", (string)arr[2] == "in" && arr[0] == null, 0);
+
+            // A boxed int into a string[] seen as object[].
+            object[] strings = StelemStrings(1);
+            bool mismatch = false;
+            try { strings[StelemIndex(0)] = (object)42; }
+            catch (ArrayTypeMismatchException) { mismatch = true; }
+            ReportProbe("stelem wrong element type throws", mismatch && strings[0] == null, 0);
+
+            strings[StelemIndex(0)] = "same type";
+            ReportProbe("stelem matching element type stored", (string)strings[0] == "same type", 0);
         }
 
         // --- Thread handoff with GC mid-transfer ---

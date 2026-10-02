@@ -22,11 +22,9 @@ namespace System.Runtime
             // GcMethodTable shares layout with Internal.Runtime.MethodTable
             // (see GcRuntimeExports.RhBox for the same cast).
             GcMethodTable* gcMt = (GcMethodTable*)mt;
-            void* obj = GcHeap.AllocateRaw(gcMt->BaseSize);
+            void* obj = GcHeap.AllocateObject(gcMt->BaseSize, gcMt);
             if (obj == null)
                 throw GcHeap.OutOfMemory();
-
-            *(GcMethodTable**)obj = gcMt;
 
             object result = null;
             *(void**)&result = obj;

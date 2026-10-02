@@ -59,11 +59,20 @@ namespace OS.Kernel.Diagnostics
                 // case this exists to catch: a thread the scheduler parked and
                 // never got back to. Printed with a mark rather than withheld,
                 // because withholding it hid the only thread that mattered.
+                // The saved stack can be gone: a thread last switched out
+                // inside an app keeps that app's stack pointer after the app
+                // ended and its stack was unmapped (2026-10-02, a #PF here
+                // from the sampler's tick).
                 byte* ctx = t.ContextBlock;
                 if (ctx != null)
                 {
                     ulong savedRsp = *(ulong*)ctx;
-                    if (savedRsp != 0)
+                    if (savedRsp != 0 && !OS.Kernel.Paging.Pager.TryQuery(savedRsp + 64, out _, out _))
+                    {
+                        Put(" resume=(stack unmapped)");
+                        if (t == cur) Put(" (stale)");
+                    }
+                    else if (savedRsp != 0)
                     {
                         Put(" resume=0x");
                         PutHex(*(ulong*)(savedRsp + 64), 16);

@@ -157,12 +157,9 @@ namespace Internal.Runtime.CompilerHelpers
             if (size > 0xFFFFFFFFUL)
                 throw new OutOfMemoryException();
 
-            void* allocated = GcHeap.AllocateRaw((uint)size);
+            void* allocated = GcHeap.AllocateArray((uint)size, mt, numElements);
             if (allocated == null)
                 throw new OutOfMemoryException();
-
-            *(GcMethodTable**)allocated = mt;
-            *(int*)((byte*)allocated + 8) = numElements;
 
             Array result = null;
             *(void**)&result = allocated;

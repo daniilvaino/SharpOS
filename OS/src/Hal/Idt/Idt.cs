@@ -230,6 +230,12 @@ namespace OS.Hal.Idt
             // interrupted.
             if (vector == TimerVector)
             {
+                // Inside the handler from here to each TryResumeFrame. The same
+                // object is decremented on the way out even if the tick
+                // switched threads: it is this thread's handler that returns.
+                OS.Kernel.Threading.Thread? interrupted = OS.Kernel.Threading.Scheduler.Current;
+                if (interrupted != null) interrupted.InterruptDepth++;
+
                 OS.Hal.Apic.LocalApic.OnTimerTick();
 
                 // If the tick lands while the scheduler owns its queues or
@@ -240,6 +246,7 @@ namespace OS.Hal.Idt
                 if (OS.Kernel.Threading.Scheduler.SwitchInProgress)
                 {
                     OS.Hal.Apic.LocalApic.EndOfInterrupt();
+                    if (interrupted != null) interrupted.InterruptDepth--;
                     if (OS.Hal.X64Asm.TryResumeFrame(frame))
                         return;                 // iretq — does not return
                 }
@@ -264,6 +271,7 @@ namespace OS.Hal.Idt
                 // this thread's own stack, so it survives untouched.
                 OS.Kernel.Threading.Preemption.OnTick(frame);
 
+                if (interrupted != null) interrupted.InterruptDepth--;
                 if (OS.Hal.X64Asm.TryResumeFrame(frame))
                     return;                 // iretq — does not return
             }

@@ -215,6 +215,22 @@
         // behavior. Separate toggle so threading regressions don't mask
         // early-boot feature probes.
         public const bool NativeAotFeaturesLate = true;
+
+        // Every nested app launch collects the kernel heap once, from the
+        // child's first service call, and checks that an object held only by
+        // the launching kernel frame (under the child's jump stub) survived.
+        // pipe_plan.md item 2, condition (c). One collection per launch.
+        public const bool KernelGcAcrossApp = true;
+
+        // Preemption for the launcher and every program it runs (pipe_plan.md
+        // item 9). The kernel's critical sections are Preemption.Suppress
+        // regions — the preempt_disable model, valid on one CPU.
+        public const bool PreemptLauncher = true;
+
+        // Narrower fallback: switch only threads stopped in an app's code,
+        // never in the kernel's. For telling a kernel race from an app one
+        // when something breaks under preemption on hardware.
+        public const bool PreemptAppCodeOnly = false;
         public const bool Cctor = true;
 
         // EH probe gradient — flip each level on independently. L1+L2+L4

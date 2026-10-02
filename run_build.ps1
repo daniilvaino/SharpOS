@@ -848,13 +848,15 @@ if ($NoRun) {
 
 Write-Host "Launching QEMU..."
 Write-Host "Firmware: $OvmfCode"
-Write-Host "COM1 is attached to this terminal (-serial mon:stdio)."
+Write-Host "COM1 is attached to this terminal (stdio chardev, muxed with the monitor)."
 # COM3 carries what programs print (the launcher, its children, PowerShell,
 # the census); COM1 keeps the kernel log. Kept in a file next to last_build.log
 # rather than on this terminal: two streams on one console are the mix this
 # split removes.
 $appLog = Join-Path $repoRoot "last_app.log"
 $errLog = Join-Path $repoRoot "last_err.log"
+$kernelLog = Join-Path $repoRoot "last_kernel.log"
+Write-Host "COM1 (kernel log) also -> $kernelLog"
 Write-Host "COM3 (program output) -> $appLog"
 Write-Host "COM4 (program errors) -> $errLog"
 Write-Host "Exit QEMU: Ctrl+], then X; if hotkeys are blocked, run .\run_build.ps1 -Stop in another terminal."
@@ -929,10 +931,20 @@ try {
         Write-Output "Display: offering ${xres}x${yres} (bochs-display, vgamem ${vgamemMb} MB)"
     }
 
+    # COM1 stays on this terminal and is copied to last_kernel.log by QEMU
+    # itself (chardev logfile): the kernel log used to exist only in the
+    # terminal's scrollback, so reading it meant pasting it by hand.
     if ($env:SHARPOS_GUI -eq '1') {
-        $displayArgs = $vgaArgs + @("-serial", "stdio")
+        $displayArgs = $vgaArgs + @(
+            "-chardev", "stdio,id=com1,logfile=$kernelLog",
+            "-serial", "chardev:com1")
     } else {
-        $displayArgs = $vgaArgs + @("-nographic", "-serial", "mon:stdio", "-echr", "0x1d")
+        $displayArgs = $vgaArgs + @(
+            "-nographic",
+            "-chardev", "stdio,id=com1,mux=on,logfile=$kernelLog",
+            "-serial", "chardev:com1",
+            "-mon", "chardev=com1,mode=readline",
+            "-echr", "0x1d")
     }
     # The program port is COM3 (index 2 = 0x3E8, IRQ 4), not a second -serial:
     # that would be COM2, and the firmware mirrors its console onto COM2 —

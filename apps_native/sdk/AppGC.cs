@@ -60,8 +60,18 @@ namespace SharpOS.AppSdk
         /// something approximate: a collection that cannot see the stack frees
         /// live objects, and the damage surfaces far from here.
         /// </summary>
+        /// <summary>
+        /// While set, a collection request is declined and the allocation that
+        /// asked for it grows the heap or fails. Set around allocations made
+        /// where the root walk cannot see the whole stack.
+        /// </summary>
+        public static bool Held;
+
         public static void Collect()
         {
+            if (Held)
+                return;
+
             AppServiceTable* services = AppRuntime.Services;
             if (services == null || services->GcWalkRootsAddress == 0)
             {
@@ -69,16 +79,28 @@ namespace SharpOS.AppSdk
                 return;
             }
 
-            GcMark.Begin();
-            GcRoots.MarkStaticRootsOnly();
-            uint afterStatics = GcMark.LastMarkedCount;
+            // Stop-the-world on one core: no other thread of this app may run
+            // between the first mark and the last sweep. Its preempted
+            // threads stay parked, and the walk scans them where they stopped.
+            AppPreemption.Suppress();
+            uint afterStatics;
+            try
+            {
+                GcMark.Begin();
+                GcRoots.MarkStaticRootsOnly();
+                afterStatics = GcMark.LastMarkedCount;
 
-            s_stackRoots = 0;
-            var walk = (delegate* unmanaged<nuint, void>)(nint)services->GcWalkRootsAddress;
-            walk((nuint)(nint)(delegate* unmanaged<nuint, void>)&MarkRoot);
-            s_afterStatics = afterStatics;
+                s_stackRoots = 0;
+                var walk = (delegate* unmanaged<nuint, void>)(nint)services->GcWalkRootsAddress;
+                walk((nuint)(nint)(delegate* unmanaged<nuint, void>)&MarkRoot);
+                s_afterStatics = afterStatics;
 
-            GcSweep.Run();
+                GcSweep.Run();
+            }
+            finally
+            {
+                AppPreemption.Allow();
+            }
 
             s_lastWalkOk = true;
             s_collections++;
@@ -154,6 +176,33 @@ namespace SharpOS.AppSdk
             if (value == 0) return;
             s_stackRoots++;
             GcMark.MarkFromRoot((nint)value);
+        }
+    }
+}
+
+namespace SharpOS.AppSdk
+{
+    // The app's critical sections against preemption: the kernel's own
+    // suppression depth, bumped in place (AppServiceTable.PreemptionDepthAddress).
+    //
+    // An app's allocator and collector are its own code, and the kernel
+    // preempts app code like any other: another thread of the same app could
+    // otherwise run in the middle of an allocation or a sweep. Without the
+    // address (an older kernel) nothing preempts apps, and these do nothing.
+    internal static unsafe class AppPreemption
+    {
+        private static uint* s_depth;
+
+        public static void Install(ulong depthAddress) => s_depth = (uint*)depthAddress;
+
+        public static void Suppress()
+        {
+            if (s_depth != null) (*s_depth)++;
+        }
+
+        public static void Allow()
+        {
+            if (s_depth != null && *s_depth != 0) (*s_depth)--;
         }
     }
 }

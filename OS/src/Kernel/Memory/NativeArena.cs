@@ -52,7 +52,24 @@ namespace OS.Kernel.Memory
         public static uint  DirectCount => s_directCount;
         public static uint  AllocCount  => s_allocCount;
 
+        // One critical section around the whole allocation: the cursor and
+        // the remaining count move together, and a thread preempted between
+        // them hands the next caller memory that is already handed out
+        // (step174 named this race; pipe_plan.md item 9).
         public static void* Allocate(ulong size)
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
+            {
+                return AllocateCore(size);
+            }
+            finally
+            {
+                OS.Kernel.Threading.Preemption.Allow();
+            }
+        }
+
+        private static void* AllocateCore(ulong size)
         {
             if (size == 0) size = 1;
 

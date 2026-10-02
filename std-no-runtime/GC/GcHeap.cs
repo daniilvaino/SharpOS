@@ -537,7 +537,28 @@ namespace SharpOS.Std.NoRuntime
             return true;
         }
 
-        public static void* AllocateRaw(uint size)
+        public static void* AllocateRaw(uint size) => Allocate(size, null, 0, false);
+
+        /// <summary>
+        /// A block with its MethodTable already in it, written inside the
+        /// allocator's critical section.
+        /// </summary>
+        /// <remarks>
+        /// The header must not be written after the critical section ends. A
+        /// thread preempted between the allocation and the header store leaves
+        /// a block the heap walk cannot read — reused from the free list it
+        /// still carries the free marker — and another thread's sweep returns
+        /// it to the free list while it is in use: two objects in one block
+        /// (pipe_plan.md item 9, AotTests under preemption).
+        /// </remarks>
+        public static void* AllocateObject(uint size, void* methodTable)
+            => Allocate(size, methodTable, 0, false);
+
+        /// <summary>As <see cref="AllocateObject"/>, with the length at +8.</summary>
+        public static void* AllocateArray(uint size, void* methodTable, int length)
+            => Allocate(size, methodTable, length, true);
+
+        private static void* Allocate(uint size, void* methodTable, int length, bool hasLength)
         {
             if (!s_initialized)
                 return null;
@@ -550,6 +571,7 @@ namespace SharpOS.Std.NoRuntime
 
             if (s_enterCritical != null) s_enterCritical();
             void* allocated = AllocateRawCore(size);
+            WriteHeader(allocated, methodTable, length, hasLength);
             if (s_leaveCritical != null) s_leaveCritical();
 
             if (allocated != null)
@@ -582,6 +604,7 @@ namespace SharpOS.Std.NoRuntime
 
                 if (s_enterCritical != null) s_enterCritical();
                 allocated = AllocateRawCore(size);
+                WriteHeader(allocated, methodTable, length, hasLength);
                 if (s_leaveCritical != null) s_leaveCritical();
             }
 
@@ -597,6 +620,15 @@ namespace SharpOS.Std.NoRuntime
                 s_lastRequest = size;
 
             return allocated;
+        }
+
+        private static void WriteHeader(void* allocated, void* methodTable, int length, bool hasLength)
+        {
+            if (allocated == null || methodTable == null)
+                return;
+            *(void**)allocated = methodTable;
+            if (hasLength)
+                *(int*)((byte*)allocated + 8) = length;
         }
 
         private static void* AllocateRawCore(uint size)

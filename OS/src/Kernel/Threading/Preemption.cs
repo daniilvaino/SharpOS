@@ -67,6 +67,29 @@ namespace OS.Kernel.Threading
         }
 
         /// <summary>
+        /// Puts the depth back to a value taken earlier. For an app ended
+        /// mid-flight: it may have died inside a service that suppressed, and
+        /// the matching Allow will never run.
+        /// </summary>
+        public static void RestoreDepth(uint depth) => s_disableDepth = depth;
+
+        /// <summary>
+        /// Whether the running code may wait for another thread: not from
+        /// inside an interrupt handler (Thread.InterruptDepth). Installed as
+        /// the class-constructor runner's s_canWait.
+        /// </summary>
+        public static bool CanWait() => (Scheduler.Current?.InterruptDepth ?? 0) == 0;
+
+        /// <summary>
+        /// Where the depth lives, for apps: their allocator and collector
+        /// suppress by incrementing it directly (AppServiceTable
+        /// .PreemptionDepthAddress) rather than through a service call per
+        /// allocation. A static in .bss never moves.
+        /// </summary>
+        public static uint* DepthAddress
+            => (uint*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_disableDepth);
+
+        /// <summary>
         /// Called from the timer interrupt, after the interrupt has been
         /// acknowledged. Returns having possibly run other threads.
         /// </summary>
@@ -87,6 +110,14 @@ namespace OS.Kernel.Threading
 
             Thread? curr = Scheduler.Current;
             if (curr == null) return;
+
+            // The narrow mode: only code of the app now running is switched.
+            if (OS.Kernel.Diagnostics.Probes.PreemptAppCodeOnly &&
+                !OS.Kernel.Exec.JumpStub.IsAppCode(((OS.Hal.Idt.InterruptFrame*)frame)->Rip))
+            {
+                s_declined++;
+                return;
+            }
 
             // Nested ticks must not switch this thread again: we are about to
             // run with interrupts enabled inside an interrupt handler, and a

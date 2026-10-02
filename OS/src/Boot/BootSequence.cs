@@ -235,12 +235,19 @@ namespace OS.Boot
             // left to make it.
             GcHeap.PrepareOutOfMemory();
 
-            // Route System.GC.Collect() (std, plain conservative MarkAll — blind
-            // to roots living in callee-saved registers) to KernelGC.Collect,
-            // which spills registers via GcStackSpill / uses the precise walker.
-            // Without this, BCL code calling GC.Collect() can have a live local
-            // swept if the JIT kept it in a register (write-barrier probe FAIL).
-            SharpOS.Std.NoRuntime.GC.s_collectHook = &global::OS.Kernel.Memory.KernelGC.CollectConservative;
+            // Route System.GC.Collect() and the allocator's out-of-room collect
+            // (std, plain conservative MarkAll — blind to roots living in
+            // callee-saved registers) to KernelGC.Collect: the precise walker
+            // once its machinery is up, the register-spill conservative scan
+            // before that. It was CollectConservative until pipe_plan.md item 2:
+            // that scan reads only the stack it runs on, and only below the
+            // boot thread's top, so a collection on any other thread or inside
+            // an app's service call saw no stack roots at all.
+            SharpOS.Std.NoRuntime.GC.s_collectHook = &global::OS.Kernel.Memory.KernelGC.Collect;
+
+            // A cctor another thread is running is waited for — except from an
+            // interrupt handler, which would wait on the thread it interrupted.
+            System.Runtime.CompilerServices.ClassConstructorRunner.s_canWait = &global::OS.Kernel.Threading.Preemption.CanWait;
 
             // Who allocates, sampled by allocation. The heap census says what
             // fills the heap; this says who put it there.
@@ -643,6 +650,11 @@ namespace OS.Boot
         {
             if ((bootInfo.Capabilities & PlatformCapabilities.MemoryMap) == PlatformCapabilities.MemoryMap)
             {
+                // Programs share the CPU by the timer, not by goodwill: a
+                // thread that never sleeps no longer holds every other one off.
+                if (OS.Kernel.Diagnostics.Probes.PreemptLauncher)
+                    OS.Kernel.Threading.Preemption.Enable();
+
                 LauncherBoot.Run(bootInfo);
             }
             DemoApp.Run();

@@ -330,6 +330,12 @@ namespace OS.Kernel.Process
                 table.WakeByAddressAllAddress = (ulong)(nint)(delegate* unmanaged<void*, void>)&AppWakeByAddressAll;
             }
 
+            // One argument in rcx: Win64 only, like the waits above.
+            if (serviceAbi != AppServiceAbi.SystemV)
+                table.SetHwExceptionFactoryAddress = (ulong)(nint)(delegate* unmanaged<void*, void>)&AppSetHwExceptionFactory;
+
+            table.PreemptionDepthAddress = (ulong)OS.Kernel.Threading.Preemption.DepthAddress;
+
             AppServiceTable* serviceTablePointer = Pager.IsPagerRootActive()
                 ? (AppServiceTable*)serviceVirtual
                 : (AppServiceTable*)servicePhysical;
@@ -823,6 +829,9 @@ namespace OS.Kernel.Process
 
         private static void WriteString(ulong textAddress)
         {
+            if (OS.Kernel.Diagnostics.Probes.KernelGcAcrossApp)
+                OS.Kernel.Diagnostics.KernelGcAcrossAppProbe.OnService();
+
             WriteUtf8(textAddress, AppOutputChannel());
             NoteAlternateScreenOwner();
         }
@@ -1274,6 +1283,10 @@ namespace OS.Kernel.Process
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void AppWakeByAddressAll(void* address)
             => global::OS.Kernel.Threading.AddressWait.WakeByAddressAll(address);
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void AppSetHwExceptionFactory(void* factory)
+            => global::OS.Kernel.Exec.JumpStub.SetHwExceptionFactory((nint)factory);
 
         private static uint TryReadKey(ulong requestAddress)
         {
@@ -1763,6 +1776,12 @@ namespace OS.Kernel.Process
                     // the stack of process contexts.
                     ProcessContext parentContext = ProcessManager.ExchangeCurrent(
                         ref processImage, ref loadedImage, out bool hadParentContext);
+
+                    // Held only by this frame, which the child's jump stub
+                    // sits on top of (pipe_plan.md item 2, condition (c)).
+                    object kernelGcSentinel = OS.Kernel.Diagnostics.Probes.KernelGcAcrossApp
+                        ? OS.Kernel.Diagnostics.KernelGcAcrossAppProbe.Arm()
+                        : null;
                     try
                     {
                         jumped = JumpStub.Run(
@@ -1777,6 +1796,9 @@ namespace OS.Kernel.Process
                         ProcessManager.RestoreCurrent(ref parentContext, hadParentContext);
                         EndAppRun(appGeneration, previousGeneration);
                     }
+
+                    if (kernelGcSentinel != null)
+                        OS.Kernel.Diagnostics.KernelGcAcrossAppProbe.Check(kernelGcSentinel);
 
                     if (!jumped)
                     {

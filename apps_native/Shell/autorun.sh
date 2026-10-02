@@ -12,7 +12,7 @@
 #
 # `expect CODE COMMAND` runs the command and counts it as a failure unless it
 # exits with exactly CODE. Needed because "non-zero means broken" is not true
-# here: AOTTESTS.EXE returns the number of tests it passed, so 61 is a clean
+# here: AOTTESTS.EXE returns the number of tests it passed, so 95 is a clean
 # run and 0 would be a catastrophe.
 #
 # Arguments are not passed to programs yet, so every line is just a path. The
@@ -29,5 +29,6 @@
 # forward slashes to the kernel's own separator on the way to the file system.
 # Single quotes would also work ('\apps\AOTTESTS.EXE'), and read worse.
 
-expect 61 /apps/AOTTESTS.EXE
+expect 95 /apps/AOTTESTS.EXE
+expect 95 /apps/AOTTESTS.EXE
 expect 0  /apps/BENCHAOT.EXE

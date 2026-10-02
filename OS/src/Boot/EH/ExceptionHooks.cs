@@ -36,6 +36,11 @@
             var h = FailFastHandler;
             if (h != null) { h(); return; }
 
+            // An app that dies takes itself down, not the machine: the run is
+            // ended and the kernel resumes where it launched it. Does not
+            // return when it applies.
+            OS.Kernel.Exec.JumpStub.TryAbortCurrentApp();
+
             // Was a silent `while (true) { }`. Two things were wrong with it,
             // and preemption turned both into a puzzle: it said nothing, so a
             // fatal error looked like a mysterious stall; and it spun as a

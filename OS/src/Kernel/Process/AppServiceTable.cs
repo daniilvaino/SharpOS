@@ -203,6 +203,22 @@
         // indices. Ctap runs one CTAPHID exchange, framing and all.
         public ulong UsbEnumerateAddress;
         public ulong UsbCtapAddress;
+
+        // The app's own factory for hardware-fault exceptions: the app calls
+        // this once with a `delegate* unmanaged<int, nint>` that returns a new
+        // NullReferenceException (0), AccessViolationException (1) or
+        // DivideByZeroException (2) of ITS types. A fault in the app's code
+        // then raises one of those, which the app's catch clauses can match;
+        // without it the kernel's own type comes back, and nothing in the app
+        // catches it. Win64 callers only, published directly, no thunk.
+        public ulong SetHwExceptionFactoryAddress;
+
+        // The kernel's preemption-suppression depth (a uint), for an app's
+        // own critical sections: its allocator and its collector must not be
+        // preempted by another of its threads. Incremented and decremented in
+        // place, the same counter the kernel's Suppress/Allow use. Data, not
+        // code: offered to every ABI.
+        public ulong PreemptionDepthAddress;
     }
 
     /// <summary>

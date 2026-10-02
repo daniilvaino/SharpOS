@@ -67,6 +67,21 @@
             SharpOS.Std.NoRuntime.GcHeap.s_fatal = &Fatal;
             SharpOS.Std.NoRuntime.GcHeap.s_diagnostic = &OomDiagnostic;
             SharpOS.Std.NoRuntime.GcHeap.s_heapTag = "app";
+
+            // The allocator's critical section: the kernel preempts app code,
+            // and two of this app's threads must not be inside the heap at
+            // once. The kernel heap does the same with Preemption.Suppress.
+            AppPreemption.Install(s_services->PreemptionDepthAddress);
+            SharpOS.Std.NoRuntime.GcHeap.s_enterCritical = &AppPreemption.Suppress;
+            SharpOS.Std.NoRuntime.GcHeap.s_leaveCritical = &AppPreemption.Allow;
+
+            // Every object on this heap has its type in this image, so the
+            // marker can refuse a candidate whose "MethodTable" is elsewhere —
+            // which a word-by-word scan of an interrupted thread will offer
+            // (pipe_plan.md, item 2). The kernel has done this for its heap
+            // since step169.
+            SharpOS.Std.NoRuntime.GcMark.MethodTableLow = (nint)startup->ImageBase;
+            SharpOS.Std.NoRuntime.GcMark.MethodTableHigh = (nint)startup->ImageEnd;
             if (!SharpOS.Std.NoRuntime.GcHeap.Init())
                 Fatal("app GC heap init failed");
 
@@ -135,6 +150,12 @@
             // that there is nothing to keep alive and nothing to sweep.
             AppGC.Install();
 
+            // Hardware faults in this image raise this image's exception types.
+            // After the heap and the statics: the factory allocates.
+            if (s_services->SetHwExceptionFactoryAddress != 0)
+                ((delegate* unmanaged<void*, void>)(nint)s_services->SetHwExceptionFactoryAddress)(
+                    (void*)(delegate* unmanaged<int, nint>)&CreateHardwareException);
+
             // Who this actually is. Every app goes through here, so no app has
             // to remember to say it, and it is said before the app can take
             // over the screen. The kernel prints its own id in the banner; an
@@ -175,6 +196,28 @@
                 : (long)(counter * (TicksPerSecond / hz));
         }
 
+
+        /// <summary>
+        /// The exception object for a hardware fault in this image's code.
+        /// </summary>
+        /// <remarks>
+        /// Called by the kernel from inside its fault handler, on the faulting
+        /// thread's stack, with interrupts off. Kinds as in
+        /// AppServiceTable.SetHwExceptionFactoryAddress. The collector is held
+        /// for the allocation: between the fault and this call the stack holds
+        /// an interrupt frame the root walk cannot step across, and a
+        /// collection now would not see the app frames beneath it.
+        /// </remarks>
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static nint CreateHardwareException(int kind)
+        {
+            AppGC.Held = true;
+            object exception = kind == 0 ? new System.NullReferenceException()
+                             : kind == 2 ? new System.DivideByZeroException()
+                             : new System.AccessViolationException();
+            AppGC.Held = false;
+            return System.Runtime.CompilerServices.Unsafe.As<object, nint>(ref exception);
+        }
 
         // Exit code of an app stopped by a failure it cannot survive, the
         // number an aborted process gets on Unix.

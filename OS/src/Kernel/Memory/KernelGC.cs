@@ -31,8 +31,20 @@ namespace OS.Kernel.Memory
         /// </remarks>
         public static ulong Collections;
 
+        /// <summary>Collections asked for from inside an interrupt handler, and declined.</summary>
+        public static ulong DeclinedInInterrupt;
+
         public static void Collect()
         {
+            // Not from a handler: the interrupted code is stopped at an
+            // arbitrary instruction, not at a call, and the walk cannot vouch
+            // for its frame. The allocation that asked fails instead, loudly.
+            if ((OS.Kernel.Threading.Scheduler.Current?.InterruptDepth ?? 0) != 0)
+            {
+                DeclinedInInterrupt++;
+                return;
+            }
+
             Collections++;
             ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
 
@@ -144,9 +156,17 @@ namespace OS.Kernel.Memory
 
                     // A preempted thread is parked inside the interrupt
                     // handler, and the walk above stops at the entry stub.
-                    // Continue on the far side of it.
-                    if (t.PreemptedFrame != null)
+                    // On the far side is code stopped at an arbitrary
+                    // instruction, which GcInfo cannot vouch for: scan it
+                    // conservatively, and walk precisely only where that is
+                    // impossible (stopped off its own stack).
+                    if (t.PreemptedFrame != null &&
+                        !KernelGcPreciseWalk.ScanInterruptedConservatively(t, t.PreemptedFrame, markRoot))
                         KernelGcPreciseWalk.RunFromInterruptFrame(t.PreemptedFrame, markRoot);
+
+                    // And the kernel frames under any app this thread runs.
+                    if (markRoot == null)
+                        KernelGcPreciseWalk.ContinueBelowApps(t.Id);
                 }
 
                 t = t.AllNext;

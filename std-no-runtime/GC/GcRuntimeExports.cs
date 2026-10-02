@@ -33,11 +33,10 @@ namespace SharpOS.Std.NoRuntime
                 return null;
 
             uint size = mt->BaseSize;
-            void* obj = GcHeap.AllocateRaw(size);
+            void* obj = GcHeap.AllocateObject(size, mt);
             if (obj == null)
                 throw GcHeap.OutOfMemory();
 
-            *(GcMethodTable**)obj = mt;
             return obj;
         }
 
@@ -65,13 +64,11 @@ namespace SharpOS.Std.NoRuntime
                 throw GcHeap.OutOfMemory();
             }
 
-            void* obj = GcHeap.AllocateRaw((uint)size64);
+            // Length field lives at offset 8 (sizeof(MethodTable*) on x64).
+            void* obj = GcHeap.AllocateArray((uint)size64, mt, numElements);
             if (obj == null)
                 throw GcHeap.OutOfMemory();
 
-            *(GcMethodTable**)obj = mt;
-            // Length field lives at offset 8 (sizeof(MethodTable*) on x64).
-            *(int*)((byte*)obj + 8) = numElements;
             return obj;
         }
 
@@ -124,11 +121,9 @@ namespace SharpOS.Std.NoRuntime
             // Our GcMethodTable shares layout with Internal.Runtime.MethodTable;
             // cast via nint/pointer-reinterpret to read BaseSize.
             GcMethodTable* gcMt = (GcMethodTable*)mt;
-            void* obj = GcHeap.AllocateRaw(gcMt->BaseSize);
+            void* obj = GcHeap.AllocateObject(gcMt->BaseSize, mt);
             if (obj == null)
                 throw GcHeap.OutOfMemory();
-
-            *(Internal.Runtime.MethodTable**)obj = mt;
 
             uint payload = gcMt->BaseSize - 8;
             byte* dst = (byte*)obj + 8;
@@ -149,9 +144,18 @@ namespace SharpOS.Std.NoRuntime
         // (Array, nint, object) — ILC matches [RuntimeExport] targets by
         // signature, not just name. See dotnet/runtime TypeCast.cs:745.
         //
-        // The real runtime does null/bounds/covariance-type checks plus a
-        // write barrier; we skip all of them (kernel code is trusted, our
-        // GC is single-threaded non-generational so no barrier needed).
+        // Ported from TypeCast.StelemRef (non-INPLACE_RUNTIME branch): the
+        // helper itself owns the null and bounds checks — ILC emits no range
+        // check before calling it, so without them `arr[i] = x` past the end
+        // wrote into whatever followed the array. No write barrier: the
+        // collector is non-generational.
+        //
+        // The element-type check throws ArrayTypeMismatchException, as the
+        // original does. It was counted first, to see whether kernel arrays
+        // ever receive objects whose MethodTable belongs to another image; a
+        // launcher + AotTests run counted none. Stores where the element type
+        // or the value is itself an array are not checked yet: array casting
+        // is not implemented (pipe_plan.md, item 6).
         //
         // Array layout (NativeAOT x64):
         //   +0:  MethodTable*
@@ -173,11 +177,34 @@ namespace SharpOS.Std.NoRuntime
         [RuntimeExport("RhpStelemRef")]
         public static unsafe void RhpStelemRef(System.Array array, nint index, object value)
         {
-            if (array == null) return;
+            if (array == null)
+                throw new NullReferenceException();
             nint arrayAddr = *(nint*)&array;
-            nint valueAddr = value == null ? 0 : *(nint*)&value;
+            if ((ulong)index >= *(uint*)((byte*)arrayAddr + 8))
+                throw new IndexOutOfRangeException();
+
+            nint valueAddr = 0;
+            if (value != null)
+            {
+                valueAddr = *(nint*)&value;
+                GcMethodTable* elementType = (*(GcMethodTable**)arrayAddr)->RelatedType;
+                if (*(GcMethodTable**)valueAddr != elementType)
+                    StelemRef_Helper(elementType, value);
+            }
             byte* slot = (byte*)arrayAddr + 16 + ((long)index * 8);
             *(nint*)slot = valueAddr;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static unsafe void StelemRef_Helper(GcMethodTable* elementType, object value)
+        {
+            // Object is the only class without a base: anything goes there.
+            if (!elementType->IsInterface && !elementType->IsArray && elementType->GetBaseType() == null)
+                return;
+            if (elementType->IsArray || (*(GcMethodTable**)*(nint*)&value)->IsArray)
+                return;
+            if (RhTypeCast_IsInstanceOfAny(elementType, value) == null)
+                throw new ArrayTypeMismatchException();
         }
 
         // Emitted by ILC for `obj is SomeInterface` and the `is`-pattern

@@ -142,6 +142,17 @@
         // registers and stack pointer needed to continue past that gap.
         public void* PreemptedFrame;
 
+        // How many timer interrupts this thread is inside, counted by
+        // Idt.Dispatch. Per thread, not global: a tick may switch threads in
+        // the middle of its handler, and the thread it switches to is not in
+        // an interrupt. Code that must not run from a handler — a collection,
+        // ending an app — asks this.
+        public int InterruptDepth;
+
+        // This thread's exception-dispatch chain while it is switched out
+        // (Scheduler.SwapExceptionChain). Zero for a thread that never threw.
+        public System.IntPtr SavedExInfoHead;
+
         // True while this thread is inside a preemptive switch of its own.
         //
         // Per-thread, not global: the flag means "do not preempt ME again from

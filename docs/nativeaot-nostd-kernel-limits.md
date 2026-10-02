@@ -281,29 +281,26 @@ ILC переводит `newobj` на массиве в `Internal.Runtime.Compile
 
 `arr.Contains(item)` на reference-array с value-типом: due to boxing-based equality, reference-сравнение двух отдельных боксов всегда false → `Contains` возвращает false даже если значения равны. Не крашит, но результат "не тот".
 
-### ⚠️ Array covariance — silent UB на wrong-type store (нет ArrayTypeMismatchException)
+### ✅ `stelem.ref`: null, границы, тип элемента (pipe_plan.md, п. 1)
 
-`RhpStelemRef` в нашем std (`std-no-runtime/GC/GcRuntimeExports.cs`)
-**skipped все checks**: null/bounds/**covariance**/write barrier. Кернел-
-код trusted, а GC non-generational. Эффект:
+`RhpStelemRef` (`std-no-runtime/GC/GcRuntimeExports.cs`) — порт
+`TypeCast.StelemRef`: null-массив → `NullReferenceException`, индекс вне
+границ (и отрицательный) → `IndexOutOfRangeException`, значение не того
+типа → `ArrayTypeMismatchException`. Оба яруса. До этого проверок не было
+никаких, а ILC перед вызовом границу не проверяет: запись за конец
+массива ссылок молча портила память за ним.
 
-```csharp
-object[] o = new string[3];   // covariant alias
-o[0] = 42;                     // boxed int into string[]
-                               // → AOT: silent UB (heap corruption)
-                               // → CoreCLR: ArrayTypeMismatchException
-```
+Проба: `NativeAotProbe.Probe_StelemChecks` (ядро) и `CheckStelem` в
+`AotTests` (приложение).
 
-Монотипичный stelem (Base[] aliased over Derived[], писать Derived)
-работает корректно — это паттерн который обычно встречается в реальном
-коде. Wrong-type store — edge case, обычно симптом баги выше по стеку;
-silent UB вместо early-throw усложняет диагностику.
-
-**Когда чинить:** добавить ComponentType check в `RhpStelemRef` (или
-полный port из dotnet/runtime) если столкнёмся с явным симптомом
-heap corruption после array assignment. Pretty cheap fix (compare MT
-pointers), но usability win небольшой пока user-code не пишет
-generic-data-container'ы с covariant assignment.
+Остаётся без проверки:
+- тип элемента — массив, или записываемое значение — массив: приведения
+  массивов нет (pipe_plan.md, п. 6);
+- вариантность обобщённых интерфейсов и делегатов (`IEnumerable<object>[]`
+  ← `List<string>`): бросит, хотя CoreCLR пропустит — `is` у нас её тоже
+  не знает;
+- `RhpLdelemaRef` (`ref arr[i]`) — по-прежнему без границ и без проверки
+  типа.
 
 ### ✅ Массивы реализуют `IEnumerable<T>` / `IList<T>` / `ICollection<T>` (step 142)
 
@@ -625,7 +622,16 @@ Milestone-1 срез [PeNet](https://github.com/secana/PeNet) (Apache-2.0, `vend
 3. **`RhpThrowEx` handoff** — адрес kernel-`RhpThrowEx` (`ThrowExStub.GetMethodAddress`) в `AppServiceTable.RhpThrowExAddress`; апп tail-jmp'ит свой стаб (`ThrowExTrampoline`). `ExInfoHead.s_head` — kernel-глобал (ок при single-thread ExInfo). Матч catch-типа (`IsAssignableFromClass`) — pure MT-identity, app-safe.
 4. **`System.Exception` + `Exceptions.Derived.cs`** в app Compile list.
 
-Батарея AotTests 20/20 (6 EH-кейсов). **Отложено:** `RhpRethrow` handoff (`throw;`), `RhpThrowHwEx` (HW-fault→managed в аппе), rich stack-trace (`AppendStackFrame` аллоцирует в kernel-heap → cross-heap ref, латентно), конкурентный throw kernel↔app (single `s_head`).
+Батарея AotTests 20/20 (6 EH-кейсов). **Отложено:** `RhpRethrow` handoff (`throw;`), rich stack-trace (`AppendStackFrame` аллоцирует в kernel-heap → cross-heap ref, латентно), конкурентный throw kernel↔app (single `s_head`).
+
+**HW-fault в приложении (pipe_plan.md, п. 3–5):** сбой в коде приложения даёт
+исключение типа приложения от его фабрики (`SetHwExceptionFactoryAddress`), и
+`catch (Exception)` приложения его ловит; IF восстанавливается до диспетчера.
+Необработанное исключение главного потока приложения сворачивает приложение с
+кодом 134 (`JumpStub.TryAbortCurrentApp`), лаунчер продолжает. Не покрыто:
+необработанное исключение в рабочем потоке приложения — `Panic`; блокировки,
+которые служба держала в момент гибели приложения, не снимаются. Проба —
+`HwFaultProbe` в `AotTests` (режимы 1–3).
 
 ---
 
@@ -708,6 +714,54 @@ ScanStack (только smoke-test-callers через `CaptureStackTop` discipli
 
 Остаток: куча ядра на практике не собирается — растёт (`kgc.calls=0` во всех
 прогонах step169).
+
+### ✅ Точный обход — и для `GC.Collect`, и для сборки при нехватке (pipe_plan.md, п. 2)
+
+Раздел выше говорил, что `KernelGC.Collect()` выбирает точный путь, но хук
+`GC.s_collectHook` (им пользуются `GC.Collect` и аллокатор при нехватке места)
+стоял на `CollectConservative`. Тот сканирует только стек, на котором бежит, и
+только ниже вершины загрузочного потока: на любом другом потоке и внутри службы
+приложения (стек `0x7FFF…`) он не видел ни одного стекового корня, а стеки
+остальных потоков не обходил вовсе. Теперь хук — `KernelGC.Collect`.
+
+- **Кадры ядра под приложением.** Обход для кучи ядра останавливается на
+  переходнике службы или первом кадре чужого образа (кадры приложений держат
+  объекты приложения; образ вложенного родителя снят с отображения) и
+  продолжается с каждого `JumpContext` потока (`ContinueBelowApps`): адрес
+  возврата в `JumpStub.Run` и все регистры, которые ядро отдало заглушке.
+  Ссылка на объект ядра, которую держат только кадры приложения, не видна —
+  таких путей сейчас нет. Проба `Probes.KernelGcAcrossApp`: строка, живущая
+  только в кадре `RunExternalApp`, переживает сборку из службы дочернего
+  приложения (`[kgc-probe] … ok`).
+- **Из прерывания не собирает.** `Thread.InterruptDepth` (счётчик на потоке,
+  ведёт `Idt.Dispatch` для таймера); сборка внутри обработчика отказывает
+  (`KernelGC.DeclinedInInterrupt`), аллокация, которая её просила, падает. Тот
+  же счётчик не даёт ловушке из 4б свернуть приложение по исключению в
+  обработчике.
+- **Вытесненный поток** сканируется консервативно от точки остановки до
+  `StackTop` плюс регистры кадра (`ScanInterruptedConservatively`); точно — только
+  если остановлен не на своём стеке. Под лаунчером вытеснение выключено, путь
+  не прогонялся.
+- Маркировщик приложений отбрасывает кандидатов с таблицей типа вне своего
+  образа (`GcMark.MethodTableLow/High` из стартового блока) — как ядро с step169.
+
+### ✅ Вытеснение под лаунчером (pipe_plan.md, п. 9)
+
+Один процессор, модель `preempt_disable`: критические секции — участки
+`Preemption.Suppress()`; вытесняется и ядро, и приложения
+(`Probes.PreemptLauncher`; запасной `PreemptAppCodeOnly` — только код
+приложений). Сверх уже размеченного добавлено: секции в очередях и реестре
+планировщика, `NativeArena`; повторно входимая блокировка `Fat32` (не
+`Suppress` — операции ждут диск); `ExInfoHead.s_head` переключается с потоком;
+заголовок объекта пишется внутри критической секции аллокатора
+(`GcHeap.AllocateObject/AllocateArray` — иначе сборка в другом потоке
+возвращала только что выделенный блок в список свободных); потокобезопасный
+запуск статических конструкторов (ждут владельца; внутри прерывания — прежнее
+однопоточное правило); у приложений аллокатор и сборщик — секции на счётчике
+ядра (`AppServiceTable.PreemptionDepthAddress`). В `DispatchEx` подавления нет
+намеренно: состояние на стеке потока, а счётчик утекал, когда `finally`
+бросал во втором проходе. Проба — три проверки вытеснения в `AotTests`. Для
+SMP всего этого мало: нужны настоящие блокировки (pipe_plan.md, п. 10).
 
 ---
 

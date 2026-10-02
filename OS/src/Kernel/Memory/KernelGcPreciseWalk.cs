@@ -63,6 +63,13 @@ namespace OS.Kernel.Memory
         public static int LastFramesSlotOverflow;
         public static int LastFrameCapHits;
 
+        /// <summary>Kernel walks that stopped at an app's frames and resumed below the app.</summary>
+        public static int LastAppBoundaries;
+        public static int LastAppRunsCrossed;
+
+        /// <summary>Interrupted threads scanned word by word instead of walked.</summary>
+        public static int LastConservativeScans;
+
         // The addresses behind the counters. A number says three frames were
         // dropped; it cannot say WHICH, and a dropped frame is a root nobody
         // reports and the sweep then frees. Eight is enough: if there are more
@@ -121,6 +128,9 @@ namespace OS.Kernel.Memory
             LastFramesSkippedOutOfRange = 0;
             LastFramesSlotOverflow = 0;
             LastFrameCapHits = 0;
+            LastAppBoundaries = 0;
+            LastAppRunsCrossed = 0;
+            LastConservativeScans = 0;
         }
 
         public static bool IsAvailable =>
@@ -157,6 +167,104 @@ namespace OS.Kernel.Memory
             Context ctx = default;
             GcContextSpill.Invoke(&ctx, &WalkCallback);
             s_markRoot = null;
+
+            if (markRoot == null)
+                ContinueBelowApps(OS.Kernel.Threading.Scheduler.Current?.Id ?? 0);
+        }
+
+        /// <summary>
+        /// The kernel frames under every app this thread is running, for the
+        /// kernel's own heap.
+        /// </summary>
+        /// <remarks>
+        /// A walk that meets an app stops there: the next frames are the app's
+        /// (its objects, its collector), and below them is the jump stub, which
+        /// has no unwind data. But under the stub is the kernel code that
+        /// launched the app, with live locals of its own — and before
+        /// pipe_plan.md item 2 a collection during an app's service call saw
+        /// none of them. JumpStub keeps every register the kernel handed over
+        /// and the stack pointer it returns to (JumpContext), which is exactly
+        /// a context to resume the walk from. Runs nest; each one crossed in
+        /// turn, innermost first, as the stack has them.
+        /// </remarks>
+        internal static void ContinueBelowApps(int threadId)
+        {
+            for (OS.Kernel.Exec.JumpContext* run = OS.Kernel.Exec.JumpStub.Innermost; run != null; run = run->Previous)
+            {
+                if (run->OwnerThreadId != threadId || run->KernelRsp == 0)
+                    continue;
+
+                Context ctx = default;
+                ctx.Rip = *(ulong*)run->KernelRsp;      // return address into JumpStub.Run
+                ctx.Rsp = run->KernelRsp + 8;
+                ctx.Rbx = run->Rbx;
+                ctx.Rbp = run->Rbp;
+                ctx.Rsi = run->Rsi;
+                ctx.Rdi = run->Rdi;
+                ctx.R12 = run->R12;
+                ctx.R13 = run->R13;
+                ctx.R14 = run->R14;
+                ctx.R15 = run->R15;
+
+                LastAppRunsCrossed++;
+                s_markRoot = null;
+                s_topFrameIsActive = false;
+                WalkFrames(&ctx);
+            }
+        }
+
+        /// <summary>
+        /// A thread stopped by an interrupt, scanned word by word from where it
+        /// was stopped to the top of its stack, registers included.
+        /// </summary>
+        /// <remarks>
+        /// The interrupted code is at an arbitrary instruction, not at a call:
+        /// unless its method is fully interruptible, GcInfo has nothing to say
+        /// about it, and the precise walk dropped the frame and every root in
+        /// it. Conservative over-marks, never under-marks. False when the
+        /// thread was stopped off its own stack (an app's main thread runs on
+        /// the app's stack): the caller then walks it precisely, as before.
+        /// </remarks>
+        public static bool ScanInterruptedConservatively(OS.Kernel.Threading.Thread thread, void* frame,
+                                                         delegate* unmanaged<nuint, void> markRoot)
+        {
+            ulong* f = (ulong*)frame;
+            ulong rsp = f[21];
+            ulong low = (ulong)thread.StackBase;
+            ulong high = (ulong)thread.StackTop;
+
+            // The thread that runs an app runs it on the app's stack, not on
+            // its own: find the run whose stack it was stopped on.
+            if (low == 0 || rsp < low || rsp >= high)
+            {
+                low = high = 0;
+                for (OS.Kernel.Exec.JumpContext* run = OS.Kernel.Exec.JumpStub.Innermost; run != null; run = run->Previous)
+                {
+                    if (run->OwnerThreadId == thread.Id && run->AppStackBase != 0 &&
+                        rsp >= run->AppStackBase && rsp < run->StackTop)
+                    {
+                        low = run->AppStackBase;
+                        high = run->StackTop;
+                        break;
+                    }
+                }
+                if (high == 0)
+                    return false;
+            }
+
+            LastConservativeScans++;
+            for (int i = 1; i <= 15; i++)
+                MarkCandidate(f[i], markRoot);
+            for (ulong p = rsp & ~7UL; p < high; p += 8)
+                MarkCandidate(*(ulong*)p, markRoot);
+            return true;
+        }
+
+        private static void MarkCandidate(ulong value, delegate* unmanaged<nuint, void> markRoot)
+        {
+            if (value == 0) return;
+            if (markRoot != null) markRoot((nuint)value);
+            else GcMark.MarkFromRoot((nint)value);
         }
 
         /// <summary>
@@ -309,12 +417,32 @@ namespace OS.Kernel.Memory
                 {
                     // An app's call into a kernel service: no GcInfo, no
                     // unwind data, no roots — but the app's frames, which do
-                    // hold roots, are on the other side of it.
+                    // hold roots, are on the other side of it. For the
+                    // kernel's own heap they do not: the walk ends here and
+                    // goes on below the app (ContinueBelowApps).
                     if (OS.Kernel.Process.AppServiceBuilder.TryUnwindServiceThunk(ref ctx->Rip, ref ctx->Rsp))
+                    {
+                        if (s_markRoot == null)
+                        {
+                            LastAppBoundaries++;
+                            return;
+                        }
                         continue;
+                    }
 
                     LastFramesUnresolved++;
                     NoteSkipped(ctx->Rip, prevRip);
+                    return;
+                }
+
+                // A frame of another image, reached without a thunk (a direct
+                // [UnmanagedCallersOnly] service). Not walked for the kernel's
+                // heap: app frames hold the app's objects, and a nested parent's
+                // image is not even mapped while its child runs.
+                if (s_markRoot == null &&
+                    CoffRuntimeFunctionTable.ImageBaseForRecord(r.RuntimeFunction) != CoffRuntimeFunctionTable.ImageBase)
+                {
+                    LastAppBoundaries++;
                     return;
                 }
 

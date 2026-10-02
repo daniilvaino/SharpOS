@@ -109,6 +109,7 @@ hello/
 last_build.log
 last_app.log
 last_err.log
+last_kernel.log
 last_linux_ref.log
 
 # Любой лог — артефакт прогона. Именованные выше оставлены как указание, что

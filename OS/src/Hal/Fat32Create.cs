@@ -19,7 +19,7 @@ namespace OS.Hal
         /// clusters allocated and zeroed. Fails if the name is not 8.3, the
         /// file already exists, or the volume has no room.
         /// </summary>
-        public static bool TryCreateFile(string path, uint sizeBytes)
+        private static bool TryCreateFileLocked(string path, uint sizeBytes)
         {
             if (!s_mounted || s_disk == null || !s_isFat32) return false;
             if (Exists(path)) return false;

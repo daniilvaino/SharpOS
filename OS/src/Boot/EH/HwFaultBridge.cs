@@ -516,6 +516,13 @@ namespace OS.Boot.EH
                 }
             }
 
+            // The interrupt gate cleared IF, and the catch funclet is reached by
+            // a jump, not an IRETQ, so nothing would set it again: code that
+            // caught a fault ran on with interrupts off — no timer, no sleep
+            // that ever wakes. Give the handler the interrupted code's IF.
+            if ((frame->Rflags & 0x200) != 0)
+                X64Asm.Sti();
+
             // Hand off к managed dispatcher. Does not return on success.
             DispatchEx.Dispatch(exceptionPtr, &exInfo);
 
@@ -803,6 +810,16 @@ namespace OS.Boot.EH
         // на managed heap (GC alloc).
         private static object ResolveException(int vector, InterruptFrame* frame)
         {
+            // A fault in an app's code gets an exception of the APP's type.
+            // Catch clauses match by MethodTable pointer, and the app's
+            // `catch (Exception)` names its own Exception: the kernel's object
+            // walked past every handler in the app (pipe_plan.md, item 3).
+            int kind = vector == VecDivideByZero ? OS.Kernel.Exec.JumpStub.HwExceptionDivideByZero
+                     : vector == VecPageFault && frame->Cr2 < 0x10000 ? OS.Kernel.Exec.JumpStub.HwExceptionNullReference
+                     : OS.Kernel.Exec.JumpStub.HwExceptionAccessViolation;
+            if (OS.Kernel.Exec.JumpStub.TryCreateAppHwException(kind, frame->Rip, out object appException))
+                return appException;
+
             switch (vector)
             {
                 case VecDivideByZero:

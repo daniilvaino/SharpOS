@@ -67,6 +67,12 @@ namespace OS.Kernel.Memory
             Put(" capped=");
             PutInt(KernelGcPreciseWalk.LastFrameCapHits);
 
+            // Threads stopped by the timer, scanned word by word rather than
+            // walked (pipe_plan.md item 2b). Without the number a passing run
+            // could not say whether that path ever ran.
+            Put(" conservative=");
+            PutInt(KernelGcPreciseWalk.LastConservativeScans);
+
             // The addresses, not just the tally. A frame the walk dropped is
             // a root the sweep is then free to reclaim, and until these were
             // printed the only honest statement about them was that three of

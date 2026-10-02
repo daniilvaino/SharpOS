@@ -243,6 +243,13 @@ namespace OS.Boot.EH
             // зациклит — stack overflow → #GP с non-canonical RIP.
             //
             // Normal throw: init from own ExContext, no skip.
+            // Preemptible throughout, filters and finally clauses included: the
+            // dispatch state is on this thread's stack and the ExInfo chain is
+            // swapped with the thread (Scheduler.SwapExceptionChain). A
+            // suppression held across it leaked whenever a finally threw and
+            // abandoned the outer dispatch (eh L15) — and a leaked depth
+            // stops preemption for good (pipe_plan.md item 9, first run).
+
             uint startIdx = ExInfo.MaxTryRegionIdx;
             bool isRethrow = (exInfo->Kind & ExInfo.KindRethrow) != 0;
             bool reusedIter = false;

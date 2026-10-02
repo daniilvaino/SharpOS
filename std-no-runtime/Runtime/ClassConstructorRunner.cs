@@ -8,9 +8,8 @@
 // Implementation ported verbatim from Test.CoreLib (which itself is
 // the minimum-viable subset of System.Private.CoreLib's full version).
 //
-// Single-threaded contract: kernel is single-threaded for now, so the
-// CAS loop is overkill but harmless. When Phase 3.5 brings SMP we'll
-// already have the right structure.
+// Thread-safe since pipe_plan.md item 9: one thread runs a cctor, others
+// wait for it, the running thread re-enters freely.
 
 using System.Threading;
 using System.Runtime.InteropServices;
@@ -71,20 +70,51 @@ namespace System.Runtime.CompilerServices
         // CAS guarantees only one thread runs the cctor body. Memory barrier
         // after the cctor ensures any writes inside it become visible before
         // the initialized flag flips to 1.
+        // Thread-safe run of a type's cctor (pipe_plan.md item 9: the kernel
+        // now preempts, apps have threads).
+        //
+        // The pending cctor's address is the state: non-zero means "not run".
+        // The thread that runs it first swaps in InProgress, an odd value no
+        // code address can be. Another thread that sees InProgress waits,
+        // yielding, until the address becomes zero; the running thread itself
+        // seeing it (a static touched from inside its own cctor, directly or
+        // through a cctor it triggers) goes straight through and uses the
+        // partially-initialised storage, as before. Which thread is running
+        // which cctor is kept in a small table, because the context has no
+        // room for an owner.
+        //
+        // The single-threaded version nulled the address BEFORE running the
+        // cctor, so a second thread arriving meanwhile skipped it and read
+        // statics the first was still filling in.
+        //
+        // Ported in spirit from Test.CoreLib / System.Private.CoreLib's
+        // ClassConstructorRunner (which spins on a per-context lock and tracks
+        // the running thread for the recursion case); cut: deadlock detection
+        // between two threads each inside the other's cctor, and
+        // TypeInitializationException — a cctor that throws counts as run.
+        private const long InProgress = 1;
+        private const int MaxRunning = 32;
+
+        private unsafe struct RunningTable
+        {
+            public fixed long Context[MaxRunning];
+            public fixed int Owner[MaxRunning];
+        }
+
+        private static RunningTable s_running;
+        private static int s_runningLock;
+
+        /// <summary>
+        /// Whether the calling code may wait for another thread. The kernel
+        /// answers no inside an interrupt handler: the thread holding what it
+        /// would wait for is the one it interrupted, or one that cannot run
+        /// until the handler returns. Null: always.
+        /// </summary>
+        public static unsafe delegate*<bool> s_canWait;
+
         private static unsafe void CheckStaticClassConstruction(
             ref StaticClassConstructionContext context)
         {
-            // SINGLE-THREADED simplification. The original Test.CoreLib version
-            // spins when state == 2 (another thread mid-cctor). We're single-
-            // threaded — state == 2 means WE are mid-cctor on this very stack,
-            // recursing through a helper that read state without knowing we're
-            // already inside. Spinning would deadlock. Return immediately:
-            // the partially-initialized statics are still safe for the
-            // recursive access (ILC already laid out the storage).
-            //
-            // SMP TODO: replace with per-thread cctor execution stack
-            // (currentlyExecuting array of context*'s). Until Phase 3.5, the
-            // single-threaded shortcut is correct.
             CheckCalls++;
             if (CheckCalls == 1)
             {
@@ -100,20 +130,102 @@ namespace System.Runtime.CompilerServices
             // (that slot holds the GC static base pointer). The cctor is
             // pending iff cctorMethodAddress != 0; the runner nulls it once
             // run. Confirmed against dotnet/runtime release/8.0
-            // ClassConstructorRunner (`if (pfnCctor == 0) return;`). Reading
-            // the old `initialized` field saw a non-zero pointer and wrongly
-            // skipped every lazy cctor.
-            IntPtr pfn = context.cctorMethodAddress;
-            if (pfn == IntPtr.Zero) return;     // already run
+            // ClassConstructorRunner (`if (pfnCctor == 0) return;`).
+            ref long state = ref Unsafe.As<IntPtr, long>(ref context.cctorMethodAddress);
 
-            // Null BEFORE running: a reentrant access to the same static
-            // during the cctor sees 0 and uses the partially-initialized
-            // storage (ILC already laid it out) instead of recursing forever.
-            // Single-threaded — no CAS needed.
-            CctorRuns++;
-            context.cctorMethodAddress = IntPtr.Zero;
-            ((delegate*<void>)pfn)();
-            Interlocked.MemoryBarrier();
+            // Where waiting is impossible, the single-threaded rule: a cctor in
+            // progress is gone through, one not yet started is run here.
+            if (s_canWait != null && !s_canWait())
+            {
+                long pending = state;
+                if (pending == 0 || pending == InProgress) return;
+                if (Interlocked.CompareExchange(ref state, InProgress, pending) != pending) return;
+                CctorRuns++;
+                ((delegate*<void>)(IntPtr)pending)();
+                Interlocked.MemoryBarrier();
+                Interlocked.Exchange(ref state, 0);
+                return;
+            }
+
+            long contextKey = (long)Unsafe.AsPointer(ref context);
+            int me = Environment.CurrentManagedThreadId;
+
+            while (true)
+            {
+                long pfn = Interlocked.CompareExchange(ref state, 0, 0);
+                if (pfn == 0)
+                    return;                                 // already run
+
+                if (pfn == InProgress)
+                {
+                    if (RunningOwner(contextKey) == me)
+                        return;                             // our own cctor, re-entered
+                    Thread.Yield();
+                    continue;
+                }
+
+                if (Interlocked.CompareExchange(ref state, InProgress, pfn) != pfn)
+                    continue;                               // lost the race; look again
+
+                CctorRuns++;
+                int slot = Track(contextKey, me);
+                try
+                {
+                    ((delegate*<void>)(IntPtr)pfn)();
+                }
+                finally
+                {
+                    Interlocked.MemoryBarrier();
+                    Untrack(slot);
+                    Interlocked.Exchange(ref state, 0);
+                }
+                return;
+            }
         }
+
+        private static unsafe int RunningOwner(long contextKey)
+        {
+            int owner = 0;
+            EnterTable();
+            fixed (RunningTable* t = &s_running)
+                for (int i = 0; i < MaxRunning; i++)
+                    if (t->Context[i] == contextKey) { owner = t->Owner[i]; break; }
+            LeaveTable();
+            return owner;
+        }
+
+        // A full table leaves the cctor untracked: its own re-entry then waits
+        // on itself. Thirty-two cctors running at once, nested or concurrent,
+        // is far past anything seen.
+        private static unsafe int Track(long contextKey, int owner)
+        {
+            int slot = -1;
+            EnterTable();
+            fixed (RunningTable* t = &s_running)
+                for (int i = 0; i < MaxRunning; i++)
+                    if (t->Context[i] == 0) { t->Context[i] = contextKey; t->Owner[i] = owner; slot = i; break; }
+            LeaveTable();
+            return slot;
+        }
+
+        private static unsafe void Untrack(int slot)
+        {
+            if (slot < 0) return;
+            EnterTable();
+            fixed (RunningTable* t = &s_running)
+            {
+                t->Context[slot] = 0;
+                t->Owner[slot] = 0;
+            }
+            LeaveTable();
+        }
+
+        private static void EnterTable()
+        {
+            while (Interlocked.CompareExchange(ref s_runningLock, 1, 0) != 0)
+                Thread.Yield();
+        }
+
+        private static void LeaveTable() => Interlocked.Exchange(ref s_runningLock, 0);
     }
 }
