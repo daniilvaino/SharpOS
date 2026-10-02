@@ -38,6 +38,27 @@ namespace AotTests
             s_pass = 0;
             s_total = 0;
 
+            // Startup data (pipe_plan.md "Подготовить под трубы", item 3):
+            // `AOTTESTS.EXE --echo-args ...` prints what arrived and exits with
+            // the count, so the shell's `expect N` checks the delivery.
+            string[] arguments = AppHost.Arguments;
+            if (arguments.Length > 0 && arguments[0] == "--echo-args")
+            {
+                for (int i = 0; i < arguments.Length; i++)
+                {
+                    AppHost.WriteString("[args] ");
+                    AppHost.WriteUInt((uint)i);
+                    AppHost.WriteString(" '");
+                    AppHost.WriteString(arguments[i]);
+                    AppHost.WriteString("'\n");
+                }
+
+                // autorun.sh passes exactly these; anything else arrived damaged.
+                if (arguments.Length == 3 && (arguments[1] != "two words" || arguments[2] != "третий"))
+                    return 100;
+                return arguments.Length;
+            }
+
             AppHost.WriteString("==== AOT app test battery ====\n");
 
             // GC allocation.
@@ -232,6 +253,8 @@ namespace AotTests
             Check("multi-catch select", which == 2);
 
             CheckStelem();
+            CheckArrayCasts();
+            CheckNumberFormatting();
             CheckThreadsAndTasks();
             CheckPreemption();
             CheckClockWrap();
@@ -345,6 +368,99 @@ namespace AotTests
             }
         }
 
+        // Array casts (pipe_plan.md, item 6). Through an opaque object, so ILC
+        // cannot fold the answer at compile time and the runtime helper runs.
+        private class CastBase { }
+        private sealed class CastDerived : CastBase { }
+        private enum CastTint { A, B }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static object Opaque(object o) => o;
+
+        private static void CheckArrayCasts()
+        {
+            object strings = Opaque(new string[1]);
+            object ints = Opaque(new int[1]);
+            // With a real CastDerived in it: an array of a type that is never
+            // instantiated lets ILC prove no element type derives from CastBase
+            // and compile `is CastBase[]` into an exact MethodTable compare,
+            // which answered no without ever reaching the runtime.
+            object derived = Opaque(new CastDerived[] { new CastDerived() });
+            object tints = Opaque(new CastTint[1]);
+
+            Check("string[] is object[] (covariance)", strings is object[]);
+            Check("string[] is Array", strings is Array);
+            Check("int[] is not ValueType", !(ints is ValueType));
+            Check("int[] is uint[] (same-size integers)", ints is uint[]);
+            Check("int[] is not long[]", !(ints is long[]));
+            Check("enum[] is int[]", tints is int[]);
+            Check("Derived[] is Base[]", derived is CastBase[]);
+            Check("int[] is not object[]", !(ints is object[]));
+
+            object[] covariant = (object[])Opaque(new string[1]);
+            bool refMismatch = false;
+            try
+            {
+                ref object slot = ref covariant[0];
+                slot = null;
+            }
+            catch (ArrayTypeMismatchException) { refMismatch = true; }
+            Check("ref into a covariant array throws", refMismatch);
+
+            // BinaryWriter / BinaryReader in std (pipe_plan.md "Подготовить под
+            // трубы", item 5): the format the pipes' file bridge will write.
+            var stream = new System.IO.MemoryStream();
+            var writer = new System.IO.BinaryWriter(stream);
+            string longText = new string('ж', 300);
+            writer.Write(-123456789);
+            writer.Write(0x1122334455667788L);
+            writer.Write(2.5);
+            writer.Write(true);
+            writer.Write("строка");
+            writer.Write(longText);
+            writer.Write7BitEncodedInt(300);
+            stream.Position = 0;
+            var reader = new System.IO.BinaryReader(stream);
+            bool roundTrip = reader.ReadInt32() == -123456789
+                             && reader.ReadInt64() == 0x1122334455667788L
+                             && reader.ReadDouble() == 2.5
+                             && reader.ReadBoolean()
+                             && reader.ReadString() == "строка"
+                             && reader.ReadString() == longText
+                             && reader.Read7BitEncodedInt() == 300;
+            Check("BinaryWriter -> BinaryReader round trip", roundTrip);
+
+            // A length prefix of two gigabytes over a few bytes of data.
+            var forged = new System.IO.MemoryStream(new byte[] { 0xFF, 0xFF, 0xFF, 0xFF, 0x07, (byte)'x' });
+            bool forgedRefused = false;
+            try { new System.IO.BinaryReader(forged).ReadString(); }
+            catch (System.IO.EndOfStreamException) { forgedRefused = true; }
+            Check("BinaryReader refuses a forged string length", forgedRefused);
+
+            // The shared generator project reaches every image (pipe_plan.md
+            // "Подготовить под трубы", item 4).
+            Check("shared generator ran for this image", SharpOS.Generated.ImageInfo.AssemblyName == "AotTests");
+
+            // Interpolation through DefaultInterpolatedStringHandler: a span
+            // hole compiles only through the handler.
+            int hexValue = 255;
+            int negative = -5;
+            ReadOnlySpan<char> holeSpan = "xyz".AsSpan(1);
+            Check("interpolation (format, alignment, span holes)",
+                  $"{hexValue:X}|{negative,4}|[{holeSpan}]" == "FF|  -5|[yz]");
+
+            // File writes refuse instead of vanishing (pipe_plan.md, item 7).
+            bool textRefused = false;
+            try { System.IO.File.WriteAllText("\\aottests.txt", "x"); }
+            catch (System.IO.IOException) { textRefused = true; }
+            Check("File.WriteAllText refuses without a write service", textRefused);
+
+            bool streamRefused = false;
+            try { new System.IO.FileStream("\\aottests.bin", System.IO.FileMode.Create, System.IO.FileAccess.Write); }
+            catch (System.IO.IOException) { streamRefused = true; }
+            Check("FileStream for writing refuses without a write service", streamRefused);
+        }
+
         // Reference-array stores (pipe_plan.md, item 1). The exceptions here
         // are created by this image's own copy of std, so their types are the
         // app's: a catch that misses them is an EH problem, not a type-identity
@@ -357,6 +473,27 @@ namespace AotTests
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static int StelemIndex(int i) => i;
+
+        // BCL number formatting (std-no-runtime/Number/). The kernel checks the
+        // same engine in StdSurfaceProbe; this is the app tier's compile of it.
+        // Expected strings are .NET's invariant-culture output.
+        private static void CheckNumberFormatting()
+        {
+            Check("format int X / x4 / D5", 255.ToString("X") == "FF" && 255.ToString("x4") == "00ff" && 42.ToString("D5") == "00042");
+            Check("format int N0 / negative D3", 1234567.ToString("N0") == "1,234,567" && (-5).ToString("D3") == "-005");
+            Check("format long.MinValue / ulong X", long.MinValue.ToString() == "-9223372036854775808" && ulong.MaxValue.ToString("X") == "FFFFFFFFFFFFFFFF");
+            Check("format double shortest round-trip", 0.1.ToString() == "0.1" && (1.0 / 3).ToString() == "0.3333333333333333" && 1e20.ToString() == "1E+20");
+            Check("format double F2 / E3 / N2", 3.14159.ToString("F2") == "3.14" && 123.456.ToString("E3") == "1.235E+002" && 1234.5.ToString("N2") == "1,234.50");
+            Check("format float shortest", 0.1f.ToString() == "0.1" && float.MaxValue.ToString() == "3.4028235E+38");
+            Check("format NaN / Infinity", double.NaN.ToString() == "NaN" && double.PositiveInfinity.ToString() == "Infinity");
+            Check("string.Format {0:X8}|{1,6:F1}|{2:N2}", string.Format("{0:X8}|{1,6:F1}|{2:N2}", 48879, 2.26, 1234.5) == "0000BEEF|   2.3|1,234.50");
+            Check("format B / B8 (binary)", 255.ToString("B") == "11111111" && 5.ToString("B8") == "00000101");
+
+            Span<byte> u8 = stackalloc byte[32];
+            bool utf8 = (-1234.5).TryFormat(u8, out int written, "N1", null) && written == 8
+                        && u8[0] == (byte)'-' && u8[2] == (byte)',' && u8[6] == (byte)'.' && u8[7] == (byte)'5';
+            Check("format UTF-8 TryFormat (IUtf8SpanFormattable)", utf8);
+        }
 
         private static void CheckStelem()
         {

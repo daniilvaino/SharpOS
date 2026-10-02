@@ -282,20 +282,22 @@ namespace Shell
                 return 127;
             }
 
-            // The service ABI starts a program with no argv, so arguments
-            // would vanish. Refusing beats pretending they were delivered.
-            if (args.Count > 0)
+            bool managed = EndsWith(path, ".dll");
+
+            // Arguments reach a native program through its startup data. A
+            // managed one is started by the hosted runtime, which takes none
+            // yet: refusing beats pretending they were delivered.
+            if (managed && args.Count > 0)
             {
-                Write("sh: arguments are not passed to programs yet, refusing to run ");
+                Write("sh: arguments are not passed to managed programs yet, refusing to run ");
                 Write(path);
                 Write("\n");
                 return 2;
             }
 
-            bool managed = EndsWith(path, ".dll");
             AppServiceStatus status = managed
                 ? AppHost.TryRunManagedApp(path, out int exitCode)
-                : AppHost.TryRunApp(path, out exitCode);
+                : AppHost.TryRunApp(path, args.ToArray(), out exitCode);
 
             if (status != AppServiceStatus.Ok)
             {

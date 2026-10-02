@@ -534,6 +534,16 @@
             uint appAbiVersion,
             AppServiceAbi serviceAbi,
             out int exitCode)
+            => TryRunApp(path, appAbiVersion, serviceAbi, null, 0, out exitCode);
+
+        // arguments: UTF-8 strings, each ended by a NUL, argumentsLength bytes.
+        private static AppServiceStatus TryRunApp(
+            byte* path,
+            uint appAbiVersion,
+            AppServiceAbi serviceAbi,
+            byte* arguments,
+            uint argumentsLength,
+            out int exitCode)
         {
             exitCode = 0;
 
@@ -553,6 +563,12 @@
             request.AppAbiVersion = appAbiVersion;
             request.ServiceAbi = (uint)serviceAbi;
             request.ExitCode = 0;
+            if (argumentsLength != 0)
+            {
+                request.Reserved = AppRunAppRequest.FlagHasArguments;
+                request.ArgumentsAddress = (ulong)arguments;
+                request.ArgumentsLength = argumentsLength;
+            }
 
             AppServiceStatus status = (AppServiceStatus)runApp((ulong)(&request));
             exitCode = request.ExitCode;
@@ -583,6 +599,90 @@
         public static AppServiceStatus TryRunApp(string path, out int exitCode)
         {
             return TryRunApp(path, AppServiceTable.AutoSelectAbiVersion, AppServiceAbi.Auto, out exitCode);
+        }
+
+        /// <summary>
+        /// Runs a program with arguments; it reads them from
+        /// <see cref="Arguments"/>. Unsupported on a kernel without startup
+        /// data, rather than starting the program without them.
+        /// </summary>
+        public static AppServiceStatus TryRunApp(string path, string[] arguments, out int exitCode)
+        {
+            if (arguments == null || arguments.Length == 0)
+                return TryRunApp(path, out exitCode);
+
+            exitCode = 0;
+            if (!KernelTakesArguments)
+                return AppServiceStatus.Unsupported;
+
+            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
+            if (!TryEncodeAscii(path, pathBuffer, MaxTempPathChars + 1, out _))
+                return AppServiceStatus.InvalidParameter;
+
+            int total = 0;
+            byte[][] encoded = new byte[arguments.Length][];
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                encoded[i] = System.Text.Encoding.UTF8.GetBytes(arguments[i] ?? "");
+                total += encoded[i].Length + 1;
+            }
+            byte[] list = new byte[total];
+            int at = 0;
+            for (int i = 0; i < encoded.Length; i++)
+            {
+                for (int k = 0; k < encoded[i].Length; k++)
+                    list[at++] = encoded[i][k];
+                list[at++] = 0;
+            }
+
+            fixed (byte* listPointer = list)
+                return TryRunApp(pathBuffer, AppServiceTable.AutoSelectAbiVersion, AppServiceAbi.Auto,
+                                 listPointer, (uint)total, out exitCode);
+        }
+
+        private static string[] s_arguments;
+
+        /// <summary>What this program was started with; empty, never null.</summary>
+        public static string[] Arguments => s_arguments ?? new string[0];
+
+        // A kernel that reads FlagHasArguments publishes PreemptionDepthAddress
+        // too (both arrived together); one that does not would start the child
+        // with the arguments silently dropped.
+        private static bool KernelTakesArguments
+            => AppRuntime.Services != null && AppRuntime.Services->PreemptionDepthAddress != 0;
+
+        // The arguments records of the startup data block (kernel StartupData).
+        internal static void LoadArguments(AppServiceTable* services)
+        {
+            if (services == null || services->StartupDataAddress == 0 || services->StartupDataLength < 16)
+                return;
+
+            byte* block = (byte*)services->StartupDataAddress;
+            uint length = services->StartupDataLength;
+            if (*(uint*)block != 0x54445353) return;      // "SSDT"
+            uint count = *(uint*)(block + 4);
+
+            int arguments = 0;
+            for (uint at = 16, n = 0; n < count && at + 8 <= length; n++)
+            {
+                uint len = *(uint*)(block + at + 4);
+                if (*(uint*)(block + at) == 1) arguments++;
+                at += 8 + ((len + 7) & ~7u);
+            }
+
+            string[] result = new string[arguments];
+            int index = 0;
+            for (uint at = 16, n = 0; n < count && at + 8 <= length; n++)
+            {
+                uint kind = *(uint*)(block + at);
+                uint len = *(uint*)(block + at + 4);
+                if (at + 8 + len > length) break;
+                if (kind == 1)
+                    result[index++] = System.Text.Encoding.UTF8.GetString(
+                        new System.ReadOnlySpan<byte>(block + at + 8, (int)len));
+                at += 8 + ((len + 7) & ~7u);
+            }
+            s_arguments = result;
         }
 
         /// <summary>

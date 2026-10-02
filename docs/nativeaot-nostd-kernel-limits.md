@@ -281,7 +281,7 @@ ILC переводит `newobj` на массиве в `Internal.Runtime.Compile
 
 `arr.Contains(item)` на reference-array с value-типом: due to boxing-based equality, reference-сравнение двух отдельных боксов всегда false → `Contains` возвращает false даже если значения равны. Не крашит, но результат "не тот".
 
-### ✅ `stelem.ref`: null, границы, тип элемента (pipe_plan.md, п. 1)
+### 🟡 `stelem.ref`: null, границы, тип элемента (pipe_plan.md, п. 1)
 
 `RhpStelemRef` (`std-no-runtime/GC/GcRuntimeExports.cs`) — порт
 `TypeCast.StelemRef`: null-массив → `NullReferenceException`, индекс вне
@@ -293,14 +293,26 @@ ILC переводит `newobj` на массиве в `Internal.Runtime.Compile
 Проба: `NativeAotProbe.Probe_StelemChecks` (ядро) и `CheckStelem` в
 `AotTests` (приложение).
 
-Остаётся без проверки:
-- тип элемента — массив, или записываемое значение — массив: приведения
-  массивов нет (pipe_plan.md, п. 6);
-- вариантность обобщённых интерфейсов и делегатов (`IEnumerable<object>[]`
-  ← `List<string>`): бросит, хотя CoreCLR пропустит — `is` у нас её тоже
-  не знает;
-- `RhpLdelemaRef` (`ref arr[i]`) — по-прежнему без границ и без проверки
-  типа.
+`RhpLdelemaRef` (`ref arr[i]`) — те же null и границы плюс точное совпадение
+типа элемента (`ref` в ковариантный массив → `ArrayTypeMismatchException`).
+
+### 🟡 Приведение массивов (pipe_plan.md, п. 6)
+
+`RhTypeCast_*` и проверка типа в `stelem` идут через `AreTypesAssignable` —
+порт `TypeCast.AreTypesAssignableInternal` (release/8.0) без кэша приведений и
+обобщённой вариантности. До этого всё ходило по `GetBaseType()`, а у массива это
+тип ЭЛЕМЕНТА: `string[] is string` и `int[] is ValueType` отвечали «да», ни один
+массив не был `Array`, `int[]`→`uint[]` и `Derived[]`→`Base[]` — «нет». Теперь:
+ковариантность ссылочных элементов, целые одного размера и enum (`int[]`↔`uint[]`,
+`enum[]`↔`int[]`), массив — это `Object` и `Array`. Запись в `object[]` принимает
+объект любого образа (иначе цепочка чужого объекта кончается чужим `Object`).
+
+Остаётся: вариантность обобщённых интерфейсов и делегатов (`IEnumerable<object>`
+← `List<string>`) — ни `is`, ни `stelem` её не знают.
+
+Ловушка для проб: ILC сворачивает `x is Base[]` в точное сравнение таблицы, если
+наследники `Base` нигде не создаются (массив `Derived[]` без единого `Derived`).
+Проверка ковариантности должна класть в массив настоящий объект.
 
 ### ✅ Массивы реализуют `IEnumerable<T>` / `IList<T>` / `ICollection<T>` (step 142)
 
@@ -624,6 +636,16 @@ Milestone-1 срез [PeNet](https://github.com/secana/PeNet) (Apache-2.0, `vend
 
 Батарея AotTests 20/20 (6 EH-кейсов). **Отложено:** `RhpRethrow` handoff (`throw;`), rich stack-trace (`AppendStackFrame` аллоцирует в kernel-heap → cross-heap ref, латентно), конкурентный throw kernel↔app (single `s_head`).
 
+**Запись файлов из приложения (pipe_plan.md, п. 7):** `FileStream` на запись,
+`File.WriteAllText/WriteAllBytes`, `StreamWriter(path)` бросают `IOException`:
+службы записи у ядра для программ нет. До этого данные молча выбрасывались, и
+сохранение игры в DOOM или состояния в Fami сообщало «сохранено». Теперь такое
+сохранение без `try` завершает программу с кодом 134 (настройки DOOM пишутся в
+`try` и переживают). **Версия ABI таблицы служб** сверяется при старте
+приложения (`AppRuntime.Initialize`): несовпадение — сообщение и выход, а не
+чтение чужой формы таблицы; копия константы в SDK (`AppStartupBlock`) стояла на
+V2 и привязана к `AppServiceTable.CurrentAbiVersion` (п. 8).
+
 **HW-fault в приложении (pipe_plan.md, п. 3–5):** сбой в коде приложения даёт
 исключение типа приложения от его фабрики (`SetHwExceptionFactoryAddress`), и
 `catch (Exception)` приложения его ловит; IF восстанавливается до диспетчера.
@@ -715,7 +737,7 @@ ScanStack (только smoke-test-callers через `CaptureStackTop` discipli
 Остаток: куча ядра на практике не собирается — растёт (`kgc.calls=0` во всех
 прогонах step169).
 
-### ✅ Точный обход — и для `GC.Collect`, и для сборки при нехватке (pipe_plan.md, п. 2)
+### 🟡 Точный обход — и для `GC.Collect`, и для сборки при нехватке (pipe_plan.md, п. 2)
 
 Раздел выше говорил, что `KernelGC.Collect()` выбирает точный путь, но хук
 `GC.s_collectHook` (им пользуются `GC.Collect` и аллокатор при нехватке места)
@@ -745,7 +767,7 @@ ScanStack (только smoke-test-callers через `CaptureStackTop` discipli
 - Маркировщик приложений отбрасывает кандидатов с таблицей типа вне своего
   образа (`GcMark.MethodTableLow/High` из стартового блока) — как ядро с step169.
 
-### ✅ Вытеснение под лаунчером (pipe_plan.md, п. 9)
+### 🟡 Вытеснение под лаунчером (pipe_plan.md, п. 9)
 
 Один процессор, модель `preempt_disable`: критические секции — участки
 `Preemption.Suppress()`; вытесняется и ядро, и приложения
@@ -1064,6 +1086,69 @@ post-EBS это развёртка. `bochs-display` + EDID.
   протокол clientPIN (ему нужен ECDH). Ключ с установленным PIN ответит на
   `makeCredential` кодом `0x31` или `0x36`, и это не поломка, а отсутствующая
   возможность.
+
+---
+
+## 20. 🟡 Форматирование чисел — порт BCL (release/8.0)
+
+Неполно: культура только инвариантная; нет `decimal`, `Half`, `Int128`/`UInt128`,
+обобщённой арифметики, `Rune`; разбор чисел — старый, только десятичный;
+форматирование читает статик `NumberFormatInfo` и не годится до материализации
+статиков (кроме неотрицательных целых без формата).
+
+- **`ToString` / `TryFormat` примитивов — настоящий BCL .NET 8**
+  (`gc-experiment/dotnet-runtime-8.0`, v8.0.27). `std-no-runtime/Number/`:
+  `Number.Formatting` — как в .NET 8, обобщённый по `TChar` (`char` — UTF-16,
+  `byte` — UTF-8): B/C/D/E/F/G/N/P/R/X и пользовательские шаблоны
+  `"#,##0.00;(#)"`; `Grisu3` + `Dragon4` + `BigInteger` + `DiyFp`,
+  `NumberFormatInfo` (с UTF-8-аксессорами), `ISpanFormattable`,
+  `IUtf8SpanFormattable`, внутренние `IUtfChar<T>` и `ValueListBuilder<T>`,
+  `System.Numerics.BitOperations` (с `Crc32C`), `FormattingHelpers.CountDigits`,
+  `System.Index`. Byte…UInt64, IntPtr/UIntPtr, Single, Double реализуют
+  `IFormattable`, `ISpanFormattable`, `IUtf8SpanFormattable`; Char и Byte —
+  `IUtfChar`. Члены — в одном файле `Number/Primitives.Formatting.cs` для обоих
+  ярусов, сами структуры в двух `MinimalRuntime.cs` объявлены `partial`.
+- **Статические абстрактные члены интерфейсов работают:** в `RuntimeFeature`
+  обоих `MinimalRuntime.cs` объявлен `VirtualStaticsInInterfaces` (без него
+  CS8919), ILC 8 разрешает вызовы на точных инстанциациях.
+- **Культура одна — инвариантная**, и её данные — исходные инициализаторы
+  `NumberFormatInfo`: `"Infinity"` / `"-Infinity"` / `"NaN"`, валюта `¤`,
+  проценты `"50 %"`. `CultureInfo.NumberFormat` и `GetFormat(typeof(...))`
+  есть; для `typeof` в ядро перенесён `Type` из app-SDK (только тождество).
+- **Вырезано:** `decimal`, `Half`, `Int128`/`UInt128` (типов нет — публичной
+  поверхности не теряется); аппаратные ветки `BitOperations` (нет
+  `Intrinsics.X86/Arm/Wasm`, работает штатный программный путь); база
+  `IBinaryInteger<T>` у `IUtfChar` (семейства generic math нет, форматтер
+  зовёт только `CastFrom`); `CultureData`; проверка `NativeDigits` по таблицам
+  Unicode; `System.Text.Rune` в UTF-8-пути одиночного символа (кодируется
+  руками, байты те же). `MemberwiseClone` / `Array.Clone` нет —
+  `NumberFormatInfo.Clone` копирует поля руками. Разбор чисел
+  (`Number.Parsing`) **не** портирован — `Parse` остался прежним, десятичным.
+- **Поменялся вывод `double`/`float`:** по умолчанию кратчайшая строка,
+  возвращающая то же число (`0.1+0.2` → `0.30000000000000004`, `1e20` →
+  `1E+20`), а не прежние 6 знаков после точки. Неверный формат бросает
+  `FormatException`, а не печатает число как есть.
+- **Ранняя загрузка:** таблицы — данные образа (`ReadOnlySpan<T>`, u8-литерал,
+  span поверх строкового литерала) или `switch`; кэш строк малых чисел
+  (`s_smallNumberCache`) не перенесён — это GC-статик на пути
+  `int.ToString()`. Поэтому неотрицательные целые статиков не трогают.
+  Отрицательные числа, форматные строки и плавающая точка читают
+  `NumberFormatInfo.InvariantInfo` (ленивый статик) — до `GcStaticsMaterializer`
+  их звать нельзя. Консоль ядра печатает через
+  `SharpOS.Std.NoRuntime.NumberFormatting`.
+- **Попутно появилось в std:** `string` → `ReadOnlySpan<char>` (неявное
+  преобразование), `string.CopyTo/TryCopyTo(Span<char>)`, кортежные
+  `Math.DivRem`, `BitConverter.DoubleToUInt64Bits` и три парных,
+  `double/float.IsFinite/IsNegative/…`, `uint.Log2`, `uint/ulong.LeadingZeroCount`,
+  `Encoding.TryGetBytes`, `NumberStyles.AllowBinarySpecifier/BinaryNumber`,
+  `ICloneable`, `DigitShapes`, `System.Index`, внутренний `System.ThrowHelper`,
+  `ArgumentException.ThrowIfNullOrEmpty`; `ArgumentNullException.ThrowIfNull`
+  теперь бросает, а не зависает.
+- **`RhpStackProbe` в ядре:** у `Dragon4` кадр больше страницы, ILC зовёт пробу
+  стека. Как у приложений (`StackProbeStub`) — экспорт с телом-заглушкой, которое
+  `ChkstkPatcher` заменяет на `ret` вместе с `__chkstk`: защитных страниц нет.
+- Проверки: `std: format …` в `StdSurfaceProbe` (в том числе `B` и UTF-8),
+  `string.Format` в `NativeAotProbe`, десять `format …` в AotTests.
 
 ---
 

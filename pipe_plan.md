@@ -32,10 +32,13 @@
    **Сделано (2026-10-02):** IF из RFLAGS прерванного кода перед `DispatchEx`. Прогон: `Thread.Sleep(50)` после пойманного сбоя в приложении вернулся.
 
 6. **Приведение массивов** ([GcRuntimeExports.cs:200-222](std-no-runtime/GC/GcRuntimeExports.cs#L200-L222)). `GetBaseType()` у массива отдаёт тип элемента, возможны ложные «да». Базой массива должен быть `System.Array`, приведение массива к массиву сравнивает типы элементов.
+   **Сделано (2026-10-03):** `AreTypesAssignable` — порт `TypeCast.AreTypesAssignableInternal` (без кэша и вариантности обобщений); `RhpLdelemaRef` с null, границами и точным типом. Девять проверок в `AotTests`. Попутно: ILC сворачивает `x is Base[]` в сравнение таблицы, если ни один наследник `Base` не создаётся.
 
 7. **`FileStream` приложения молча выбрасывает запись** ([FileSystem.AppHost.cs](apps_native/sdk/FileSystem.AppHost.cs)). Пока службы записи нет, бросать исключение.
+   **Сделано (2026-10-03):** `FileStream` на запись, `File.WriteAllText/WriteAllBytes`, `StreamWriter(path)` бросают `IOException`. Следствие: сохранение игры в DOOM и состояния в Fami (без `try`) завершает программу с кодом 134 вместо ложного «сохранено».
 
 8. **Версии ABI.** SDK объявляет V2 ([AppStartupBlock.cs:7](apps_native/sdk/AppStartupBlock.cs#L7)), ядро V3. Выровнять и добавить проверку при старте.
+   **Сделано (2026-10-03):** `AppStartupBlock.CurrentAbiVersion` → `AppServiceTable.CurrentAbiVersion`; `AppRuntime.Initialize` сверяет опубликованную версию таблицы и при несовпадении выходит с сообщением.
 
 9. **Вытеснение для приложений.** Сейчас под лаунчером выключено ([Preemption.cs:5-19](OS/src/Kernel/Threading/Preemption.cs#L5-L19), step184), должно заработать. Конфликт с точным обходом: поток, прерванный таймером не в точке вызова, не описан `GcInfo`.
    Зависит от пункта 2 (условие «поток, остановленный не в точке вызова, сканируется консервативно целиком»). Включать только после него.
@@ -47,18 +50,25 @@
 ## Подготовить под трубы
 
 1. **Обменная куча.** Распределитель блоков на страницах вне куч всех сборщиков (`PhysicalMemory.AllocPages` или `NativeArena`), с пулом свободных блоков и меткой владельца на блоке. Не в диапазоне образа приложения и не в сегментах `KernelHeap`.
+   **Сделано (2026-10-03):** `OS/src/Kernel/Memory/ExchangeHeap.cs` — куски по 64 КиБ из `PhysicalMemory`, тождественно отображённые, только ниже 4 ГиБ; классы 64 Б–32 КиБ с пулами, крупные — сериями страниц с повторным использованием; заголовок с меткой и владельцем; `Allocate/Free/SetOwner/OwnerOf/SizeOf/ReleaseOwner/Contains`, чужой указатель отказывается без записи. Проба `ExchangeHeapProbe` (7 проверок ok).
 
 2. **Учёт ресурсов процесса.** Реестр ресурсов по ключу `AppGeneration`, освобождение у `EndAppRun` → `Scheduler.LeaveApp` ([LauncherBoot.cs:245-249](OS/src/Kernel/Process/LauncherBoot.cs#L245-L249)). `ProcessState` должен доходить до `Exited`.
+   **Сделано (2026-10-03):** `OS/src/Kernel/Process/ProcessResources.cs` — запись по поколению: `OnAppStarted` при `EnterApp`, `OnAppEnded` в `EndAppRun` (блоки обменной кучи владельца возвращаются, состояние `Exited`), `MarkFailed` из ловушки 4б. Прогон: `[proc] generation N exited: exchange blocks returned 1` на каждом вложенном запуске.
 
 3. **Данные при старте приложения.** Один механизм для аргументов, позже для концов труб: служба в хвосте `AppServiceTable` или расширение `ProcessStartupBlock` вместе с зеркалом в SDK. Оболочка ([Executor.cs:285-293](apps_native/Shell/Executor.cs#L285-L293)) начинает передавать аргументы.
+   **Сделано (2026-10-03):** `StartupData` (ядро) — блок записей «вид, длина, байты» под стартовым блоком на стеке ребёнка, адрес в `AppServiceTable.StartupDataAddress`; вид 1 — аргумент UTF-8, концы труб станут видом 2. `RunApp` берёт аргументы из запроса (`FlagHasArguments`, поля в хвосте `AppRunAppRequest`) пока родитель отображён. SDK: `AppHost.Arguments`, `TryRunApp(path, string[])`. Оболочка передаёт аргументы программам `.exe` (`.dll` — по-прежнему отказ) и читает скрипт как UTF-8 (читала Latin-1). Проверка в автозапуске: `expect 3 … --echo-args 'two words' третий`.
 
 4. **Генератор для всех образов.** Подключить генератор Roslyn через `Std.props` (сейчас только в ядре, [OS.csproj:93-95](OS/OS.csproj#L93-L95)). Выровнять версию C# у ядра и приложений.
+   **Сделано (2026-10-03):** `generators/SharpOS.Generators` подключён через `Std.props` (ядро и все приложения); первый генератор — `SharpOS.Generated.ImageInfo.AssemblyName`, проверка в ядре и `AotTests`. `BootAsm.Generator` остаётся ядерным. Приложения по умолчанию на C# 14.0 (`FreestandingPe.props`), как ядро.
 
 5. **`BinaryWriter` и `BinaryReader` в std.** Перенести одну копию из Fami или TriCNES в `std-no-runtime`, копии в приложениях убрать.
+   **Сделано (2026-10-03):** не копия из приложения, а порт `BinaryWriter`/`BinaryReader` из dotnet/runtime release/8.0 (`std-no-runtime/IO/`). Вырезано: async, `decimal`, `Half`, посимвольное чтение (нет `Decoder`). `ReadString` берёт байты кусками и не верит длине из данных (В11). В std добавлены `Stream.Read(Span<byte>)/Write(ReadOnlySpan<byte>)/ReadExactly(Span)`, `Encoding.GetMaxByteCount`. Копии в Fami и TriCNES удалены. Проверки: круговой прогон и подложная длина строки.
 
 6. **Запрет выделять память в куче сборщика из обработчиков прерываний.** Проверить существующие обработчики, добавить отладочную проверку в распределитель.
+   **Сделано (2026-10-03):** `GcHeap.s_allocationAllowed` (ядро ставит `Preemption.CanWait`), счётчик `AllocationsWhereForbidden` в итоге пакета: 0. Хук ставится после материализации статиков — поставленный раньше, он читал `Scheduler.Current` до статиков, и машина не загружалась.
 
 7. **Пробелы std для печати.** `DefaultInterpolatedStringHandler` и форматирование `float`.
+   **Сделано (2026-10-03):** из `gc-experiment/dotnet-runtime-8.0` (v8.0.27): форматтер чисел целиком (`Number.Formatting` обобщённый по `TChar`, Dragon4, Grisu3, `NumberFormatInfo`, `BitOperations`, `ISpanFormattable`, `IUtf8SpanFormattable`), примитивы реализуют `IFormattable`/`ISpanFormattable`/`IUtf8SpanFormattable` (общий `Number/Primitives.Formatting.cs` для обоих `MinimalRuntime`); `DefaultInterpolatedStringHandler` + атрибуты, `ICustomFormatter`, `string.Create(provider, …)`, `new string(ReadOnlySpan<char>)` (парный `Ctor` для ILC); в рантайме `RhTypeCast_CheckCastInterface/CheckCastClass`. Давняя красная проба `string.Format` — зелёная. Вырезано: `decimal`/`Half`/`Int128`, аппаратные ветки `BitOperations`, ветка enum в обработчике. Ядро: 51 проверка `std:`; `AotTests` 120/120.
 
 ## Проверить опытом
 

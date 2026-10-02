@@ -43,5 +43,28 @@ namespace OS.PAL.SharpOSHost
             delegate*<void> fn = &Chkstk;
             return (void*)fn;
         }
+
+        // RhpStackProbe: what ILC calls in the prologue of a managed method
+        // whose frame crosses a page (the number formatter's Dragon4 keeps
+        // several 464-byte BigIntegers on the stack). The real one lives in
+        // the NativeAOT runtime lib we exclude. Same reasoning as __chkstk
+        // above, and the same as the app SDK's StackProbeStub: no guard pages,
+        // so touching pages in order buys nothing, and the contract is
+        // register-preserving, so the body is replaced by a lone `ret` rather
+        // than trusted to run.
+        [RuntimeExport("RhpStackProbe")]
+        private static unsafe void RhpStackProbe()
+        {
+            ulong* p = (ulong*)0;
+            p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 0;
+            p[4] = 0; p[5] = 0; p[6] = 0; p[7] = 0;
+            OS.Kernel.Panic.Fail("RhpStackProbe: stub body executed — patcher did not run");
+        }
+
+        public static unsafe void* GetStackProbeAddress()
+        {
+            delegate*<void> fn = &RhpStackProbe;
+            return (void*)fn;
+        }
     }
 }

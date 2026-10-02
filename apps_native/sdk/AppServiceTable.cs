@@ -176,6 +176,12 @@
         // allocator and collector bump it around their critical sections
         // (AppPreemption). Zero: an older kernel, which never preempts apps.
         public ulong PreemptionDepthAddress;
+
+        // What this program was started with: records on its own stack
+        // (AppRuntime reads the arguments from it). Zero: nothing was passed.
+        public ulong StartupDataAddress;
+        public uint StartupDataLength;
+        public uint StartupDataReserved;
     }
 
     /// <summary>
@@ -308,11 +314,18 @@
 
     internal unsafe struct AppRunAppRequest
     {
+        public const uint FlagHasArguments = 1;
+
         public ulong PathAddress;
         public uint AppAbiVersion;
         public uint ServiceAbi;
         public int ExitCode;
-        public uint Reserved;
+        public uint Reserved;                   // flags
+
+        // With FlagHasArguments: UTF-8 strings, each ended by a NUL.
+        public ulong ArgumentsAddress;
+        public uint ArgumentsLength;
+        public uint ArgumentsReserved;
     }
 
     internal enum AppServiceAbi : uint

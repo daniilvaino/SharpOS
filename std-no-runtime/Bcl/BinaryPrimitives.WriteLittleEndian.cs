@@ -22,6 +22,36 @@ namespace System.Buffers.Binary
             MemoryMarshal.Write(destination, value);
         }
 
+        // Double / Single: from release/8.0 BinaryPrimitives.WriteLittleEndian.cs
+        // (SharpOS: MemoryMarshal.Write here takes the value, not `in`).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void WriteDoubleLittleEndian(Span<byte> destination, double value)
+        {
+            if (!BitConverter.IsLittleEndian)
+            {
+                long tmp = ReverseEndianness(BitConverter.DoubleToInt64Bits(value));
+                MemoryMarshal.Write(destination, tmp);
+            }
+            else
+            {
+                MemoryMarshal.Write(destination, value);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void WriteSingleLittleEndian(Span<byte> destination, float value)
+        {
+            if (!BitConverter.IsLittleEndian)
+            {
+                int tmp = ReverseEndianness(BitConverter.SingleToInt32Bits(value));
+                MemoryMarshal.Write(destination, tmp);
+            }
+            else
+            {
+                MemoryMarshal.Write(destination, value);
+            }
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void WriteInt64LittleEndian(Span<byte> destination, long value)
         {

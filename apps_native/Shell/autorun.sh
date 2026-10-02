@@ -12,11 +12,12 @@
 #
 # `expect CODE COMMAND` runs the command and counts it as a failure unless it
 # exits with exactly CODE. Needed because "non-zero means broken" is not true
-# here: AOTTESTS.EXE returns the number of tests it passed, so 95 is a clean
+# here: AOTTESTS.EXE returns the number of tests it passed, so 120 is a clean
 # run and 0 would be a catastrophe.
 #
-# Arguments are not passed to programs yet, so every line is just a path. The
-# census (NormalHello.dll) already runs earlier, from the kernel.
+# Arguments reach native programs (startup data); the last line checks that
+# they arrive whole — quoted, with spaces, in UTF-8. The census
+# (NormalHello.dll) already runs earlier, from the kernel.
 #
 # A line saying exactly `shell` hands the machine to a prompt after the list
 # instead of powering off — and that prompt can launch things, because the
@@ -29,6 +30,7 @@
 # forward slashes to the kernel's own separator on the way to the file system.
 # Single quotes would also work ('\apps\AOTTESTS.EXE'), and read worse.
 
-expect 95 /apps/AOTTESTS.EXE
-expect 95 /apps/AOTTESTS.EXE
+expect 120 /apps/AOTTESTS.EXE
+expect 120 /apps/AOTTESTS.EXE
 expect 0  /apps/BENCHAOT.EXE
+expect 3 /apps/AOTTESTS.EXE --echo-args 'two words' третий

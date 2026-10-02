@@ -219,6 +219,13 @@
         // place, the same counter the kernel's Suppress/Allow use. Data, not
         // code: offered to every ABI.
         public ulong PreemptionDepthAddress;
+
+        // What the program was started with (StartupData): a block of records
+        // on its own stack, under the startup block — arguments today, pipe
+        // ends handed over at launch next. Zero: nothing was passed.
+        public ulong StartupDataAddress;
+        public uint StartupDataLength;
+        public uint StartupDataReserved;
     }
 
     /// <summary>
@@ -351,10 +358,19 @@
 
     internal unsafe struct AppRunAppRequest
     {
+        public const uint FlagHasArguments = 1;
+
         public ulong PathAddress;
         public uint AppAbiVersion;
         public uint ServiceAbi;
         public int ExitCode;
+        // Flags. Zero from every caller that predates arguments, which is
+        // what keeps the fields below unread for them: their request ends here.
         public uint Reserved;
+
+        // With FlagHasArguments: UTF-8 strings, each ended by a NUL.
+        public ulong ArgumentsAddress;
+        public uint ArgumentsLength;
+        public uint ArgumentsReserved;
     }
 }

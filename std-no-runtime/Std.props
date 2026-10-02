@@ -9,6 +9,14 @@
   ярусных пар — в README.md рядом.
 -->
 <Project>
+  <!-- Source generators every image runs (generators/SharpOS.Generators):
+       the kernel and each app import this file, so this is the one place that
+       reaches all of them. -->
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\SharpOS.Generators\SharpOS.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\ArraySegment.cs" Link="std\Bcl\ArraySegment.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\BinaryPrimitives.ReadBigEndian.cs" Link="std\Bcl\BinaryPrimitives.ReadBigEndian.cs" />
@@ -26,6 +34,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Guid.cs" Link="std\Bcl\Guid.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\HashCode.cs" Link="std\Bcl\HashCode.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\HashSet.cs" Link="std\Bcl\HashSet.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\ICustomFormatter.cs" Link="std\Bcl\ICustomFormatter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Index.cs" Link="std\Bcl\Index.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Interfaces.cs" Link="std\Bcl\Interfaces.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\LinkedList.cs" Link="std\Bcl\LinkedList.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\List.cs" Link="std\Bcl\List.cs" />
@@ -88,6 +98,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Globalization.DateTimeFormat.cs" Link="std\Globalization.DateTimeFormat.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Globalization.NumberStyles.cs" Link="std\Globalization.NumberStyles.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Globalization.cs" Link="std\Globalization.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\BinaryReader.cs" Link="std\IO\BinaryReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\BinaryWriter.cs" Link="std\IO\BinaryWriter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\IOException.cs" Link="std\IO\IOException.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\MemoryStream.cs" Link="std\IO\MemoryStream.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\Stream.cs" Link="std\IO\Stream.cs" />
@@ -96,6 +108,25 @@
     <Compile Include="$(MSBuildThisFileDirectory)MemoryPrimitives.cs" Link="std\MemoryPrimitives.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)NumberFormatting.cs" Link="std\NumberFormatting.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)NumberParsing.cs" Link="std\NumberParsing.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\BitOperations.cs" Link="std\Number\BitOperations.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Crc32ReflectedTable.cs" Link="std\Number\Crc32ReflectedTable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\DigitShapes.cs" Link="std\Number\DigitShapes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\FormattingHelpers.CountDigits.cs" Link="std\Number\FormattingHelpers.CountDigits.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\ICloneable.cs" Link="std\Number\ICloneable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\ISpanFormattable.cs" Link="std\Number\ISpanFormattable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\IUtf8SpanFormattable.cs" Link="std\Number\IUtf8SpanFormattable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\IUtfChar.cs" Link="std\Number\IUtfChar.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Number.BigInteger.cs" Link="std\Number\Number.BigInteger.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Number.DiyFp.cs" Link="std\Number\Number.DiyFp.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Number.Dragon4.cs" Link="std\Number\Number.Dragon4.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Number.Formatting.cs" Link="std\Number\Number.Formatting.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Number.Grisu3.cs" Link="std\Number\Number.Grisu3.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Number.NumberBuffer.cs" Link="std\Number\Number.NumberBuffer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\NumberFormatInfo.cs" Link="std\Number\NumberFormatInfo.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Primitives.Formatting.cs" Link="std\Number\Primitives.Formatting.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\SR.cs" Link="std\Number\SR.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\ThrowHelper.cs" Link="std\Number\ThrowHelper.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\ValueListBuilder.cs" Link="std\Number\ValueListBuilder.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Numerics\Vector3.cs" Link="std\Numerics\Vector3.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ActionFunc.cs" Link="std\Runtime\ActionFunc.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Array.cs" Link="std\Runtime\Array.cs" />
@@ -106,6 +137,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ClassConstructorRunner.cs" Link="std\Runtime\ClassConstructorRunner.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CodeAnalysisAttributes.cs" Link="std\Runtime\CodeAnalysisAttributes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerFeatures.cs" Link="std\Runtime\CompilerFeatures.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\DefaultInterpolatedStringHandler.cs" Link="std\Runtime\CompilerServices\DefaultInterpolatedStringHandler.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\InterpolatedStringHandlerArgumentAttribute.cs" Link="std\Runtime\CompilerServices\InterpolatedStringHandlerArgumentAttribute.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\InterpolatedStringHandlerAttribute.cs" Link="std\Runtime\CompilerServices\InterpolatedStringHandlerAttribute.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ConditionalWeakTable.cs" Link="std\Runtime\ConditionalWeakTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Delegate.cs" Link="std\Runtime\Delegate.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Diagnostics.cs" Link="std\Runtime\Diagnostics.cs" />

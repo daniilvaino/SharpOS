@@ -26,6 +26,11 @@ namespace OS.PAL.SharpOSHost
             int compileLen = Emit(target);
             if (compileLen != 1 || target[0] != 0xC3) return false;
 
+            // RhpStackProbe gets the same lone `ret` (see ChkstkStub).
+            byte* probe = (byte*)ChkstkStub.GetStackProbeAddress();
+            if (probe == null) return false;
+            if (Emit(probe) != 1 || probe[0] != 0xC3) return false;
+
             s_installed = true;
             return true;
         }

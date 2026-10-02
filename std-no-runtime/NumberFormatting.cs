@@ -1,3 +1,9 @@
+// Plain integer -> text for kernel diagnostics (console, perf counters,
+// sampler): decimal and upper-case hex, no format strings, no culture. Their
+// output equals the BCL's ToString() / ToString("X<n>") for the same value
+// (hex widths are clamped to the type's digit count, 8 or 16).
+// Everything with format semantics is the BCL port in std-no-runtime/Number/.
+
 namespace SharpOS.Std.NoRuntime
 {
     internal static unsafe class NumberFormatting
@@ -118,167 +124,12 @@ namespace SharpOS.Std.NoRuntime
             return result;
         }
 
-        // ---- format-string subset (step141, ManagedDoom callsites) ----
-        // Supported: all-'0' patterns ("00", "000") and "D<n>" — zero-pad to
-        // width; "0.0…" via the double path. Unknown formats fall back to the
-        // plain decimal form rather than throwing.
-
-        public static string FormatInt64(long value, string format)
-        {
-            if (format == null || format.Length == 0) return LongToString(value);
-
-            char c0 = format[0];
-            if (c0 == 'D' || c0 == 'd')
-            {
-                int width = format.Length == 1 ? 1 : ParseFormatWidth(format, 1);
-                if (width >= 0) return ZeroPad(value, width);
-                return LongToString(value);
-            }
-
-            // "X"/"x" with optional width, uppercase or lowercase digits.
-            // BCL semantics: hex prints the raw two's-complement bits, so -1
-            // is FFFFFFFFFFFFFFFF and not "-1" — printing a sign here would be
-            // worse than useless in the places hex is used (registers, opcodes,
-            // addresses).
-            if (c0 == 'X' || c0 == 'x')
-            {
-                int width = format.Length == 1 ? 1 : ParseFormatWidth(format, 1);
-                if (width < 0) width = 1;
-                return HexPad((ulong)value, width, c0 == 'X');
-            }
-
-            bool allZeros = true;
-            int dot = -1;
-            for (int i = 0; i < format.Length; i++)
-            {
-                char c = format[i];
-                if (c == '.' && dot < 0) { dot = i; continue; }
-                if (c != '0') { allZeros = false; break; }
-            }
-            if (allZeros && dot < 0) return ZeroPad(value, format.Length);
-            if (allZeros) return DoubleToString(value, format.Length - dot - 1, false);
-
-            return LongToString(value);
-        }
-
-        private static int ParseFormatWidth(string format, int start)
-        {
-            int width = 0;
-            for (int i = start; i < format.Length; i++)
-            {
-                char c = format[i];
-                if (c < '0' || c > '9') return -1;
-                width = width * 10 + (c - '0');
-            }
-            return width;
-        }
-
-        private static string ZeroPad(long value, int width)
-        {
-            string s = LongToString(value);
-            bool neg = s[0] == '-';
-            int digits = neg ? s.Length - 1 : s.Length;
-            if (digits >= width) return s;
-
-            char[] buf = new char[width + (neg ? 1 : 0)];
-            int pos = 0;
-            if (neg) buf[pos++] = '-';
-            for (int i = 0; i < width - digits; i++) buf[pos++] = '0';
-            for (int i = neg ? 1 : 0; i < s.Length; i++) buf[pos++] = s[i];
-            return new string(buf);
-        }
-
-        // Hex digits of `value`, zero-padded to at least `width`.
-        //
-        // Width is a MINIMUM, as in the BCL: "X2" of 0x1234 is "1234", not
-        // "34". Truncating instead would quietly corrupt exactly the values
-        // worth printing in hex.
-        private static string HexPad(ulong value, int width, bool upper)
-        {
-            char[] digits = new char[16];
-            int count = 0;
-            do
-            {
-                uint nibble = (uint)(value & 0xF);
-                digits[count++] = nibble < 10
-                    ? (char)('0' + nibble)
-                    : (char)((upper ? 'A' : 'a') + (nibble - 10));
-                value >>= 4;
-            }
-            while (value != 0);
-
-            int length = count > width ? count : width;
-            char[] buf = new char[length];
-            for (int i = 0; i < length - count; i++) buf[i] = '0';
-            for (int i = 0; i < count; i++) buf[length - 1 - i] = digits[i];
-            return new string(buf);
-        }
-
-        // ---- double formatting (step141) ----
-        // Fixed-point only: scale-round-split. Callers are small values
-        // (fps counters, gamma); |value| must stay well inside long range
-        // after scaling. Default form trims trailing fraction zeros.
-
-        public static string DoubleToString(double value) => DoubleToString(value, 6, true);
-
-        public static string DoubleToString(double value, string format)
-        {
-            if (format == null || format.Length == 0) return DoubleToString(value);
-            int dot = -1;
-            for (int i = 0; i < format.Length; i++)
-            {
-                if (format[i] == '.') { dot = i; break; }
-            }
-            int frac = dot < 0 ? 0 : format.Length - dot - 1;
-            return DoubleToString(value, frac, false);
-        }
-
-        public static string DoubleToString(double value, int fracDigits, bool trimTrailingZeros)
-        {
-            if (double.IsNaN(value)) return "NaN";
-            if (value > double.MaxValue) return "Infinity";
-            if (value < double.MinValue) return "-Infinity";
-
-            bool neg = value < 0;
-            double v = neg ? -value : value;
-
-            long scale = 1;
-            for (int i = 0; i < fracDigits; i++) scale *= 10;
-
-            long scaled = (long)(v * scale + 0.5);
-            long intPart = scaled / scale;
-            long fracPart = scaled - intPart * scale;
-
-            string ip = LongToString(intPart);
-            int fracLen = fracDigits;
-            char[] fracBuf = null;
-            if (fracDigits > 0)
-            {
-                fracBuf = new char[fracDigits];
-                long f = fracPart;
-                for (int i = fracDigits - 1; i >= 0; i--)
-                {
-                    fracBuf[i] = (char)('0' + (int)(f % 10));
-                    f /= 10;
-                }
-                if (trimTrailingZeros)
-                {
-                    while (fracLen > 0 && fracBuf[fracLen - 1] == '0') fracLen--;
-                }
-            }
-
-            int total = (neg ? 1 : 0) + ip.Length + (fracLen > 0 ? 1 + fracLen : 0);
-            char[] buf = new char[total];
-            int pos = 0;
-            if (neg) buf[pos++] = '-';
-            for (int i = 0; i < ip.Length; i++) buf[pos++] = ip[i];
-            if (fracLen > 0)
-            {
-                buf[pos++] = '.';
-                for (int i = 0; i < fracLen; i++) buf[pos++] = fracBuf[i];
-            }
-            return new string(buf);
-        }
+        // The format-string subset that lived here (FormatInt64 with "D"/"X"/
+        // "000", DoubleToString with fixed 6-digit fallback) is gone: the
+        // primitives format through the ported BCL engine now
+        // (std-no-runtime/Number/), and those approximations printed things
+        // the BCL does not. What stays is allocation-light plain decimal/hex
+        // for kernel diagnostics, whose output matches the BCL's "G"/"X".
 
         public static string UIntToHex(uint value, int minDigits)
         {

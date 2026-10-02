@@ -1224,6 +1224,10 @@ namespace OS.Kernel.Process
         internal static void EndAppRun(uint generation, uint previousGeneration)
         {
             uint ended = global::OS.Kernel.Threading.Scheduler.LeaveApp(generation, previousGeneration);
+
+            // Its threads are gone; now what it held outside them.
+            ProcessResources.OnAppEnded(generation);
+
             if (ended == 0) return;
             DebugLog.Begin(LogLevel.Info);
             UiText.Write("app threads ended with the app: ");
@@ -1413,6 +1417,14 @@ namespace OS.Kernel.Process
 
             LogRunAppAbiSelection(abiSource, appAbiVersion, serviceAbi);
 
+            // Arguments are read now, while the caller's memory is still
+            // mapped: the launch below unmaps its image before the child's
+            // stack is built. The block waits in StartupData for that build.
+            StartupData.Clear();
+            if ((request->Reserved & AppRunAppRequest.FlagHasArguments) != 0 &&
+                !StartupData.SetArguments((byte*)request->ArgumentsAddress, request->ArgumentsLength))
+                return (uint)AppServiceStatus.InvalidParameter;
+
             int savedExitRequested = s_exitRequested;
             int savedExitCode = s_exitCode;
             uint savedPublishedAbi = s_publishedAbiVersion;
@@ -1428,6 +1440,7 @@ namespace OS.Kernel.Process
                 abiFromRequest: abiSource == AbiResolveSource.Request,
                 out int childExitCode);
             request->ExitCode = childExitCode;
+            StartupData.Clear();     // a launch that failed before its build took it
             OS.Kernel.Diagnostics.PerfCounters.Report(RunScope(string.FromUtf16Z(pathBuffer, (int)MaxPathChars)));
 
             s_exitRequested = savedExitRequested;
@@ -1768,6 +1781,12 @@ namespace OS.Kernel.Process
                     int returnExitCode = 0;
                     bool jumped;
                     uint previousGeneration = OS.Kernel.Threading.Scheduler.EnterApp(out uint appGeneration);
+                    ProcessResources.OnAppStarted(appGeneration);
+
+                    // A block the child owns and never frees: its end must
+                    // return it (OnAppEnded logs the count).
+                    if (OS.Kernel.Diagnostics.Probes.ExchangeHeap)
+                        OS.Kernel.Memory.ExchangeHeap.Allocate(64, appGeneration);
 
                     // The child is the current process while it runs, so that
                     // a launch of its own suspends ITS image rather than the

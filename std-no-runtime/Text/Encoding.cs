@@ -40,6 +40,15 @@ namespace System.Text
         // --- encode: string -> bytes ------------------------------------
 
         public abstract int GetByteCount(string s);
+
+        // The most bytes charCount chars can become. The original is abstract;
+        // here a safe default (UTF-8 and UTF-16 both stay within it), tightened
+        // where the encoding is known.
+        public virtual int GetMaxByteCount(int charCount)
+        {
+            if (charCount < 0) throw new ArgumentOutOfRangeException(nameof(charCount));
+            return (charCount + 1) * 4;
+        }
         public abstract byte[] GetBytes(string s);
 
         public byte[] GetBytes(char[] chars)
@@ -69,6 +78,21 @@ namespace System.Text
 
             new ReadOnlySpan<byte>(bytes).CopyTo(destination);
             return bytes.Length;
+        }
+
+        // BCL .NET 8, verbatim (Encoding.cs). The number formatter's UTF-8
+        // path copies culture strings ("NaN", "Infinity") through it.
+        public virtual bool TryGetBytes(ReadOnlySpan<char> chars, Span<byte> bytes, out int bytesWritten)
+        {
+            int required = GetByteCount(chars);
+            if (required <= bytes.Length)
+            {
+                bytesWritten = GetBytes(chars, bytes);
+                return true;
+            }
+
+            bytesWritten = 0;
+            return false;
         }
 
         public virtual int GetCharCount(ReadOnlySpan<byte> bytes)
@@ -210,6 +234,14 @@ namespace System.Text
         private readonly bool _throwOnInvalidBytes;
 
         public UTF8Encoding() { }
+
+        // Encoding.UTF8's own bound: a char is at most three bytes, and one
+        // more slot for a surrogate left over from a previous call.
+        public override int GetMaxByteCount(int charCount)
+        {
+            if (charCount < 0) throw new ArgumentOutOfRangeException(nameof(charCount));
+            return (charCount + 1) * 3;
+        }
 
         public UTF8Encoding(bool encoderShouldEmitUTF8Identifier)
         {

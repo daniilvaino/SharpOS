@@ -222,6 +222,11 @@
         // pipe_plan.md item 2, condition (c). One collection per launch.
         public const bool KernelGcAcrossApp = true;
 
+        // The exchange heap's properties at boot, and one block owned by every
+        // nested launch, which its end must hand back ("[proc] … exchange
+        // blocks returned 1"). pipe_plan.md "Подготовить под трубы", 1–2.
+        public const bool ExchangeHeap = true;
+
         // Preemption for the launcher and every program it runs (pipe_plan.md
         // item 9). The kernel's critical sections are Preemption.Suppress
         // regions — the preempt_disable model, valid on one CPU.

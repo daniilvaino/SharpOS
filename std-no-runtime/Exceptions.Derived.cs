@@ -52,6 +52,18 @@ namespace System
         public ArgumentException(string message, string paramName) : base(message) { }
         public ArgumentException(string message, Exception innerException)
             : base(message, innerException) { }
+
+        // BCL (.NET 7) helper. Without CallerArgumentExpression the default
+        // paramName stays null, and this ArgumentException keeps no paramName
+        // anyway; the throw itself is the BCL's.
+        public static void ThrowIfNullOrEmpty(string argument, string paramName = null)
+        {
+            if (string.IsNullOrEmpty(argument))
+            {
+                ArgumentNullException.ThrowIfNull(argument, paramName);
+                throw new ArgumentException("The value cannot be an empty string.", paramName);
+            }
+        }
     }
 
     public class ArgumentNullException : ArgumentException
@@ -61,12 +73,11 @@ namespace System
         public ArgumentNullException(string paramName, string message) : base(message, paramName) { }
 
         // BCL helper: `ArgumentNullException.ThrowIfNull(arg)` is a common
-        // pattern in verbatim-ported BCL code. Halts via the exception
-        // throw path — which itself halts in our runtime until step 5
-        // wires the unwinder.
+        // pattern in verbatim-ported BCL code. Throws for real: these used to
+        // spin in place from before the unwinder existed.
         public static void ThrowIfNull(object argument)
         {
-            if (argument == null) Throw();
+            if (argument == null) Throw(null);
         }
 
         public static void ThrowIfNull(object argument, string paramName)
@@ -74,8 +85,8 @@ namespace System
             if (argument == null) Throw(paramName);
         }
 
-        public static void Throw() { while (true) { } }
-        public static void Throw(string paramName) { while (true) { } }
+        public static void Throw() => throw new ArgumentNullException();
+        public static void Throw(string paramName) => throw new ArgumentNullException(paramName);
     }
 
     public class ArgumentOutOfRangeException : ArgumentException

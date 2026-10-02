@@ -4,7 +4,10 @@ namespace SharpOS.AppSdk
     {
         public const uint AbiVersionV1 = 1;
         public const uint AbiVersionV2 = 2;
-        public const uint CurrentAbiVersion = AbiVersionV2;
+        public const uint AbiVersionV3 = 3;
+        // Follows the service table, as the kernel's copy does: this one was
+        // left at V2 while everything else moved to V3 (pipe_plan.md item 8).
+        public const uint CurrentAbiVersion = AppServiceTable.CurrentAbiVersion;
         public const uint FlagMarkerAddressIsPhysical = 1U << 0;
         public const uint FlagServiceTableAddressIsPhysical = 1U << 1;
 

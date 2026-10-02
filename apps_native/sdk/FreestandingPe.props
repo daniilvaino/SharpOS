@@ -15,6 +15,11 @@
   <PropertyGroup>
     <!-- net8/ILC8 (matches the kernel / major-9 GC layout). -->
     <TargetFramework Condition="'$(TargetFramework)' == ''">net8.0</TargetFramework>
+    <!-- The kernel's language version. net8 would otherwise default apps to
+         C# 12 while the std they compile is written against 14, and code
+         generated for every image (generators/SharpOS.Generators) has to
+         compile in both. -->
+    <LangVersion Condition="'$(LangVersion)' == ''">14.0</LangVersion>
     <!-- Unconditional: Sdk.props already defaulted OutputType to Library before
          this import, so a `== ''` guard would leave it Library and NativeAOT
          would link bootstrapperdll.obj (the DLL runtime bootstrap) which our

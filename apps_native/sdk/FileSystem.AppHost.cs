@@ -6,10 +6,11 @@
 //     retry on BufferTooSmall) and serves Read/Seek from that buffer.
 //     WADs are a few MB — needs the app GC pool grown past its current
 //     1 MB (GcMemorySource.AppStatic) before DOOM-sized files load.
-//   - FileStream(write) accepts writes into a growing in-memory buffer and
-//     discards it on Dispose — nothing is persisted (config/savegame
-//     writes vanish silently). TODO: kernel write-file service.
-//   - StreamWriter(path) is the same discard sink at text level.
+//   - Writing — FileStream for writing, File.WriteAllText/WriteAllBytes,
+//     StreamWriter(path) — throws IOException. Until pipe_plan.md item 7 these
+//     accepted the data and dropped it: a savegame reported "saved" and was
+//     gone. A program that tolerates a missing file catches the exception
+//     (DOOM's config save does); one that does not now ends with the reason.
 //
 // API shapes mirror BCL; each member documents its cut where behaviour
 // differs.
@@ -23,24 +24,14 @@ namespace System.IO
         private byte[] _buffer;
         private int _length;
         private int _position;
-        private readonly bool _canRead;
-        private readonly bool _canWrite;
 
         public FileStream(string path, FileMode mode, FileAccess access)
         {
-            if (access == FileAccess.Read)
-            {
-                _buffer = File.ReadAllBytes(path);
-                _length = _buffer.Length;
-                _canRead = true;
-            }
-            else
-            {
-                // Write side: in-memory discard buffer (no kernel write service).
-                _buffer = new byte[4096];
-                _length = 0;
-                _canWrite = true;
-            }
+            if (access != FileAccess.Read)
+                throw File.WritesNotSupported(path);
+
+            _buffer = File.ReadAllBytes(path);
+            _length = _buffer.Length;
         }
 
         public FileStream(string path, FileMode mode)
@@ -48,9 +39,9 @@ namespace System.IO
         {
         }
 
-        public override bool CanRead => _canRead;
+        public override bool CanRead => true;
         public override bool CanSeek => true;
-        public override bool CanWrite => _canWrite;
+        public override bool CanWrite => false;
 
         public override long Length => _length;
 
@@ -66,7 +57,6 @@ namespace System.IO
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            if (!_canRead) throw new NotSupportedException("Stream does not support reading.");
             int n = _length - _position;
             if (n > count) n = count;
             if (n <= 0) return 0;
@@ -91,34 +81,12 @@ namespace System.IO
         }
 
         public override void Write(byte[] buffer, int offset, int count)
-        {
-            if (!_canWrite) throw new NotSupportedException("Stream does not support writing.");
-            EnsureCapacity(_position + count);
-            Array.Copy(buffer, offset, _buffer, _position, count);
-            _position += count;
-            if (_position > _length) _length = _position;
-        }
+            => throw new NotSupportedException("Stream does not support writing.");
 
         public override void SetLength(long value)
-        {
-            if (!_canWrite) throw new NotSupportedException("Stream does not support writing.");
-            if (value < 0 || value > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(value));
-            EnsureCapacity((int)value);
-            _length = (int)value;
-            if (_position > _length) _position = _length;
-        }
+            => throw new NotSupportedException("Stream does not support writing.");
 
         public override void Flush() { }
-
-        private void EnsureCapacity(int required)
-        {
-            if (required <= _buffer.Length) return;
-            int newSize = _buffer.Length * 2;
-            if (newSize < required) newSize = required;
-            byte[] grown = new byte[newSize];
-            Array.Copy(_buffer, grown, _length);
-            _buffer = grown;
-        }
     }
 
     public static unsafe class File
@@ -132,20 +100,20 @@ namespace System.IO
         public static FileStream OpenRead(string path)
             => new FileStream(path, FileMode.Open, FileAccess.Read);
 
-        // Writes go nowhere, exactly as FileStream(write) does: there is no
-        // kernel write service behind the app service table yet. Silent rather
-        // than throwing, to match the write path that already exists — an app
-        // that logs to a file should not die because the log went nowhere.
-        //
-        // The moment a write service lands, both this and FileStream's discard
-        // buffer become real, and this comment is the marker for it.
+        // No kernel write service behind the app service table yet. These used
+        // to return silently, on the reasoning that a program logging to a file
+        // should not die because the log went nowhere; the cost was that every
+        // write looked like it worked — savegames, state saves, config — and
+        // nothing ever said otherwise. A program that can live without the file
+        // catches the exception.
         public static void WriteAllText(string path, string contents)
-        {
-        }
+            => throw WritesNotSupported(path);
 
         public static void WriteAllBytes(string path, byte[] bytes)
-        {
-        }
+            => throw WritesNotSupported(path);
+
+        internal static IOException WritesNotSupported(string path)
+            => new IOException("cannot write '" + path + "': the kernel has no file write service for programs yet");
 
         // Whole-file load through the AppHost read service. The service has
         // no size query, so grow + retry: BufferTooSmall and exact-fit
@@ -223,11 +191,11 @@ namespace System.IO
         public static string GetCurrentDirectory() => "\\";
     }
 
-    // Text-level discard sink over the missing write service: accepts
-    // Write/WriteLine, persists nothing. Config.Save/savegames call this.
+    // Text writer over the missing write service: refuses at construction,
+    // like FileStream for writing.
     public class StreamWriter : IDisposable
     {
-        public StreamWriter(string path) { }
+        public StreamWriter(string path) { throw File.WritesNotSupported(path); }
 
         public void Write(string value) { }
 

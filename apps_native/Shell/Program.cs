@@ -122,16 +122,20 @@ namespace Shell
             return 0;
         }
 
+        // A script line is UTF-8. It used to be read a byte per char — Latin-1 —
+        // which turned every non-ASCII character into two, and an argument
+        // passed on from it arrived double-encoded.
         private static string NextLine(byte* buffer, uint length, ref uint index)
         {
-            var text = new StringBuilder();
+            uint start = index;
             while (index < length && buffer[index] != (byte)'\n' && buffer[index] != (byte)'\r')
-                text.Append((char)buffer[index++]);
+                index++;
+            string text = Encoding.UTF8.GetString(new System.ReadOnlySpan<byte>(buffer + start, (int)(index - start)));
 
             while (index < length && (buffer[index] == (byte)'\n' || buffer[index] == (byte)'\r'))
                 index++;
 
-            return text.ToString().Trim();
+            return text.Trim();
         }
     }
 }

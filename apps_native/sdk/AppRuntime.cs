@@ -21,6 +21,21 @@
 
             s_services = (AppServiceTable*)startup->ServiceTableAddress;
 
+            // The table this image was built to read. A different version means
+            // a different shape (the version is bumped only for that), and
+            // reading it as ours would call through whatever sits at our
+            // offsets. Said and refused before anything else touches it; the
+            // write and exit services are at the head of every version.
+            if (s_services->AbiVersion != AppServiceTable.CurrentAbiVersion)
+            {
+                AppHost.WriteError("[app] service table ABI ");
+                AppHost.WriteUInt(s_services->AbiVersion);
+                AppHost.WriteError(", this program was built for ");
+                AppHost.WriteUInt(AppServiceTable.CurrentAbiVersion);
+                AppHost.WriteError("\n");
+                Fatal("service table ABI mismatch");
+            }
+
             // Publish this image's TypeManager into its TypeManagerIndirection
             // slots (needs no GC, no services). The kernel resolver reads
             // MT -> TM -> DispatchMapTable on the shared-generic/variant
@@ -149,6 +164,9 @@
             // from the static roots the step above just materialised — before
             // that there is nothing to keep alive and nothing to sweep.
             AppGC.Install();
+
+            // What this program was started with (needs the heap: strings).
+            AppHost.LoadArguments(s_services);
 
             // Hardware faults in this image raise this image's exception types.
             // After the heap and the statics: the factory allocates.

@@ -25,9 +25,11 @@ namespace System.Globalization
         AllowExponent = 0x00000080,
         AllowCurrencySymbol = 0x00000100,
         AllowHexSpecifier = 0x00000200,
+        AllowBinarySpecifier = 0x00000400,
 
         Integer = AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign,
         HexNumber = AllowLeadingWhite | AllowTrailingWhite | AllowHexSpecifier,
+        BinaryNumber = AllowLeadingWhite | AllowTrailingWhite | AllowBinarySpecifier,
         Number = AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign
                  | AllowTrailingSign | AllowDecimalPoint | AllowThousands,
         Float = AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign

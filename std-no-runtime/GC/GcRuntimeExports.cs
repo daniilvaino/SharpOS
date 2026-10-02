@@ -198,13 +198,135 @@ namespace SharpOS.Std.NoRuntime
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static unsafe void StelemRef_Helper(GcMethodTable* elementType, object value)
         {
-            // Object is the only class without a base: anything goes there.
-            if (!elementType->IsInterface && !elementType->IsArray && elementType->GetBaseType() == null)
+            // object[] takes anything — including an object of another image,
+            // whose base chain ends at THAT image's Object and would never meet
+            // ours (the original's INPLACE_RUNTIME shortcut, for the same reason).
+            if (IsSystemObject(elementType))
                 return;
-            if (elementType->IsArray || (*(GcMethodTable**)*(nint*)&value)->IsArray)
-                return;
-            if (RhTypeCast_IsInstanceOfAny(elementType, value) == null)
+
+            GcMethodTable* valueType = *(GcMethodTable**)*(nint*)&value;
+            if (!AreTypesAssignable(valueType, elementType, boxedSource: true, allowSizeEquivalence: false))
                 throw new ArrayTypeMismatchException();
+        }
+
+        // ---- Assignability, ported from TypeCast.AreTypesAssignableInternalUncached
+        // and WellKnownEETypes (dotnet/runtime release/8.0, NativeAOT
+        // Runtime.Base). Cut: the cast cache, generic variance (our `is` never
+        // had it), pointer / byref / function-pointer types (no such objects
+        // exist), IDynamicInterfaceCastable.
+        //
+        // Before this, every cast walked GetBaseType(), which for an array is
+        // its ELEMENT type: string[] answered "is string", int[] "is ValueType",
+        // and no array was ever an Array; int[] -> uint[] and Derived[] ->
+        // Base[] failed (pipe_plan.md item 6).
+
+        // WellKnownEETypes.IsSystemObject / IsValidArrayBaseType: by the type's
+        // own shape, not by pointer — so Object of ANY image answers, which a
+        // pointer compare against this image's Object could not.
+        private static unsafe bool IsSystemObject(GcMethodTable* type)
+        {
+            if (type->IsArray)
+                return false;
+            return type->GetBaseType() == null && !type->IsInterface;
+        }
+
+        private static unsafe bool IsValidArrayBaseType(GcMethodTable* type)
+        {
+            GcEETypeElementType elementType = type->ElementType;
+            return elementType == GcEETypeElementType.SystemArray
+                || (elementType == GcEETypeElementType.Class && type->GetBaseType() == null);
+        }
+
+        internal static unsafe bool AreTypesAssignable(GcMethodTable* pSourceType, GcMethodTable* pTargetType,
+                                                       bool boxedSource, bool allowSizeEquivalence)
+        {
+            if (pSourceType == pTargetType)
+                return true;
+
+            if (pTargetType->IsInterface)
+            {
+                // Value types can only be cast to interfaces if they're boxed.
+                if (!boxedSource && pSourceType->IsValueType)
+                    return false;
+                return ImplementsInterface(pSourceType, pTargetType);
+            }
+
+            if (pSourceType->IsInterface)
+                return IsSystemObject(pTargetType);
+
+            // Array to array: same shape, then the element types — reference
+            // elements covariantly, value elements only when identical or
+            // integers of one size (int[] <-> uint[], enum[] <-> int[]).
+            if (pTargetType->IsArray)
+            {
+                if (pSourceType->IsArray
+                    && pSourceType->ElementType == pTargetType->ElementType
+                    && pSourceType->BaseSize == pTargetType->BaseSize)
+                {
+                    return AreTypesAssignable(pSourceType->RelatedType, pTargetType->RelatedType,
+                                              boxedSource: false, allowSizeEquivalence: true);
+                }
+                return false;
+            }
+
+            // Target type is not an array. But we can still cast arrays to Object or System.Array.
+            if (pSourceType->IsArray)
+                return IsValidArrayBaseType(pTargetType);
+
+            if (pSourceType->IsValueType)
+            {
+                if (allowSizeEquivalence && IsPrimitiveElement(pTargetType))
+                    return IsPrimitiveElement(pSourceType)
+                        && NormalizedIntegral(pSourceType) == NormalizedIntegral(pTargetType);
+
+                if (!boxedSource)
+                    return false;
+            }
+
+            const int MaxDepth = 64;
+            GcMethodTable* cur = pSourceType;
+            for (int i = 0; i < MaxDepth; i++)
+            {
+                cur = cur->GetBaseType();
+                if (cur == null) return false;
+                if (cur == pTargetType) return true;
+            }
+            return false;
+        }
+
+        private static unsafe bool ImplementsInterface(GcMethodTable* pType, GcMethodTable* pInterface)
+        {
+            int count = pType->NumInterfaces;
+            if (count == 0) return false;
+            EEInterfaceInfo* map = pType->GetInterfaceMap();
+            for (int i = 0; i < count; i++)
+                if (map[i].GetInterfaceEEType() == pInterface)
+                    return true;
+            return false;
+        }
+
+        // Primitives and enums: an element type code in Boolean..Double.
+        private static unsafe bool IsPrimitiveElement(GcMethodTable* type)
+        {
+            GcEETypeElementType et = type->ElementType;
+            return et >= GcEETypeElementType.Boolean && et <= GcEETypeElementType.Double;
+        }
+
+        // TypeCast.GetNormalizedIntegralArrayElementType: unsigned folds onto
+        // its signed twin, so int and uint (and an int-based enum) compare equal.
+        private static unsafe GcEETypeElementType NormalizedIntegral(GcMethodTable* type)
+        {
+            GcEETypeElementType et = type->ElementType;
+            switch (et)
+            {
+                case GcEETypeElementType.Byte:
+                case GcEETypeElementType.UInt16:
+                case GcEETypeElementType.UInt32:
+                case GcEETypeElementType.UInt64:
+                case GcEETypeElementType.UIntPtr:
+                    return et - 1;
+            }
+            return et;
         }
 
         // Emitted by ILC for `obj is SomeInterface` and the `is`-pattern
@@ -235,17 +357,8 @@ namespace SharpOS.Std.NoRuntime
             if (pObjType == pTargetType)
                 return obj;
 
-            // Walk up the class hierarchy.
-            const int MaxDepth = 32;
-            for (int i = 0; i < MaxDepth; i++)
-            {
-                pObjType = pObjType->GetBaseType();
-                if (pObjType == null)
-                    return null;
-                if (pObjType == pTargetType)
-                    return obj;
-            }
-            return null;
+            return AreTypesAssignable(pObjType, pTargetType, boxedSource: true, allowSizeEquivalence: false)
+                ? obj : null;
         }
 
         // Boolean variant of IsInstanceOfClass specifically for catch-clause
@@ -316,18 +429,8 @@ namespace SharpOS.Std.NoRuntime
             GcMethodTable* mt = *(GcMethodTable**)objAddr;
             if (mt == pTargetType) return obj;
 
-            if (pTargetType->IsInterface)
-                return RhTypeCast_IsInstanceOfInterface(pTargetType, obj);
-
-            const int MaxDepth = 64;
-            GcMethodTable* cur = mt;
-            for (int i = 0; i < MaxDepth; i++)
-            {
-                cur = cur->GetBaseType();
-                if (cur == null) break;
-                if (cur == pTargetType) return obj;
-            }
-            return null;
+            return AreTypesAssignable(mt, pTargetType, boxedSource: true, allowSizeEquivalence: false)
+                ? obj : null;
         }
 
         // RhTypeCast_CheckCastAny / CheckCastClassSpecial / RhpLdelemaRef lived
@@ -348,6 +451,32 @@ namespace SharpOS.Std.NoRuntime
             return obj;
         }
 
+        // TypeCast.CheckCastInterface / CheckCastClass (release/8.0). ILC calls
+        // them for a cast it could not settle at compile time — e.g.
+        // `(ISpanFormattable)value` on a shared-generic reference T in
+        // DefaultInterpolatedStringHandler. SharpOS cut: the unrolled interface
+        // scan and the cast cache; the same answer through AreTypesAssignable.
+        [RuntimeExport("RhTypeCast_CheckCastInterface")]
+        public static unsafe object RhTypeCast_CheckCastInterface(GcMethodTable* pTargetType, object obj)
+        {
+            if (obj == null) return null;
+            GcMethodTable* mt = *(GcMethodTable**)*(nint*)&obj;
+            if (AreTypesAssignable(mt, pTargetType, boxedSource: true, allowSizeEquivalence: false))
+                return obj;
+            throw new InvalidCastException();
+        }
+
+        [RuntimeExport("RhTypeCast_CheckCastClass")]
+        public static unsafe object RhTypeCast_CheckCastClass(GcMethodTable* pTargetType, object obj)
+        {
+            if (obj == null) return null;
+            GcMethodTable* mt = *(GcMethodTable**)*(nint*)&obj;
+            if (mt == pTargetType ||
+                AreTypesAssignable(mt, pTargetType, boxedSource: true, allowSizeEquivalence: false))
+                return obj;
+            throw new InvalidCastException();
+        }
+
         // checkcast to a class (non-interface, non-array target). JIT inlines the
         // trivial obj==null / mt==target cases; this slow path walks the base
         // chain and throws on miss.
@@ -359,26 +488,28 @@ namespace SharpOS.Std.NoRuntime
             nint objAddr = *(nint*)&obj;
             GcMethodTable* mt = *(GcMethodTable**)objAddr;
 
-            const int MaxDepth = 64;
-            GcMethodTable* cur = mt;
-            for (int i = 0; i < MaxDepth; i++)
-            {
-                cur = cur->GetBaseType();
-                if (cur == pTargetType) return obj;
-                if (cur == null) break;
-            }
+            if (mt == pTargetType ||
+                AreTypesAssignable(mt, pTargetType, boxedSource: true, allowSizeEquivalence: false))
+                return obj;
             throw new InvalidCastException();
         }
 
         // ref array[index] for reference-element arrays. ILC emits this for
         // `ref a[i]` (e.g. Interlocked.CompareExchange(ref list[i], ...) in
-        // MulticastDelegate.TrySetSlot). Trusted: skip null/bounds/covariance
-        // checks (same policy as RhpStelemRef). Array layout: MT@0, Length@8,
-        // element[0]@16, 8 bytes each.
+        // MulticastDelegate.TrySetSlot). Ported from TypeCast.LdelemaRef: a
+        // `ref` into a covariant array must be to exactly the element type,
+        // or a later store through it would bypass the store check. Array
+        // layout: MT@0, Length@8, element[0]@16, 8 bytes each.
         [RuntimeExport("RhpLdelemaRef")]
         public static unsafe ref object RhpLdelemaRef(System.Array array, nint index, System.IntPtr elementType)
         {
+            if (array == null)
+                throw new NullReferenceException();
             nint arrayAddr = *(nint*)&array;
+            if ((ulong)index >= *(uint*)((byte*)arrayAddr + 8))
+                throw new IndexOutOfRangeException();
+            if ((GcMethodTable*)elementType != (*(GcMethodTable**)arrayAddr)->RelatedType)
+                throw new ArrayTypeMismatchException();
             byte* slot = (byte*)arrayAddr + 16 + index * 8;
             // Same pattern Buffer.cs uses (proven to compile in this project):
             // reinterpret the element slot as `ref object`.

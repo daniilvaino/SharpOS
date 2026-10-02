@@ -126,7 +126,10 @@ namespace System
         public override string ToString() => new string(new char[] { _value });
     }
 
-    public struct SByte : IEquatable<sbyte>, IComparable<sbyte>, IComparable
+    // Formatting (ToString overloads, IFormattable, ISpanFormattable) and the
+    // IEEE classification statics of the numeric primitives live in
+    // std-no-runtime/Number/Primitives.Formatting.cs, shared by both tiers.
+    public partial struct SByte : IEquatable<sbyte>, IComparable<sbyte>, IComparable
     {
         public const sbyte MaxValue = (sbyte)0x7F;
         public const sbyte MinValue = unchecked((sbyte)0x80);
@@ -137,10 +140,9 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(sbyte other) => _value - other;
         public int CompareTo(object obj) => obj is sbyte v ? CompareTo(v) : 1;
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.IntToString(_value);
     }
 
-    public struct Byte : IEquatable<byte>, IComparable<byte>, IComparable
+    public partial struct Byte : IEquatable<byte>, IComparable<byte>, IComparable
     {
         public const byte MaxValue = (byte)0xFF;
         public const byte MinValue = 0;
@@ -151,10 +153,9 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(byte other) => _value - other;
         public int CompareTo(object obj) => obj is byte v ? CompareTo(v) : 1;
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
     }
 
-    public struct Int16 : IEquatable<short>, IComparable<short>, IComparable
+    public partial struct Int16 : IEquatable<short>, IComparable<short>, IComparable
     {
         public const short MaxValue = (short)0x7FFF;
         public const short MinValue = unchecked((short)0x8000);
@@ -165,10 +166,9 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(short other) => _value - other;
         public int CompareTo(object obj) => obj is short v ? CompareTo(v) : 1;
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.IntToString(_value);
     }
 
-    public struct UInt16 : IEquatable<ushort>, IComparable<ushort>, IComparable
+    public partial struct UInt16 : IEquatable<ushort>, IComparable<ushort>, IComparable
     {
         public const ushort MaxValue = (ushort)0xFFFF;
         public const ushort MinValue = 0;
@@ -179,10 +179,9 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(ushort other) => _value - other;
         public int CompareTo(object obj) => obj is ushort v ? CompareTo(v) : 1;
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
     }
 
-    public struct Int32 : IEquatable<int>, IComparable<int>, IComparable
+    public partial struct Int32 : IEquatable<int>, IComparable<int>, IComparable
     {
         public const int MaxValue = 0x7FFFFFFF;
         public const int MinValue = unchecked((int)0x80000000);
@@ -193,8 +192,6 @@ namespace System
         public override int GetHashCode() => _value;
         public int CompareTo(int other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is int v ? CompareTo(v) : 1;
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.IntToString(_value);
-        public string ToString(string format) => SharpOS.Std.NoRuntime.NumberFormatting.FormatInt64(_value, format);
 
         public static int Parse(string s)
         {
@@ -207,7 +204,7 @@ namespace System
             => SharpOS.Std.NoRuntime.NumberParsing.TryParseInt32(s, out result);
     }
 
-    public struct UInt32 : IEquatable<uint>, IComparable<uint>, IComparable
+    public partial struct UInt32 : IEquatable<uint>, IComparable<uint>, IComparable
     {
         public const uint MaxValue = 0xFFFFFFFFu;
         public const uint MinValue = 0u;
@@ -218,10 +215,9 @@ namespace System
         public override int GetHashCode() => (int)_value;
         public int CompareTo(uint other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is uint v ? CompareTo(v) : 1;
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(_value);
     }
 
-    public struct Int64 : IEquatable<long>, IComparable<long>, IComparable
+    public partial struct Int64 : IEquatable<long>, IComparable<long>, IComparable
     {
         public const long MaxValue = 0x7FFFFFFFFFFFFFFFL;
         public const long MinValue = unchecked((long)0x8000000000000000L);
@@ -232,7 +228,6 @@ namespace System
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
         public int CompareTo(long other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is long v ? CompareTo(v) : 1;
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.LongToString(_value);
 
         public static long Parse(string s)
         {
@@ -245,7 +240,7 @@ namespace System
             => SharpOS.Std.NoRuntime.NumberParsing.TryParseInt64(s, out result);
     }
 
-    public struct UInt64 : IEquatable<ulong>, IComparable<ulong>, IComparable
+    public partial struct UInt64 : IEquatable<ulong>, IComparable<ulong>, IComparable
     {
         public const ulong MaxValue = 0xFFFFFFFFFFFFFFFFuL;
         public const ulong MinValue = 0uL;
@@ -256,7 +251,6 @@ namespace System
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
         public int CompareTo(ulong other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is ulong v ? CompareTo(v) : 1;
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.ULongToString(_value);
     }
 
     // IntPtr / UIntPtr = native-sized integer (8 bytes on x64, 4 on x86).
@@ -266,7 +260,7 @@ namespace System
     // does `(IntPtr)someLong` or `(IntPtr)somePtr` compiles. The underlying
     // storage is a recursive `nint` — ILC special-cases primitives by
     // namespace+name, same trick as Int32._value.
-    public readonly struct IntPtr
+    public readonly partial struct IntPtr
     {
         private readonly nint _value;
 
@@ -302,10 +296,9 @@ namespace System
 
         public override bool Equals(object obj) => obj is IntPtr p && p._value == _value;
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.LongToString((long)_value);
     }
 
-    public readonly struct UIntPtr
+    public readonly partial struct UIntPtr
     {
         private readonly nuint _value;
 
@@ -341,7 +334,6 @@ namespace System
 
         public override bool Equals(object obj) => obj is UIntPtr p && p._value == _value;
         public override int GetHashCode() => (int)_value ^ (int)(_value >> 32);
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.ULongToString((ulong)_value);
     }
     // Single / Double MUST carry the recursive `_value` instance field — the
     // same BCL convention as Int32/Boolean/Char. Without it the struct is an
@@ -351,7 +343,7 @@ namespace System
     // in string.Format {0:F2} → bad MT 0xFFFFFFFF00000000). The field gives the
     // type its true 4/8-byte size so the box is correct. Bit patterns of the
     // constants match dotnet/runtime; NaN / Infinity are IEEE-754 const-foldable.
-    public struct Single
+    public partial struct Single
     {
 #pragma warning disable 169
         private float _value;
@@ -365,7 +357,7 @@ namespace System
         public const float NaN = (float)0.0 / (float)0.0;
     }
 
-    public struct Double
+    public partial struct Double
     {
         private double _value;
 
@@ -390,8 +382,6 @@ namespace System
             return (bits & 0x7FFFFFFFFFFFFFFFul) == 0x7FF0000000000000ul;
         }
 
-        public override string ToString() => SharpOS.Std.NoRuntime.NumberFormatting.DoubleToString(_value);
-        public string ToString(string format) => SharpOS.Std.NoRuntime.NumberFormatting.DoubleToString(_value, format);
     }
 
     public abstract class ValueType { }
@@ -486,8 +476,75 @@ namespace System
         }
     }
 
-    public abstract class Type { }
-    public class RuntimeType : Type { }
+    /// <summary>
+    /// A type, cut down to what <c>typeof</c> needs — which is identity and
+    /// nothing else.
+    /// </summary>
+    /// <remarks>
+    /// This was an empty placeholder until apps started using records. Every
+    /// record makes the compiler emit
+    /// <c>EqualityContract =&gt; typeof(X)</c> and compare two of them with
+    /// <c>==</c>, so a record cannot compile without GetTypeFromHandle and the
+    /// equality operator.
+    ///
+    /// What a type IS here is its MethodTable pointer, and that is the whole
+    /// implementation. Two instances describing the same type are equal
+    /// without being the same object, which is the property record equality
+    /// rests on.
+    ///
+    /// Everything reflective stays absent: no Name, no members, no
+    /// inheritance queries, no Type.GetType(string). Those need metadata the
+    /// compiler does not emit for us, and inventing answers reads as real.
+    /// </remarks>
+    public abstract class Type
+    {
+        // MethodTable*. Unique per type and stable for the life of the image.
+        internal readonly IntPtr _handle;
+
+        internal Type(IntPtr handle)
+        {
+            _handle = handle;
+        }
+
+        /// <summary>
+        /// What <c>typeof(X)</c> becomes: the compiler emits <c>ldtoken X</c>
+        /// and calls this with the resulting handle.
+        /// </summary>
+        public static Type GetTypeFromHandle(RuntimeTypeHandle handle)
+            => new RuntimeType(handle._value);
+
+        public RuntimeTypeHandle TypeHandle
+        {
+            get
+            {
+                RuntimeTypeHandle handle = default;
+                handle._value = _handle;
+                return handle;
+            }
+        }
+
+        public static bool operator ==(Type left, Type right)
+        {
+            if ((object)left == null) return (object)right == null;
+            if ((object)right == null) return false;
+            return left._handle == right._handle;
+        }
+
+        public static bool operator !=(Type left, Type right) => !(left == right);
+
+        // `is` with a concrete type rather than `as`: the cast helper the
+        // latter needs is not linked in here.
+        public override bool Equals(object obj)
+            => obj is Type other && other._handle == _handle;
+
+        public override int GetHashCode() => unchecked((int)(long)_handle);
+    }
+
+    public class RuntimeType : Type
+    {
+        internal RuntimeType(IntPtr handle) : base(handle) { }
+    }
+
 
     // Base class for all arrays. Length is stored at offset 8 (after the
     // MethodTable pointer) by RhpNewArray and read here via managed field
@@ -626,6 +683,11 @@ namespace System
             // ref structs (C#11 feature, used by Span<T>'s ByReference<T>
             // storage). Without this const the compiler emits CS9064.
             public const string ByRefFields = nameof(ByRefFields);
+            // Static abstract interface members (C# 11). Without it the compiler
+            // refuses them with CS8919; ILC 8 compiles them, resolving each call
+            // at its exact instantiation. The ported number formatter's
+            // IUtfChar<TChar> (char/byte) is the first user.
+            public const string VirtualStaticsInInterfaces = nameof(VirtualStaticsInInterfaces);
         }
 
         public enum MethodImplOptions

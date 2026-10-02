@@ -31,6 +31,17 @@ namespace System
         public static unsafe double Int64BitsToDouble(long value) => *(double*)&value;
         public static unsafe long DoubleToInt64Bits(double value) => *(long*)&value;
 
+        // Unsigned twins (BCL .NET 6+); the number formatter reads the IEEE
+        // fields through them.
+        [CLSCompliant(false)]
+        public static unsafe float UInt32BitsToSingle(uint value) => *(float*)&value;
+        [CLSCompliant(false)]
+        public static unsafe uint SingleToUInt32Bits(float value) => *(uint*)&value;
+        [CLSCompliant(false)]
+        public static unsafe double UInt64BitsToDouble(ulong value) => *(double*)&value;
+        [CLSCompliant(false)]
+        public static unsafe ulong DoubleToUInt64Bits(double value) => *(ulong*)&value;
+
         // byte[]-reader subset (step141: ManagedDoom WAD/lump parsing).
         // Little-endian composition, bounds via the array indexer.
         public static short ToInt16(byte[] value, int startIndex)

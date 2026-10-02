@@ -1439,6 +1439,11 @@ namespace OS.Kernel.Diagnostics
             Probe_ThreadHandoffWithGc();
             Probe_OomDeterministic();
             Probe_StelemChecks();
+            ReportProbe("shared generator ran (image " + SharpOS.Generated.ImageInfo.AssemblyName + ")",
+                        SharpOS.Generated.ImageInfo.AssemblyName.Length != 0, 0);
+            if (Probes.ExchangeHeap)
+                ExchangeHeapProbe.Run();
+            StdSurfaceProbe.Run();
             Log.Write(LogLevel.Info, "---- nativeaot probe (late) end ----");
         }
 

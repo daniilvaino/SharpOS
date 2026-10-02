@@ -245,9 +245,6 @@ namespace OS.Boot
             // an app's service call saw no stack roots at all.
             SharpOS.Std.NoRuntime.GC.s_collectHook = &global::OS.Kernel.Memory.KernelGC.Collect;
 
-            // A cctor another thread is running is waited for — except from an
-            // interrupt handler, which would wait on the thread it interrupted.
-            System.Runtime.CompilerServices.ClassConstructorRunner.s_canWait = &global::OS.Kernel.Threading.Preemption.CanWait;
 
             // Who allocates, sampled by allocation. The heap census says what
             // fills the heap; this says who put it there.
@@ -260,7 +257,7 @@ namespace OS.Boot
             // it the two calls; apps leave them null and stay as they were.
             SharpOS.Std.NoRuntime.GcHeap.s_enterCritical = &global::OS.Kernel.Threading.Preemption.Suppress;
             SharpOS.Std.NoRuntime.GcHeap.s_leaveCritical = &global::OS.Kernel.Threading.Preemption.Allow;
-            Log.Write(LogLevel.Info, "gc collect hook installed (conservative)");
+            Log.Write(LogLevel.Info, "gc collect hook installed (precise once the walker is up)");
 
             // Force-init NativeAotModuleInit (RTR walking + TypeManager).
             // Anchor MT for the scan = `EETypePtrOf<object>()` intrinsic,
@@ -292,6 +289,20 @@ namespace OS.Boot
             // address of the statics — a wild pointer, not an error.
             if (!GcStaticsMaterializer.Materialize())
                 Panic.Fail("gc statics materialization failed");
+
+            // Hooks that ask Scheduler.Current, and so read a GC static: only
+            // after the statics exist. Installed with the collect hook at
+            // first, the allocation check ran on the materializer's own
+            // allocations, read the static before it was there, and the
+            // machine died at boot (QEMU itself crashed, twice, 2026-10-03).
+            //
+            // A cctor another thread is running is waited for — except from an
+            // interrupt handler, which would wait on the thread it interrupted.
+            System.Runtime.CompilerServices.ClassConstructorRunner.s_canWait = &global::OS.Kernel.Threading.Preemption.CanWait;
+
+            // No allocation from an interrupt handler: counted by the heap,
+            // reported at the end of the app batch.
+            SharpOS.Std.NoRuntime.GcHeap.s_allocationAllowed = &global::OS.Kernel.Threading.Preemption.CanWait;
         }
 
         // ─────────────────────────────────────────────────────────────────

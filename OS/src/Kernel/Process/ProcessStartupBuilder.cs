@@ -52,8 +52,27 @@ namespace OS.Kernel.Process
                 return false;
             }
 
-            ulong entryStackTop = AlignDown(startupVirtual - StackHeadroom, StackAlignment);
-            if (entryStackTop <= processImage.StackBase || entryStackTop > startupVirtual)
+            // Startup data (StartupData: arguments, later pipe ends) goes under
+            // the startup block, and the stack starts under it. Written through
+            // its virtual address, so only with the pager root active — it may
+            // cross a page, and the physical alias of one page says nothing
+            // about the next.
+            ulong dataLength = Pager.IsPagerRootActive() ? StartupData.PendingLength : 0;
+            ulong dataVirtual = 0;
+            ulong belowStartup = startupVirtual;
+            if (dataLength != 0)
+            {
+                dataVirtual = AlignDown(startupVirtual - dataLength, StartupBlockAlignment);
+                if (dataVirtual < processImage.StackBase + StackHeadroom + 4096)
+                {
+                    Log.Write(LogLevel.Warn, "process startup: startup data leaves no stack");
+                    return false;
+                }
+                belowStartup = dataVirtual;
+            }
+
+            ulong entryStackTop = AlignDown(belowStartup - StackHeadroom, StackAlignment);
+            if (entryStackTop <= processImage.StackBase || entryStackTop > belowStartup)
             {
                 Log.Write(LogLevel.Warn, "process startup: entry stack top is invalid");
                 return false;
@@ -119,6 +138,14 @@ namespace OS.Kernel.Process
                 : (ProcessStartupBlock*)startupPhysical;
 
             *startupPointer = startup;
+
+            if (dataLength != 0)
+            {
+                StartupData.Take((byte*)dataVirtual);
+                AppServiceTable* table = (AppServiceTable*)serviceVirtual;
+                table->StartupDataAddress = dataVirtual;
+                table->StartupDataLength = (uint)dataLength;
+            }
 
             processImage.AbiVersion = startup.AbiVersion;
             processImage.AbiFlags = startup.Flags;

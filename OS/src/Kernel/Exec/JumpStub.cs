@@ -212,6 +212,7 @@ namespace OS.Kernel.Exec
 
             OS.Boot.EH.ExInfoHead.s_head = context->ExInfoHead;
             OS.Kernel.Threading.Preemption.RestoreDepth(context->PreemptionDepth);
+            OS.Kernel.Process.ProcessResources.MarkFailed(OS.Kernel.Threading.Scheduler.Current?.AppGeneration ?? 0);
 
             Console.Write("[app] unhandled exception: app ended, exit code ");
             Console.WriteUInt(UnhandledExitCode);

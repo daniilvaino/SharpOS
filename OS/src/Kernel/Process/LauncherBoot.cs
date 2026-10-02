@@ -98,6 +98,15 @@ namespace OS.Kernel.Process
             UiText.WriteUInt(failed);
             DebugLog.EndLine();
 
+            // Must be zero: an allocation from an interrupt handler can land in
+            // the middle of the interrupted thread's own allocation.
+            DebugLog.Begin(LogLevel.Info);
+            UiText.Write("kernel allocations inside interrupts: ");
+            UiText.WriteULong(SharpOS.Std.NoRuntime.GcHeap.AllocationsWhereForbidden);
+            UiText.Write(" last size=");
+            UiText.WriteUInt(SharpOS.Std.NoRuntime.GcHeap.LastForbiddenSize);
+            DebugLog.EndLine();
+
             // "passed: 0 / failed: 0" reads as a green batch while meaning the
             // opposite — every app was optional and none was on the disk.
             if (passed == 0 && failed == 0)
@@ -233,6 +242,7 @@ namespace OS.Kernel.Process
             bool jumpOk = false;
             int returnExitCode = 0;
             uint previousGeneration = OS.Kernel.Threading.Scheduler.EnterApp(out uint appGeneration);
+            ProcessResources.OnAppStarted(appGeneration);
             try
             {
                 jumpOk = JumpStub.Run(

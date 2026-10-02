@@ -267,6 +267,16 @@ namespace SharpOS.Std.NoRuntime
         //
         // Left as hooks rather than a direct call so std stays free of kernel
         // types — same shape as GC.s_collectHook.
+        // Whether the caller may allocate here. The kernel answers no inside an
+        // interrupt handler: the thread it interrupted may be inside the heap
+        // with the critical section held, and a collection the allocation
+        // triggers could not run there anyway (pipe_plan.md "Подготовить под
+        // трубы", item 6). Counted, not refused — refusing from a handler is a
+        // panic, and the count is what says whether any handler does it.
+        public static delegate*<bool> s_allocationAllowed;
+        public static ulong AllocationsWhereForbidden;
+        public static uint LastForbiddenSize;
+
         public static delegate*<void> s_enterCritical;
         public static delegate*<void> s_leaveCritical;
 
@@ -560,6 +570,12 @@ namespace SharpOS.Std.NoRuntime
 
         private static void* Allocate(uint size, void* methodTable, int length, bool hasLength)
         {
+            if (s_allocationAllowed != null && !s_allocationAllowed())
+            {
+                AllocationsWhereForbidden++;
+                LastForbiddenSize = size;
+            }
+
             if (!s_initialized)
                 return null;
             if (size == 0 || size > MaxAllocationSize)

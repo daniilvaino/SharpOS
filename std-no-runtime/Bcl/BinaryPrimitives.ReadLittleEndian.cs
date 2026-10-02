@@ -25,6 +25,23 @@ namespace System.Buffers.Binary
 {
     public static partial class BinaryPrimitives
     {
+        // Double / Single: from release/8.0 BinaryPrimitives.ReadLittleEndian.cs.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static double ReadDoubleLittleEndian(ReadOnlySpan<byte> source)
+        {
+            return !BitConverter.IsLittleEndian ?
+                BitConverter.Int64BitsToDouble(ReverseEndianness(MemoryMarshal.Read<long>(source))) :
+                MemoryMarshal.Read<double>(source);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static float ReadSingleLittleEndian(ReadOnlySpan<byte> source)
+        {
+            return !BitConverter.IsLittleEndian ?
+                BitConverter.Int32BitsToSingle(ReverseEndianness(MemoryMarshal.Read<int>(source))) :
+                MemoryMarshal.Read<float>(source);
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static short ReadInt16LittleEndian(ReadOnlySpan<byte> source)
         {
