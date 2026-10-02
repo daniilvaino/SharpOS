@@ -700,17 +700,31 @@ foreach ($staleElf in @("HELLO.ELF", "ABIINFO.ELF", "MARKER.ELF", "HELLOCS.ELF",
 # could be separated by a copy, and a missing one meant a silent fall back to
 # V1 — the failure looked like the app misbehaving rather than like a file left
 # behind. Stale sidecars from earlier builds are deleted below.
+# Выводится, а не выписывается. Ровно те же девять имён, что стояли здесь
+# руками: у всех ESP-имя это Short в верхнем регистре (FetchApp -> FETCH,
+# DoomApp -> DOOM, TriCNESApp -> TRICNES). Список был вторым реестром рядом с
+# tools/Apps.ps1, и они разошлись при первом же новом приложении: оно
+# собралось, потому что его находит Get-SharpOsApps, и не попало на образ,
+# потому что сюда его никто не вписал.
+. (Join-Path $repoRoot "tools/Apps.ps1")
 $peApps = @(
-    @{ Src = "apps_native\FetchApp\bin\Release\out-win-x64\FetchApp.exe";         Dest = "FETCH.EXE" },
-    @{ Src = "apps_native\AotTests\bin\Release\out-win-x64\AotTests.exe";         Dest = "AOTTESTS.EXE" },
-    @{ Src = "apps_native\BenchAot\bin\Release\out-win-x64\BenchAot.exe";         Dest = "BENCHAOT.EXE" },
-    @{ Src = "apps_native\GPL_AHEAD_WARNING_DOOM_managed\bin\Release\out-win-x64\DoomApp.exe"; Dest = "DOOM.EXE" },
-    @{ Src = "apps_native\TriCNES\bin\Release\out-win-x64\TriCNESApp.exe";        Dest = "TRICNES.EXE" },
-    @{ Src = "apps_native\Fami\bin\Release\out-win-x64\FamiApp.exe";              Dest = "FAMI.EXE" },
-    @{ Src = "apps_native\Launcher\bin\Release\out-win-x64\Launcher.exe";         Dest = "LAUNCHER.EXE" },
-    @{ Src = "apps_native\Shell\bin\Release\out-win-x64\Shell.exe";               Dest = "SHELL.EXE" },
-    @{ Src = "apps_native\UsbTest\bin\Release\out-win-x64\UsbTest.exe";           Dest = "USBTEST.EXE" }
+    Get-SharpOsApps -RepoRoot $repoRoot | ForEach-Object {
+        # Относительный, как и прежние записи: ниже цикл делает
+        # Join-Path $repoRoot $peApp.Src, и абсолютный путь его сломал бы.
+        $folder = (Split-Path -Path $_.Project -Parent).Substring($repoRoot.Length).TrimStart('\', '/')
+        $short  = $_.Short.ToUpperInvariant()
+        # Имя файла на образе — 8.3: наш FAT создаёт только такие, и приложение
+        # с длинным именем молча не появилось бы в лаунчере.
+        if ($short.Length -gt 8) {
+            throw "имя приложения '$($_.Short)' длиннее 8 символов — на образе оно станет $short.EXE, а FAT такого не создаст"
+        }
+        @{
+            Src  = (Join-Path (Join-Path $folder "bin\Release\out-win-x64") "$($_.Name).exe")
+            Dest = "$short.EXE"
+        }
+    }
 )
+Write-Host "на образ: $(($peApps | ForEach-Object { $_.Dest }) -join ' ')"
 foreach ($peApp in $peApps) {
     $peSrc = Join-Path $repoRoot $peApp.Src
     $peDst = Join-Path $espAppsDir $peApp.Dest

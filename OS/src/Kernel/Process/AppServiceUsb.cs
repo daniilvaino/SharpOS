@@ -1,4 +1,4 @@
-﻿namespace OS.Kernel.Process
+namespace OS.Kernel.Process
 {
     using OS.Hal.Usb;
 
@@ -43,6 +43,17 @@
             uint capacity = request->Capacity;
             uint count = 0;
 
+            // Both descriptor buffers live here, above both loops, because
+            // stackalloc is not released at the end of an iteration — the stack
+            // pointer only comes back when the method returns. Inside the device
+            // loop these 530 bytes were taken again per device and again per
+            // controller, so a hub tree of a hundred devices would have eaten 53
+            // KiB of a 64 KiB kernel stack and the overflow would have looked like
+            // a USB bug. One buffer each, reused: every iteration overwrites what
+            // it then reads, and neither pointer outlives its iteration.
+            byte* device = stackalloc byte[18];
+            byte* descriptor = stackalloc byte[512];
+
             for (int c = 0; c < Xhci.Count; c++)
             {
                 XhciController hc = Xhci.Get(c);
@@ -84,7 +95,6 @@
                     // control transfer on a configured device is the cheapest
                     // request there is, and it happens when someone asks for
                     // the listing, not at boot.
-                    byte* device = stackalloc byte[18];
                     if (hc.TryFetchDeviceDescriptor(slot, device, 18, out int deviceLength)
                         && deviceLength >= 12)
                     {
@@ -124,7 +134,6 @@
                     // The configuration descriptor, walked here rather than
                     // remembered: the stack keeps only what it drives, and a
                     // device manager has to show what it declined too.
-                    byte* descriptor = stackalloc byte[512];
                     if (!hc.TryFetchConfigDescriptor(slot, descriptor, 512, out int length))
                         continue;
 

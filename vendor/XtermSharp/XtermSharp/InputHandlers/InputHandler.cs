@@ -46,10 +46,18 @@ namespace XtermSharp {
 
 			// REP repeats the preceding *printed* character; any control function in between
 			// invalidates it (ECMA-48 leaves that case undefined, xterm.js makes it a no-op).
-			parser.ControlDispatched = (code) => {
-				if (code != (byte)'b')
-					precedingCodepoint = -1;
-			};
+			//
+			// SharpOS cut: a method group instead of a lambda. As a lambda this
+			// captured `this`, so Roslyn built a closure object and the delegate
+			// pointed at that; the write became two indirections, closure ->
+			// InputHandler -> field. On 2026-09-30 it faulted there with the
+			// closure's captured reference reading zero (write to 0x20, not
+			// present) and took the machine down. A method group has no closure
+			// and no allocation: the delegate targets the InputHandler itself and
+			// the write is one indirection. Whether that removes the fault or
+			// only moves it one level up is the point — it is also simpler code,
+			// so it stands either way.
+			parser.ControlDispatched = OnControlDispatched;
 
 			// Print handler
 			unsafe { parser.SetPrintHandler (Print); }
@@ -953,6 +961,13 @@ namespace XtermSharp {
 		// 
 		// CSI Ps b  Repeat the preceding graphic character Ps times (REP).
 		//
+		// SharpOS cut: extracted from a lambda in the constructor, see there.
+		void OnControlDispatched (byte code)
+		{
+			if (code != (byte)'b')
+				precedingCodepoint = -1;
+		}
+
 		void RepeatPrecedingCharacter (int [] pars)
 		{
 			var p = Math.Max (pars.Length == 0 ? 1 : pars [0], 1);
