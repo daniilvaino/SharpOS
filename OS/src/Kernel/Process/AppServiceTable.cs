@@ -242,6 +242,12 @@
         // collector runs under load. Answers the number of failures, negative
         // when the hand-over itself was refused. Zero: not published.
         public ulong RegionToKernelAddress;
+
+        // The other direction: the kernel writes the same graph into an
+        // exchange block the calling run owns, and the schema into another.
+        // Takes a ulong[4] that gets region, length, schema, schema length;
+        // answers 0, negative when it could not. Zero: not published.
+        public ulong RegionFromKernelAddress;
     }
 
     /// <summary>

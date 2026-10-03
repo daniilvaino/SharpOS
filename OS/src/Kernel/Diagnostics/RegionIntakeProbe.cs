@@ -42,6 +42,58 @@ namespace OS.Kernel.Diagnostics
         private static volatile int s_running;
         private static volatile bool s_stop;
 
+        /// <summary>
+        /// The other direction: the kernel builds the graph in its own heap,
+        /// writes it into an exchange block the calling run owns, and the
+        /// schema into a second one. <paramref name="answer"/> gets region,
+        /// length, schema, schema length. 0, or negative when it could not.
+        /// </summary>
+        public static int Give(ulong* answer)
+        {
+            uint generation = Scheduler.Current?.AppGeneration ?? 0;
+            if (answer == null || generation == 0)
+                return -1;
+            try
+            {
+                RegionProbeGraph.Declare();
+                if (RegionProbeGraph.Problems != 0)
+                    return -2;
+
+                object graph = RegionProbeGraph.Build(Numbers);
+                Region.Plan plan = Region.Lay(graph, out string complaint);
+                if (plan == null)
+                {
+                    Say("give: " + complaint);
+                    return -3;
+                }
+                byte[] schema = RegionSchema.Build(TypeKeys.Declared);
+
+                byte* region = (byte*)ExchangeHeap.Allocate(plan.Size, generation);
+                byte* schemaBlock = (byte*)ExchangeHeap.Allocate((ulong)schema.Length, generation);
+                if (region == null || schemaBlock == null)
+                {
+                    if (region != null) ExchangeHeap.Free(region);
+                    if (schemaBlock != null) ExchangeHeap.Free(schemaBlock);
+                    return -4;
+                }
+                Region.Write(plan, region);
+                for (int i = 0; i < schema.Length; i++)
+                    schemaBlock[i] = schema[i];
+
+                answer[0] = (ulong)region;
+                answer[1] = plan.Size;
+                answer[2] = (ulong)schemaBlock;
+                answer[3] = (ulong)schema.Length;
+                Say($"gave generation {generation} {plan.Count} objects, {plan.Size} bytes");
+                return 0;
+            }
+            catch (Exception e)
+            {
+                Say("give threw: " + e.Message);
+                return -5;
+            }
+        }
+
         public static int Receive(byte* region, ulong length, byte* schema, ulong schemaLength)
         {
             uint generation = Scheduler.Current?.AppGeneration ?? 0;
@@ -153,8 +205,68 @@ namespace OS.Kernel.Diagnostics
             try { InterfaceOn(untranslated); }
             catch (AccessViolationException) { caught = true; }
             failed += Expect("untranslated: interface dispatch throws, caught", caught);
+
+            // Interface calls by the number of implementations: what ILC made
+            // of each, printed rather than asserted here — the battery asserts
+            // the app's.
+            Say("untranslated: interface, 1 implementation: " + Outcome(1, untranslated));
+            Say("untranslated: interface, 2 implementations: " + Outcome(2, untranslated));
+            Say("untranslated: interface, 3 implementations: " + Outcome(3, untranslated));
+
+            // A table carrying a collector's mark in bit 0 is still a table:
+            // the resolver must dispatch through it, not take it for a key.
+            // Set by hand under suppression, so no collection and no other
+            // thread sees the object marked.
+            Shaped marked = new Shaped();
+            object markedObject = marked;
+            ulong markedAt = System.Runtime.CompilerServices.Unsafe.As<object, ulong>(ref markedObject);
+            int label = 0;
+            bool threw = false;
+            Preemption.Suppress();
+            try
+            {
+                *(ulong*)markedAt |= 1;
+                label = InterfaceOn(marked);
+            }
+            catch (AccessViolationException)
+            {
+                threw = true;
+            }
+            finally
+            {
+                *(ulong*)markedAt &= ~1UL;
+                Preemption.Allow();
+            }
+            failed += Expect("marked table: interface dispatch goes through, Label() == 50", !threw && label == 50);
+
+            bool allKeys = true;
+            foreach (TypeKeys.Description d in TypeKeys.Declared)
+                allKeys &= TypeKeys.IsKeyWord(d.Key);
+            failed += Expect("every key is odd and non-canonical", allKeys);
             return failed;
         }
+
+        private static string Outcome(int implementations, object o)
+        {
+            try
+            {
+                int value = implementations == 1 ? SingleOn(o) : implementations == 2 ? RankedOn(o) : TripleOn(o);
+                return "returned " + value.ToString();
+            }
+            catch (AccessViolationException)
+            {
+                return "AccessViolationException";
+            }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int SingleOn(object o) => System.Runtime.CompilerServices.Unsafe.As<ISingle>(o).Single();
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int RankedOn(object o) => System.Runtime.CompilerServices.Unsafe.As<IRanked>(o).Sides();
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int TripleOn(object o) => System.Runtime.CompilerServices.Unsafe.As<ITriple>(o).Triple();
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static int VirtualOn(object o) => System.Runtime.CompilerServices.Unsafe.As<Base>(o).Rank();

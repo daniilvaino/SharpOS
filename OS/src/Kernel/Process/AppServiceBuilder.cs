@@ -341,7 +341,10 @@ namespace OS.Kernel.Process
                 table.ExchangeAllocateAddress = (ulong)(nint)(delegate* unmanaged<ulong, void*>)&AppExchangeAllocate;
                 table.ExchangeFreeAddress = (ulong)(nint)(delegate* unmanaged<void*, uint>)&AppExchangeFree;
                 if (OS.Kernel.Diagnostics.Probes.RegionIntake)
+                {
                     table.RegionToKernelAddress = (ulong)(nint)(delegate* unmanaged<void*, ulong, void*, ulong, int>)&AppRegionToKernel;
+                    table.RegionFromKernelAddress = (ulong)(nint)(delegate* unmanaged<ulong*, int>)&AppRegionFromKernel;
+                }
             }
 
             AppServiceTable* serviceTablePointer = Pager.IsPagerRootActive()
@@ -1321,6 +1324,10 @@ namespace OS.Kernel.Process
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static int AppRegionToKernel(void* region, ulong length, void* schema, ulong schemaLength)
             => OS.Kernel.Diagnostics.RegionIntakeProbe.Receive((byte*)region, length, (byte*)schema, schemaLength);
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int AppRegionFromKernel(ulong* answer)
+            => OS.Kernel.Diagnostics.RegionIntakeProbe.Give(answer);
 
         private static uint TryReadKey(ulong requestAddress)
         {

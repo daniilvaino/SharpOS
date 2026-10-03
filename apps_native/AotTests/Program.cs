@@ -65,16 +65,11 @@ namespace AotTests
             // its own: one of them may end the program, and the battery must
             // not go with it. Exit 1 — an exception, caught here; 2 — the call
             // returned without a fault (the value is printed); 134 — the
-            // kernel ended the program.
-            //   --untranslated-interface      real dispatch (ILabelled, four
-            //                                 implementations): the kernel's
-            //                                 bridge and resolver read the key;
-            //   --untranslated-devirtualized  IRanked, two implementations: ILC
-            //                                 compiles one table compare.
-            if (arguments.Length > 0 && arguments[0] == "--untranslated-interface")
-                return RunUntranslatedInterface(devirtualized: false);
-            if (arguments.Length > 0 && arguments[0] == "--untranslated-devirtualized")
-                return RunUntranslatedInterface(devirtualized: true);
+            // kernel ended the program. The digit is how many types implement
+            // the interface, which decides what ILC compiles:
+            //   --untranslated-interface1..4  ISingle, IRanked, ITriple, ILabelled.
+            if (arguments.Length > 0 && arguments[0].Length == 25 && arguments[0].StartsWith("--untranslated-interface"))
+                return RunUntranslatedInterface(arguments[0][24] - '0');
 
             AppHost.WriteString("==== AOT app test battery ====\n");
 
@@ -279,6 +274,7 @@ namespace AotTests
             CheckStackTraceText();
             CheckStackTraceOwnership();
             CheckRegion();
+            CheckRegionFromKernel();
 
             // The error stream (step 167). The check can only see that the
             // kernel offers it; whether the marker reached last_err.log and not
@@ -586,6 +582,125 @@ namespace AotTests
             Check("region: the block is the kernel's now", !AppHost.ExchangeFree(block));
         }
 
+        // The other direction (pipe_plan.md "Проверить опытом", 1): the kernel
+        // writes the graph into exchange blocks this run owns; the app prints
+        // it by the schema, translates it in place, and reads it while two of
+        // its threads allocate and a third runs its collector.
+        private static volatile int s_regionStop;
+        private static volatile int s_regionRunning;
+        private static volatile int s_regionAllocations;
+        private static volatile int s_regionCorruptions;
+        private static volatile int s_regionCollections;
+
+        private static void CheckRegionFromKernel()
+        {
+            int given = AppHost.RegionFromKernel(out byte* region, out ulong length, out byte* schema, out ulong schemaLength);
+            Check("region from kernel: two exchange blocks of ours", given == 0 && region != null && schema != null);
+            if (given != 0 || region == null || schema == null)
+                return;
+
+            byte[] schemaBytes = new byte[(int)schemaLength];
+            for (int i = 0; i < schemaBytes.Length; i++)
+                schemaBytes[i] = schema[i];
+            int printed = RegionSchema.Print(region, length, schemaBytes,
+                line => AppHost.WriteString("[region-print] " + line + "\n"), out string printComplaint);
+            Check("region from kernel: printed by the schema alone", printed > 0);
+
+            RegionProbeGraph.Declare();
+            bool resolved = Region.Resolve(region, length, out object root, out string complaint);
+            if (!resolved)
+                AppHost.WriteString("[region] resolve refused: " + complaint + "\n");
+            Check("region from kernel: translated in place", resolved);
+            if (!resolved)
+                return;
+            Check("region from kernel: graph checks out",
+                  RegionProbeGraph.Check(root, RegionProbeGraph.Numbers,
+                      line => AppHost.WriteString("[region] " + line + "\n")) == 0);
+
+            ulong before = RegionChecksum(region, length);
+            object own = RegionProbeGraph.Build(RegionProbeGraph.Numbers);
+            uint collectionsBefore = AppGC.Collections;
+
+            s_regionStop = 0;
+            s_regionRunning = 3;
+            s_regionAllocations = 0;
+            s_regionCorruptions = 0;
+            s_regionCollections = 0;
+            var ring0 = new object[64];
+            var ring1 = new object[64];
+            System.Threading.Tasks.Task.Run(() => RegionAllocate(ring0, 0x11));
+            System.Threading.Tasks.Task.Run(() => RegionAllocate(ring1, 0x77));
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                while (s_regionStop == 0)
+                {
+                    GC.Collect();
+                    s_regionCollections++;
+                    System.Threading.Thread.Sleep(1);
+                }
+                System.Threading.Interlocked.Decrement(ref s_regionRunning);
+            });
+
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            int reads = 0;
+            int readFailures = 0;
+            while (watch.ElapsedMilliseconds < 1000)
+            {
+                readFailures += RegionProbeGraph.Check(root, RegionProbeGraph.Numbers, null);
+                reads++;
+            }
+            s_regionStop = 1;
+            var wait = System.Diagnostics.Stopwatch.StartNew();
+            while (s_regionRunning > 0 && wait.ElapsedMilliseconds < 2000)
+                System.Threading.Thread.Sleep(1);
+
+            AppHost.WriteString("[region] app load: " + reads.ToString() + " reads, "
+                                + s_regionAllocations.ToString() + " allocations, "
+                                + (AppGC.Collections - collectionsBefore).ToString() + " collections" + "\n");
+            Check("region from kernel: reader, allocators and collector all ran",
+                  s_regionRunning == 0 && reads > 0 && s_regionAllocations > 0 && s_regionCollections > 0
+                  && AppGC.Collections > collectionsBefore);
+            Check("region from kernel: every read checked out, bytes unchanged",
+                  readFailures == 0 && RegionChecksum(region, length) == before);
+            Check("region from kernel: the app's own objects intact",
+                  s_regionCorruptions == 0 && RegionProbeGraph.Check(own, RegionProbeGraph.Numbers, null) == 0);
+            Check("region from kernel: both blocks given back", AppHost.ExchangeFree(region) && AppHost.ExchangeFree(schema));
+        }
+
+        private static void RegionAllocate(object[] ring, byte seed)
+        {
+            int n = 0;
+            while (s_regionStop == 0)
+            {
+                int slot = n % ring.Length;
+                if (ring[slot] is byte[] old)
+                {
+                    for (int i = 1; i < old.Length; i++)
+                        if (old[i] != (byte)(old[0] ^ i)) { s_regionCorruptions++; break; }
+                }
+                byte[] block = new byte[40];
+                block[0] = (byte)(seed + n);
+                for (int i = 1; i < block.Length; i++) block[i] = (byte)(block[0] ^ i);
+                ring[slot] = block;
+                string garbage = new string('g', 8 + n % 24);
+                if (garbage.Length == 0) s_regionCorruptions++;
+                n++;
+                s_regionAllocations++;
+            }
+            System.Threading.Interlocked.Decrement(ref s_regionRunning);
+        }
+
+        private static ulong RegionChecksum(byte* p, ulong length)
+        {
+            ulong h = 0xCBF29CE484222325UL;
+            for (ulong i = 0; i < length; i++)
+            {
+                h ^= p[i];
+                h *= 0x100000001B3UL;
+            }
+            return h;
+        }
+
         // An object of the region before translation: its table word holds an
         // odd type key. Each access that reads the table must end in an
         // exception this app catches, and the app must carry on (pipe_plan.md
@@ -616,8 +731,10 @@ namespace AotTests
             Check("untranslated: collect and sleep after the catches", AppGC.LastWalkOk && untranslated != null);
         }
 
-        private static int RunUntranslatedInterface(bool devirtualized)
+        private static int RunUntranslatedInterface(int implementations)
         {
+            if (implementations < 1 || implementations > 4)
+                return 4;
             RegionProbeGraph.Declare();
             object graph = RegionProbeGraph.Build(4);
             Region.Plan plan = Region.Lay(graph, out _);
@@ -632,7 +749,10 @@ namespace AotTests
             string how;
             try
             {
-                int value = devirtualized ? DevirtualizedOnUntranslated(untranslated) : InterfaceOnUntranslated(untranslated);
+                int value = implementations == 1 ? SingleOnUntranslated(untranslated)
+                          : implementations == 2 ? DevirtualizedOnUntranslated(untranslated)
+                          : implementations == 3 ? TripleOnUntranslated(untranslated)
+                          : InterfaceOnUntranslated(untranslated);
                 how = "returned " + value.ToString();
             }
             catch (Exception e)
@@ -640,10 +760,18 @@ namespace AotTests
                 how = ExceptionName(e);
                 result = 1;
             }
-            AppHost.WriteString((devirtualized ? "[untranslated] interface call, two implementations: "
-                                               : "[untranslated] interface call, real dispatch: ") + how + "\n");
+            AppHost.WriteString("[untranslated] interface call, " + implementations.ToString()
+                                + " implementation(s): " + how + "\n");
             return result;
         }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int SingleOnUntranslated(object o)
+            => System.Runtime.CompilerServices.Unsafe.As<SharpOS.Std.Exchange.Probe.ISingle>(o).Single();
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int TripleOnUntranslated(object o)
+            => System.Runtime.CompilerServices.Unsafe.As<SharpOS.Std.Exchange.Probe.ITriple>(o).Triple();
 
         private static string ExceptionName(Exception e)
             => e is AccessViolationException ? "AccessViolationException"

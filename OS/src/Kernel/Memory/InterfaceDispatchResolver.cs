@@ -56,9 +56,11 @@ namespace OS.Kernel.Memory
             GcMethodTable* thisMT = *(GcMethodTable**)thisPtr;
             InterfaceDispatchCell* cell = (InterfaceDispatchCell*)cellPtr;
 
-            // A table word that is not 8-aligned is no table: it is the type
-            // key of a region object nobody translated (SharpOS.Std.Exchange
-            // .Region — keys are odd so that using such an object fails). Left
+            // A table word that is odd and not canonical is no table: it is
+            // the type key of a region object nobody translated
+            // (SharpOS.Std.Exchange.TypeKeys.IsKeyWord). Odd but canonical is a
+            // table with a collector's mark in bit 0, and is used as the table
+            // it is. Left
             // to the walk below, the key faulted in FindImplSlot, in kernel
             // code under the bridge, which has no unwind data: the exception
             // was the kernel's, no frame of the caller was reached, and an app
@@ -66,8 +68,9 @@ namespace OS.Kernel.Memory
             // Instead the call goes to a method that throws, entered by the
             // bridge's tail jump in place of the interface method — so it
             // throws from the caller's own frame.
-            if (((nint)thisMT & 7) != 0)
+            if (SharpOS.Std.Exchange.TypeKeys.IsKeyWord((ulong)thisMT))
                 return UntranslatedTarget(cellPtr);
+            thisMT = (GcMethodTable*)((nint)thisMT & ~1);
 
             cell->GetDispatchCellInfo(out DispatchCellInfo info);
 

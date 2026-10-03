@@ -40,16 +40,19 @@ namespace SharpOS.Std.Exchange.Probe
         public abstract int Rank();
     }
 
-    public sealed class Derived : Base, ILabelled
+    public sealed class Derived : Base, ILabelled, ITriple
     {
         public override int Rank() => 2;
         public int Label() => 20;
+        public int Triple() => 21;
     }
 
-    public sealed class Other : Base, ILabelled
+    public sealed class Other : Base, ILabelled, ISingle, ITriple
     {
         public override int Rank() => 3;
         public int Label() => 30;
+        public int Single() => 31;
+        public int Triple() => 32;
     }
 
     public interface IRanked
@@ -71,10 +74,24 @@ namespace SharpOS.Std.Exchange.Probe
         public int Label() => 50;
     }
 
-    public sealed class Squared : IRanked, ILabelled
+    public sealed class Squared : IRanked, ILabelled, ITriple
     {
         public int Sides() => 4;
         public int Label() => 40;
+        public int Triple() => 41;
+    }
+
+    // How ILC compiles an interface call by the number of implementations,
+    // measured on an untranslated object (pipe_plan.md "Проверить опытом", 3):
+    // one (ISingle), two (IRanked), three (ITriple), four (ILabelled).
+    public interface ISingle
+    {
+        int Single();
+    }
+
+    public interface ITriple
+    {
+        int Triple();
     }
 
     public struct Pair

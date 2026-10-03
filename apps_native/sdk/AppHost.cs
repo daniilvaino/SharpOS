@@ -680,6 +680,32 @@
                 region, length, schema, schemaLength);
         }
 
+        /// <summary>
+        /// Takes a region the kernel writes for this run: two exchange blocks
+        /// this run owns, the region and its schema. Answers 0, negative when
+        /// the kernel could not or does not offer it.
+        /// </summary>
+        public static int RegionFromKernel(out byte* region, out ulong length, out byte* schema, out ulong schemaLength)
+        {
+            region = null;
+            schema = null;
+            length = 0;
+            schemaLength = 0;
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null || services->RegionFromKernelAddress == 0)
+                return -100;
+            ulong* answer = stackalloc ulong[4];
+            int result = ((delegate* unmanaged<ulong*, int>)services->RegionFromKernelAddress)(answer);
+            if (result == 0)
+            {
+                region = (byte*)answer[0];
+                length = answer[1];
+                schema = (byte*)answer[2];
+                schemaLength = answer[3];
+            }
+            return result;
+        }
+
         private static string[] s_arguments;
 
         /// <summary>What this program was started with; empty, never null.</summary>

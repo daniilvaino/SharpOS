@@ -20,9 +20,10 @@ namespace SharpOS.Std.Exchange
     /// layout against them; this registry is the runtime half of that, enough to
     /// run the experiments without the generator.
     ///
-    /// Keys are odd. An odd value where the runtime expects a table pointer can
-    /// never be taken for one: a cast or a virtual call on an untranslated object
-    /// faults instead of answering quietly.
+    /// Keys are odd and non-canonical. An odd value where the runtime expects a
+    /// table pointer can never be taken for one: a cast or a virtual call on an
+    /// untranslated object faults instead of answering quietly. Non-canonical
+    /// tells a key from a table carrying a collector's mark in bit 0.
     /// </remarks>
     public static unsafe class TypeKeys
     {
@@ -130,8 +131,20 @@ namespace SharpOS.Std.Exchange
                     h = Mix(h, f.Type);
                     h = Mix(h, (ulong)f.Offset);
                 }
-            return h | 1;
+            return (h & 0x3FFF_FFFF_FFFF_FFFFUL) | KeyTopBits | 1;
         }
+
+        // Bits 63:62 = 10: never a canonical address. A collector's mark is
+        // bit 0 of a real table pointer — odd too, but canonical once the bit
+        // is cleared — so the two cannot be confused (IsKeyWord).
+        private const ulong KeyTopBits = 0x8000_0000_0000_0000UL;
+
+        /// <summary>
+        /// True when a table word holds a type key rather than a table, marked
+        /// or not: odd, and not canonical.
+        /// </summary>
+        public static bool IsKeyWord(ulong word)
+            => (word & 1) != 0 && (ulong)((long)(word << 16) >> 16) != word;
 
         public static bool TryKey(ulong table, out ulong key)
         {

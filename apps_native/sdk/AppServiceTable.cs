@@ -190,6 +190,9 @@
 
         // Experiment: hand a region to the kernel (AppHost.TryRegionToKernel).
         public ulong RegionToKernelAddress;
+
+        // Experiment: a region from the kernel (AppHost.RegionFromKernel).
+        public ulong RegionFromKernelAddress;
     }
 
     /// <summary>
