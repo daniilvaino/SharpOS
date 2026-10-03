@@ -640,6 +640,46 @@
                                  listPointer, (uint)total, out exitCode);
         }
 
+        /// <summary>
+        /// A zeroed block of the exchange heap, owned by this run: memory no
+        /// collector owns, for what goes to another program. Null when the
+        /// kernel does not offer it or has no memory.
+        /// </summary>
+        public static void* ExchangeAllocate(ulong size)
+        {
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null || services->ExchangeAllocateAddress == 0)
+                return null;
+            return ((delegate* unmanaged<ulong, void*>)services->ExchangeAllocateAddress)(size);
+        }
+
+        /// <summary>Gives a block back; false when it is not a live block of this run.</summary>
+        public static bool ExchangeFree(void* block)
+        {
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null || services->ExchangeFreeAddress == 0)
+                return false;
+            return ((delegate* unmanaged<void*, uint>)services->ExchangeFreeAddress)(block) != 0;
+        }
+
+        /// <summary>Whether the kernel takes regions (an experiment, see RegionToKernelAddress).</summary>
+        public static bool HasRegionToKernel
+            => AppRuntime.Services != null && AppRuntime.Services->RegionToKernelAddress != 0;
+
+        /// <summary>
+        /// Hands an exchange block holding a region to the kernel, with the
+        /// schema that describes it. The block is the kernel's afterwards.
+        /// Answers the kernel's failure count; negative when it refused.
+        /// </summary>
+        public static int RegionToKernel(void* region, ulong length, byte* schema, ulong schemaLength)
+        {
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null || services->RegionToKernelAddress == 0)
+                return -100;
+            return ((delegate* unmanaged<void*, ulong, void*, ulong, int>)services->RegionToKernelAddress)(
+                region, length, schema, schemaLength);
+        }
+
         private static string[] s_arguments;
 
         /// <summary>What this program was started with; empty, never null.</summary>

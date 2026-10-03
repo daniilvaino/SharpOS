@@ -155,9 +155,20 @@ namespace OS.Kernel.Exec
         {
             exception = null;
             JumpContext* context = s_active;
-            if (context == null || context->HwExceptionFactory == 0)
+            if (context == null || rip < context->ImageBase || rip >= context->ImageEnd)
                 return false;
-            if (rip < context->ImageBase || rip >= context->ImageEnd)
+            return TryCreateAppException(kind, out exception);
+        }
+
+        /// <summary>
+        /// An exception of the running app's own type, for a failure the
+        /// caller already attributed to the app.
+        /// </summary>
+        public static bool TryCreateAppException(int kind, out object exception)
+        {
+            exception = null;
+            JumpContext* context = s_active;
+            if (context == null || context->HwExceptionFactory == 0)
                 return false;
 
             nint created = ((delegate* unmanaged<int, nint>)context->HwExceptionFactory)(kind);

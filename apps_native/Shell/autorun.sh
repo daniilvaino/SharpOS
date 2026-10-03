@@ -12,11 +12,15 @@
 #
 # `expect CODE COMMAND` runs the command and counts it as a failure unless it
 # exits with exactly CODE. Needed because "non-zero means broken" is not true
-# here: AOTTESTS.EXE returns the number of tests it passed, so 120 is a clean
+# here: AOTTESTS.EXE returns the number of tests it passed, so 129 is a clean
 # run and 0 would be a catastrophe.
 #
-# Arguments reach native programs (startup data); the last line checks that
-# they arrive whole — quoted, with spaces, in UTF-8. The census
+# Arguments reach native programs (startup data); the --echo-args line checks
+# that they arrive whole — quoted, with spaces, in UTF-8. The last two lines
+# call an interface method on an untranslated region object (pipe_plan.md
+# "Проверить опытом", 3), each in a run of its own: 1 means the app caught an
+# exception, 2 that the call returned — which is what ILC's compare-only code
+# for an interface with two implementations does. The census
 # (NormalHello.dll) already runs earlier, from the kernel.
 #
 # A line saying exactly `shell` hands the machine to a prompt after the list
@@ -30,7 +34,9 @@
 # forward slashes to the kernel's own separator on the way to the file system.
 # Single quotes would also work ('\apps\AOTTESTS.EXE'), and read worse.
 
-expect 120 /apps/AOTTESTS.EXE
-expect 120 /apps/AOTTESTS.EXE
+expect 129 /apps/AOTTESTS.EXE
+expect 129 /apps/AOTTESTS.EXE
 expect 0  /apps/BENCHAOT.EXE
 expect 3 /apps/AOTTESTS.EXE --echo-args 'two words' третий
+expect 1 /apps/AOTTESTS.EXE --untranslated-interface
+expect 2 /apps/AOTTESTS.EXE --untranslated-devirtualized

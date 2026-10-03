@@ -60,6 +60,11 @@
     <Compile Include="$(MSBuildThisFileDirectory)EventHandling.cs" Link="std\EventHandling.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exception.cs" Link="std\Exception.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exceptions.Derived.cs" Link="std\Exceptions.Derived.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\ObjectLayout.cs" Link="std\Exchange\ObjectLayout.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\Region.cs" Link="std\Exchange\Region.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionProbeGraph.cs" Link="std\Exchange\RegionProbeGraph.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionSchema.cs" Link="std\Exchange\RegionSchema.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\TypeKeys.cs" Link="std\Exchange\TypeKeys.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborConformanceLevel.cs" Link="std\Formats\Cbor\CborConformanceLevel.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborContentException.cs" Link="std\Formats\Cbor\CborContentException.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborHelpers.cs" Link="std\Formats\Cbor\CborHelpers.cs" />

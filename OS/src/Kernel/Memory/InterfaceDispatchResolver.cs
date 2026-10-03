@@ -56,6 +56,19 @@ namespace OS.Kernel.Memory
             GcMethodTable* thisMT = *(GcMethodTable**)thisPtr;
             InterfaceDispatchCell* cell = (InterfaceDispatchCell*)cellPtr;
 
+            // A table word that is not 8-aligned is no table: it is the type
+            // key of a region object nobody translated (SharpOS.Std.Exchange
+            // .Region — keys are odd so that using such an object fails). Left
+            // to the walk below, the key faulted in FindImplSlot, in kernel
+            // code under the bridge, which has no unwind data: the exception
+            // was the kernel's, no frame of the caller was reached, and an app
+            // making the call was ended (pipe_plan.md "Проверить опытом", 3).
+            // Instead the call goes to a method that throws, entered by the
+            // bridge's tail jump in place of the interface method — so it
+            // throws from the caller's own frame.
+            if (((nint)thisMT & 7) != 0)
+                return UntranslatedTarget(cellPtr);
+
             cell->GetDispatchCellInfo(out DispatchCellInfo info);
 
             if (info.CellType == DispatchCellType.VTableOffset)
@@ -447,6 +460,31 @@ namespace OS.Kernel.Memory
 
             DumpResolveState(thisPtr, thisMT, cellPtr, cell, in info);
         }
+
+        // The cell lies in the image of whoever made the call: inside the app
+        // now running means the app called, and the exception must be of its
+        // types for its catch clauses to match.
+        private static nint UntranslatedTarget(nint cellPtr)
+        {
+            delegate*<void> target = OS.Kernel.Exec.JumpStub.IsAppCode((ulong)cellPtr)
+                ? &ThrowUntranslatedForApp
+                : &ThrowUntranslatedForKernel;
+            return (nint)target;
+        }
+
+        // Called with the interface method's arguments still in registers,
+        // which are ignored, and the caller's return address on the stack.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void ThrowUntranslatedForApp()
+        {
+            if (OS.Kernel.Exec.JumpStub.TryCreateAppException(
+                    OS.Kernel.Exec.JumpStub.HwExceptionAccessViolation, out object appException))
+                throw System.Runtime.CompilerServices.Unsafe.As<System.Exception>(appException);
+            throw new System.AccessViolationException();
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void ThrowUntranslatedForKernel() => throw new System.AccessViolationException();
 
         private static void ReportResolveFailure(
             nint thisPtr, GcMethodTable* thisMT,

@@ -2,6 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime;
+using SharpOS.Std.Exchange;
+using SharpOS.Std.Exchange.Probe;
 
 namespace AotTests
 {
@@ -58,6 +60,21 @@ namespace AotTests
                     return 100;
                 return arguments.Length;
             }
+
+            // Interface calls on an untranslated region object, each in a run of
+            // its own: one of them may end the program, and the battery must
+            // not go with it. Exit 1 — an exception, caught here; 2 — the call
+            // returned without a fault (the value is printed); 134 — the
+            // kernel ended the program.
+            //   --untranslated-interface      real dispatch (ILabelled, four
+            //                                 implementations): the kernel's
+            //                                 bridge and resolver read the key;
+            //   --untranslated-devirtualized  IRanked, two implementations: ILC
+            //                                 compiles one table compare.
+            if (arguments.Length > 0 && arguments[0] == "--untranslated-interface")
+                return RunUntranslatedInterface(devirtualized: false);
+            if (arguments.Length > 0 && arguments[0] == "--untranslated-devirtualized")
+                return RunUntranslatedInterface(devirtualized: true);
 
             AppHost.WriteString("==== AOT app test battery ====\n");
 
@@ -261,6 +278,7 @@ namespace AotTests
             CheckClockAdvances();
             CheckStackTraceText();
             CheckStackTraceOwnership();
+            CheckRegion();
 
             // The error stream (step 167). The check can only see that the
             // kernel offers it; whether the marker reached last_err.log and not
@@ -527,6 +545,125 @@ namespace AotTests
             strings[StelemIndex(0)] = "same type";
             Check("stelem matching element type stored", (string)strings[0] == "same type");
         }
+
+        // Regions (pipe_plan.md "Проверить опытом"). The app builds the probe
+        // graph straight into an exchange block, touches it untranslated, and
+        // hands it to the kernel, which prints it by the schema, translates it
+        // in place and reads it while its collector runs under load (the
+        // kernel's own lines are "[region] …").
+        private static void CheckRegion()
+        {
+            Check("region: kernel takes regions", AppHost.HasRegionToKernel);
+            if (!AppHost.HasRegionToKernel)
+                return;
+
+            RegionProbeGraph.Declare();
+            Check("region: graph types declared", RegionProbeGraph.Problems == 0);
+
+            object graph = RegionProbeGraph.Build(RegionProbeGraph.Numbers);
+            Region.Plan plan = Region.Lay(graph, out string complaint);
+            Check("region: graph laid out", plan != null);
+            if (plan == null)
+            {
+                AppHost.WriteString("[region] " + complaint + "\n");
+                return;
+            }
+
+            byte* block = (byte*)AppHost.ExchangeAllocate(plan.Size);
+            Check("region: exchange block", block != null);
+            if (block == null)
+                return;
+            Region.Write(plan, block);
+            AppHost.WriteString("[region] " + plan.Count.ToString() + " objects, " + plan.Size.ToString() + " bytes\n");
+
+            CheckUntranslated((ulong)block + Region.HeaderSize);
+
+            byte[] schema = RegionSchema.Build(TypeKeys.Declared);
+            int failures;
+            fixed (byte* schemaBytes = schema)
+                failures = AppHost.RegionToKernel(block, plan.Size, schemaBytes, (ulong)schema.Length);
+            Check("region: the kernel received, printed, translated and read it under load", failures == 0);
+            Check("region: the block is the kernel's now", !AppHost.ExchangeFree(block));
+        }
+
+        // An object of the region before translation: its table word holds an
+        // odd type key. Each access that reads the table must end in an
+        // exception this app catches, and the app must carry on (pipe_plan.md
+        // "Проверить опытом", 3). A cast ILC reduced to a pointer compare
+        // answers "no" without reading anything — also fine; "yes" is not.
+        private static void CheckUntranslated(ulong objectAt)
+        {
+            object untranslated = System.Runtime.CompilerServices.Unsafe.As<ulong, object>(ref objectAt);
+
+            string how = "returned";
+            try { VirtualOnUntranslated(untranslated); }
+            catch (Exception e) { how = ExceptionName(e); }
+            AppHost.WriteString("[untranslated] virtual call: " + how + "\n");
+            Check("untranslated: virtual call throws, caught here", how != "returned");
+
+            how = "no fault";
+            bool answer = false;
+            try { answer = CastOnUntranslated(untranslated); }
+            catch (Exception e) { how = ExceptionName(e); }
+            AppHost.WriteString("[untranslated] cast to a class: " + how + (how == "no fault" ? (answer ? ", yes" : ", no") : "") + "\n");
+            Check("untranslated: cast throws or answers no", how != "no fault" || !answer);
+
+            // The key-form object is still in a local: the app's collector
+            // must pass it by (it is outside every segment), and a wait after
+            // the catches must still return.
+            GC.Collect();
+            System.Threading.Thread.Sleep(20);
+            Check("untranslated: collect and sleep after the catches", AppGC.LastWalkOk && untranslated != null);
+        }
+
+        private static int RunUntranslatedInterface(bool devirtualized)
+        {
+            RegionProbeGraph.Declare();
+            object graph = RegionProbeGraph.Build(4);
+            Region.Plan plan = Region.Lay(graph, out _);
+            byte* block = plan == null ? null : (byte*)AppHost.ExchangeAllocate(plan.Size);
+            if (block == null)
+                return 3;
+            Region.Write(plan, block);
+            ulong objectAt = (ulong)block + Region.HeaderSize;
+            object untranslated = System.Runtime.CompilerServices.Unsafe.As<ulong, object>(ref objectAt);
+
+            int result = 2;
+            string how;
+            try
+            {
+                int value = devirtualized ? DevirtualizedOnUntranslated(untranslated) : InterfaceOnUntranslated(untranslated);
+                how = "returned " + value.ToString();
+            }
+            catch (Exception e)
+            {
+                how = ExceptionName(e);
+                result = 1;
+            }
+            AppHost.WriteString((devirtualized ? "[untranslated] interface call, two implementations: "
+                                               : "[untranslated] interface call, real dispatch: ") + how + "\n");
+            return result;
+        }
+
+        private static string ExceptionName(Exception e)
+            => e is AccessViolationException ? "AccessViolationException"
+             : e is NullReferenceException ? "NullReferenceException"
+             : "another exception";
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int VirtualOnUntranslated(object o)
+            => System.Runtime.CompilerServices.Unsafe.As<SharpOS.Std.Exchange.Probe.Base>(o).Rank();
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static bool CastOnUntranslated(object o) => o is SharpOS.Std.Exchange.Probe.Base;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int InterfaceOnUntranslated(object o)
+            => System.Runtime.CompilerServices.Unsafe.As<SharpOS.Std.Exchange.Probe.ILabelled>(o).Label();
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int DevirtualizedOnUntranslated(object o)
+            => System.Runtime.CompilerServices.Unsafe.As<SharpOS.Std.Exchange.Probe.IRanked>(o).Sides();
 
         // Hardware fault in app code (pipe_plan.md, item 3).
         //   0 — off;

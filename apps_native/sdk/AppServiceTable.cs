@@ -182,6 +182,14 @@
         public ulong StartupDataAddress;
         public uint StartupDataLength;
         public uint StartupDataReserved;
+
+        // The exchange heap: blocks outside every collector, owned by this run
+        // and returned when it ends. Zero: an older kernel.
+        public ulong ExchangeAllocateAddress;
+        public ulong ExchangeFreeAddress;
+
+        // Experiment: hand a region to the kernel (AppHost.TryRegionToKernel).
+        public ulong RegionToKernelAddress;
     }
 
     /// <summary>

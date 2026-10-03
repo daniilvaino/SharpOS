@@ -227,6 +227,13 @@
         // blocks returned 1"). pipe_plan.md "Подготовить под трубы", 1–2.
         public const bool ExchangeHeap = true;
 
+        // The kernel as a region's receiver (pipe_plan.md "Проверить опытом",
+        // 1 and 2): publishes RegionToKernel, through which AotTests hands over
+        // a region in an exchange block. The kernel prints it by the schema,
+        // translates it in place and reads it while worker threads allocate
+        // and a third collects ("[region] …").
+        public const bool RegionIntake = true;
+
         // Preemption for the launcher and every program it runs (pipe_plan.md
         // item 9). The kernel's critical sections are Preemption.Suppress
         // regions — the preempt_disable model, valid on one CPU.

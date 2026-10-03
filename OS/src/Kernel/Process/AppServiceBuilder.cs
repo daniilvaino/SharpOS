@@ -336,6 +336,14 @@ namespace OS.Kernel.Process
 
             table.PreemptionDepthAddress = (ulong)OS.Kernel.Threading.Preemption.DepthAddress;
 
+            if (serviceAbi != AppServiceAbi.SystemV)
+            {
+                table.ExchangeAllocateAddress = (ulong)(nint)(delegate* unmanaged<ulong, void*>)&AppExchangeAllocate;
+                table.ExchangeFreeAddress = (ulong)(nint)(delegate* unmanaged<void*, uint>)&AppExchangeFree;
+                if (OS.Kernel.Diagnostics.Probes.RegionIntake)
+                    table.RegionToKernelAddress = (ulong)(nint)(delegate* unmanaged<void*, ulong, void*, ulong, int>)&AppRegionToKernel;
+            }
+
             AppServiceTable* serviceTablePointer = Pager.IsPagerRootActive()
                 ? (AppServiceTable*)serviceVirtual
                 : (AppServiceTable*)servicePhysical;
@@ -1291,6 +1299,28 @@ namespace OS.Kernel.Process
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void AppSetHwExceptionFactory(void* factory)
             => global::OS.Kernel.Exec.JumpStub.SetHwExceptionFactory((nint)factory);
+
+        // Owned by the calling run: its generation is on the calling thread,
+        // and every thread of the run carries the same one.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void* AppExchangeAllocate(ulong size)
+        {
+            uint generation = global::OS.Kernel.Threading.Scheduler.Current?.AppGeneration ?? 0;
+            return generation == 0 ? null : OS.Kernel.Memory.ExchangeHeap.Allocate(size, generation);
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static uint AppExchangeFree(void* block)
+        {
+            uint generation = global::OS.Kernel.Threading.Scheduler.Current?.AppGeneration ?? 0;
+            if (generation == 0 || OS.Kernel.Memory.ExchangeHeap.OwnerOf(block) != generation)
+                return 0;
+            return OS.Kernel.Memory.ExchangeHeap.Free(block) ? 1u : 0u;
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int AppRegionToKernel(void* region, ulong length, void* schema, ulong schemaLength)
+            => OS.Kernel.Diagnostics.RegionIntakeProbe.Receive((byte*)region, length, (byte*)schema, schemaLength);
 
         private static uint TryReadKey(ulong requestAddress)
         {

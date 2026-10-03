@@ -226,6 +226,22 @@
         public ulong StartupDataAddress;
         public uint StartupDataLength;
         public uint StartupDataReserved;
+
+        // The exchange heap (ExchangeHeap): memory no collector owns, for what
+        // goes between programs. Allocate takes a size and returns a zeroed
+        // block owned by the calling run, or null; Free takes it back and
+        // answers 1, or 0 for a pointer that is not a live block of this run.
+        // Whatever a run still holds goes back when it ends. Win64 only.
+        public ulong ExchangeAllocateAddress;
+        public ulong ExchangeFreeAddress;
+
+        // Experiment (pipe_plan.md "Проверить опытом", 1 and 2): the app hands
+        // the kernel a region in an exchange block it owns, with the schema
+        // that describes it. The kernel takes the block, prints the region by
+        // the schema, translates it in place and reads it while its own
+        // collector runs under load. Answers the number of failures, negative
+        // when the hand-over itself was refused. Zero: not published.
+        public ulong RegionToKernelAddress;
     }
 
     /// <summary>
