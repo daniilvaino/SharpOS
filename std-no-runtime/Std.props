@@ -9,11 +9,14 @@
   ярусных пар — в README.md рядом.
 -->
 <Project>
-  <!-- Source generators every image runs (generators/SharpOS.Generators):
-       the kernel and each app import this file, so this is the one place that
-       reaches all of them. -->
+  <!-- Source generators every image runs (generators/): the kernel and each
+       app import this file, so this is the one place that reaches all of
+       them. ImageInfo — which image this is; Pipes — [Message] catalog and
+       Region<T> rules. -->
   <ItemGroup>
-    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\SharpOS.Generators\SharpOS.Generators.csproj"
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\ImageInfo.Generator\ImageInfo.Generator.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\Pipes.Generator\Pipes.Generator.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 

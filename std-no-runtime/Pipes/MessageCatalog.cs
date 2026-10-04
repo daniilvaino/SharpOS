@@ -8,7 +8,7 @@ namespace SharpOS.Std.Pipes
 {
     /// <summary>Marks a type that may travel through a native pipe (pipe spec Р16).</summary>
     /// <remarks>
-    /// SharpOS.Generators registers every marked type in this image's catalog:
+    /// Pipes.Generator registers every marked type in this image's catalog:
     /// full name, fields with names and types, offsets measured at start-up from
     /// the real layout. Compile-time errors: a field that is a delegate, a
     /// pointer, or a class outside the catalog; a pipe end over an unmarked type.

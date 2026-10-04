@@ -1,10 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Roslyn source generators for every SharpOS image — the kernel and each
-       freestanding app — wired through std-no-runtime/Std.props. Home of the
-       pipe-message generator to come (pipe_plan.md "Подготовить под трубы",
-       item 4). BootAsm.Generator stays kernel-only: its shellcode stubs are
-       the kernel's.
+  <!-- Which image this is, as a compile-time constant
+       (SharpOS.Generated.ImageInfo) in the kernel and every freestanding app —
+       wired through std-no-runtime/Std.props.
 
        netstandard2.0 is what the Roslyn analyzer host loads. -->
 
@@ -16,8 +14,6 @@
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <IncludeBuildOutput>false</IncludeBuildOutput>
-    <!-- Rule ids are documented in the analyzer and generator headers, not in release-tracking files. -->
-    <NoWarn>$(NoWarn);RS2008</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

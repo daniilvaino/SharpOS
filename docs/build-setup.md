@@ -238,7 +238,7 @@ one implicitly, and the import then fails to load the task assembly.
 build is driven by hand, do it once:
 
 ```powershell
-dotnet build .\bootasm\CoffStub.Generator\CoffStub.Generator.csproj -c Release
+dotnet build .\generators\CoffStub.Generator\CoffStub.Generator.csproj -c Release
 ```
 
 `invalid symbol redefinition` warnings from ILC are benign noise, not failures.

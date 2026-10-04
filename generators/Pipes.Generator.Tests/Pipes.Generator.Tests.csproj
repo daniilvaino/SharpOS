@@ -15,7 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
-    <ProjectReference Include="..\SharpOS.Generators\SharpOS.Generators.csproj" />
+    <ProjectReference Include="..\Pipes.Generator\Pipes.Generator.csproj" />
   </ItemGroup>
 
 </Project>

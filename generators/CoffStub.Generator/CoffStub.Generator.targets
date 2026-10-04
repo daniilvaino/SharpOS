@@ -16,12 +16,12 @@
   <UsingTask TaskName="BootAsm.EmitCoffStubsTask"
              AssemblyFile="$(_CoffStubGeneratorAssembly)" />
 
-  <!-- CoffDataSymbolAttribute defn — master живёт в bootasm/, csc
+  <!-- CoffDataSymbolAttribute defn — master живёт в generators/CoffStub.Generator/, csc
        компилит его напрямую как часть consumer'а. Никакого copy, никакого
        .g.cs — один файл, одно место. -->
   <ItemGroup>
     <Compile Include="$(_CoffStubGeneratorDir)CoffDataSymbolAttribute.cs"
-             Link="bootasm/CoffDataSymbolAttribute.cs" />
+             Link="generators/CoffDataSymbolAttribute.cs" />
   </ItemGroup>
 
   <!-- Run after CoreCompile (Roslyn has full semantic model available)

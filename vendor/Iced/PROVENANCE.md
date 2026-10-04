@@ -8,7 +8,7 @@ encoder library is the mechanism, not a convenience.
 
 Used at two different times, from the same source:
 
-- **Build time** — `bootasm/BootAsm.Generator/` (a Roslyn source generator)
+- **Build time** — `generators/BootAsm.Generator/` (a Roslyn source generator)
   runs Iced while the OS compiles and bakes the result into `ReadOnlySpan<byte>`
   templates. Everything the early boot needs is emitted this way, because at
   that point nothing can be allocated yet.

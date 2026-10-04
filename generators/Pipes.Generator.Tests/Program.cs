@@ -6,7 +6,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
-using SharpOS.Generators;
+using Pipes.Generator;
 
 // Pipe test 12: every rule of RegionAnalyzer and MessageGenerator against an
 // example that must trip it, and correct code that must not. The pipe API is a

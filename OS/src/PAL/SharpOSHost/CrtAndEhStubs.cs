@@ -531,7 +531,7 @@ namespace OS.PAL.SharpOSHost
         //
         // step 121: ILC's [RuntimeExport] на static field НЕ emit'ит native
         // data symbol — это исторический ILC gap. CoffStub.Generator
-        // (bootasm/CoffStub.Generator/) обходит gap: атрибут на C# static
+        // (generators/CoffStub.Generator/) обходит gap: атрибут на C# static
         // field → MSBuild Task материализует tiny COFF .obj с этим полем
         // как native external data symbol, .obj автоматом в @(NativeLibrary).
         //

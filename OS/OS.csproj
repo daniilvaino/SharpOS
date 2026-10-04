@@ -90,7 +90,7 @@
        Analyzer + ReferenceOutputAssembly=false means the generator runs
        at compile time only — no runtime dependency on the analyzer DLL. -->
   <ItemGroup>
-    <ProjectReference Include="..\bootasm\BootAsm.Generator\BootAsm.Generator.csproj"
+    <ProjectReference Include="..\generators\BootAsm.Generator\BootAsm.Generator.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
@@ -161,9 +161,9 @@
        attribute → .obj emission pipeline. Включает attribute defn в
        compile, регистрирует MSBuild Task, запускает emit перед
        IlcCompile. Generator.dll должен быть pre-built:
-       cd ../bootasm/CoffStub.Generator && dotnet build -c Release -->
-  <Import Project="..\bootasm\CoffStub.Generator\CoffStub.Generator.targets"
-          Condition="Exists('..\bootasm\CoffStub.Generator\CoffStub.Generator.targets')" />
+       cd ../generators/CoffStub.Generator && dotnet build -c Release -->
+  <Import Project="..\generators\CoffStub.Generator\CoffStub.Generator.targets"
+          Condition="Exists('..\generators\CoffStub.Generator\CoffStub.Generator.targets')" />
 
 
   <!-- Phase 6.1.0b: link CoreCLR guest archive bundle. На bare-metal these

@@ -29,7 +29,7 @@ using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 
-namespace SharpOS.Generators;
+namespace Pipes.Generator;
 
 [DiagnosticAnalyzer(Microsoft.CodeAnalysis.LanguageNames.CSharp)]
 public sealed class RegionAnalyzer : DiagnosticAnalyzer

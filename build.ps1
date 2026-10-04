@@ -170,7 +170,7 @@ try {
     # Один раз на весь прогон, а не перед каждым приложением: csproj импортирует
     # его .targets, а DLL, оставшаяся от старой копии дерева, была бы
     # использована молча. Десять пересборок подряд — чистая трата.
-    & dotnet build "bootasm/CoffStub.Generator/CoffStub.Generator.csproj" -c Release --nologo -v quiet
+    & dotnet build "generators/CoffStub.Generator/CoffStub.Generator.csproj" -c Release --nologo -v quiet
     if ($LASTEXITCODE -ne 0) { throw "CoffStub.Generator build failed ($LASTEXITCODE)" }
 
     foreach ($app in $selected) {

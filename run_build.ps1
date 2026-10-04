@@ -302,7 +302,7 @@ $buildId = Get-SharpOsBuildId -RepoRoot $repoRoot
 # nothing builds it implicitly. On a fresh clone the publish below fails with
 # MSB4062 ("BootAsm.EmitCoffStubsTask could not be loaded"). Build it first;
 # the step is incremental and costs nothing once it is up to date.
-$coffStubProj = Join-Path $repoRoot "bootasm\CoffStub.Generator\CoffStub.Generator.csproj"
+$coffStubProj = Join-Path $repoRoot "generators\CoffStub.Generator\CoffStub.Generator.csproj"
 if (Test-Path -LiteralPath $coffStubProj) {
     Write-Host "Building CoffStub.Generator (MSBuild task host)..."
     # Output captured, not discarded: a bare exit code says nothing, and the
