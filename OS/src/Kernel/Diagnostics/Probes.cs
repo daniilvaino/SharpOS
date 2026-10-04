@@ -234,6 +234,12 @@
         // and a third collects ("[region] …").
         public const bool RegionIntake = true;
 
+        // Native pipe tests (pipe spec, "родная труба"): kernel service
+        // threads reading and writing the pipes AotTests connects to by name,
+        // and the PipeProbe service AotTests uses to start them and read
+        // their verdicts ("[pipe] …").
+        public const bool PipeProbe = true;
+
         // Preemption for the launcher and every program it runs (pipe_plan.md
         // item 9). The kernel's critical sections are Preemption.Suppress
         // regions — the preempt_disable model, valid on one CPU.

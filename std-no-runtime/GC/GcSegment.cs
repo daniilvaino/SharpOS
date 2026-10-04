@@ -32,5 +32,15 @@ namespace SharpOS.Std.NoRuntime
 
         // Next segment in the heap linked list, or null for the tail.
         public GcSegmentHeader* Next;
+
+        // One bit per 16 bytes of the object area: set where a live object
+        // starts. Lies between this header and ObjectStart. The allocator
+        // sets a bit for every object it hands out; the sweep recomputes the
+        // bits it walks (live: set; dead or free: clear). The marker resolves
+        // every candidate through it (GcHeap.FindObjectStart).
+        public byte* Starts;
+
+        // Bytes in Starts: a bit index past it is a bug, refused loudly.
+        public nint StartsBytes;
     }
 }

@@ -249,10 +249,25 @@ namespace OS.Kernel.Memory
                     }
                 }
                 if (high == 0)
+                {
+                    if (Tracing)
+                    {
+                        OS.Hal.Console.Write("[walk-trace] conservative REFUSED rsp=0x"); OS.Hal.Console.WriteHex(rsp);
+                        OS.Hal.Console.WriteLine("");
+                    }
                     return false;
+                }
             }
 
             LastConservativeScans++;
+            if (Tracing)
+            {
+                OS.Hal.Console.Write("[walk-trace] conservative rsp=0x"); OS.Hal.Console.WriteHex(rsp);
+                OS.Hal.Console.Write(" low=0x"); OS.Hal.Console.WriteHex(low);
+                OS.Hal.Console.Write(" high=0x"); OS.Hal.Console.WriteHex(high);
+                OS.Hal.Console.Write(" rip=0x"); OS.Hal.Console.WriteHex(f[18]);
+                OS.Hal.Console.WriteLine("");
+            }
             for (int i = 1; i <= 15; i++)
                 MarkCandidate(f[i], markRoot);
             for (ulong p = rsp & ~7UL; p < high; p += 8)
@@ -371,8 +386,25 @@ namespace OS.Kernel.Memory
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void WalkCallback(Context* ctx) => WalkFrames(ctx);
 
+        /// <summary>Walks still to trace frame by frame ("[walk-trace]"); a debugging switch.</summary>
+        public static int TraceWalks;
+
+        /// <summary>Set only around an app's walk: kernel collections are never traced.</summary>
+        public static bool Tracing;
+
+        private static void Trace(string what, Context* ctx, int roots)
+        {
+            OS.Hal.Console.Write("[walk-trace] ");
+            OS.Hal.Console.Write(what);
+            OS.Hal.Console.Write(" rip=0x"); OS.Hal.Console.WriteHex(ctx->Rip);
+            OS.Hal.Console.Write(" rsp=0x"); OS.Hal.Console.WriteHex(ctx->Rsp);
+            OS.Hal.Console.Write(" roots="); OS.Hal.Console.WriteUInt((uint)roots);
+            OS.Hal.Console.WriteLine("");
+        }
+
         private static void WalkFrames(Context* ctx)
         {
+            bool trace = Tracing;
             int rtrMajor = NativeAotModuleInit.ReadyToRunMajor;
             int rtrMinor = NativeAotModuleInit.ReadyToRunMinor;
             int gcInfoVersion = CoffGcInfoDecoder.ReadyToRunVersionToGcInfoVersion(rtrMajor, rtrMinor);
@@ -399,6 +431,7 @@ namespace OS.Kernel.Memory
                 if (ctx->Rip == 0)
                 {
                     LastBottomsReached++;
+                    if (trace) Trace("end: bottom", ctx, 0);
                     return;
                 }
 
@@ -409,6 +442,7 @@ namespace OS.Kernel.Memory
                 if (OS.Kernel.Exec.JumpStub.ContainsAddress(ctx->Rip))
                 {
                     LastBottomsReached++;
+                    if (trace) Trace("end: jump stub", ctx, 0);
                     return;
                 }
 
@@ -432,6 +466,7 @@ namespace OS.Kernel.Memory
 
                     LastFramesUnresolved++;
                     NoteSkipped(ctx->Rip, prevRip);
+                    if (trace) Trace("end: unresolved", ctx, 0);
                     return;
                 }
 
@@ -453,6 +488,8 @@ namespace OS.Kernel.Memory
                 // unwind codes below are genuine and move to the caller
                 // correctly; what it does not have is anything to tell us
                 // which of its slots hold references.
+                int rootsBefore = LastRootsMarked;
+                int skippedBefore = LastFramesSkippedOutOfRange;
                 if (r.HasGcInfo)
                 {
                     MarkOneFrame(ctx, in r, gcInfoVersion,
@@ -462,6 +499,10 @@ namespace OS.Kernel.Memory
                 {
                     LastFramesWithoutGcInfo++;
                 }
+                if (trace)
+                    Trace(!r.HasGcInfo ? "frame (no gcinfo)"
+                          : LastFramesSkippedOutOfRange != skippedBefore ? "frame OUT OF RANGE" : "frame",
+                          ctx, LastRootsMarked - rootsBefore);
 
                 // Image base PER FRAME, not one fixed base for the whole walk.
                 // A stack that crosses from an app into the kernel (or back)
@@ -484,6 +525,10 @@ namespace OS.Kernel.Memory
                     &establisher);
             }
         }
+
+        // AMD64 volatile registers in GcInfo numbering: rax, rcx, rdx, r8-r11.
+        private static bool IsScratchRegister(int reg)
+            => reg == 0 || reg == 1 || reg == 2 || (reg >= 8 && reg <= 11);
 
         private static void MarkOneFrame(Context* ctx, in CoffMethodGcInfo.Result r, int gcInfoVersion,
                                          bool isActiveFrame)
@@ -528,11 +573,42 @@ namespace OS.Kernel.Memory
                 return;
             }
 
+            if (Tracing)
+            {
+                OS.Hal.Console.Write("[walk-trace]   slots="); OS.Hal.Console.WriteUInt(counts.NumSlots);
+                OS.Hal.Console.Write(" tracked="); OS.Hal.Console.WriteUInt((uint)trackedCount);
+                OS.Hal.Console.Write(" codeOffset=0x"); OS.Hal.Console.WriteHex(codeOffset);
+                OS.Hal.Console.Write(" rbp=0x"); OS.Hal.Console.WriteHex(ctx->Rbp);
+                OS.Hal.Console.Write(" safepoints="); OS.Hal.Console.WriteUInt(hdr.NumSafePoints);
+                OS.Hal.Console.Write(" ranges="); OS.Hal.Console.WriteUInt(hdr.NumInterruptibleRanges);
+                OS.Hal.Console.Write(" spIndex="); OS.Hal.Console.WriteUInt(CoffGcInfoDecoder.FindSafePoint(r.GcInfo, in hdr, hdr.BitOffsetAfterHeader, codeOffset));
+                OS.Hal.Console.WriteLine("");
+            }
+
             for (int i = 0; i < (int)counts.NumSlots && i < slots.Length; i++)
             {
                 bool isUntracked = (slots[i].Flags & CoffGcSlotFlags.Untracked) != 0;
                 bool isLive = isUntracked || (i < trackedCount && live[i]);
+                if (Tracing)
+                {
+                    ulong v = CoffGcInfoResolver.ResolveSlotValue(in slots[i], ctx, in hdr);
+                    OS.Hal.Console.Write("[walk-trace]   slot "); OS.Hal.Console.WriteUInt((uint)i);
+                    OS.Hal.Console.Write(" kind="); OS.Hal.Console.WriteUInt(slots[i].Kind);
+                    OS.Hal.Console.Write(" base="); OS.Hal.Console.WriteUInt(slots[i].SpBase);
+                    OS.Hal.Console.Write(" flags=0x"); OS.Hal.Console.WriteHex(slots[i].Flags);
+                    OS.Hal.Console.Write(" off="); OS.Hal.Console.WriteInt(slots[i].RegOrOffset);
+                    OS.Hal.Console.Write(isLive ? " LIVE" : " dead");
+                    OS.Hal.Console.Write(" value=0x"); OS.Hal.Console.WriteHex(v);
+                    OS.Hal.Console.WriteLine("");
+                }
                 if (!isLive) continue;
+
+                // A frame below the top is stopped at a call, and the call
+                // clobbers the scratch registers: what the context holds for
+                // them is someone else's value (GcInfoDecoder::ReportSlotToGC
+                // skips them the same way unless the frame is the active one).
+                if (!isActiveFrame && slots[i].Kind == 0 && IsScratchRegister(slots[i].RegOrOffset))
+                    continue;
 
                 ulong value = CoffGcInfoResolver.ResolveSlotValue(in slots[i], ctx, in hdr);
                 if (value == 0) continue;

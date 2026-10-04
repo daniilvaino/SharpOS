@@ -53,9 +53,13 @@
                 s_services->InterfaceDispatchBridgeAddress);
 
             // Byref struct copies (List<T> element moves, Dictionary entries) go through
-            // RhpByRefAssignRef; unlike the dispatch bridge this one needs nothing from the
-            // kernel — our GC has no write barrier, so the app writes the 15 bytes itself.
-            ByRefAssignRefStub.TryInstall();
+            // RhpByRefAssignRef. Our GC has no card table, so the plain helper is a
+            // copy the app writes itself; a kernel with the region write barrier
+            // offers a shared one that checks stores into the exchange heap, and
+            // the stub jumps there instead.
+            if (s_services->RegionByRefBarrierAddress == 0
+                || !ByRefAssignRefStub.PatchToBarrier(s_services->RegionByRefBarrierAddress))
+                ByRefAssignRefStub.TryInstall();
 
             // Real compare-and-swap for std's Interlocked. Apps have threads
             // now and the kernel preempts them, so the managed fallback — read,
@@ -87,6 +91,12 @@
             // and two of this app's threads must not be inside the heap at
             // once. The kernel heap does the same with Preemption.Suppress.
             AppPreemption.Install(s_services->PreemptionDepthAddress);
+
+            // The exchange heap, for the write barrier: stores into a region
+            // are checked, everything else passes on one compare.
+            if (s_services->ExchangeArenaSpan != 0)
+                SharpOS.Std.Exchange.ExchangeArena.Install(s_services->ExchangeArenaLow,
+                    s_services->ExchangeArenaSpan, (uint*)s_services->ExchangePageTable);
             SharpOS.Std.NoRuntime.GcHeap.s_enterCritical = &AppPreemption.Suppress;
             SharpOS.Std.NoRuntime.GcHeap.s_leaveCritical = &AppPreemption.Allow;
 
@@ -232,6 +242,7 @@
             AppGC.Held = true;
             object exception = kind == 0 ? new System.NullReferenceException()
                              : kind == 2 ? new System.DivideByZeroException()
+                             : kind == 3 ? new SharpOS.Std.Pipes.RegionReferenceException()
                              : new System.AccessViolationException();
             AppGC.Held = false;
             return System.Runtime.CompilerServices.Unsafe.As<object, nint>(ref exception);

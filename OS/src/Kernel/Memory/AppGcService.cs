@@ -36,8 +36,12 @@ namespace OS.Kernel.Memory
         {
             if (markCallback == 0) return;
             var markRoot = (delegate* unmanaged<nuint, void>)markCallback;
+            KernelGcPreciseWalk.Tracing = KernelGcPreciseWalk.TraceWalks > 0;
+            if (KernelGcPreciseWalk.Tracing) OS.Hal.Console.WriteLine("[walk-trace] ---- app collection, current thread");
             KernelGcPreciseWalk.RunFromCurrentFrame(markRoot);
             KernelGC.MarkOtherThreadStacks(markRoot);
+            if (KernelGcPreciseWalk.Tracing) KernelGcPreciseWalk.TraceWalks--;
+            KernelGcPreciseWalk.Tracing = false;
             Report();
         }
 

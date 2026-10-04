@@ -12,8 +12,14 @@
 #
 # `expect CODE COMMAND` runs the command and counts it as a failure unless it
 # exits with exactly CODE. Needed because "non-zero means broken" is not true
-# here: AOTTESTS.EXE returns the number of tests it passed, so 137 is a clean
+# here: AOTTESTS.EXE returns the number of tests it passed, so 179 is a clean
 # run and 0 would be a catastrophe.
+#
+# The two --pipe-writer-dies runs end a pipe writer with its queue full —
+# by a normal exit and by an unhandled exception — before the battery, which
+# reads the kernel's verdicts on them (pipe test 2). --pipe-stress repeats
+# pipe tests 1-6 under a collector on every load iteration, the heap walked
+# around every collection; it caught the GC root bugs fixed in step 189.
 #
 # Arguments reach native programs (startup data); the --echo-args line checks
 # that they arrive whole — quoted, with spaces, in UTF-8. The last four lines
@@ -35,8 +41,11 @@
 # forward slashes to the kernel's own separator on the way to the file system.
 # Single quotes would also work ('\apps\AOTTESTS.EXE'), and read worse.
 
-expect 137 /apps/AOTTESTS.EXE
-expect 137 /apps/AOTTESTS.EXE
+expect 0 /apps/AOTTESTS.EXE --pipe-stress 2
+expect 0 /apps/AOTTESTS.EXE --pipe-writer-dies normal
+expect 134 /apps/AOTTESTS.EXE --pipe-writer-dies crash
+expect 179 /apps/AOTTESTS.EXE
+expect 179 /apps/AOTTESTS.EXE
 expect 0  /apps/BENCHAOT.EXE
 expect 3 /apps/AOTTESTS.EXE --echo-args 'two words' третий
 expect 2 /apps/AOTTESTS.EXE --untranslated-interface1

@@ -336,10 +336,27 @@ namespace OS.Kernel.Process
 
             table.PreemptionDepthAddress = (ulong)OS.Kernel.Threading.Preemption.DepthAddress;
 
+            table.RegionByRefBarrierAddress = (ulong)OS.Kernel.Memory.RegionBarrier.Entry;
+            if (OS.Kernel.Memory.ExchangeHeap.EnsureArena())
+            {
+                table.ExchangeArenaLow = OS.Kernel.Memory.ExchangeHeap.ArenaLow;
+                table.ExchangeArenaSpan = OS.Kernel.Memory.ExchangeHeap.ArenaSpan;
+                table.ExchangePageTable = (ulong)OS.Kernel.Memory.ExchangeHeap.PageTable;
+            }
+
             if (serviceAbi != AppServiceAbi.SystemV)
             {
                 table.ExchangeAllocateAddress = (ulong)(nint)(delegate* unmanaged<ulong, void*>)&AppExchangeAllocate;
                 table.ExchangeFreeAddress = (ulong)(nint)(delegate* unmanaged<void*, uint>)&AppExchangeFree;
+                table.PipeCreateAddress = (ulong)(nint)(delegate* unmanaged<uint, uint, int*, int>)&OS.Kernel.Pipes.PipeServices.Create;
+                table.PipeConnectAddress = (ulong)(nint)(delegate* unmanaged<ulong*, int>)&OS.Kernel.Pipes.PipeServices.Connect;
+                table.PipeDeclareAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, ulong, ulong, int>)&OS.Kernel.Pipes.PipeServices.Declare;
+                table.PipeSendAddress = (ulong)(nint)(delegate* unmanaged<int, void*, ulong, int>)&OS.Kernel.Pipes.PipeServices.Send;
+                table.PipeReceiveAddress = (ulong)(nint)(delegate* unmanaged<int, uint, ulong*, int>)&OS.Kernel.Pipes.PipeServices.Receive;
+                table.PipeCloseAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.Close;
+                table.PipeSchemaAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, ulong, ulong*, int>)&OS.Kernel.Pipes.PipeServices.Schema;
+                if (OS.Kernel.Diagnostics.Probes.PipeProbe)
+                    table.PipeProbeAddress = (ulong)(nint)(delegate* unmanaged<int, ulong, ulong*, int>)&OS.Kernel.Diagnostics.PipeProbe.Service;
                 if (OS.Kernel.Diagnostics.Probes.RegionIntake)
                 {
                     table.RegionToKernelAddress = (ulong)(nint)(delegate* unmanaged<void*, ulong, void*, ulong, int>)&AppRegionToKernel;

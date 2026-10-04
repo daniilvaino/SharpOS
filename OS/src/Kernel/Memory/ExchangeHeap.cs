@@ -24,6 +24,12 @@ namespace OS.Kernel.Memory
     // into one size class each; a request past the largest class gets a page
     // run of its own. Freed blocks of either kind are kept for reuse, never
     // handed back to PhysicalMemory.
+    //
+    // Chunks and runs are carved from ONE contiguous arena, reserved on first
+    // use, with a page table beside it (SharpOS.Std.Exchange.ExchangeArena,
+    // which holds the format). That is for the write barrier of every image:
+    // "is this destination in the exchange heap" has to be one compare against
+    // the arena's bounds, and "which block" one table read.
     internal static unsafe class ExchangeHeap
     {
         public const uint OwnerKernel = 0xFFFFFFFF;
@@ -35,8 +41,10 @@ namespace OS.Kernel.Memory
         private const uint ChunkBytes = 64 * 1024;
         private const ulong PageSize = 4096;
         private const ulong IdentityLimit = 0x1_0000_0000UL;
-        private const int MaxRanges = 512;
         private const byte LargeClass = 0xFF;
+
+        /// <summary>Pages in the arena: 32 MiB. Growth is not done (pipe spec, В3).</summary>
+        public const uint ArenaPages = 8192;
 
         private struct Header
         {
@@ -55,17 +63,13 @@ namespace OS.Kernel.Memory
             public fixed ulong FreeHead[ClassCount];
         }
 
-        private unsafe struct RangeTable
-        {
-            public fixed ulong Start[MaxRanges];
-            public fixed ulong End[MaxRanges];
-        }
-
         private static Lists s_lists;
         private static Header* s_largeFree;
         private static Header* s_live;
-        private static RangeTable s_ranges;
-        private static int s_rangeCount;
+        private static ulong s_arena;
+        private static uint* s_pageTable;
+        private static uint s_carvedPages;
+        private static bool s_arenaFailed;
 
         private static ulong s_liveBlocks;
         private static ulong s_liveBytes;
@@ -90,6 +94,7 @@ namespace OS.Kernel.Memory
             Preemption.Suppress();
             try
             {
+                if (!EnsureArenaCore()) return null;
                 Header* h = size <= MaxSmallPayload
                     ? TakeSmall(ClassFor(size))
                     : TakeLarge(size);
@@ -208,12 +213,43 @@ namespace OS.Kernel.Memory
         /// pointer an app hands over before reading a header through it.
         /// </summary>
         public static bool Contains(ulong address)
+            => SharpOS.Std.Exchange.ExchangeArena.Contains(address);
+
+        /// <summary>The arena's first byte, its size and its page table: what apps are handed.</summary>
+        public static ulong ArenaLow => SharpOS.Std.Exchange.ExchangeArena.Low;
+        public static ulong ArenaSpan => SharpOS.Std.Exchange.ExchangeArena.Span;
+        public static uint* PageTable => s_pageTable;
+
+        /// <summary>Arena pages carved so far (they never go back): what an exhausted arena shows.</summary>
+        public static uint CarvedPages => s_carvedPages;
+
+        /// <summary>Reserves the arena if it is not yet; false when there is no memory for it.</summary>
+        public static bool EnsureArena()
         {
-            fixed (RangeTable* r = &s_ranges)
-                for (int i = 0; i < s_rangeCount; i++)
-                    if (address >= r->Start[i] && address < r->End[i])
-                        return true;
-            return false;
+            Preemption.Suppress();
+            try { return EnsureArenaCore(); }
+            finally { Preemption.Allow(); }
+        }
+
+        private static bool EnsureArenaCore()
+        {
+            if (s_arena != 0) return true;
+            if (s_arenaFailed) return false;
+
+            ulong tablePages = (ArenaPages * 4 + PageSize - 1) / PageSize;
+            ulong table = MapIdentity(tablePages);
+            ulong arena = table == 0 ? 0 : MapIdentity(ArenaPages);
+            if (arena == 0)
+            {
+                s_arenaFailed = true;
+                return false;
+            }
+            OS.Kernel.Util.Memory.Zero((byte*)table, (uint)(tablePages * PageSize));
+            s_pageTable = (uint*)table;
+            s_arena = arena;
+            s_reservedBytes = (ulong)ArenaPages * PageSize;
+            SharpOS.Std.Exchange.ExchangeArena.Install(arena, (ulong)ArenaPages * PageSize, s_pageTable);
+            return true;
         }
 
         // ---- internals; callers hold the suppression ----
@@ -235,10 +271,9 @@ namespace OS.Kernel.Memory
         private static Header* HeaderOf(void* payload)
         {
             ulong p = (ulong)payload;
-            if (p < HeaderSize || !Contains(p - HeaderSize)) return null;
-            Header* h = (Header*)(p - HeaderSize);
-            if (h->Magic != Magic || h->Live != 1) return null;
-            return h;
+            if (!SharpOS.Std.Exchange.ExchangeArena.TryBlock(p, out ulong start, out _) || start != p)
+                return null;
+            return (Header*)(p - HeaderSize);
         }
 
         private static void Release(Header* h)
@@ -277,7 +312,7 @@ namespace OS.Kernel.Memory
 
         private static bool CutChunk(int cls)
         {
-            ulong chunk = Reserve(ChunkBytes / PageSize);
+            ulong chunk = Reserve(ChunkBytes / PageSize, (byte)cls);
             if (chunk == 0) return false;
 
             uint block = 1u << (MinClassShift + cls);
@@ -312,7 +347,7 @@ namespace OS.Kernel.Memory
                 return h;
             }
 
-            ulong run = Reserve(pages);
+            ulong run = Reserve(pages, LargeClass);
             if (run == 0) return null;
             Header* fresh = (Header*)run;
             fresh->Magic = Magic;
@@ -321,11 +356,22 @@ namespace OS.Kernel.Memory
             return fresh;
         }
 
-        // Identity-mapped, below 4 GiB, recorded as ours.
-        private static ulong Reserve(ulong pages)
+        // The next pages of the arena, recorded in the page table as one unit
+        // of the given class (a chunk of small blocks, or a large run).
+        private static ulong Reserve(ulong pages, byte cls)
         {
-            if (s_rangeCount >= MaxRanges) return 0;
+            if (s_arena == 0 || s_carvedPages + pages > ArenaPages) return 0;
+            uint first = s_carvedPages;
+            s_carvedPages += (uint)pages;
+            uint entry = (first + 1) | ((uint)cls << 24);
+            for (uint i = 0; i < pages; i++)
+                s_pageTable[first + i] = entry;
+            return s_arena + (ulong)first * PageSize;
+        }
 
+        // Identity-mapped, below 4 GiB: one address for the kernel and every app.
+        private static ulong MapIdentity(ulong pages)
+        {
             ulong phys = PhysicalMemory.AllocPages((uint)pages);
             if (phys == 0) return 0;
             ulong bytes = pages * PageSize;
@@ -337,14 +383,6 @@ namespace OS.Kernel.Memory
             }
             if (!VirtualMemory.MapFixed((void*)phys, phys, bytes, exec: false))
                 return 0;
-
-            fixed (RangeTable* r = &s_ranges)
-            {
-                r->Start[s_rangeCount] = phys;
-                r->End[s_rangeCount] = phys + bytes;
-            }
-            s_rangeCount++;
-            s_reservedBytes += bytes;
             return phys;
         }
 

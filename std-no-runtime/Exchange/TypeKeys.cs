@@ -56,6 +56,9 @@ namespace SharpOS.Std.Exchange
 
         public static int Count => s_keyToTable == null ? 0 : s_keyToTable.Count;
 
+        /// <summary>Where this type's statics live: for the root-coverage detector.</summary>
+        public static nint StaticsAddress => (nint)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_declared);
+
         /// <summary>Every declared type, in declaration order.</summary>
         public static List<Description> Declared => s_declared ??= new List<Description>();
 
@@ -80,17 +83,21 @@ namespace SharpOS.Std.Exchange
         /// <summary>
         /// Declares a type by a witness instance: its table gets a key, and the key a table.
         /// </summary>
-        /// <returns>The key; 0 when the key is already taken by another table.</returns>
+        /// <returns>The key; 0 when the key or the table is already taken under another name.</returns>
         public static ulong Declare(string name, object witness, Field[] fields)
+            => Declare(name, ObjectLayout.TableOf(AddressOf(witness)), fields);
+
+        /// <summary>The same, by the type's table.</summary>
+        public static ulong Declare(string name, ulong table, Field[] fields)
         {
             s_tableToKey ??= new Dictionary<ulong, ulong>();
             s_keyToTable ??= new Dictionary<ulong, ulong>();
 
-            ulong table = ObjectLayout.TableOf(AddressOf(witness));
             ulong key = KeyOf(name, table, fields);
-
-            if (s_keyToTable.TryGetValue(key, out ulong existing))
-                return existing == table ? key : 0;
+            if (s_tableToKey.TryGetValue(table, out ulong existingKey))
+                return existingKey == key ? key : 0;
+            if (s_keyToTable.ContainsKey(key))
+                return 0;
 
             s_tableToKey[table] = key;
             s_keyToTable[key] = table;
@@ -104,6 +111,15 @@ namespace SharpOS.Std.Exchange
                 Fields = fields ?? new Field[0],
             });
             return key;
+        }
+
+        /// <summary>The description declared under a key; null when none.</summary>
+        public static Description DescriptionOf(ulong key)
+        {
+            List<Description> all = Declared;
+            for (int i = 0; i < all.Count; i++)
+                if (all[i].Key == key) return all[i];
+            return null;
         }
 
         /// <summary>FNV-1a over the name and the layout fingerprint, low bit set.</summary>

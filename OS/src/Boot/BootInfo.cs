@@ -65,6 +65,12 @@ namespace OS.Boot
         public void* BigStackStubBuffer;
         public uint BigStackStubBufferSize;
 
+        // The region write barrier's shared RhpByRefAssignRef shellcode
+        // (OS.Kernel.Memory.RegionBarrier): its own loader-code pool, because
+        // every window of ExecStubBuffer is taken.
+        public void* RegionBarrierBuffer;
+        public uint RegionBarrierBufferSize;
+
         // Pointer to the live UEFI System Table. Needed by Acpi.Init to
         // walk EFI_CONFIGURATION_TABLE for the ACPI 2.0 RSDP. Set by
         // UefiBootInfoBuilder; null only if firmware path isn't UEFI.

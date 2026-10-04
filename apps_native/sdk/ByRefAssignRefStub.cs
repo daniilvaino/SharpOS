@@ -37,6 +37,20 @@ namespace SharpOS.AppSdk
         //   add rdi, 8        ; 48 83 C7 08
         //   add rsi, 8        ; 48 83 C6 08
         //   ret               ; C3
+        /// <summary>Points the stub at the kernel's shared region barrier: mov rax, entry; jmp rax.</summary>
+        public static bool PatchToBarrier(ulong entry)
+        {
+            byte* target = (byte*)GetMethodAddress();
+            if (target == null || entry == 0)
+                return false;
+            target[0] = 0x48;
+            target[1] = 0xB8;
+            for (int i = 0; i < 8; i++) target[2 + i] = (byte)(entry >> (8 * i));
+            target[10] = 0xFF;
+            target[11] = 0xE0;
+            return target[0] == 0x48 && target[1] == 0xB8;
+        }
+
         public static bool TryInstall()
         {
             byte* target = (byte*)GetMethodAddress();

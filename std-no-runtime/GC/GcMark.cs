@@ -82,9 +82,16 @@ namespace SharpOS.Std.NoRuntime
                     continue;
 
                 // Only mark objects inside our heap. Pointers into .rdata,
-                // kernel structs, or arbitrary stack values are skipped.
-                if (GcHeap.FindSegmentContaining(ptr) == null)
+                // kernel structs, or arbitrary stack values are skipped. A
+                // pointer into an object marks that object (GcHeap
+                // .FindObjectStart); a pointer into nothing marks nothing.
+                GcSegmentHeader* seg = GcHeap.FindSegmentContaining(ptr);
+                if (seg == null)
                     continue;
+                ptr = GcHeap.FindObjectStart(seg, ptr);
+                if (ptr == 0)
+                    continue;
+                obj = (GcObject*)ptr;
 
                 // Sanity-check the candidate MT pointer BEFORE dereferencing
                 // anything else on the object. Conservative stack scan can

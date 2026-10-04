@@ -115,6 +115,14 @@ namespace SharpOS.Std.NoRuntime
             block->RawMethodTable = freeMt;
             block->Length = (uint)runBytes - 12;   // ComputeSize == runBytes
 
+            // A detector: whatever still uses a swept object reads 0xCC…
+            // instead of its old fields and faults at the first reference it
+            // follows, where its own stack says who held it. The allocator
+            // zeroes what it hands out, so this changes nothing for live code.
+            if (PoisonFreed)
+                for (nint q = runStart + 20; q < runStart + runBytes; q++)
+                    *(byte*)q = 0xCC;
+
             GcHeap.LinkFreeBlock(runStart, (uint)runBytes);
 
             runStart = 0;
@@ -124,6 +132,9 @@ namespace SharpOS.Std.NoRuntime
         // Run one sweep pass over all GcHeap segments. Assumes Mark phase
         // has already marked live objects. After Run, mark bits are cleared
         // (ready for next GC pass) and dead objects replaced with free markers.
+        /// <summary>Fill freed blocks with 0xCC (FlushRun). Off: a debugging detector.</summary>
+        public static bool PoisonFreed;
+
         public static void Run()
         {
             // Foreign-runtime guard: when CoreCLR is allocating into the
@@ -170,6 +181,7 @@ namespace SharpOS.Std.NoRuntime
 
                     bool marked = o->IsMarked();
                     bool isAlreadyFree = o->MethodTable == freeMt;
+                    GcHeap.SetObjectStart(seg, p, marked);
 
                     if (marked)
                     {

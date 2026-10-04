@@ -60,6 +60,11 @@
     <Compile Include="$(MSBuildThisFileDirectory)EventHandling.cs" Link="std\EventHandling.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exception.cs" Link="std\Exception.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exceptions.Derived.cs" Link="std\Exceptions.Derived.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\ExchangeArena.cs" Link="std\Exchange\ExchangeArena.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\MessageCatalog.cs" Link="std\Pipes\MessageCatalog.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\Pipe.cs" Link="std\Pipes\Pipe.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeProbeMessages.cs" Link="std\Pipes\PipeProbeMessages.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStatus.cs" Link="std\Pipes\PipeStatus.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\ObjectLayout.cs" Link="std\Exchange\ObjectLayout.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\Region.cs" Link="std\Exchange\Region.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionProbeGraph.cs" Link="std\Exchange\RegionProbeGraph.cs" />

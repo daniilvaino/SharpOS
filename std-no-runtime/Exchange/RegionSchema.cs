@@ -131,7 +131,7 @@ namespace SharpOS.Std.Exchange
                 if (d.ComponentSize != 0)
                     line.Append('[').Append(length.ToString()).Append(']');
 
-                if (d.Name == "String")
+                if (d.Name == "System.String")
                 {
                     line.Append(" \"");
                     char* text = (char*)(objectAt + 12);
@@ -181,16 +181,16 @@ namespace SharpOS.Std.Exchange
         {
             switch (type)
             {
-                case "Boolean": return *(byte*)at != 0 ? "true" : "false";
-                case "Byte": return (*(byte*)at).ToString();
-                case "Char": return "'" + (*(char*)at).ToString() + "'";
-                case "Int16": return (*(short*)at).ToString();
-                case "Int32": return (*(int*)at).ToString();
-                case "UInt32": return (*(uint*)at).ToString();
-                case "Int64": return (*(long*)at).ToString();
-                case "UInt64": return (*(ulong*)at).ToString();
-                case "Single": return (*(float*)at).ToString();
-                case "Double": return (*(double*)at).ToString();
+                case "System.Boolean": return *(byte*)at != 0 ? "true" : "false";
+                case "System.Byte": return (*(byte*)at).ToString();
+                case "System.Char": return "'" + (*(char*)at).ToString() + "'";
+                case "System.Int16": return (*(short*)at).ToString();
+                case "System.Int32": return (*(int*)at).ToString();
+                case "System.UInt32": return (*(uint*)at).ToString();
+                case "System.Int64": return (*(long*)at).ToString();
+                case "System.UInt64": return (*(ulong*)at).ToString();
+                case "System.Single": return (*(float*)at).ToString();
+                case "System.Double": return (*(double*)at).ToString();
             }
 
             if (byName.TryGetValue(type, out TypeKeys.Description value) && value.IsValueType)

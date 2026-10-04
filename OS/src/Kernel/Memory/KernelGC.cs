@@ -152,6 +152,15 @@ namespace OS.Kernel.Memory
                     t.State != OS.Kernel.Threading.ThreadState.Exited &&
                     t.ContextBlock != null)
                 {
+                    if (KernelGcPreciseWalk.Tracing)
+                    {
+                        OS.Hal.Console.Write("[walk-trace] ---- thread ");
+                        OS.Hal.Console.WriteUInt((uint)t.Id);
+                        OS.Hal.Console.Write(t.PreemptedFrame != null ? " preempted" : " parked");
+                        OS.Hal.Console.Write(" gen ");
+                        OS.Hal.Console.WriteUInt(t.AppGeneration);
+                        OS.Hal.Console.WriteLine("");
+                    }
                     KernelGcPreciseWalk.RunFromParkedThread(t.ContextBlock, markRoot);
 
                     // A preempted thread is parked inside the interrupt

@@ -91,7 +91,7 @@ namespace System.Collections.Generic
             return true;
         }
 
-        public void Add(TKey key, TValue value)
+        public void Add([SharpOS.Std.Pipes.Retains] TKey key, [SharpOS.Std.Pipes.Retains] TValue value)
         {
             // BCL throws ArgumentException on a duplicate key.
             if (!TryInsert(key, value, overwrite: false)) Halt();
@@ -100,7 +100,7 @@ namespace System.Collections.Generic
         public bool ContainsKey(TKey key) => FindEntry(key) >= 0;
 
         /// <summary>Adds if absent; false on a duplicate, without throwing.</summary>
-        public bool TryAdd(TKey key, TValue value) => TryInsert(key, value, overwrite: false);
+        public bool TryAdd([SharpOS.Std.Pipes.Retains] TKey key, [SharpOS.Std.Pipes.Retains] TValue value) => TryInsert(key, value, overwrite: false);
 
         public void Clear(int capacity = DefaultSize)
         {

@@ -80,7 +80,7 @@ namespace System.Collections.Generic
             return true;
         }
 
-        public void Push(T item)
+        public void Push([SharpOS.Std.Pipes.Retains] T item)
         {
             if (_size == _array.Length)
             {

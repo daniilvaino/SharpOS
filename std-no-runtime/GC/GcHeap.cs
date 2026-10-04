@@ -675,7 +675,9 @@ namespace SharpOS.Std.NoRuntime
                 {
                     // 3. Grow: need a new segment.
                     uint segSize = DefaultSegmentSize;
-                    while (segSize < aligned + (uint)sizeof(GcSegmentHeader))
+                    // Header, the object-start bitmap (one byte per 128 bytes)
+                    // and alignment slack come out of the same block.
+                    while (segSize < aligned + (uint)sizeof(GcSegmentHeader) + segSize / 128 + 32)
                         segSize *= 2;
 
                     GcSegmentHeader* fresh = AllocateSegment(segSize);
@@ -693,6 +695,8 @@ namespace SharpOS.Std.NoRuntime
                     s_allocBytes += aligned;
                 }
             }
+
+            SetObjectStart(FindSegmentContaining((nint)result), (nint)result, true);
 
             // Zero the region in 8-byte chunks (aligned is always 16-multiple).
             ulong* p = (ulong*)result;
@@ -921,6 +925,94 @@ namespace SharpOS.Std.NoRuntime
             if (seg->End > s_heapHigh) s_heapHigh = seg->End;
         }
 
+        /// <summary>Records whether a live object starts at <paramref name="addr"/>.</summary>
+        internal static void SetObjectStart(GcSegmentHeader* seg, nint addr, bool live)
+        {
+            if (seg == null || seg->Starts == null || addr < seg->ObjectStart) return;
+            nint index = (addr - seg->ObjectStart) >> 4;
+            if ((index >> 3) >= seg->StartsBytes || addr >= seg->End || (addr & 15) != 0)
+                BitmapFault(seg, addr);
+            byte bit = (byte)(1 << (int)(index & 7));
+            if (live) seg->Starts[index >> 3] |= bit;
+            else seg->Starts[index >> 3] &= (byte)~bit;
+        }
+
+        /// <summary>
+        /// Walks every segment as the sweep does; the first block whose table
+        /// is neither the free marker nor inside [low, high), or whose size is
+        /// impossible. Zero when the heap walks end to end. A debugging check.
+        /// </summary>
+        public static nint FindBrokenObject(nint low, nint high)
+        {
+            GcMethodTable* freeMt = GcSweep.FreeObjectMt;
+            for (GcSegmentHeader* seg = s_firstSegment; seg != null; seg = seg->Next)
+            {
+                nint p = seg->ObjectStart;
+                nint end = seg->Current;
+                while (p < end)
+                {
+                    GcObject* o = (GcObject*)p;
+                    nint mt = (nint)o->MethodTable;
+                    if (mt == 0 || (o->MethodTable != freeMt && (mt < low || mt >= high)))
+                        return p;
+                    uint size = o->ComputeSize();
+                    if (size < 16 || size > 64u * 1024 * 1024)
+                        return p;
+                    p += (nint)((size + 15u) & ~15u);
+                }
+                if (p != end) return p;
+            }
+            return 0;
+        }
+
+        // A bitmap write that would land outside the bitmap, or for an address
+        // the segment does not own: stop here, while the stack still says who.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void BitmapFault(GcSegmentHeader* seg, nint addr)
+        {
+            throw new System.InvalidOperationException("object-start bitmap: address outside its segment or misaligned");
+        }
+
+        /// <summary>
+        /// The live object that contains <paramref name="addr"/> — its start,
+        /// or zero when the address is in no live object (a free gap, past the
+        /// bump pointer, or the segment's own header and bitmap).
+        /// </summary>
+        /// <remarks>
+        /// A candidate root may point anywhere: a stack word scanned
+        /// conservatively, or an interior reference from GcInfo. Taking it for
+        /// an object start whenever its first word looked like a MethodTable
+        /// pointer let the marker set the mark bit inside a live object's
+        /// field — a reference to a string literal or a static is an address
+        /// in the image too — and that bit was never cleared: the reference
+        /// stayed off by one. Resolved through the bitmap instead, a pointer
+        /// into an object keeps that object alive, as a conservative root
+        /// should, and a pointer into nothing marks nothing.
+        /// </remarks>
+        public static nint FindObjectStart(GcSegmentHeader* seg, nint addr)
+        {
+            if (seg == null || seg->Starts == null || addr < seg->ObjectStart || addr >= seg->Current)
+                return 0;
+            long index = (long)((addr - seg->ObjectStart) >> 4);
+            byte* bits = seg->Starts;
+            while (index >= 0)
+            {
+                byte b = (byte)(bits[index >> 3] & (byte)((2 << (int)(index & 7)) - 1));
+                if (b != 0)
+                {
+                    int top = 7;
+                    while ((b & (1 << top)) == 0) top--;
+                    nint start = seg->ObjectStart + (nint)((((index & ~7L) + top)) << 4);
+                    GcObject* o = (GcObject*)start;
+                    if (o->MethodTable == null) return 0;
+                    uint size = o->ComputeSize();
+                    return addr < start + (nint)((size + 15u) & ~15u) ? start : 0;
+                }
+                index = (index & ~7L) - 1;
+            }
+            return 0;
+        }
+
         private static GcSegmentHeader* AllocateSegment(uint totalSize)
         {
             byte* block = (byte*)GcMemorySource.AllocateBlock(totalSize);
@@ -935,7 +1027,15 @@ namespace SharpOS.Std.NoRuntime
             // subsequent allocations bump by 16-multiples and stay aligned.
             // Required by CoreCLR (and CRT spec): malloc-returned memory must
             // be aligned for MAX_ALIGN_T = 16 on x64 — `movaps` etc. otherwise #GP.
-            nint rawStart = (nint)(block + sizeof(GcSegmentHeader));
+            // The object-start bitmap follows the header: one bit per 16 bytes
+            // of whatever is left, rounded up — a slight over-count, never short.
+            byte* afterHeader = block + sizeof(GcSegmentHeader);
+            nint usable = (nint)(block + totalSize - afterHeader);
+            nint bitmapBytes = (usable / (nint)ObjectAlignment + 7) / 8;
+            hdr->Starts = afterHeader;
+            hdr->StartsBytes = bitmapBytes;
+            for (nint i = 0; i < bitmapBytes; i++) afterHeader[i] = 0;
+            nint rawStart = (nint)(afterHeader + bitmapBytes);
             hdr->ObjectStart = (rawStart + (nint)(ObjectAlignment - 1)) & ~(nint)(ObjectAlignment - 1);
             hdr->End = (nint)(block + totalSize);
             hdr->Current = hdr->ObjectStart;

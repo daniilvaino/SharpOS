@@ -139,6 +139,28 @@ namespace SharpOS.Std.NoRuntime
         // Static-roots half of MarkAll, exposed for precise GC walkers
         // that supply their own stack-root discovery (e.g. via per-frame
         // GcInfo enumeration). Skip the conservative ScanStack here.
+        /// <summary>
+        /// Whether an address lies inside an object that a registered slot
+        /// holds (a statics block): a detector for statics nobody roots.
+        /// </summary>
+        public static bool CoversAddress(nint address)
+        {
+            fixed (GcRootsStorage* basePtr = &s_slots)
+            {
+                nint** slots = (nint**)basePtr;
+                for (int i = 0; i < s_count; i++)
+                {
+                    nint* slot = slots[i];
+                    if (slot == null) continue;
+                    nint obj = *slot;
+                    if (obj == 0) continue;
+                    uint size = ((GcObject*)obj)->ComputeSize();
+                    if (address >= obj && address < obj + (nint)size) return true;
+                }
+            }
+            return false;
+        }
+
         public static void MarkStaticRootsOnly()
         {
             fixed (GcRootsStorage* basePtr = &s_slots)

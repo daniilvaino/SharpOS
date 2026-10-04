@@ -290,6 +290,14 @@ namespace OS.Boot
             if (!GcStaticsMaterializer.Materialize())
                 Panic.Fail("gc statics materialization failed");
 
+            // The region write barrier for RhpByRefAssignRef: Iced assembles
+            // it, and Iced needs the statics. Before any region exists.
+            OS.Kernel.Diagnostics.WriteWatch.Install((byte*)bootInfo.RegionBarrierBuffer + 384);
+            if (OS.Kernel.Memory.RegionBarrier.TryInstall(bootInfo.RegionBarrierBuffer, 384))
+                OS.Kernel.Memory.RegionBarrier.PatchStub((byte*)OS.Boot.ByRefAssignRefStub.GetMethodAddress());
+            else
+                Log.Write(LogLevel.Warn, "[region-barrier] not installed: byref copies into regions go unchecked");
+
             // Hooks that ask Scheduler.Current, and so read a GC static: only
             // after the statics exist. Installed with the collect hook at
             // first, the allocation check ran on the materializer's own
@@ -840,6 +848,7 @@ namespace OS.Boot
             DumpOne("IdtExecBuffer     ", bi.IdtExecBuffer,     bi.IdtExecBufferSize);
             DumpOne("AsmExecBuffer     ", bi.AsmExecBuffer,     bi.AsmExecBufferSize);
             DumpOne("BigStackStubBuffer", bi.BigStackStubBuffer, bi.BigStackStubBufferSize);
+            DumpOne("RegionBarrierBuffer", bi.RegionBarrierBuffer, bi.RegionBarrierBufferSize);
 
             // step 123: register every loader-code exec pool as a "stub range"
             // with SehUnwind so the SEH walker treats RAs inside them as
@@ -859,6 +868,7 @@ namespace OS.Boot
             RegOne(bi.IdtExecBuffer,      bi.IdtExecBufferSize);
             RegOne(bi.AsmExecBuffer,      bi.AsmExecBufferSize);
             RegOne(bi.BigStackStubBuffer, bi.BigStackStubBufferSize);
+            RegOne(bi.RegionBarrierBuffer, bi.RegionBarrierBufferSize);
             Log.Write(LogLevel.Info, "[exec-pool] registered with SehUnwind stub range");
         }
 

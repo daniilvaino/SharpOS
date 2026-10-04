@@ -90,7 +90,7 @@ namespace System.Collections.Generic
             set => _items[index] = value;
         }
 
-        public void Add(T item)
+        public void Add([SharpOS.Std.Pipes.Retains] T item)
         {
             if (_size == _items.Length) EnsureCapacity(_size + 1);
             _items[_size] = item;
@@ -122,7 +122,7 @@ namespace System.Collections.Generic
             return -1;
         }
 
-        public void Insert(int index, T item)
+        public void Insert(int index, [SharpOS.Std.Pipes.Retains] T item)
         {
             if (_size == _items.Length) EnsureCapacity(_size + 1);
             for (int i = _size; i > index; i--)

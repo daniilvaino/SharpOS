@@ -77,6 +77,18 @@ namespace OS.Boot
                     info.BigStackStubBufferSize = BigStackStubSize;
                 }
 
+                // Region write barrier (RegionBarrier): the shared slow path of
+                // RhpByRefAssignRef for stores into the exchange heap.
+                const uint RegionBarrierSize = 512;
+                void* regionBarrierAlloc = null;
+                ulong rbStatus = systemTable->BootServices->AllocatePool(
+                    EFI_MEMORY_TYPE.EfiLoaderCode, RegionBarrierSize, &regionBarrierAlloc);
+                if (rbStatus == 0 && regionBarrierAlloc != null)
+                {
+                    info.RegionBarrierBuffer = regionBarrierAlloc;
+                    info.RegionBarrierBufferSize = RegionBarrierSize;
+                }
+
                 // JumpStub: shellcode called under firmware CR3 (before CR3 switch).
                 // Needs page alignment for Pager.Map → allocate 4096+4095 and align up.
                 const uint JumpStubRawSize = 4096 + 4095;

@@ -536,172 +536,119 @@ namespace OS.Boot.EH
             for (int i = targetRange; i < numRanges; i++)
                 totalInterruptibleLength += ranges[i].StopOffset - ranges[i].StartOffset;
 
-            const int ChunkBits = 6;                             // log2(64)
-            const int ChunkSize = 1 << ChunkBits;                // 64
-            int normTotal = (int)CoffGcInfoTypes.NormalizeCodeOffset(totalInterruptibleLength);
-            int numChunks = (normTotal + ChunkSize - 1) / ChunkSize;
-            int targetChunk = (int)(normalizedPc >> ChunkBits);
-            uint pcInChunk = normalizedPc & (ChunkSize - 1);
+            // Ported from GcInfoDecoder::EnumerateLiveSlots (dotnet/runtime
+            // release/8.0, vm/gcinfodecoder.cpp), fully-interruptible half.
+            //
+            // A chunk records, for the slots that can be live in it, their
+            // state at the END of the chunk and the offsets where that state
+            // flips. The state at a PC is the final state with every flip
+            // AFTER the PC undone; a slot outside the chunk's could-be-live
+            // set is dead throughout it. A chunk with no record means nothing
+            // changed in it: the nearest earlier chunk's final state holds,
+            // with no flips to undo.
+            //
+            // This used to replay chunks forward from the first and toggle
+            // the target chunk's flips up to the PC on top of the previous
+            // chunk's result, and it read the run-length could-be-live header
+            // one bit late. In Task.Execute — fully interruptible, the task
+            // spilled to [rbp+16] for its finally — the result was "dead" at
+            // the call that runs the task's work, and the collector freed a
+            // task its own pool thread was still running.
+            const int ChunkSizeLog2 = 6;                         // NUM_NORM_CODE_OFFSETS_PER_CHUNK_LOG2
+            const int ChunkSize = 1 << ChunkSizeLog2;            // 64
+            uint numInterruptibleLength = cumLen;
+            for (int i = targetRange; i < numRanges; i++)
+                numInterruptibleLength += ranges[i].StopOffset - ranges[i].StartOffset;
 
-            // POINTER_SIZE varint, then `numChunks * numBitsPerPointer` raw
-            // bits of chunk pointers, then byte-align → info2Offset.
-            BitReader r = new BitReader(gcInfo);
-            r.SetBitOffset(bitOffset);
-            int numBitsPerPointer = (int)r.DecodeVarLengthUnsigned(CoffGcInfoTypes.PointerSizeEncBase);
+            int numChunks = (int)((numInterruptibleLength + ChunkSize - 1) / ChunkSize);
+            int breakChunk = (int)(normalizedPc / ChunkSize);
+
+            BitReader m = new BitReader(gcInfo);
+            m.SetBitOffset(bitOffset);
+            int numBitsPerPointer = (int)m.DecodeVarLengthUnsigned(CoffGcInfoTypes.PointerSizeEncBase);
             if (numBitsPerPointer == 0)
-                return true;   // no transitions encoded → liveOut stays all-false
+                return true;
 
-            // Read chunk pointers into stackalloc (up to 128 chunks
-            // = 8192 bytes of code — covers any realistic kernel method).
-            if (numChunks > 128) Halt();
-            Span<int> chunkPointers = stackalloc int[numChunks];
-            for (int i = 0; i < numChunks; i++)
-                chunkPointers[i] = (int)r.ReadBits(numBitsPerPointer);
-
-            int info2Offset = (r.BitOffset + 7) & ~7;   // byte-align
-
-            // Walk chunks 0..targetChunk, updating liveOut.
-            for (int chunkIdx = 0; chunkIdx <= targetChunk; chunkIdx++)
+            int pointerTablePos = m.BitOffset;
+            int chunk = breakChunk;
+            int chunkPointer;
+            while (true)
             {
-                int chunkPtr = chunkPointers[chunkIdx];
-                if (chunkPtr == 0) continue;   // no state changes in this chunk
+                m.SetBitOffset(pointerTablePos + chunk * numBitsPerPointer);
+                chunkPointer = (int)m.ReadBits(numBitsPerPointer);
+                if (chunkPointer != 0) break;
+                if (chunk-- == 0) return true;
+            }
 
-                int chunkBitOffset = info2Offset + chunkPtr - 1;
-                ApplyChunkTransitions(
-                    gcInfo, chunkBitOffset,
-                    (int)slots.NumTracked,
-                    /*isTargetChunk:*/ chunkIdx == targetChunk,
-                    pcInChunk,
-                    liveOut);
+            int chunksStartPos = (pointerTablePos + numChunks * numBitsPerPointer + 7) & ~7;
+            int chunkPos = chunksStartPos + chunkPointer - 1;
+            m.SetBitOffset(chunkPos);
+            BitReader couldBeLiveReader = new BitReader(gcInfo);
+            couldBeLiveReader.SetBitOffset(chunkPos);
+
+            uint numCouldBeLive = 0;
+            if (m.ReadBits(1) != 0)
+            {
+                bool skip = m.ReadBits(1) == 0;
+                bool report = true;
+                uint read = m.DecodeVarLengthUnsigned(skip ? CoffGcInfoTypes.LivestateRleSkipEncBase
+                                                           : CoffGcInfoTypes.LivestateRleRunEncBase);
+                skip = !skip;
+                while (read < (uint)numSlots)
+                {
+                    uint cnt = m.DecodeVarLengthUnsigned(skip ? CoffGcInfoTypes.LivestateRleSkipEncBase
+                                                              : CoffGcInfoTypes.LivestateRleRunEncBase) + 1;
+                    if (report) numCouldBeLive += cnt;
+                    read += cnt;
+                    skip = !skip;
+                    report = !report;
+                }
+            }
+            else
+            {
+                for (int i = 0; i < numSlots; i++)
+                    if (m.ReadBits(1) != 0) numCouldBeLive++;
+            }
+
+            BitReader finalStateReader = new BitReader(gcInfo);
+            finalStateReader.SetBitOffset(m.BitOffset);
+            m.SetBitOffset(m.BitOffset + (int)numCouldBeLive);
+
+            int slotIndex = 0;
+            bool fSimple = couldBeLiveReader.ReadBits(1) == 0;
+            bool fSkipFirst = false;
+            int runLeft = 0;
+            if (!fSimple)
+            {
+                fSkipFirst = couldBeLiveReader.ReadBits(1) == 0;
+                slotIndex = -1;
+            }
+
+            uint breakDelta = normalizedPc % ChunkSize;
+            for (uint i = 0; i < numCouldBeLive; i++)
+            {
+                slotIndex = GetNextSlotId(ref couldBeLiveReader, fSimple, fSkipFirst, slotIndex, ref runLeft);
+
+                bool isLive = finalStateReader.ReadBits(1) != 0;
+                if (chunk == breakChunk)
+                {
+                    while (m.ReadBits(1) != 0)
+                    {
+                        uint transitionOffset = m.ReadBits(ChunkSizeLog2);
+                        if (transitionOffset > breakDelta)
+                            isLive = !isLive;
+                    }
+                }
+
+                if (isLive && slotIndex >= 0 && slotIndex < liveOut.Length)
+                    liveOut[slotIndex] = true;
+
+                slotIndex++;
             }
 
             return true;
         }
 
-        // Process one chunk: read couldBeLive bitmap + finalState bitmap +
-        // per-slot transition lists. Updates liveOut[slotId] either to
-        // finalState (if !isTargetChunk) or by toggling with parity of
-        // transitions where offsetInChunk <= pcInChunk (if isTargetChunk).
-        private static void ApplyChunkTransitions(
-            byte* gcInfo,
-            int chunkBitOffset,
-            int numTracked,
-            bool isTargetChunk,
-            uint pcInChunk,
-            Span<bool> liveOut)
-        {
-            // couldBeLive cursor + slotId iterator state — these read from
-            // the bitmap region (couldBeLiveOffset in the source).
-            int couldBeLiveOffset = chunkBitOffset;
-
-            BitReader r = new BitReader(gcInfo);
-            r.SetBitOffset(chunkBitOffset);
-
-            bool fSimple = r.ReadBits(1) == 0;
-            bool fSkipFirst = false;
-            int slotId = 0;
-            int couldBeLiveCnt = 0;
-            if (!fSimple)
-            {
-                fSkipFirst = r.ReadBits(1) == 0;
-                slotId = -1;
-            }
-            // Advance our couldBeLiveOffset cursor past the fSimple/skipFirst
-            // bits (they live before the bitmap).
-            couldBeLiveOffset = r.BitOffset;
-
-            // r.BitOffset advances past the couldBeLive area to numCouldBeLive count.
-            uint numCouldBeLive = GetNumCouldBeLiveSlots(ref r, numTracked, fSimple);
-
-            // finalState bits live at current r position; bitOffset for
-            // transitions is right after.
-            int finalStateOffset = r.BitOffset;
-            r.SetBitOffset(finalStateOffset + (int)numCouldBeLive);
-            int transitionsOffset = r.BitOffset;
-
-            BitReader finalReader = new BitReader(gcInfo);
-            finalReader.SetBitOffset(finalStateOffset);
-
-            BitReader transitionReader = new BitReader(gcInfo);
-            transitionReader.SetBitOffset(transitionsOffset);
-
-            BitReader couldBeLiveReader = new BitReader(gcInfo);
-            couldBeLiveReader.SetBitOffset(couldBeLiveOffset);
-
-            for (uint i = 0; i < numCouldBeLive; i++)
-            {
-                slotId = GetNextSlotId(ref couldBeLiveReader, fSimple, fSkipFirst, slotId, ref couldBeLiveCnt);
-
-                bool finalState = finalReader.ReadBits(1) != 0;
-
-                // Walk per-slot transition list, count flips before pcInChunk.
-                int flipsTotal = 0;
-                int flipsBeforePc = 0;
-                while (transitionReader.ReadBits(1) != 0)
-                {
-                    uint offsetInChunk = transitionReader.ReadBits(6);   // log2(64)
-                    flipsTotal++;
-                    if (!isTargetChunk || offsetInChunk <= pcInChunk)
-                        flipsBeforePc++;
-                }
-
-                if (slotId < liveOut.Length)
-                {
-                    if (isTargetChunk)
-                    {
-                        if ((flipsBeforePc & 1) == 1)
-                            liveOut[slotId] = !liveOut[slotId];
-                    }
-                    else
-                    {
-                        liveOut[slotId] = finalState;
-                    }
-                }
-
-                slotId++;
-            }
-        }
-
-        // Count "could be live" slots for this chunk. fSimple branch reads
-        // numTracked raw bits (one per tracked slot, 1 = in couldBeLive set).
-        // RLE branch alternates skip/run runs. Advances the BitReader cursor
-        // to the start of finalState bits.
-        private static uint GetNumCouldBeLiveSlots(ref BitReader r, int numTracked, bool fSimple)
-        {
-            // r is already past the fSimple/skipFirst bits.
-            uint count = 0;
-            if (fSimple)
-            {
-                for (int i = 0; i < numTracked; i++)
-                    if (r.ReadBits(1) != 0)
-                        count++;
-            }
-            else
-            {
-                bool fSkip = r.ReadBits(1) == 0;
-                bool fReport = true;
-                uint readSlots = r.DecodeVarLengthUnsigned(
-                    fSkip ? CoffGcInfoTypes.LivestateRleSkipEncBase
-                          : CoffGcInfoTypes.LivestateRleRunEncBase);
-                fSkip = !fSkip;
-                while (readSlots < (uint)numTracked)
-                {
-                    uint cnt = r.DecodeVarLengthUnsigned(
-                        fSkip ? CoffGcInfoTypes.LivestateRleSkipEncBase
-                              : CoffGcInfoTypes.LivestateRleRunEncBase) + 1;
-                    if (fReport) count += cnt;
-                    readSlots += cnt;
-                    fSkip = !fSkip;
-                    fReport = !fReport;
-                }
-            }
-            return count;
-        }
-
-        // Yield the next slot id from the couldBeLive iterator. State
-        // (slotId / couldBeLiveCnt) is carried across calls. For fSimple
-        // we scan bits one at a time; for RLE we maintain a (skip, run)
-        // state machine.
         private static int GetNextSlotId(
             ref BitReader r,
             bool fSimple,
@@ -838,47 +785,49 @@ namespace OS.Boot.EH
             }
         }
 
+        // Ported from GcSlotDecoder::DecodeSlotTable (dotnet/runtime release/8.0,
+        // vm/gcinfodecoder.cpp), the stack and untracked halves are the same
+        // loop: a slot after one whose RAW two flag bits are zero carries an
+        // UNSIGNED delta from the previous offset; otherwise a full signed
+        // offset and fresh flags.
+        //
+        // Two departures from that loop used to live here, and together they
+        // lost roots. The untracked marker was OR-ed into the carried flags, so
+        // "flags != 0" held for every untracked slot and a delta was read as a
+        // whole offset — an out-local at [rbp+48] came back as [rbp+8], read
+        // as null, and the object it held was swept while its frame still used
+        // it. And the delta was decoded as signed, which turns a small positive
+        // delta into a negative one.
         private static void DecodeStackSlotList(
             ref BitReader r, int n, bool isUntracked, Span<CoffGcSlot> slotsOut, ref int outIdx)
         {
+            byte marker = isUntracked ? CoffGcSlotFlags.Untracked : (byte)0;
             byte spBase = (byte)r.ReadBits(2);
             int normSpOffset = r.DecodeVarLengthSigned(CoffGcInfoTypes.StackSlotEncBase);
             int spOffset = CoffGcInfoTypes.DenormalizeStackSlot(normSpOffset);
             byte flags = (byte)r.ReadBits(2);
-            if (isUntracked) flags |= CoffGcSlotFlags.Untracked;
             slotsOut[outIdx++] = new CoffGcSlot
             {
-                Kind = 1, SpBase = spBase, RegOrOffset = spOffset, Flags = flags,
+                Kind = 1, SpBase = spBase, RegOrOffset = spOffset, Flags = (byte)(flags | marker),
             };
             for (int i = 1; i < n; i++)
             {
                 spBase = (byte)r.ReadBits(2);
-                if (flags != 0 && !isUntracked)
+                if (flags != 0)
                 {
                     normSpOffset = r.DecodeVarLengthSigned(CoffGcInfoTypes.StackSlotEncBase);
                     spOffset = CoffGcInfoTypes.DenormalizeStackSlot(normSpOffset);
                     flags = (byte)r.ReadBits(2);
-                    if (isUntracked) flags |= CoffGcSlotFlags.Untracked;
-                }
-                else if (flags != 0 && isUntracked)
-                {
-                    // Untracked slots always read full offset + flags (no
-                    // delta-chain — matches stock decoder's pattern of
-                    // separating tracked/untracked passes).
-                    normSpOffset = r.DecodeVarLengthSigned(CoffGcInfoTypes.StackSlotEncBase);
-                    spOffset = CoffGcInfoTypes.DenormalizeStackSlot(normSpOffset);
-                    flags = (byte)r.ReadBits(2);
-                    flags |= CoffGcSlotFlags.Untracked;
                 }
                 else
                 {
-                    int normSpOffsetDelta = r.DecodeVarLengthSigned(CoffGcInfoTypes.StackSlotDeltaEncBase);
+                    int normSpOffsetDelta = (int)r.DecodeVarLengthUnsigned(CoffGcInfoTypes.StackSlotDeltaEncBase);
                     normSpOffset += normSpOffsetDelta;
                     spOffset = CoffGcInfoTypes.DenormalizeStackSlot(normSpOffset);
                 }
                 slotsOut[outIdx++] = new CoffGcSlot
                 {
-                    Kind = 1, SpBase = spBase, RegOrOffset = spOffset, Flags = flags,
+                    Kind = 1, SpBase = spBase, RegOrOffset = spOffset, Flags = (byte)(flags | marker),
                 };
             }
         }
@@ -921,7 +870,7 @@ namespace OS.Boot.EH
                 }
                 else
                 {
-                    r.DecodeVarLengthSigned(CoffGcInfoTypes.StackSlotDeltaEncBase);
+                    r.DecodeVarLengthUnsigned(CoffGcInfoTypes.StackSlotDeltaEncBase);
                 }
             }
         }

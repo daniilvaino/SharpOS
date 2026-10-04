@@ -48,7 +48,7 @@ namespace System.Collections.Generic
 
         public bool IsReadOnly => false;
 
-        public bool Add(T item)
+        public bool Add([SharpOS.Std.Pipes.Retains] T item)
         {
             if (item == null) Halt();
             Entry existing = Find(item);

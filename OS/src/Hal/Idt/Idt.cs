@@ -275,6 +275,14 @@ namespace OS.Hal.Idt
                 if (OS.Hal.X64Asm.TryResumeFrame(frame))
                     return;                 // iretq — does not return
             }
+            else if (vector == 1)
+            {
+                // #DB from a hardware write watch (Diagnostics.WriteWatch):
+                // logged, disarmed, resumed.
+                OS.Kernel.Diagnostics.WriteWatch.OnDebugTrap(frame);
+                if (OS.Hal.X64Asm.TryResumeFrame(frame))
+                    return;
+            }
             else if (vector == SpuriousVector)
             {
                 // A spurious interrupt is one the APIC withdrew after

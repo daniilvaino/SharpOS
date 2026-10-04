@@ -11,6 +11,7 @@
 <Project>
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)GC\GcMemorySource.AppStatic.cs" Link="std\GC\GcMemorySource.AppStatic.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeTransport.AppServices.cs" Link="std\Pipes\PipeTransport.AppServices.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)GC\GcStaticsInit.cs" Link="std\GC\GcStaticsInit.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Diagnostics.Output.AppHost.cs" Link="std\Runtime\Diagnostics.Output.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StringRuntime.RhNewString.cs" Link="std\StringRuntime.RhNewString.cs" />

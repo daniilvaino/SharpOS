@@ -193,6 +193,33 @@
 
         // Experiment: a region from the kernel (AppHost.RegionFromKernel).
         public ulong RegionFromKernelAddress;
+
+        // The exchange heap's arena and page table, for the write barrier
+        // (SharpOS.Std.Exchange.ExchangeArena). Zero: an older kernel.
+        public ulong ExchangeArenaLow;
+        public ulong ExchangeArenaSpan;
+        public ulong ExchangePageTable;
+
+        // Native pipes (pipe spec Р6, Р27, Р30, Р44; OS.Kernel.Pipes.PipeServices
+        // has the signatures): create a pair, connect by name, declare the
+        // writer's type, send, receive with or without waiting, close, read the
+        // declared description. Win64 only. Zero: an older kernel.
+        public ulong PipeCreateAddress;
+        public ulong PipeConnectAddress;
+        public ulong PipeDeclareAddress;
+        public ulong PipeSendAddress;
+        public ulong PipeReceiveAddress;
+        public ulong PipeCloseAddress;
+        public ulong PipeSchemaAddress;
+
+        // Test orchestration for the pipe probes (Probes.PipeProbe):
+        // int (int op, ulong argument, ulong* answer). Zero: not published.
+        public ulong PipeProbeAddress;
+
+        // The shared RhpByRefAssignRef barrier (OS.Kernel.Memory.RegionBarrier):
+        // the app points its own stub there with `mov rax, imm64; jmp rax`.
+        // Zero: an older kernel, and the app keeps its plain copy.
+        public ulong RegionByRefBarrierAddress;
     }
 
     /// <summary>

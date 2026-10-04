@@ -73,7 +73,7 @@ namespace System.Collections.Generic
             if (node == head) head = newNode;
         }
 
-        public LinkedListNode<T> AddFirst(T value)
+        public LinkedListNode<T> AddFirst([SharpOS.Std.Pipes.Retains] T value)
         {
             LinkedListNode<T> result = new LinkedListNode<T>(this, value);
             if (head == null)
@@ -103,7 +103,7 @@ namespace System.Collections.Generic
             node.list = this;
         }
 
-        public LinkedListNode<T> AddLast(T value)
+        public LinkedListNode<T> AddLast([SharpOS.Std.Pipes.Retains] T value)
         {
             LinkedListNode<T> result = new LinkedListNode<T>(this, value);
             if (head == null) InternalInsertNodeToEmptyList(result);

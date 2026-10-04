@@ -107,9 +107,29 @@ namespace System
             byte* dstStart = (byte*)dstObj + 16 + (uint)destinationIndex * elemSize;
 
             nuint bytesToCopy = (nuint)length * elemSize;
+
+            // Into a region: every reference copied must stay inside the
+            // destination's block, as for a single store (the write barrier).
+            if ((ulong)dstStart - SharpOS.Std.Exchange.ExchangeArena.Bounds.Low < SharpOS.Std.Exchange.ExchangeArena.Bounds.Span
+                && SharpOS.Std.Exchange.ObjectLayout.HasPointers((ulong)srcMt))
+                CheckRegionCopy((ulong)srcObj, (ulong)srcMt, (ulong)srcStart, (ulong)dstStart, (ulong)bytesToCopy);
+
             // Use our Memmove for overlap safety — same array src/dst is
             // a legitimate caller pattern (e.g. List<T>.RemoveAt shift).
             SharpOS.Std.MemoryOps.Memmove(ref *dstStart, ref *srcStart, bytesToCopy);
+        }
+
+        private static unsafe void CheckRegionCopy(ulong srcObj, ulong srcMt, ulong srcStart, ulong dstStart, ulong bytes)
+        {
+            var slots = new ulong[SharpOS.Std.Exchange.ObjectLayout.MaxReferences(srcObj, srcMt)];
+            int found = SharpOS.Std.Exchange.ObjectLayout.ReferenceSlots(srcObj, srcMt, slots);
+            for (int i = 0; i < found; i++)
+            {
+                ulong slot = slots[i];
+                if (slot < srcStart || slot >= srcStart + bytes) continue;
+                if (!SharpOS.Std.Exchange.ExchangeArena.StoreAllowed(dstStart + (slot - srcStart), *(ulong*)slot))
+                    SharpOS.Std.NoRuntime.GcRuntimeExports.ThrowRegionStore();
+            }
         }
 
         public static unsafe void Copy<T>(T[] sourceArray, T[] destinationArray, int length)

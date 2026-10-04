@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using SharpOS.Std.Pipes;
 
 namespace SharpOS.Std.Exchange.Probe
 {
@@ -13,12 +14,14 @@ namespace SharpOS.Std.Exchange.Probe
     // ILC would turn the call into a direct call, and a call on an untranslated
     // object would never read its table word.
 
+    [Message]
     public sealed class Bag
     {
         public string[] Keys;
         public object[] Values;
     }
 
+    [Message]
     public sealed class SelfRef
     {
         public string Text;
@@ -29,17 +32,26 @@ namespace SharpOS.Std.Exchange.Probe
         public long Big;
     }
 
-    public sealed class Box<T>
+    [Message]
+    public sealed class IntBox
     {
-        public T Value;
+        public int Value;
     }
 
+    [Message]
+    public sealed class TextBox
+    {
+        public string Value;
+    }
+
+    [Message]
     public abstract class Base
     {
         public int Tag;
         public abstract int Rank();
     }
 
+    [Message]
     public sealed class Derived : Base, ILabelled, ITriple
     {
         public override int Rank() => 2;
@@ -47,6 +59,7 @@ namespace SharpOS.Std.Exchange.Probe
         public int Triple() => 21;
     }
 
+    [Message]
     public sealed class Other : Base, ILabelled, ISingle, ITriple
     {
         public override int Rank() => 3;
@@ -68,12 +81,14 @@ namespace SharpOS.Std.Exchange.Probe
         int Label();
     }
 
+    [Message]
     public sealed class Shaped : IRanked, ILabelled
     {
         public int Sides() => 5;
         public int Label() => 50;
     }
 
+    [Message]
     public sealed class Squared : IRanked, ILabelled, ITriple
     {
         public int Sides() => 4;
@@ -94,12 +109,14 @@ namespace SharpOS.Std.Exchange.Probe
         int Triple();
     }
 
+    [Message]
     public struct Pair
     {
         public string Name;
         public int X;
     }
 
+    [Message]
     public enum Tint
     {
         Pale,
@@ -107,11 +124,12 @@ namespace SharpOS.Std.Exchange.Probe
         Deep,
     }
 
+    [Message]
     public sealed class Holder
     {
         public Base Base;
         public IRanked Ranked;
-        public Box<string> Text;
+        public TextBox Text;
         public Pair[] Pairs;
         public object Enum;
         public object RefStruct;
@@ -129,89 +147,18 @@ namespace SharpOS.Std.Exchange.Probe
         /// <summary>Types the graph uses that could not be declared (a key taken twice).</summary>
         public static int Problems => s_problems;
 
-        /// <summary>Declares every type of the graph, once per image.</summary>
+        /// <summary>
+        /// Declares every type of the graph, once per image: they are [Message]
+        /// types, so this is the catalog's own registration.
+        /// </summary>
         public static void Declare()
         {
             if (s_declared)
                 return;
             s_declared = true;
-
-            Bag bag = new Bag();
-            Declare("Bag", bag, new[]
-            {
-                F("Keys", "String[]", bag, ref bag.Keys),
-                F("Values", "Object[]", bag, ref bag.Values),
-            });
-
-            SelfRef self = new SelfRef();
-            Declare("SelfRef", self, new[]
-            {
-                F("Text", "String", self, ref self.Text),
-                F("Me", "SelfRef", self, ref self.Me),
-                F("Any", "Object", self, ref self.Any),
-                F("Small", "Byte", self, ref self.Small),
-                F("Middle", "Int32", self, ref self.Middle),
-                F("Big", "Int64", self, ref self.Big),
-            });
-
-            Box<int> boxInt = new Box<int>();
-            Declare("Box<Int32>", boxInt, new[] { F("Value", "Int32", boxInt, ref boxInt.Value) });
-            Box<string> boxString = new Box<string>();
-            Declare("Box<String>", boxString, new[] { F("Value", "String", boxString, ref boxString.Value) });
-
-            string text = "w";
-            Declare("String", text, new[]
-            {
-                new TypeKeys.Field("Length", "Int32", 8),
-                F("[]", "Char", text, ref text.GetPinnableReference()),
-            });
-            Declare("Int32", (object)5, new[] { new TypeKeys.Field("value", "Int32", 8) });
-
-            int[] ints = new int[1];
-            Declare("Int32[]", ints, new[] { F("[]", "Int32", ints, ref MemoryMarshal.GetArrayDataReference(ints)) });
-            string[] strings = new string[1];
-            Declare("String[]", strings, new[] { F("[]", "String", strings, ref MemoryMarshal.GetArrayDataReference(strings)) });
-            object[] objects = new object[1];
-            Declare("Object[]", objects, new[] { F("[]", "Object", objects, ref MemoryMarshal.GetArrayDataReference(objects)) });
-
-            Derived derived = new Derived();
-            Declare("Derived", derived, new[] { F("Tag", "Int32", derived, ref derived.Tag) });
-            Other other = new Other();
-            Declare("Other", other, new[] { F("Tag", "Int32", other, ref other.Tag) });
-            Declare("Shaped", new Shaped(), new TypeKeys.Field[0]);
-            Declare("Squared", new Squared(), new TypeKeys.Field[0]);
-
-            Pair pair = default;
-            Declare("Pair", (object)pair, new[]
-            {
-                new TypeKeys.Field("Name", "String", TypeKeys.StructOffset(ref pair, ref pair.Name)),
-                new TypeKeys.Field("X", "Int32", TypeKeys.StructOffset(ref pair, ref pair.X)),
-            });
-            Pair[] pairs = new Pair[1];
-            Declare("Pair[]", pairs, new[] { F("[]", "Pair", pairs, ref MemoryMarshal.GetArrayDataReference(pairs)) });
-            Declare("Tint", (object)Tint.Amber, new[] { new TypeKeys.Field("value", "Int32", 8) });
-
-            Holder holder = new Holder();
-            Declare("Holder", holder, new[]
-            {
-                F("Base", "Base", holder, ref holder.Base),
-                F("Ranked", "IRanked", holder, ref holder.Ranked),
-                F("Text", "Box<String>", holder, ref holder.Text),
-                F("Pairs", "Pair[]", holder, ref holder.Pairs),
-                F("Enum", "Object", holder, ref holder.Enum),
-                F("RefStruct", "Object", holder, ref holder.RefStruct),
-                F("Numbers", "Int32[]", holder, ref holder.Numbers),
-            });
+            MessageCatalog.Ensure();
+            s_problems = MessageCatalog.Problems.Count;
         }
-
-        private static void Declare(string name, object witness, TypeKeys.Field[] fields)
-        {
-            if (TypeKeys.Declare(name, witness, fields) == 0)
-                s_problems++;
-        }
-
-        private static TypeKeys.Field F<T>(string name, string type, object owner, ref T field)
-            => new TypeKeys.Field(name, type, TypeKeys.Offset(owner, ref field));
 
         /// <summary>
         /// A cycle, a shared reference, a reference back to the root, null, boxes,
@@ -228,7 +175,7 @@ namespace SharpOS.Std.Exchange.Probe
                 Small = 7,
                 Middle = 0x1234,
                 Big = 0x1122334455667788,
-                Any = new Box<int> { Value = 389 },
+                Any = new IntBox { Value = 389 },
             };
             self.Me = self;
 
@@ -240,7 +187,7 @@ namespace SharpOS.Std.Exchange.Probe
             {
                 Base = new Derived { Tag = 17 },
                 Ranked = new Shaped(),
-                Text = new Box<string> { Value = "boxed" },
+                Text = new TextBox { Value = "boxed" },
                 Pairs = new[] { new Pair { Name = "a", X = 1 }, new Pair { Name = null, X = 2 }, new Pair { Name = "c", X = 3 } },
                 Enum = Tint.Deep,
                 RefStruct = new Pair { Name = "ref", X = 99 },
@@ -288,7 +235,7 @@ namespace SharpOS.Std.Exchange.Probe
             failed += Expect(say, "SelfRef fields",
                              self != null && self.Text == "hello" && self.Small == 7 && self.Middle == 0x1234
                              && self.Big == 0x1122334455667788);
-            failed += Expect(say, "SelfRef.Any is Box<int> 389", self != null && self.Any is Box<int> b && b.Value == 389);
+            failed += Expect(say, "SelfRef.Any is IntBox 389", self != null && self.Any is IntBox b && b.Value == 389);
             failed += Expect(say, "Values[4] is Bag {x: y}, Values[1] is the root",
                              bag.Values[4] is Bag inner && inner.Keys[0] == "x" && (string)inner.Values[0] == "y"
                              && ReferenceEquals(inner.Values[1], bag));
@@ -304,7 +251,7 @@ namespace SharpOS.Std.Exchange.Probe
             failed += Expect(say, "interface field holds Shaped, Sides() == 5", h.Ranked is Shaped && h.Ranked.Sides() == 5);
             failed += Expect(say, "interface dispatch with four implementations: Label() == 20 and 50",
                              h.Base is ILabelled bl && bl.Label() == 20 && h.Ranked is ILabelled rl && rl.Label() == 50);
-            failed += Expect(say, "Box<string> \"boxed\"", h.Text != null && h.Text.Value == "boxed");
+            failed += Expect(say, "TextBox \"boxed\"", h.Text != null && h.Text.Value == "boxed");
             failed += Expect(say, "Pair[] {a,1} {null,2} {c,3}",
                              h.Pairs is Pair[] ps && ps.Length == 3 && ps[0].Name == "a" && ps[0].X == 1
                              && ps[1].Name == null && ps[1].X == 2 && ps[2].Name == "c" && ps[2].X == 3);

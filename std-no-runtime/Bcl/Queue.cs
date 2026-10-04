@@ -70,7 +70,7 @@ namespace System.Collections.Generic
             return false;
         }
 
-        public void Enqueue(T item)
+        public void Enqueue([SharpOS.Std.Pipes.Retains] T item)
         {
             if (_size == _array.Length)
             {

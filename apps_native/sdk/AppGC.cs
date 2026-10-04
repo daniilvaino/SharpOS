@@ -67,6 +67,11 @@ namespace SharpOS.AppSdk
         /// </summary>
         public static bool Held;
 
+        /// <summary>Walk the heap before the mark and after the sweep, and say which broke it. Debugging.</summary>
+        public static bool VerifyHeap;
+        public static nint FirstBroken;
+        public static int BrokenPhase;   // 1: before the mark (the program broke it); 2: after the sweep (the collector did)
+
         public static void Collect()
         {
             if (Held)
@@ -86,6 +91,11 @@ namespace SharpOS.AppSdk
             uint afterStatics;
             try
             {
+                if (VerifyHeap && FirstBroken == 0)
+                {
+                    nint broken = GcHeap.FindBrokenObject(GcMark.MethodTableLow, GcMark.MethodTableHigh);
+                    if (broken != 0) { FirstBroken = broken; BrokenPhase = 1; }
+                }
                 GcMark.Begin();
                 GcRoots.MarkStaticRootsOnly();
                 afterStatics = GcMark.LastMarkedCount;
@@ -96,6 +106,12 @@ namespace SharpOS.AppSdk
                 s_afterStatics = afterStatics;
 
                 GcSweep.Run();
+
+                if (VerifyHeap && FirstBroken == 0)
+                {
+                    nint broken = GcHeap.FindBrokenObject(GcMark.MethodTableLow, GcMark.MethodTableHigh);
+                    if (broken != 0) { FirstBroken = broken; BrokenPhase = 2; }
+                }
             }
             finally
             {

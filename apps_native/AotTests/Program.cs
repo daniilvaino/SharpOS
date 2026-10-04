@@ -14,7 +14,7 @@ namespace AotTests
     // case and exits with the pass count, so a launcher / harness can read the
     // result. Deliberately uses NO static reference fields (ClassConstructorRunner
     // trap): all test data is local / factory.
-    internal static unsafe class AppEntry
+    internal static unsafe partial class AppEntry
     {
         private static uint s_pass;
         private static uint s_total;
@@ -68,6 +68,14 @@ namespace AotTests
             // kernel ended the program. The digit is how many types implement
             // the interface, which decides what ILC compiles:
             //   --untranslated-interface1..4  ISingle, IRanked, ITriple, ILabelled.
+            // A pipe writer that ends with its queue full (pipe test 2): normal
+            // exit (0) or an unhandled exception (134).
+            if (arguments.Length > 1 && arguments[0] == "--pipe-stress")
+                return RunPipeStress(int.Parse(arguments[1]));
+
+            if (arguments.Length > 1 && arguments[0] == "--pipe-writer-dies")
+                return RunWriterDies(arguments[1] == "crash");
+
             if (arguments.Length > 0 && arguments[0].Length == 25 && arguments[0].StartsWith("--untranslated-interface"))
                 return RunUntranslatedInterface(arguments[0][24] - '0');
 
@@ -275,6 +283,7 @@ namespace AotTests
             CheckStackTraceOwnership();
             CheckRegion();
             CheckRegionFromKernel();
+            CheckPipes();
 
             // The error stream (step 167). The check can only see that the
             // kernel offers it; whether the marker reached last_err.log and not

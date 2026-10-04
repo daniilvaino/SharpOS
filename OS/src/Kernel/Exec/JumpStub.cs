@@ -132,6 +132,7 @@ namespace OS.Kernel.Exec
         public const int HwExceptionNullReference = 0;
         public const int HwExceptionAccessViolation = 1;
         public const int HwExceptionDivideByZero = 2;
+        public const int HwExceptionRegionReference = 3;
 
         /// <summary>The innermost app registers its factory (service SetHwExceptionFactory).</summary>
         public static void SetHwExceptionFactory(nint factory)

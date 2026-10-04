@@ -11,6 +11,7 @@
 <Project>
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)GC\GcMemorySource.KernelHeap.cs" Link="std\GC\GcMemorySource.KernelHeap.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeTransport.KernelPipes.cs" Link="std\Pipes\PipeTransport.KernelPipes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Diagnostics.Output.KernelConsole.cs" Link="std\Runtime\Diagnostics.Output.KernelConsole.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StringRuntime.KernelHeap.cs" Link="std\StringRuntime.KernelHeap.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.KernelScheduler.cs" Link="std\Threading.Tasks.KernelScheduler.cs" />

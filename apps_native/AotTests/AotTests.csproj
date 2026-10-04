@@ -11,5 +11,6 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="AsyncShape.cs" />
+    <Compile Include="PipeTests.cs" />
   </ItemGroup>
 </Project>

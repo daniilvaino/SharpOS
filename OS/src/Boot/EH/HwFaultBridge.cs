@@ -814,6 +814,20 @@ namespace OS.Boot.EH
             // Catch clauses match by MethodTable pointer, and the app's
             // `catch (Exception)` names its own Exception: the kernel's object
             // walked past every handler in the app (pipe_plan.md, item 3).
+            // A store into a region refused by the write barrier, which faults
+            // here on purpose (ExchangeArena.StoreFaultAddress). Whose image:
+            // the faulting code's, or — in the shared byref shellcode — the
+            // caller's, whose return address is on top of the stack.
+            if (vector == VecPageFault && frame->Cr2 == SharpOS.Std.Exchange.ExchangeArena.StoreFaultAddress)
+            {
+                ulong who = OS.Kernel.Memory.RegionBarrier.Contains(frame->Rip) ? *(ulong*)frame->Rsp : frame->Rip;
+                if (OS.Kernel.Exec.JumpStub.IsAppCode(who)
+                    && OS.Kernel.Exec.JumpStub.TryCreateAppException(OS.Kernel.Exec.JumpStub.HwExceptionRegionReference,
+                                                                     out object refused))
+                    return refused;
+                return new SharpOS.Std.Pipes.RegionReferenceException();
+            }
+
             int kind = vector == VecDivideByZero ? OS.Kernel.Exec.JumpStub.HwExceptionDivideByZero
                      : vector == VecPageFault && frame->Cr2 < 0x10000 ? OS.Kernel.Exec.JumpStub.HwExceptionNullReference
                      : OS.Kernel.Exec.JumpStub.HwExceptionAccessViolation;

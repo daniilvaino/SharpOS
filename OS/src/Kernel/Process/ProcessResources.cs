@@ -72,6 +72,12 @@ namespace OS.Kernel.Process
         {
             if (generation == 0) return;
 
+            // Pipe ends first: an end still open closes — broken when the run
+            // failed — and the messages it queued stay with the pipe for the
+            // reader to drain.
+            int recorded = Find(generation);
+            bool failed = recorded >= 0 && s_records[recorded].State == ProcessState.Failed;
+            int ends = OS.Kernel.Pipes.KernelPipes.OnHolderEnded(generation, failed);
             int released = OS.Kernel.Memory.ExchangeHeap.ReleaseOwner(generation);
 
             ProcessState state = ProcessState.Exited;
@@ -91,7 +97,7 @@ namespace OS.Kernel.Process
                 Threading.Preemption.Allow();
             }
 
-            if (released != 0)
+            if (released != 0 || ends != 0)
             {
                 DebugLog.Begin(LogLevel.Info);
                 UiText.Write("[proc] generation ");
@@ -99,6 +105,8 @@ namespace OS.Kernel.Process
                 UiText.Write(state == ProcessState.Failed ? " failed" : " exited");
                 UiText.Write(": exchange blocks returned ");
                 UiText.WriteInt(released);
+                UiText.Write(failed ? ", pipe ends broken " : ", pipe ends closed ");
+                UiText.WriteInt(ends);
                 DebugLog.EndLine();
             }
         }

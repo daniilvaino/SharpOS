@@ -85,11 +85,25 @@ namespace SharpOS.Std.NoRuntime
         // In NativeAOT's generational GC this marks the containing card dirty.
         // Our GC is single-threaded non-generational mark-sweep — no write
         // barrier needed, just plain pointer store.
+        //
+        // One exception: a store into the exchange heap (a received region).
+        // A region may refer only to null or to objects of its own block — a
+        // reference out of it would not keep its target alive and would mean
+        // nothing in the next image. The check costs one subtraction and one
+        // compare on every other store.
         [RuntimeExport("RhpAssignRef")]
         private static void RhpAssignRef(void** dst, void* src)
         {
+            if ((ulong)dst - SharpOS.Std.Exchange.ExchangeArena.Bounds.Low < SharpOS.Std.Exchange.ExchangeArena.Bounds.Span
+                && !SharpOS.Std.Exchange.ExchangeArena.StoreAllowed((ulong)dst, (ulong)src))
+                ThrowRegionStore();
             *dst = src;
         }
+
+        // A fault, not a throw: see ExchangeArena.StoreFaultAddress.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static void ThrowRegionStore()
+            => *(byte*)SharpOS.Std.Exchange.ExchangeArena.StoreFaultAddress = 0;
 
         // Same as RhpAssignRef with a null-pointer check before write. We
         // don't care about the check (CLR uses it to protect against bad
@@ -97,6 +111,9 @@ namespace SharpOS.Std.NoRuntime
         [RuntimeExport("RhpCheckedAssignRef")]
         private static void RhpCheckedAssignRef(void** dst, void* src)
         {
+            if ((ulong)dst - SharpOS.Std.Exchange.ExchangeArena.Bounds.Low < SharpOS.Std.Exchange.ExchangeArena.Bounds.Span
+                && !SharpOS.Std.Exchange.ExchangeArena.StoreAllowed((ulong)dst, (ulong)src))
+                ThrowRegionStore();
             *dst = src;
         }
 
@@ -192,6 +209,9 @@ namespace SharpOS.Std.NoRuntime
                     StelemRef_Helper(elementType, value);
             }
             byte* slot = (byte*)arrayAddr + 16 + ((long)index * 8);
+            if ((ulong)slot - SharpOS.Std.Exchange.ExchangeArena.Bounds.Low < SharpOS.Std.Exchange.ExchangeArena.Bounds.Span
+                && !SharpOS.Std.Exchange.ExchangeArena.StoreAllowed((ulong)slot, (ulong)valueAddr))
+                ThrowRegionStore();
             *(nint*)slot = valueAddr;
         }
 
