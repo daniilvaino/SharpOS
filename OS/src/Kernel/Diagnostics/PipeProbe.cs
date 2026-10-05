@@ -105,6 +105,7 @@ namespace OS.Kernel.Diagnostics
                 case 3: return Feed((int)argument);
                 case 4: return Flood((int)argument, answer);
                 case 5: return EchoOut();
+                case 15: return StdOut();
                 case 6:
                     if (answer == null) return (int)PipeStatus.BadHandle;
                     answer[0] = ExchangeHeap.LiveBlocks;
@@ -191,6 +192,18 @@ namespace OS.Kernel.Diagnostics
                     connected = PipeReader<EchoMessage>.Connect("probe.echo.back", out PipeReader<EchoMessage> echo, out error);
                     reader = echo;
                     break;
+                case 15:
+                    connected = PipeReader<string>.Connect("probe.std.text", out PipeReader<string> text, out error);
+                    reader = text;
+                    break;
+                case 16:
+                    connected = PipeReader<byte[]>.Connect("probe.std.bytes", out PipeReader<byte[]> bytes, out error);
+                    reader = bytes;
+                    break;
+                case 17:
+                    connected = PipeReader<Expando>.Connect("probe.std.expando", out PipeReader<Expando> expando, out error);
+                    reader = expando;
+                    break;
                 default:
                     return (int)PipeStatus.BadHandle;
             }
@@ -228,6 +241,9 @@ namespace OS.Kernel.Diagnostics
                     case 22: Death(test, (PipeReader<Note>)reader); break;
                     case 3: Limit((PipeReader<Note>)reader); break;
                     case 6: EchoBack((PipeReader<EchoMessage>)reader); break;
+                    case 15: StdText((PipeReader<string>)reader); break;
+                    case 16: StdBytes((PipeReader<byte[]>)reader); break;
+                    case 17: StdExpando((PipeReader<Expando>)reader); break;
                 }
             }
             catch (Exception e)
@@ -337,6 +353,65 @@ namespace OS.Kernel.Diagnostics
             }
         }
 
+        // Tests 15-17: std types the app sends and the kernel never declared.
+        // A string, a byte array and an Expando are in every image's catalog
+        // under one key, so a typed reader on each side just works.
+        private static void StdText(PipeReader<string> reader)
+        {
+            using (reader)
+            {
+                int count = 0;
+                bool ok = true;
+                Region<string> region;
+                while ((region = reader.Receive()) != null)
+                {
+                    using (region)
+                        ok &= region.Root == StdProbe.Text(count++);
+                }
+                Say($"std text: {count} string(s), {(ok ? "as sent" : "WRONG")}, end {(int)reader.Status}");
+                Finish(15, count, ok, reader.Status, 0);
+            }
+        }
+
+        private static void StdBytes(PipeReader<byte[]> reader)
+        {
+            using (reader)
+            {
+                int count = 0;
+                bool ok = true;
+                Region<byte[]> region;
+                while ((region = reader.Receive()) != null)
+                {
+                    using (region)
+                        ok &= StdProbe.BytesOk(region.Root, StdProbe.ByteLength(count++));
+                }
+                Say($"std bytes: {count} array(s), {(ok ? "as sent" : "WRONG")}, end {(int)reader.Status}");
+                Finish(16, count, ok, reader.Status, 0);
+            }
+        }
+
+        private static void StdExpando(PipeReader<Expando> reader)
+        {
+            using (reader)
+            {
+                int count = 0;
+                string inPlace = null, copied = null;
+                Region<Expando> region;
+                while ((region = reader.Receive()) != null)
+                {
+                    using (region)
+                    {
+                        inPlace ??= StdProbe.Check(region.Root, "app");
+                        copied ??= StdProbe.Check(region.ToHeap(), "app");
+                        if (count == 0) Say("std expando: " + region.Root.ToString());
+                        count++;
+                    }
+                }
+                Say($"std expando: {count} received; in place {inPlace ?? "ok"}, copied {copied ?? "ok"}, end {(int)reader.Status}");
+                Finish(17, count, inPlace == null && copied == null, reader.Status, 0);
+            }
+        }
+
         // ---- writers: in the service call ----
 
         private static int Feed(int count)
@@ -391,6 +466,23 @@ namespace OS.Kernel.Diagnostics
                 }
                 return (int)writer.Copy(new EchoMessage { Value = 41, Tag = "echo", Items = items });
             }
+        }
+
+        // The other direction of tests 15-17: an Expando and a string the
+        // kernel builds, for the app's typed readers.
+        private static int StdOut()
+        {
+            if (PipeWriter<Expando>.Connect("probe.std.out", out PipeWriter<Expando> expando, out _) != PipeStatus.Ok)
+                return (int)PipeStatus.Refused;
+            using (expando)
+            {
+                PipeStatus s = expando.Copy(StdProbe.Sample("kernel"));
+                if (s != PipeStatus.Ok) return (int)s;
+            }
+            if (PipeWriter<string>.Connect("probe.std.textout", out PipeWriter<string> text, out _) != PipeStatus.Ok)
+                return (int)PipeStatus.Refused;
+            using (text)
+                return (int)text.Copy(StdProbe.Text(1));
         }
 
         // Test 9: pending typed readers the app's writer meets.

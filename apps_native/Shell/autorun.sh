@@ -12,7 +12,7 @@
 #
 # `expect CODE COMMAND` runs the command and counts it as a failure unless it
 # exits with exactly CODE. Needed because "non-zero means broken" is not true
-# here: AOTTESTS.EXE returns the number of tests it passed, so 189 is a clean
+# here: AOTTESTS.EXE returns the number of tests it passed, so 199 is a clean
 # run and 0 would be a catastrophe.
 #
 # The two --pipe-writer-dies runs end a pipe writer with its queue full —
@@ -50,13 +50,13 @@
 expect 0 /apps/AOTTESTS.EXE --pipe-writer-dies normal
 expect 134 /apps/AOTTESTS.EXE --pipe-writer-dies crash
 expect 0 /apps/AOTTESTS.EXE --pipe-stress 2
-expect 189 /apps/AOTTESTS.EXE
-expect 189 /apps/AOTTESTS.EXE
+expect 199 /apps/AOTTESTS.EXE
+expect 199 /apps/AOTTESTS.EXE
 expect 0  /apps/BENCHAOT.EXE
 expect 3 /apps/AOTTESTS.EXE --echo-args 'two words' третий
 expect 2 /apps/AOTTESTS.EXE --untranslated-interface1
 expect 2 /apps/AOTTESTS.EXE --untranslated-interface2
 expect 2 /apps/AOTTESTS.EXE --untranslated-interface3
 expect 1 /apps/AOTTESTS.EXE --untranslated-interface4
-expect 189 /apps/AOTTESTS.EXE --gc-stress 16 4
+expect 199 /apps/AOTTESTS.EXE --gc-stress 16 4
 expect 0 /apps/AOTTESTS.EXE --gc-stress 1 1 --pipe-stress 1

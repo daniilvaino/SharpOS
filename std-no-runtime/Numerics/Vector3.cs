@@ -10,6 +10,8 @@
 
 namespace System.Numerics
 {
+    // In the pipe catalog (SharpOS.Std.Pipes): the same key in every image.
+    [SharpOS.Std.Pipes.Message]
     public struct Vector3 : IEquatable<Vector3>
     {
         public float X;

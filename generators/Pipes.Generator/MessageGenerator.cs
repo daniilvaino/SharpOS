@@ -12,6 +12,9 @@
 //   SOSM002  a field is a pointer
 //   SOSM003  a field's class is not in the catalog (not [Message], not a
 //            string, array, object or interface)
+//
+// Every [Message] type's one-dimensional array is registered as well, so a
+// pipe can carry T[] as its message.
 //   SOSM004  an auto-property (its field has no name to measure)
 //   SOSM005  a field the registration cannot reach (private, and the type is
 //            not partial)
@@ -103,6 +106,7 @@ public sealed class MessageGenerator : IIncrementalGenerator
             if (!ok)
                 continue;
 
+            arrays[TypeName(type)] = Global(type) + "[1]";
             string code = Registration(type, fields);
             if (partial && type.ContainingType == null)
             {
@@ -228,7 +232,8 @@ public sealed class MessageGenerator : IIncrementalGenerator
         var sb = new StringBuilder();
         string ns = type.ContainingNamespace.IsGlobalNamespace ? null : type.ContainingNamespace.ToDisplayString();
         if (ns != null) sb.Append("namespace ").Append(ns).Append("\n{\n");
-        sb.Append("    partial ").Append(type.TypeKind == TypeKind.Struct ? "struct " : "class ").Append(type.Name).Append("\n    {\n");
+        sb.Append("    ").Append(type.IsReadOnly ? "readonly " : "").Append("partial ")
+          .Append(type.TypeKind == TypeKind.Struct ? "struct " : "class ").Append(type.Name).Append("\n    {\n");
         sb.Append("        internal static void __SharpOSRegisterMessage()\n        {\n").Append(code).Append("        }\n    }\n");
         if (ns != null) sb.Append("}\n");
         return sb.ToString();
@@ -248,6 +253,20 @@ public sealed class MessageGenerator : IIncrementalGenerator
 
     internal static bool HasMessage(ITypeSymbol t)
         => t.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == MessageAttributeName);
+
+    /// <summary>
+    /// Whether a type is in every image's catalog and so can be a pipe's
+    /// message: a [Message] class, a string, or a one-dimensional array of
+    /// primitives, strings, objects or [Message] types (std registers the
+    /// first three, this generator the last).
+    /// </summary>
+    internal static bool InCatalog(ITypeSymbol t)
+    {
+        if (t.SpecialType == SpecialType.System_String || (HasMessage(t) && t.TypeKind != TypeKind.Enum))
+            return true;
+        return t is IArrayTypeSymbol a && a.Rank == 1
+               && (IsBuiltinArray(a) || (HasMessage(a.ElementType) && a.ElementType.TypeKind != TypeKind.Enum));
+    }
 
     private static bool IsPartial(INamedTypeSymbol type)
         => type.DeclaringSyntaxReferences.Any(r => r.GetSyntax() is TypeDeclarationSyntax d

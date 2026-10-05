@@ -145,6 +145,7 @@ namespace AotTests
             Clean("5 losses", PipeLosses);
             Clean("6 echo", PipeEcho);
             Clean("7 byref", PipeByRef);
+            Clean("12 std types", PipeStdTypes);
 
             if (!s_stress)
             {
@@ -522,6 +523,113 @@ namespace AotTests
             Check("pipe 7: the same two copies in the kernel",
                   kernel == (ByRefProbe.InsidePassed | ByRefProbe.OutsideRefused));
         }
+
+        // Test 12: std types as messages. A string, a byte array and an
+        // Expando carrying every std structure: in the app on both ends, then
+        // to the kernel and back, neither side declaring anything.
+        private static void PipeStdTypes()
+        {
+            Pipe.Create<string>(4, PipeOverflow.DropOldest, out PipeWriter<string> tw, out PipeReader<string> tr);
+            tw.Copy(StdProbe.Text(1));
+            bool textOk;
+            using (Region<string> r = tr.Receive())
+                textOk = r != null && r.Root == StdProbe.Text(1);
+            tw.Dispose();
+            tr.Dispose();
+            Check("pipe 12: a string is a message", textOk);
+
+            Pipe.Create<byte[]>(4, PipeOverflow.DropOldest, out PipeWriter<byte[]> bw, out PipeReader<byte[]> br);
+            bw.Copy(StdProbe.Bytes(4096));
+            bool bytesOk;
+            using (Region<byte[]> r = br.Receive())
+                bytesOk = r != null && StdProbe.BytesOk(r.Root, 4096);
+            bw.Dispose();
+            br.Dispose();
+            Check("pipe 12: a byte array is a message", bytesOk);
+
+            Pipe.Create<Expando>(4, PipeOverflow.DropOldest, out PipeWriter<Expando> ew, out PipeReader<Expando> er);
+            ew.Copy(StdProbe.Sample("app"));
+            Region<Expando> region = er.Receive();
+            string inPlace = region == null ? "nothing received" : StdProbe.Check(region.Root, "app");
+            Expando heap = region?.ToHeap();
+            string copied = heap == null ? "no copy" : StdProbe.Check(heap, "app");
+            bool refused = false, untouched = false;
+            if (region != null)
+            {
+                try { WriteIntoExpando(region.Root); }
+                catch (RegionReferenceException) { refused = true; }
+                untouched = region.Root["Count"] is int c && c == 42;
+                region.Dispose();
+            }
+            if (inPlace != null || copied != null)
+                AppHost.WriteString("[pipe] std expando: in place " + (inPlace ?? "ok") + ", copied " + (copied ?? "ok") + "\n");
+            Check("pipe 12: an Expando with every std structure arrives whole, read in place", inPlace == null);
+            Check("pipe 12: ToHeap gives a real Expando", copied == null);
+            Check("pipe 12: a new value into a received Expando is refused, the field unchanged", refused && untouched);
+
+            bool resent = false;
+            if (heap != null)
+            {
+                heap["Count"] = 43;
+                heap.Remove("Nothing");
+                ew.Copy(heap);
+                using (Region<Expando> again = er.Receive())
+                    resent = again != null && again.Root["Count"] is int n && n == 43 && again.Root.Count == 15;
+            }
+            ew.Dispose();
+            er.Dispose();
+            Check("pipe 12: a changed copy goes out again", resent);
+
+            bool outsideRefused = false;
+            try { new Expando()["x"] = new object(); }
+            catch (ArgumentException) { outsideRefused = true; }
+            bool missing = false;
+            try { _ = new Expando()["missing"]; }
+            catch (System.Collections.Generic.KeyNotFoundException) { missing = true; }
+            Check("pipe 12: a value outside the catalog is refused when set; a missing name throws", outsideRefused && missing);
+
+            // App -> kernel: three typed readers there, of types the kernel never declared.
+            Probe(1, 15, null);
+            Probe(1, 16, null);
+            Probe(1, 17, null);
+            PipeWriter<string>.Connect("probe.std.text", out PipeWriter<string> kt, out _);
+            PipeWriter<byte[]>.Connect("probe.std.bytes", out PipeWriter<byte[]> kb, out _);
+            PipeWriter<Expando>.Connect("probe.std.expando", out PipeWriter<Expando> ke, out _);
+            if (kt != null) { for (int i = 0; i < StdProbe.Texts; i++) kt.Copy(StdProbe.Text(i)); kt.Dispose(); }
+            if (kb != null) { for (int i = 0; i < StdProbe.ByteArrays; i++) kb.Copy(StdProbe.Bytes(StdProbe.ByteLength(i))); kb.Dispose(); }
+            if (ke != null) { ke.Copy(StdProbe.Sample("app")); ke.Dispose(); }
+            bool t15 = Verdict(15, out int n15, out bool ok15, out PipeStatus e15, out _) && n15 == StdProbe.Texts && ok15 && e15 == PipeStatus.EndOfStream;
+            bool t16 = Verdict(16, out int n16, out bool ok16, out PipeStatus e16, out _) && n16 == StdProbe.ByteArrays && ok16 && e16 == PipeStatus.EndOfStream;
+            bool t17 = Verdict(17, out int n17, out bool ok17, out PipeStatus e17, out _) && n17 == 1 && ok17 && e17 == PipeStatus.EndOfStream;
+            Check("pipe 12: strings, byte arrays and an Expando from the app, read by the kernel's typed readers", t15 && t16 && t17);
+
+            // Kernel -> app.
+            PipeReader<Expando>.Connect("probe.std.out", out PipeReader<Expando> fromKernel, out _);
+            PipeReader<string>.Connect("probe.std.textout", out PipeReader<string> textFromKernel, out _);
+            int sent = Probe(15, 0, null);
+            string kernelExpando = "nothing received";
+            bool kernelText = false;
+            if (fromKernel != null)
+            {
+                using (Region<Expando> r = fromKernel.Receive())
+                    kernelExpando = r == null ? "nothing received" : StdProbe.Check(r.Root, "kernel");
+                fromKernel.Dispose();
+            }
+            if (textFromKernel != null)
+            {
+                using (Region<string> r = textFromKernel.Receive())
+                    kernelText = r != null && r.Root == StdProbe.Text(1);
+                textFromKernel.Dispose();
+            }
+            if (kernelExpando != null)
+                AppHost.WriteString("[pipe] std expando from the kernel: " + kernelExpando + "\n");
+            Check("pipe 12: an Expando and a string from the kernel", sent == 0 && kernelExpando == null && kernelText);
+        }
+
+        // The analyzer refuses this where it sees the region (SOSR006); behind a
+        // parameter it cannot, and the barrier does.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void WriteIntoExpando(Expando e) => e["Count"] = 9;
 
         private static bool RegionProbeGraphIntact(EchoMessage m)
             => m.Items.Length == 4 && m.Items[1].Key == 1 && m.Items[2].Name == "a2";

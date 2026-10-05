@@ -9,7 +9,9 @@
 
 namespace System
 {
-    public readonly struct TimeSpan
+    // In the pipe catalog (SharpOS.Std.Pipes): the same key in every image.
+    [SharpOS.Std.Pipes.Message]
+    public readonly partial struct TimeSpan
     {
         public const long TicksPerMillisecond = 10_000;
         public const long TicksPerSecond = TicksPerMillisecond * 1000;

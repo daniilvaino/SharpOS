@@ -65,6 +65,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Exceptions.Derived.cs" Link="std\Exceptions.Derived.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\ExchangeArena.cs" Link="std\Exchange\ExchangeArena.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\MessageCatalog.cs" Link="std\Pipes\MessageCatalog.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\Expando.cs" Link="std\Pipes\Expando.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\Pipe.cs" Link="std\Pipes\Pipe.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeProbeMessages.cs" Link="std\Pipes\PipeProbeMessages.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStatus.cs" Link="std\Pipes\PipeStatus.cs" />

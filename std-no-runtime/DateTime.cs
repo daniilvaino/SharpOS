@@ -22,7 +22,9 @@ using System.Globalization;
 
 namespace System
 {
-    public readonly struct DateTime : IEquatable<DateTime>, IComparable<DateTime>
+    // In the pipe catalog (SharpOS.Std.Pipes): the same key in every image.
+    [SharpOS.Std.Pipes.Message]
+    public readonly partial struct DateTime : IEquatable<DateTime>, IComparable<DateTime>
     {
         private const long TicksPerMillisecond = 10000;
         private const long TicksPerSecond = TicksPerMillisecond * 1000;

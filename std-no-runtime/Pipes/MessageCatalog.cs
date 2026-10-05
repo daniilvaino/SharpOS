@@ -169,6 +169,8 @@ namespace SharpOS.Std.Pipes
             RegisterArray(new uint[1], "System.UInt32");
             RegisterArray(new ulong[1], "System.UInt64");
             RegisterArray(new short[1], "System.Int16");
+            RegisterArray(new ushort[1], "System.UInt16");
+            RegisterArray(new sbyte[1], "System.SByte");
             RegisterArray(new byte[1], "System.Byte");
             RegisterArray(new char[1], "System.Char");
             RegisterArray(new bool[1], "System.Boolean");

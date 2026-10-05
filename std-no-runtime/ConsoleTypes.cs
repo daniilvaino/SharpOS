@@ -194,7 +194,9 @@ namespace System
         Control = 4
     }
 
-    public readonly struct ConsoleKeyInfo : IEquatable<ConsoleKeyInfo>
+    // In the pipe catalog (SharpOS.Std.Pipes): the same key in every image.
+    [SharpOS.Std.Pipes.Message]
+    public readonly partial struct ConsoleKeyInfo : IEquatable<ConsoleKeyInfo>
     {
         private readonly char _keyChar;
         private readonly ConsoleKey _key;

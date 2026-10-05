@@ -10,7 +10,9 @@
 // region references out of everything else.
 //
 //   SOSR001  error    T of Region<T>, PipeWriter<T>, PipeReader<T> or
-//                     Pipe.Create<T> is not a [Message] type
+//                     Pipe.Create<T> is not in the catalog: a [Message]
+//                     class, a string, or an array of primitives, strings,
+//                     objects or [Message] types
 //   SOSR002  error    a region reference stored in a field, a static or an
 //                     element of an array outside the region, captured by a
 //                     lambda or local function, or returned
@@ -51,7 +53,7 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
 
     public static readonly DiagnosticDescriptor NotMessage = new(
         "SOSR001", "Pipe type argument is not a message",
-        "'{0}' is not a [Message] type: a pipe end and a region carry only catalog types", Category, DiagnosticSeverity.Error, true);
+        "'{0}' is not in the pipe catalog: a pipe end and a region carry a [Message] class, a string, or an array of primitives, strings, objects or [Message] types", Category, DiagnosticSeverity.Error, true);
     public static readonly DiagnosticDescriptor Escapes = new(
         "SOSR002", "Region reference escapes",
         "A region reference is {0}: it would outlive its region", Category, DiagnosticSeverity.Error, true);
@@ -109,7 +111,7 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
 
     private static void Report(OperationAnalysisContext ctx, ITypeSymbol argument, Location where)
     {
-        if (argument.TypeKind == TypeKind.TypeParameter || MessageGenerator.HasMessage(argument))
+        if (argument.TypeKind == TypeKind.TypeParameter || MessageGenerator.InCatalog(argument))
             return;
         ctx.ReportDiagnostic(Diagnostic.Create(NotMessage, where, argument.ToDisplayString()));
     }

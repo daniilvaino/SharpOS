@@ -20,7 +20,9 @@ using System.Runtime.InteropServices;
 namespace System
 {
     [StructLayout(LayoutKind.Sequential)]
-    public struct Guid
+    // In the pipe catalog (SharpOS.Std.Pipes): the same key in every image.
+    [SharpOS.Std.Pipes.Message]
+    public partial struct Guid
     {
         // BCL field names + order — sequential layout means these 16 bytes
         // map 1:1 with on-wire format used by CoCreateGuid output buffer.

@@ -89,6 +89,11 @@ class C { void M() { Region<Plain> r = null; } }");
         Expect("SOSR001: Pipe.Create over an unmarked type", new[] { "SOSR001" }, @"
 class C { void M() { Pipe.Create<Plain>(out var w, out var r); } }");
 
+        Expect("SOSR001: an array of an unmarked class", new[] { "SOSR001" }, @"
+class C { void M() { PipeWriter<Plain[]>.Connect(""x"", out var w); } }");
+        Expect("correct: catalog types of std as messages — string, byte[], an array of a [Message] type", new string[0], @"
+class C { void M() { PipeWriter<string>.Connect(""a"", out var a); PipeReader<byte[]>.Connect(""b"", out var b); Pipe.Create<Node[]>(out var w, out var r); } }");
+
         // ---- SOSR002 ----
         Expect("SOSR002: into a static field", new[] { "SOSR002" }, @"
 class C { static Node s_keep; void M(PipeReader<Node> p) { using (var r = p.Receive()) { s_keep = r.Root; } } }");
