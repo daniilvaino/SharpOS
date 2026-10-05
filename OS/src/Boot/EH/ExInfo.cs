@@ -15,6 +15,8 @@ namespace OS.Boot.EH
     //   0x1C  m_idxCurClause       (4)   — handler-active state during walk
     //   0x20  m_frameIter          (...) — embedded StackFrameIterator (0x230)
     //   0x250 m_notifyDebuggerSP   (8)   — debugger sync point (unused in SharpOS)
+    //   0x258 FaultFrame           (8)   — SharpOS: the InterruptFrame of a
+    //                                      hardware fault; Kind == HardwareFault only
     //
     // Asm thunk fills: m_pPrevExInfo, m_pExContext, m_kind, m_passNumber,
     // m_idxCurClause on entry to RhpThrowEx.
@@ -32,6 +34,13 @@ namespace OS.Boot.EH
         [FieldOffset(0x01C)] public uint IdxCurClause;
         [FieldOffset(0x020)] public StackFrameIterator FrameIter;
         [FieldOffset(0x250)] public ulong NotifyDebuggerSP;
+
+        // Where a hardware fault stopped the code, for the collector: the
+        // faulting frame is at an arbitrary instruction and the frames below
+        // it are on the far side of the interrupt stub, so the root walk scans
+        // them from here (KernelGcPreciseWalk.MarkExceptionChain). The throw
+        // shellcode leaves it unset; read only when Kind is HardwareFault.
+        [FieldOffset(0x258)] public void* FaultFrame;
 
         // ExInfo.m_kind enum.
         public const byte KindNone = 0;

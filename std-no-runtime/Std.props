@@ -104,6 +104,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)GC\GcRoots.cs" Link="std\GC\GcRoots.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)GC\GcRuntimeExports.cs" Link="std\GC\GcRuntimeExports.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)GC\GcSegment.cs" Link="std\GC\GcSegment.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)GC\GcStress.cs" Link="std\GC\GcStress.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)GC\GcSweep.cs" Link="std\GC\GcSweep.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)GC\MethodTable.cs" Link="std\GC\MethodTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)GC\NativeFormatDecoder.cs" Link="std\GC\NativeFormatDecoder.cs" />

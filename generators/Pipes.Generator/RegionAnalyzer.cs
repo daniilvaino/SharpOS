@@ -1,11 +1,13 @@
 // Rules for references into regions (pipe spec Р15, В1).
 //
-// A region reference is Region<T>.Root and every reference-typed value read
-// from it by field or index, directly or through a local that holds one. Such
-// a reference is valid while its region is: the block goes back to the
-// exchange heap on Dispose, to another pipe on Move, and the next tenant
-// would answer through it. The runtime write barrier keeps references out
-// of the region; this keeps region references out of everything else.
+// A region reference is Region<T>.Root and every value carrying references
+// read from it by field, element, property or indexer — directly, through a
+// local that holds one, through ?., a cast or `as`, or as either side of ?:
+// and ??. Such a reference is valid while its region is: the block goes back
+// to the exchange heap on Dispose, to another pipe on Move, and the next
+// tenant would answer through it. The runtime write barrier keeps references
+// out of the region; SOSR006 does the same at build time, and the rest keeps
+// region references out of everything else.
 //
 //   SOSR001  error    T of Region<T>, PipeWriter<T>, PipeReader<T> or
 //                     Pipe.Create<T> is not a [Message] type
@@ -19,6 +21,15 @@
 //                     compilation — one whose body stores it
 //   SOSR005  warning  a local Region<T> that on some path is neither disposed,
 //                     moved, passed on, nor returned
+//   SOSR006  error    stored into a field, element or property of a region
+//                     reference: a value that is not a reference into that
+//                     region or null — a heap object, a literal, another
+//                     region's object. Catches the literal, which ILC stores
+//                     without calling the barrier.
+//
+// Known limit: paths are not correlated. `if (b) r.Dispose(); ... if (!b) use`
+// is reported, and a local assigned a region reference on one path and a heap
+// object on another counts as a region reference everywhere.
 
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -53,9 +64,12 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
     public static readonly DiagnosticDescriptor NotReleased = new(
         "SOSR005", "Region not released",
         "Region '{0}' is on some path neither disposed, moved, passed on nor returned", Category, DiagnosticSeverity.Warning, true);
+    public static readonly DiagnosticDescriptor Foreign = new(
+        "SOSR006", "Foreign reference stored into a region",
+        "'{0}' is stored into region memory but is not {1}: the region would refer outside its block", Category, DiagnosticSeverity.Error, true);
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
-        => ImmutableArray.Create(NotMessage, Escapes, UsedAfterRelease, Retained, NotReleased);
+        => ImmutableArray.Create(NotMessage, Escapes, UsedAfterRelease, Retained, NotReleased, Foreign);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -128,6 +142,7 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
             foreach (IOperation op in block.DescendantsAndSelf())
             {
                 CheckEscape(op, tracker, Say);
+                CheckForeign(op, tracker, Say);
                 CheckRetained(op, tracker, retains, Say);
             }
             CheckUsingScopes(block, tracker, Say);
@@ -172,11 +187,15 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
 
         private void Bind(ISymbol local, ISymbol? region)
         {
-            if (local is ILocalSymbol l && !l.Type.IsReferenceType) return;
+            if (local is ILocalSymbol l && !CarriesReferences(l.Type)) return;
             Locals[local] = region;
         }
 
-        /// <summary>Whether the value is a region reference; <paramref name="region"/> is its region's symbol when known.</summary>
+        /// <summary>
+        /// Whether the value may be a region reference; <paramref name="region"/>
+        /// is its region's symbol when known. "May": either side of ?: or ??
+        /// is enough — what escapes on one path escapes.
+        /// </summary>
         public bool TrySource(IOperation? op, out ISymbol? region)
         {
             region = null;
@@ -186,10 +205,43 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
                 case IPropertyReferenceOperation p when p.Property.Name == "Root" && IsRegionType(p.Property.ContainingType):
                     region = SymbolOf(p.Instance);
                     return true;
-                case IFieldReferenceOperation f when f.Type != null && f.Type.IsReferenceType && f.Instance != null:
+                // A property or an indexer of a region reference answers from
+                // the region (pipe types are plain fields; a property over them
+                // returns what they hold).
+                case IPropertyReferenceOperation p when !p.Property.IsStatic && p.Instance != null && CarriesReferences(p.Type):
+                    return TrySource(p.Instance, out region);
+                case IFieldReferenceOperation f when f.Instance != null && CarriesReferences(f.Type):
                     return TrySource(f.Instance, out region);
-                case IArrayElementReferenceOperation e when e.Type != null && e.Type.IsReferenceType:
+                case IArrayElementReferenceOperation e when CarriesReferences(e.Type):
                     return TrySource(e.ArrayReference, out region);
+                case IConditionalAccessOperation ca:
+                    return TrySource(ca.WhenNotNull, out region);
+                case IConditionalAccessInstanceOperation ci:
+                    return TrySource(AccessedBy(ci), out region);
+                // A struct built from region references carries them.
+                case IObjectCreationOperation o when o.Type != null && o.Type.IsValueType:
+                {
+                    foreach (IArgumentOperation arg in o.Arguments)
+                        if (TrySource(arg.Value, out region)) return true;
+                    if (o.Initializer != null)
+                        foreach (IOperation init in o.Initializer.Initializers)
+                            if (init is ISimpleAssignmentOperation ia && TrySource(ia.Value, out region)) return true;
+                    return false;
+                }
+                case IConditionalOperation c when c.WhenFalse != null:
+                {
+                    bool a = TrySource(c.WhenTrue, out ISymbol? ra);
+                    bool b = TrySource(c.WhenFalse, out ISymbol? rb);
+                    region = ra ?? rb;
+                    return a || b;
+                }
+                case ICoalesceOperation co:
+                {
+                    bool a = TrySource(co.Value, out ISymbol? ra);
+                    bool b = TrySource(co.WhenNull, out ISymbol? rb);
+                    region = ra ?? rb;
+                    return a || b;
+                }
                 case ILocalReferenceOperation l when Locals.TryGetValue(l.Local, out ISymbol? r):
                     region = r;
                     return true;
@@ -199,6 +251,77 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
             }
             return false;
         }
+
+        /// <summary>
+        /// Whether the value is certainly a region reference or null — every
+        /// side of ?: and ??, every reference a struct value carries.
+        /// <paramref name="region"/> is the region when the value names one.
+        /// </summary>
+        public bool RegionOrNull(IOperation? op, out ISymbol? region)
+        {
+            region = null;
+            op = Strip(op);
+            switch (op)
+            {
+                case null:
+                    return false;
+                case ILiteralOperation lit when lit.ConstantValue.HasValue && lit.ConstantValue.Value == null:
+                case IDefaultValueOperation:
+                    return true;
+                case IConditionalOperation c when c.WhenFalse != null:
+                {
+                    bool ok = RegionOrNull(c.WhenTrue, out ISymbol? ra) & RegionOrNull(c.WhenFalse, out ISymbol? rb);
+                    region = ra ?? rb;
+                    return ok;
+                }
+                case ICoalesceOperation co:
+                {
+                    bool ok = RegionOrNull(co.Value, out ISymbol? ra) & RegionOrNull(co.WhenNull, out ISymbol? rb);
+                    region = ra ?? rb;
+                    return ok;
+                }
+                // A struct built in place: what it carries is what its
+                // arguments and initializer put there.
+                case IObjectCreationOperation o when o.Type != null && o.Type.IsValueType:
+                {
+                    foreach (IArgumentOperation arg in o.Arguments)
+                        if (CarriesReferences(arg.Value.Type) && !RegionOrNull(arg.Value, out ISymbol? _))
+                            return false;
+                    if (o.Initializer != null)
+                        foreach (IOperation init in o.Initializer.Initializers)
+                            if (init is ISimpleAssignmentOperation ia && CarriesReferences(ia.Target.Type)
+                                && !RegionOrNull(ia.Value, out ISymbol? _))
+                                return false;
+                    return true;
+                }
+            }
+            return TrySource(op, out region);
+        }
+    }
+
+    // The value a ?. applies to, for the placeholder inside its WhenNotNull:
+    // the nearest ?. reached from its WhenNotNull side.
+    private static IOperation? AccessedBy(IConditionalAccessInstanceOperation instance)
+    {
+        IOperation previous = instance;
+        for (IOperation? o = instance.Parent; o != null; previous = o, o = o.Parent)
+            if (o is IConditionalAccessOperation ca && ca.WhenNotNull == previous)
+                return ca.Operation;
+        return null;
+    }
+
+    /// <summary>A reference, or a struct with a reference somewhere in it.</summary>
+    internal static bool CarriesReferences(ITypeSymbol? type) => CarriesReferences(type, 0);
+
+    private static bool CarriesReferences(ITypeSymbol? type, int depth)
+    {
+        if (type == null || depth > 8) return false;
+        if (type.IsReferenceType || type.TypeKind == TypeKind.TypeParameter) return true;
+        if (type.TypeKind != TypeKind.Struct || type.SpecialType != SpecialType.None) return false;
+        foreach (ISymbol member in type.GetMembers())
+            if (member is IFieldSymbol f && !f.IsStatic && CarriesReferences(f.Type, depth + 1))
+                return true;
+        return false;
     }
 
     private static IOperation? Strip(IOperation? op)
@@ -227,6 +350,9 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
             case ISimpleAssignmentOperation a when t.TrySource(a.Value, out _):
             {
                 IOperation target = Strip(a.Target)!;
+                if (target is IFieldReferenceOperation { Instance: IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ImplicitReceiver } } member
+                    && member.Field.ContainingType.IsValueType)
+                    break;
                 string? where = target switch
                 {
                     IFieldReferenceOperation f when f.Field.IsStatic => "stored in a static field",
@@ -263,6 +389,37 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
                 return declared == null || !o.Syntax.Span.Contains(declared.Span);
         }
         return false;
+    }
+
+    // ---- SOSR006 ----
+
+    // Into a field, element or property of a region reference, only what is
+    // already in that region, or null.
+    private static void CheckForeign(IOperation op, Tracker t, Reporter say)
+    {
+        IOperation? target;
+        IOperation? value;
+        switch (op)
+        {
+            case ISimpleAssignmentOperation a: target = a.Target; value = a.Value; break;
+            case ICoalesceAssignmentOperation c: target = c.Target; value = c.Value; break;
+            default: return;
+        }
+        if (!CarriesReferences(target.Type)) return;
+
+        ISymbol? into;
+        switch (Strip(target))
+        {
+            case IFieldReferenceOperation f when !f.Field.IsStatic && t.TrySource(f.Instance, out into): break;
+            case IArrayElementReferenceOperation e when t.TrySource(e.ArrayReference, out into): break;
+            case IPropertyReferenceOperation p when !p.Property.IsStatic && t.TrySource(p.Instance, out into): break;
+            default: return;
+        }
+
+        if (!t.RegionOrNull(value, out ISymbol? from))
+            say(Foreign, op.Syntax.GetLocation(), value.Syntax.ToString(), "a reference into the same region or null");
+        else if (into != null && from != null && !SymbolEqualityComparer.Default.Equals(into, from))
+            say(Foreign, op.Syntax.GetLocation(), value.Syntax.ToString(), "from the same region ('" + from.Name + "' is another)");
     }
 
     // ---- SOSR004 ----

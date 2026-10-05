@@ -386,10 +386,9 @@ namespace OS.Boot.EH
             return r.BitOffset;
         }
 
-        // Decode interruptible ranges into the caller-provided buffer.
-        // Returns count written + new bit offset via out. Halts if
-        // ranges.Length is too small (caller should size for expected
-        // max — typically 1, very rarely > 4).
+        // Decode interruptible ranges into the caller-provided buffer, sized
+        // from hdr.NumInterruptibleRanges. Returns count written + new bit
+        // offset via out; -1 when the buffer is too small (nothing decoded).
         public static int DecodeInterruptibleRanges(
             byte* gcInfo,
             in CoffGcInfoHeader hdr,
@@ -401,7 +400,11 @@ namespace OS.Boot.EH
             r.SetBitOffset(bitOffset);
             uint normLastStop = 0;
             int count = (int)hdr.NumInterruptibleRanges;
-            if (count > rangesOut.Length) Halt();
+            if (count > rangesOut.Length)
+            {
+                newBitOffset = bitOffset;
+                return -1;
+            }
             for (int i = 0; i < count; i++)
             {
                 uint normStartDelta = r.DecodeVarLengthUnsigned(CoffGcInfoTypes.InterruptibleRangeDelta1EncBase);
@@ -415,8 +418,6 @@ namespace OS.Boot.EH
             newBitOffset = r.BitOffset;
             return count;
         }
-
-        private static void Halt() { while (true) ; }
 
         // ---- Part 5: Transitions decoder ----
         //
@@ -468,9 +469,12 @@ namespace OS.Boot.EH
 
             int bitOffset = SkipSafePointOffsets(gcInfo, in hdr, hdr.BitOffsetAfterHeader);
 
-            // Decode interruptible ranges (stackalloc up to 16 — methods
-            // with > 16 ranges are extremely rare; can bump if needed).
-            Span<CoffInterruptibleRange> ranges = stackalloc CoffInterruptibleRange[16];
+            // As many ranges as the header says. A fixed buffer of 16 halted
+            // the machine on the first method with more.
+            int rangeCount = (int)hdr.NumInterruptibleRanges;
+            if (rangeCount > MaxBuffered)
+                return false;
+            Span<CoffInterruptibleRange> ranges = stackalloc CoffInterruptibleRange[rangeCount > 0 ? rangeCount : 1];
             int numRanges = DecodeInterruptibleRanges(gcInfo, in hdr, bitOffset, ranges, out bitOffset);
 
             // Slot table is right after ranges.
@@ -715,13 +719,16 @@ namespace OS.Boot.EH
             slots.BitOffsetAfterTable = r.BitOffset;
         }
 
+        /// <summary>Largest slot or range count the walk will stack-allocate for; past it a frame is reported, not decoded.</summary>
+        public const int MaxBuffered = 4096;
+
         // Variant of DecodeSlotTable that fills caller's CoffGcSlot buffer
         // with per-slot detail (register number / stack base+offset / flags).
         // Used by mark-phase to resolve addresses; the count-only variant
         // is fine for sanity probes.
         //
         // slotsOut.Length must be >= total slot count (NumRegisters +
-        // NumStackSlots + NumUntracked). Halts on undersize.
+        // NumStackSlots + NumUntracked). Too small a buffer: counts only, nothing decoded.
         public static void DecodeFullSlotTable(
             byte* gcInfo,
             int bitOffset,
@@ -744,7 +751,11 @@ namespace OS.Boot.EH
             counts.NumSlots = counts.NumRegisters + counts.NumStackSlots + counts.NumUntracked;
             counts.NumTracked = counts.NumRegisters + counts.NumStackSlots;
 
-            if ((int)counts.NumSlots > slotsOut.Length) Halt();
+            // Too small: the counts say how large, nothing is decoded, and
+            // the caller asks again with room (it used to halt here — a
+            // method with more than 32 slots stopped the machine the first
+            // time a collection met its frame).
+            if ((int)counts.NumSlots > slotsOut.Length) return;
 
             int outIdx = 0;
             if (counts.NumRegisters > 0)

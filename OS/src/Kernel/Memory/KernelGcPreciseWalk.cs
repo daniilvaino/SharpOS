@@ -119,6 +119,7 @@ namespace OS.Kernel.Memory
 
         public static void ResetTelemetry()
         {
+            LastFaultFramesScanned = 0;
             s_skippedCount = 0;
             LastFramesWalked = 0;
             LastRootsMarked = 0;
@@ -170,7 +171,64 @@ namespace OS.Kernel.Memory
 
             if (markRoot == null)
                 ContinueBelowApps(OS.Kernel.Threading.Scheduler.Current?.Id ?? 0);
+
+            MarkExceptionChain((OS.Boot.EH.ExInfo*)OS.Boot.EH.ExInfoHead.s_head,
+                               OS.Kernel.Threading.Scheduler.Current, markRoot);
         }
+
+        /// <summary>
+        /// Roots held by the exceptions a thread is dispatching: each
+        /// exception object, and for a hardware fault the code it stopped.
+        /// </summary>
+        /// <remarks>
+        /// The dispatcher keeps the exception as a raw address (ExInfo.Exception)
+        /// between the throw and the catch, and runs finally and filter funclets
+        /// in between — any of which may allocate. Stock NativeAOT reports the
+        /// same field for the same reason.
+        ///
+        /// A hardware fault leaves an interrupt frame under the handler, and the
+        /// walk from the handler stops at the entry stub: the faulting code and
+        /// everything beneath it — including, during a catch funclet, the
+        /// method that catches — are on the far side. Until this, a collection
+        /// in the fault path (the exception's own allocation, a finally, a
+        /// catch body) did not see them, and an app's factory held its
+        /// collector off to stay safe. Scanned as a preempted thread is:
+        /// conservatively, since the faulting instruction is not a safe point.
+        /// </remarks>
+        internal static void MarkExceptionChain(OS.Boot.EH.ExInfo* head, OS.Kernel.Threading.Thread? thread,
+                                                delegate* unmanaged<nuint, void> markRoot)
+        {
+            int guard = 0;
+            for (OS.Boot.EH.ExInfo* e = head; e != null && guard < 64; e = e->PrevExInfo, guard++)
+            {
+                // An entry is a stack address of the thread. Anything else
+                // means a dispatch left the chain pointing into dead memory:
+                // said, not followed.
+                if (((ulong)e & 7) != 0 || ((ulong)e >> 47) != 0)
+                {
+                    BadChainEntries++;
+                    OS.Hal.Console.Write("[gc] exception chain entry implausible: 0x");
+                    OS.Hal.Console.WriteHex((ulong)e);
+                    OS.Hal.Console.WriteLine(", chain not followed further");
+                    break;
+                }
+                if (e->Exception != 0)
+                    MarkCandidate(e->Exception, markRoot);
+
+                if (e->Kind == OS.Boot.EH.ExInfo.KindHardwareFault && e->FaultFrame != null)
+                {
+                    LastFaultFramesScanned++;
+                    if (thread == null || !ScanInterruptedConservatively(thread, e->FaultFrame, markRoot))
+                        RunFromInterruptFrame(e->FaultFrame, markRoot);
+                }
+            }
+        }
+
+        /// <summary>Hardware-fault frames the last walk scanned through MarkExceptionChain.</summary>
+        public static int LastFaultFramesScanned;
+
+        /// <summary>Exception-chain entries found implausible, ever.</summary>
+        public static int BadChainEntries;
 
         /// <summary>
         /// The kernel frames under every app this thread is running, for the
@@ -542,7 +600,21 @@ namespace OS.Kernel.Memory
             CoffGcInfoDecoder.DecodeFullSlotTable(r.GcInfo, afterIr, slots, out CoffGcSlotTable counts);
 
             if (counts.NumSlots == 0) return;
-            if ((int)counts.NumSlots > slots.Length) LastFramesSlotOverflow++;
+            if ((int)counts.NumSlots > slots.Length)
+            {
+                // Bigger frames are common enough (a test method with dozens
+                // of locals): decode again with room for all of them.
+                if ((int)counts.NumSlots > CoffGcInfoDecoder.MaxBuffered)
+                {
+                    LastFramesSlotOverflow++;
+                    OS.Hal.Console.Write("[gc] frame with ");
+                    OS.Hal.Console.WriteUInt(counts.NumSlots);
+                    OS.Hal.Console.WriteLine(" GC slots not walked: its roots are lost");
+                    return;
+                }
+                slots = stackalloc CoffGcSlot[(int)counts.NumSlots];
+                CoffGcInfoDecoder.DecodeFullSlotTable(r.GcInfo, afterIr, slots, out counts);
+            }
 
             int trackedCount = (int)counts.NumTracked;
             // stackalloc cannot be 0-sized — use 1 as floor; we just won't read it.

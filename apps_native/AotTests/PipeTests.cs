@@ -55,7 +55,7 @@ namespace AotTests
             // The battery installs the task backend in its threads section; a
             // run that starts here would have Task.Run do nothing at all.
             SharpOS.AppSdk.TaskBackendInstaller.Install();
-            AppGC.VerifyHeap = true;
+            SharpOS.Std.NoRuntime.GcStress.VerifyHeap = true;
             MessageCatalog.Ensure();
             nint statics = TypeKeys.StaticsAddress;
             AppHost.WriteString("[stress] TypeKeys statics at 0x" + ((ulong)statics).ToString("x") + " rooted "
@@ -100,7 +100,7 @@ namespace AotTests
                 Probe(2, (ulong)test, v);
                 if (v[0] != 0) break;
                 System.Threading.Thread.Sleep(5);
-            } while (watch.ElapsedMilliseconds < 10_000);
+            } while (watch.ElapsedMilliseconds < (SlowRun ? 300_000 : 10_000));
             count = (int)v[1];
             ok = v[2] != 0;
             status = (PipeStatus)(int)(long)v[3];
@@ -144,8 +144,7 @@ namespace AotTests
             Clean("4 kernel to app", PipeFeed);
             Clean("5 losses", PipeLosses);
             Clean("6 echo", PipeEcho);
-            // The corruption has twice landed at this address right after
-            // round 0: watch it from here.
+            Clean("7 byref", PipeByRef);
 
             if (!s_stress)
             {
@@ -158,12 +157,13 @@ namespace AotTests
 
             s_pipeLoad = 0;
             var wait = Stopwatch.StartNew();
-            while (s_pipeLoadRunning != 0 && wait.ElapsedMilliseconds < 2000)
+            while (s_pipeLoadRunning != 0 && wait.ElapsedMilliseconds < (SlowRun ? 60000 : 2000))
                 System.Threading.Thread.Sleep(1);
             Probe(7, 0, null);
             Check("pipe: collections ran in the app during the exchange", s_pipeCollections > 0);
 
-            if (!s_stress)
+            // Timings mean nothing with a collection per allocation.
+            if (!s_stress && !SlowRun)
                 PipeBench();
         }
 
@@ -243,9 +243,9 @@ namespace AotTests
             }
             if (bad != 0)
                 s_pipeBroken = 1;
-            if (AppGC.FirstBroken != 0)
-                AppHost.WriteString("[pipe] collector check: first broken 0x" + ((ulong)AppGC.FirstBroken).ToString("x")
-                                    + (AppGC.BrokenPhase == 1 ? " found BEFORE a mark (the program wrote it)"
+            if (SharpOS.Std.NoRuntime.GcStress.FirstBroken != 0)
+                AppHost.WriteString("[pipe] collector check: first broken 0x" + ((ulong)SharpOS.Std.NoRuntime.GcStress.FirstBroken).ToString("x")
+                                    + (SharpOS.Std.NoRuntime.GcStress.BrokenPhase == 1 ? " found BEFORE a mark (the program wrote it)"
                                                               : " found AFTER a sweep (the collector wrote it)") + "\n");
             if (bad != 0)
             {
@@ -436,7 +436,7 @@ namespace AotTests
             output.Dispose();
             input.Dispose();
             bool done = Verdict(6, out int count, out bool ok, out PipeStatus end, out _);
-            Check("pipe 6: kernel -> app -> kernel by Move; value changed and objects sorted in place",
+            Check("pipe 6: kernel -> app -> kernel by Move; value changed and 100 objects sorted in place",
                   moved == PipeStatus.Ok && done && count == 1 && ok && end == PipeStatus.EndOfStream);
         }
 
@@ -458,7 +458,7 @@ namespace AotTests
         // The misuse is the point here: each store is wrapped in a lambda so
         // the test can catch what the barrier throws, and the analyzer would
         // rightly refuse the capture (SOSR002).
-#pragma warning disable SOSR002
+#pragma warning disable SOSR002, SOSR006
         private static void PipeBarrier()
         {
             Pipe.Create<EchoMessage>(4, PipeOverflow.DropOldest, out PipeWriter<EchoMessage> w, out PipeReader<EchoMessage> r);
@@ -506,7 +506,22 @@ namespace AotTests
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static void LiteralInto(EchoMessage m) => m.Tag = "literal";
 
-#pragma warning restore SOSR002
+#pragma warning restore SOSR002, SOSR006
+
+        // Struct elements copied inside a region: the compiler copies the
+        // reference with RhpByRefAssignRef, whose shellcode carries the
+        // barrier. The same code runs in the kernel on its own pipe.
+        private static void PipeByRef()
+        {
+            int app = ByRefProbe.RunOnPipe();
+            int kernel = Probe(12, 0, null);
+            Check("pipe 7: a struct copied between elements of a region (RhpByRefAssignRef) passes inside the block",
+                  app > 0 && (app & ByRefProbe.InsidePassed) != 0);
+            Check("pipe 7: a struct carrying a heap reference into a region element is refused, the reference unchanged",
+                  app > 0 && (app & ByRefProbe.OutsideRefused) != 0);
+            Check("pipe 7: the same two copies in the kernel",
+                  kernel == (ByRefProbe.InsidePassed | ByRefProbe.OutsideRefused));
+        }
 
         private static bool RegionProbeGraphIntact(EchoMessage m)
             => m.Items.Length == 4 && m.Items[1].Key == 1 && m.Items[2].Name == "a2";

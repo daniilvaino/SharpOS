@@ -34,6 +34,33 @@ namespace OS.Kernel.Memory
         /// <summary>Collections asked for from inside an interrupt handler, and declined.</summary>
         public static ulong DeclinedInInterrupt;
 
+        /// <summary>
+        /// GC stress on the kernel heap: a collection before every
+        /// <paramref name="every"/>-th allocation, the heap walked around each,
+        /// freed blocks poisoned. 0 turns it off.
+        /// </summary>
+        public static void Stress(uint every)
+        {
+            SharpOS.Std.NoRuntime.GcStress.HeapBroken = &OnHeapBroken;
+            SharpOS.Std.NoRuntime.GcStress.VerifyHeap = every != 0;
+            SharpOS.Std.NoRuntime.GcSweep.PoisonFreed = every != 0;
+            SharpOS.Std.NoRuntime.GcStress.Every = every;
+            OS.Hal.Console.Write("[gcstress] kernel: every ");
+            OS.Hal.Console.WriteUInt(every);
+            OS.Hal.Console.Write(" allocation(s), collections so far ");
+            OS.Hal.Console.WriteUInt((uint)SharpOS.Std.NoRuntime.GcStress.Collections);
+            OS.Hal.Console.WriteLine("");
+        }
+
+        private static void OnHeapBroken(nint at, int phase)
+        {
+            OS.Hal.Console.Write("[gcstress] kernel heap broken at 0x");
+            OS.Hal.Console.WriteHex((ulong)at);
+            OS.Hal.Console.WriteLine(phase == 1 ? ", found before a mark: the program wrote it"
+                                                : ", found after a sweep: the collector wrote it");
+            Panic.Fail("kernel heap broken");
+        }
+
         public static void Collect()
         {
             // Not from a handler: the interrupted code is stopped at an
@@ -176,6 +203,9 @@ namespace OS.Kernel.Memory
                     // And the kernel frames under any app this thread runs.
                     if (markRoot == null)
                         KernelGcPreciseWalk.ContinueBelowApps(t.Id);
+
+                    // And the exceptions it is in the middle of dispatching.
+                    KernelGcPreciseWalk.MarkExceptionChain((OS.Boot.EH.ExInfo*)t.SavedExInfoHead, t, markRoot);
                 }
 
                 t = t.AllNext;

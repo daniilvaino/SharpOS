@@ -99,6 +99,7 @@
                     s_services->ExchangeArenaSpan, (uint*)s_services->ExchangePageTable);
             SharpOS.Std.NoRuntime.GcHeap.s_enterCritical = &AppPreemption.Suppress;
             SharpOS.Std.NoRuntime.GcHeap.s_leaveCritical = &AppPreemption.Allow;
+            SharpOS.Std.NoRuntime.GcStress.HeapBroken = &OnHeapBroken;
 
             // Every object on this heap has its type in this image, so the
             // marker can refuse a candidate whose "MethodTable" is elsewhere —
@@ -230,21 +231,17 @@
         /// </summary>
         /// <remarks>
         /// Called by the kernel from inside its fault handler, on the faulting
-        /// thread's stack, with interrupts off. Kinds as in
-        /// AppServiceTable.SetHwExceptionFactoryAddress. The collector is held
-        /// for the allocation: between the fault and this call the stack holds
-        /// an interrupt frame the root walk cannot step across, and a
-        /// collection now would not see the app frames beneath it.
+        /// thread's stack. Kinds as in AppServiceTable.SetHwExceptionFactoryAddress.
+        /// A collection here is safe: the kernel links the fault's ExInfo
+        /// before calling, and the root walk scans the faulting frames from it.
         /// </remarks>
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static nint CreateHardwareException(int kind)
         {
-            AppGC.Held = true;
             object exception = kind == 0 ? new System.NullReferenceException()
                              : kind == 2 ? new System.DivideByZeroException()
                              : kind == 3 ? new SharpOS.Std.Pipes.RegionReferenceException()
                              : new System.AccessViolationException();
-            AppGC.Held = false;
             return System.Runtime.CompilerServices.Unsafe.As<object, nint>(ref exception);
         }
 
@@ -261,6 +258,17 @@
             AppHost.WriteError("\n");
             AppHost.Exit(FatalExitCode);
             while (true) { }
+        }
+
+        // A heap walk around a collection found a block that is not an object
+        // (GcStress.VerifyHeap). Nothing after this can be trusted, so the app
+        // ends here, with the address and which side broke it.
+        private static void OnHeapBroken(nint at, int phase)
+        {
+            AppHost.WriteError("[gcstress] app heap broken at 0x");
+            AppHost.WriteHex((ulong)at);
+            Fatal(phase == 1 ? "found before a mark: the program wrote it"
+                             : "found after a sweep: the collector wrote it");
         }
 
         public static AppStartupBlock* Startup => s_startup;

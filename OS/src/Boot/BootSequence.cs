@@ -421,6 +421,9 @@ namespace OS.Boot
         // ─────────────────────────────────────────────────────────────────
         private static void Phase4_Probes(BootInfo bootInfo)
         {
+            if (Probes.GcStressEvery != 0)
+                OS.Kernel.Memory.KernelGC.Stress(Probes.GcStressEvery);
+
             // Terminal engine (vendor/XtermSharp). Runs here and not earlier because it
             // needs two things Phase 2/3 provide: materialized GC statics (its 256-colour
             // palette is a static List<Color> behind a class constructor) and the mapped
@@ -561,6 +564,12 @@ namespace OS.Boot
             // scheduler/Event up (Phase E5+), which is true by here.
             if (Probes.NativeAotFeaturesLate)
                 NativeAotProbe.RunLate();
+
+            // The collector where it is hardest to get right, under a
+            // collection per allocation: the hardware-fault path, references
+            // into objects, the byref region barrier, kernel threads.
+            if (Probes.GcStressPaths)
+                GcStressProbe.Run();
 
             // Phase 6.1.a — call coreclr_initialize from kernel boot path.
             // Expected to panic at first unimplemented SharpOSHost_* /

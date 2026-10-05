@@ -23,7 +23,7 @@ namespace AotTests
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            return Run();
+            return Main();
         }
 
         [RuntimeExport("SharpAppBootstrap")]
@@ -33,17 +33,63 @@ namespace AotTests
             return SharpAppEntry(startupPointer);
         }
 
-        private static int Main() => Run();
+        private static int Main()
+        {
+            string[] arguments = AppHost.Arguments;
 
-        private static int Run()
+            // `--gc-stress N K [mode...]`: the rest of the command line runs
+            // with a collection before every N-th allocation in this app and
+            // every K-th in the kernel (0: that side off), the heap walked
+            // around each collection and freed blocks poisoned. A broken heap
+            // ends the app (134) or the machine, saying where.
+            if (arguments.Length > 2 && arguments[0] == "--gc-stress")
+            {
+                uint app = (uint)int.Parse(arguments[1]);
+                uint kernel = (uint)int.Parse(arguments[2]);
+                string[] rest = new string[arguments.Length - 3];
+                for (int i = 0; i < rest.Length; i++) rest[i] = arguments[i + 3];
+
+                ulong* before = stackalloc ulong[2];
+                Probe(11, kernel | (1UL << 32), before);
+                SharpOS.Std.NoRuntime.GcSweep.PoisonFreed = true;
+                SharpOS.Std.NoRuntime.GcStress.VerifyHeap = true;
+                SharpOS.Std.NoRuntime.GcStress.Every = app;
+                s_gcStress = true;
+
+                int result = Run(rest);
+
+                SharpOS.Std.NoRuntime.GcStress.Every = 0;
+                ulong* kernelRan = stackalloc ulong[2];
+                Probe(11, before[1], kernelRan);
+                AppHost.WriteString("[gcstress] app every " + app.ToString() + ": "
+                                    + SharpOS.Std.NoRuntime.GcStress.Collections.ToString() + " collections; kernel every "
+                                    + kernel.ToString() + ": " + (kernelRan[0] - before[0]).ToString() + " collections\n");
+                return result;
+            }
+
+            return Run(arguments);
+        }
+
+        // Under --gc-stress: tests that measure time or count collections
+        // say so instead of failing on numbers the mode changes on purpose.
+        private static bool s_gcStress;
+
+        // Either side collecting at every few allocations: waits on the
+        // other side's work take far longer. The kernel can be stressed from
+        // boot (Probes.GcStressEvery) without this app asking for it.
+        private static bool s_kernelStressed;
+        private static bool SlowRun => s_gcStress || s_kernelStressed;
+
+        private static int Run(string[] arguments)
         {
             s_pass = 0;
             s_total = 0;
+            ulong* kernelEvery = stackalloc ulong[1];
+            s_kernelStressed = Probe(13, 0, kernelEvery) == 0 && kernelEvery[0] != 0;
 
             // Startup data (pipe_plan.md "Подготовить под трубы", item 3):
             // `AOTTESTS.EXE --echo-args ...` prints what arrived and exits with
             // the count, so the shell's `expect N` checks the delivery.
-            string[] arguments = AppHost.Arguments;
             if (arguments.Length > 0 && arguments[0] == "--echo-args")
             {
                 for (int i = 0; i < arguments.Length; i++)
@@ -136,8 +182,10 @@ namespace AotTests
             Check("live data survives collect", afterCollect);
             // Fully qualified: a using for the std namespace would make plain
             // `GC` ambiguous against System.GC everywhere else in this file.
+            // Under --gc-stress the allocation before it already collected.
+            if (s_gcStress) AppHost.WriteString("[gcstress] reclaimed check not meaningful under stress\n");
             Check("collect reclaimed something",
-                SharpOS.Std.NoRuntime.GcSweep.LastSweptCount > 0);
+                SharpOS.Std.NoRuntime.GcSweep.LastSweptCount > 0 || s_gcStress);
 
             CheckAllocatorShape();
             CheckHeapLookupCost();
@@ -277,6 +325,7 @@ namespace AotTests
             CheckNumberFormatting();
             CheckThreadsAndTasks();
             CheckPreemption();
+            CheckCollectorPaths();
             CheckClockWrap();
             CheckClockAdvances();
             CheckStackTraceText();
@@ -653,14 +702,21 @@ namespace AotTests
             var watch = System.Diagnostics.Stopwatch.StartNew();
             int reads = 0;
             int readFailures = 0;
-            while (watch.ElapsedMilliseconds < 1000)
+            // Under --gc-stress the workers can take longer than the second to
+            // start at all: read on until they have.
+            while (watch.ElapsedMilliseconds < 1000
+                   || (SlowRun && (s_regionAllocations == 0 || s_regionCollections == 0)
+                       && watch.ElapsedMilliseconds < 60000))
             {
                 readFailures += RegionProbeGraph.Check(root, RegionProbeGraph.Numbers, null);
                 reads++;
             }
             s_regionStop = 1;
             var wait = System.Diagnostics.Stopwatch.StartNew();
-            while (s_regionRunning > 0 && wait.ElapsedMilliseconds < 2000)
+            // A collection per allocation makes each of the workers' last
+            // iterations take seconds, not microseconds.
+            long waitLimit = SlowRun ? 60000 : 2000;
+            while (s_regionRunning > 0 && wait.ElapsedMilliseconds < waitLimit)
                 System.Threading.Thread.Sleep(1);
 
             AppHost.WriteString("[region] app load: " + reads.ToString() + " reads, "
@@ -979,8 +1035,11 @@ namespace AotTests
             // The point of the interleaving: many small free blocks, which is
             // what makes the next check mean something. If they all merged
             // anyway, the check below would pass for the wrong reason.
+            // Under --gc-stress the garbage is collected at the next
+            // allocation and its blocks reused: the precondition never forms.
+            if (s_gcStress) AppHost.WriteString("[gcstress] small-blocks check not meaningful under stress\n");
             Check("live objects between dead ones leave many small blocks",
-                  blocks >= 64);
+                  blocks >= 64 || s_gcStress);
 
             // Nothing between the snapshot and the request, so the deltas
             // belong to the array and to nothing else.

@@ -42,8 +42,12 @@ namespace OS.Kernel.Memory
             KernelGC.MarkOtherThreadStacks(markRoot);
             if (KernelGcPreciseWalk.Tracing) KernelGcPreciseWalk.TraceWalks--;
             KernelGcPreciseWalk.Tracing = false;
-            Report();
+            if (!Quiet)
+                Report();
         }
+
+        /// <summary>No line per walk: set while an app runs under GC stress (PipeProbe op 11).</summary>
+        public static bool Quiet;
 
         // The walk's own account of itself, said where the app's collector
         // says its numbers — the two halves of one collection belong on one

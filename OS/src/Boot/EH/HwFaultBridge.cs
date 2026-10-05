@@ -118,6 +118,33 @@ namespace OS.Boot.EH
 
             BuildPal(&pal, frame);
 
+            // A refusal from the shared byref barrier (RegionBarrier): the
+            // shellcode has no unwind data, and the managed dispatcher cannot
+            // step out of it — the exception went unhandled past every catch
+            // above it. At the faulting store the stack is as its caller left
+            // it, return address on top, so the dispatch starts at the call:
+            // as if the call itself had faulted.
+            if (frame->Vector == 14 && frame->Cr2 == SharpOS.Std.Exchange.ExchangeArena.StoreFaultAddress
+                && OS.Kernel.Memory.RegionBarrier.Contains(frame->Rip))
+            {
+                pal.IP = *(ulong*)frame->Rsp;
+                pal.Rsp = frame->Rsp + 8;
+            }
+
+            // Linked before the exception object is made. Making it allocates
+            // — in the kernel, or in the app's factory — and the collection
+            // that allocation may run has to see the faulting code's frames,
+            // which only this entry leads to: the walk from here stops at the
+            // interrupt stub.
+            exInfo.PrevExInfo = (ExInfo*)ExInfoHead.s_head;
+            exInfo.ExContext = &pal;
+            exInfo.Exception = 0;
+            exInfo.Kind = ExInfo.KindHardwareFault;
+            exInfo.PassNumber = 1;
+            exInfo.IdxCurClause = ExInfo.MaxTryRegionIdx;
+            exInfo.FaultFrame = frame;
+            ExInfoHead.s_head = (System.IntPtr)(&exInfo);
+
             // Resolve managed exception object для this vector.
             object exObj = ResolveException((int)frame->Vector, frame);
             if (exObj == null)
@@ -134,16 +161,7 @@ namespace OS.Boot.EH
             byte* exceptionPtr = null;
             *(object*)&exceptionPtr = exObj;
 
-            // Build ExInfo. Kind = HardwareFault.
-            exInfo.PrevExInfo = (ExInfo*)ExInfoHead.s_head;
-            exInfo.ExContext = &pal;
             exInfo.Exception = (ulong)(nuint)exceptionPtr;
-            exInfo.Kind = ExInfo.KindHardwareFault;
-            exInfo.PassNumber = 1;
-            exInfo.IdxCurClause = ExInfo.MaxTryRegionIdx;
-
-            // Link into head chain.
-            ExInfoHead.s_head = (System.IntPtr)(&exInfo);
 
             Log.Begin(LogLevel.Info);
             Console.Write("HW fault: vec=");

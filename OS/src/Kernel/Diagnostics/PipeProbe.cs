@@ -132,6 +132,29 @@ namespace OS.Kernel.Diagnostics
                 case 10:
                     WriteWatch.Arm(argument);
                     return 0;
+                case 13:
+                    // The kernel's GC stress, read only: an app's waits on
+                    // kernel work stretch when it is on.
+                    if (answer == null) return (int)PipeStatus.BadHandle;
+                    answer[0] = SharpOS.Std.NoRuntime.GcStress.Every;
+                    return 0;
+                case 12:
+                    // The byref barrier test, run by the kernel on its own pipe.
+                    return ByRefProbe.RunOnPipe();
+                case 11:
+                    // GC stress on the kernel heap for the caller's run: the low
+                    // half is N (0 off); the answer is the collections so far
+                    // and the N it replaces, for the caller to put back. The
+                    // walk lent to apps stops reporting each collection while
+                    // either side is stressed.
+                    if (answer != null)
+                    {
+                        answer[0] = SharpOS.Std.NoRuntime.GcStress.Collections;
+                        answer[1] = SharpOS.Std.NoRuntime.GcStress.Every;
+                    }
+                    KernelGC.Stress((uint)argument);
+                    AppGcService.Quiet = (argument >> 32) != 0;
+                    return 0;
                 default: return (int)PipeStatus.Unsupported;
             }
         }
@@ -303,7 +326,7 @@ namespace OS.Kernel.Diagnostics
                     using (region)
                     {
                         EchoMessage m = region.Root;
-                        ok = m.Value == 42 && m.Tag == "echo" && m.Items != null && m.Items.Length == 5;
+                        ok = m.Value == 42 && m.Tag == "echo" && m.Items != null && m.Items.Length == EchoItems;
                         for (int i = 0; ok && i < m.Items.Length; i++)
                             ok = m.Items[i].Key == 2 * i + 1 && m.Items[i].Name == "k" + m.Items[i].Key.ToString();
                         count++;
@@ -349,16 +372,23 @@ namespace OS.Kernel.Diagnostics
             return 0;
         }
 
+        private const int EchoItems = 100;
+
         private static int EchoOut()
         {
             if (PipeWriter<EchoMessage>.Connect("probe.echo.out", out PipeWriter<EchoMessage> writer, out string error) != PipeStatus.Ok)
                 return (int)PipeStatus.Refused;
             using (writer)
             {
-                int[] keys = { 5, 3, 9, 1, 7 };
-                var items = new Item[keys.Length];
-                for (int i = 0; i < keys.Length; i++)
-                    items[i] = new Item { Key = keys[i], Name = "k" + keys[i].ToString() };
+                // 100 odd keys out of order: past the 16 elements below which
+                // Array.Sort is an insertion sort, so the app's sort in the
+                // region runs partitions and swaps as well.
+                var items = new Item[EchoItems];
+                for (int i = 0; i < items.Length; i++)
+                {
+                    int key = 2 * (i * 37 % EchoItems) + 1;
+                    items[i] = new Item { Key = key, Name = "k" + key.ToString() };
+                }
                 return (int)writer.Copy(new EchoMessage { Value = 41, Tag = "echo", Items = items });
             }
         }

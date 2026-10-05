@@ -65,7 +65,13 @@ namespace SharpOS.Std.Pipes
 namespace Sample
 {
     using SharpOS.Std.Pipes;
-    [Message] public sealed class Node { public int Value; public string Name; public Node Next; public Node[] Kids; }
+    [Message] public struct Slot { public string Name; public int X; }
+    [Message] public sealed class Node
+    {
+        public int Value; public string Name; public Node Next; public Node[] Kids; public Slot[] Slots;
+        public Node First => Kids[0];
+        public Node this[int i] { get => Kids[i]; set => Kids[i] = value; }
+    }
     public sealed class Plain { public int X; }
     public sealed class Holder { public Node Keep; }
 }
@@ -112,6 +118,68 @@ class C { static void Keep([Retains] object o) { } void M(PipeReader<Node> p) { 
 class C { static object s; static void Store(object o) { var x = o; s = x; } void M(PipeReader<Node> p) { using (var r = p.Receive()) Store(r.Root.Next); } }");
         Expect("SOSR004: through a chain of calls", new[] { "SOSR004" }, @"
 class C { static object s; static void A(object o) => B(o); static void B(object o) { s = o; } void M(PipeReader<Node> p) { using (var r = p.Receive()) A(r.Root); } }");
+
+        // ---- reaching a region reference through ?., casts, as, ?:, ??, properties, indexers ----
+        Expect("SOSR002: through ?.", new[] { "SOSR002" }, @"
+class C { void M(PipeReader<Node> p, Holder h) { using (var r = p.Receive()) { h.Keep = r.Root?.Next; } } }");
+        Expect("SOSR002: through a cast", new[] { "SOSR002" }, @"
+class C { void M(PipeReader<Node> p, Holder h) { using (var r = p.Receive()) { h.Keep = (Node)(object)r.Root; } } }");
+        Expect("SOSR002: through as", new[] { "SOSR002" }, @"
+class C { void M(PipeReader<Node> p, Holder h) { using (var r = p.Receive()) { h.Keep = (object)r.Root.Next as Node; } } }");
+        Expect("SOSR002: one side of ?:", new[] { "SOSR002" }, @"
+class C { void M(PipeReader<Node> p, Holder h, bool b) { using (var r = p.Receive()) { h.Keep = b ? r.Root : null; } } }");
+        Expect("SOSR002: one side of ??", new[] { "SOSR002" }, @"
+class C { void M(PipeReader<Node> p, Holder h) { using (var r = p.Receive()) { h.Keep = h.Keep ?? r.Root; } } }");
+        Expect("SOSR002: a property of a region reference", new[] { "SOSR002" }, @"
+class C { void M(PipeReader<Node> p, Holder h) { using (var r = p.Receive()) { h.Keep = r.Root.First; } } }");
+        Expect("SOSR002: an indexer of a region reference", new[] { "SOSR002" }, @"
+class C { void M(PipeReader<Node> p, Holder h) { using (var r = p.Receive()) { var n = r.Root; h.Keep = n[1]; } } }");
+        Expect("SOSR002: a struct element carrying a region reference", new[] { "SOSR002" }, @"
+class C { static string s_name; void M(PipeReader<Node> p) { using (var r = p.Receive()) { Slot s = r.Root.Slots[0]; s_name = s.Name; } } }");
+        Expect("SOSR003: a local taken through ?., used after Dispose", new[] { "SOSR003" }, @"
+class C { int M(PipeReader<Node> p) { var r = p.Receive(); var n = r.Root?.Next; r.Dispose(); return n.Value; } }");
+
+        // ---- SOSR006 ----
+        Expect("SOSR006: a heap object into a field", new[] { "SOSR006" }, @"
+class C { void M(PipeReader<Node> p) { using (var r = p.Receive()) { r.Root.Name = new string('x', 2); } } }");
+        Expect("SOSR006: a literal into a field", new[] { "SOSR006" }, @"
+class C { void M(PipeReader<Node> p) { using (var r = p.Receive()) { var n = r.Root; n.Name = ""literal""; } } }");
+        Expect("SOSR006: a heap object into an element", new[] { "SOSR006" }, @"
+class C { void M(PipeReader<Node> p) { using (var r = p.Receive()) { r.Root.Kids[0] = new Node(); } } }");
+        Expect("SOSR006: another region's object", new[] { "SOSR006" }, @"
+class C { void M(PipeReader<Node> p) { using (var a = p.Receive()) using (var b = p.Receive()) { a.Root.Next = b.Root; } } }");
+        Expect("SOSR006: through an indexer", new[] { "SOSR006" }, @"
+class C { void M(PipeReader<Node> p, Holder h) { using (var r = p.Receive()) { r.Root[0] = h.Keep; } } }");
+        Expect("SOSR006: one side of ?: from the heap", new[] { "SOSR006" }, @"
+class C { void M(PipeReader<Node> p, bool b) { using (var r = p.Receive()) { var n = r.Root; n.Next = b ? n.Kids[0] : new Node(); } } }");
+        Expect("SOSR006: ??= with a literal", new[] { "SOSR006" }, @"
+class C { void M(PipeReader<Node> p) { using (var r = p.Receive()) { r.Root.Name ??= ""x""; } } }");
+        Expect("SOSR006: a struct carrying a heap reference into an element", new[] { "SOSR006" }, @"
+class C { void M(PipeReader<Node> p, Slot[] heap) { using (var r = p.Receive()) { r.Root.Slots[0] = heap[0]; } } }");
+        Expect("SOSR006: a struct built with a literal", new[] { "SOSR006" }, @"
+class C { void M(PipeReader<Node> p) { using (var r = p.Receive()) { r.Root.Slots[0] = new Slot { Name = ""x"", X = 1 }; } } }");
+        Expect("correct: stores of the region's own references and null", new string[0], @"
+class C
+{
+    void M(PipeReader<Node> p, bool b)
+    {
+        using (var r = p.Receive())
+        {
+            Node n = r.Root;
+            n.Next = n.Kids[0];
+            n.Kids[1] = n;
+            n.Name = null;
+            n.Next = b ? n.Kids[0] : null;
+            n.Name = n.Next?.Name;
+            n.Next = n.Next ?? n;
+            n[0] = n.First;
+            n.Slots[0] = n.Slots[1];
+            n.Slots[1] = new Slot { Name = n.Name, X = 2 };
+            n.Slots[2] = default;
+            n.Value = 5;
+        }
+    }
+}");
 
         // ---- SOSR005 ----
         Expect("SOSR005: not released on an early return", new[] { "SOSR005" }, @"

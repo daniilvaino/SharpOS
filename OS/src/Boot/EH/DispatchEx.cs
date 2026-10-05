@@ -441,6 +441,20 @@ namespace OS.Boot.EH
             uint startSecondPassIdx = isRethrow ? startIdx : ExInfo.MaxTryRegionIdx;
             InvokeSecondPass(exInfo, handlingFrameSP, catchingTryRegionIdx, startSecondPassIdx);
 
+            // Every older dispatch whose ExInfo lies between this one and the
+            // catching frame ends with this catch: its frames are the ones
+            // being unwound. The catch stub pops one entry (this one), so the
+            // rest are unlinked here — stock NativeAOT pops every ExInfo below
+            // the resume SP. Left in, a throw from inside a catch funclet
+            // (a rethrow, a collided unwind) left an entry pointing into dead
+            // stack, found when the collector began walking the chain.
+            // Bounded below by this ExInfo: an entry from another stack (the
+            // kernel's, under an app) is not between the two and stays.
+            ExInfo* keep = exInfo->PrevExInfo;
+            while (keep != null && (ulong)keep > (ulong)exInfo && (ulong)keep < handlingFrameSP)
+                keep = keep->PrevExInfo;
+            exInfo->PrevExInfo = keep;
+
             // Hand off к catch funclet via shellcode. RegDisplay is first
             // field of StackFrameIterator — &FrameIter == &RegDisplay.
             delegate* unmanaged<byte*, byte*, RegDisplay*, ExInfo*, void> catchFn =

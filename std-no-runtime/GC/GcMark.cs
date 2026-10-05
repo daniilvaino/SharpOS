@@ -54,6 +54,8 @@ namespace SharpOS.Std.NoRuntime
         // first root; it resets the mark stack and the per-pass counter.
         public static void Begin()
         {
+            if (GcStress.VerifyHeap)
+                GcStress.Check(1);
             s_count = 0;
             s_markedCount = 0;
             s_droppedCount = 0;

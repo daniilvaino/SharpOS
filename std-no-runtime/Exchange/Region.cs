@@ -33,6 +33,13 @@ namespace SharpOS.Std.Exchange
         /// <summary>Where each object of a graph goes, before any byte is written.</summary>
         public sealed class Plan
         {
+            // The graph is held below by address only, which no collector
+            // follows; this reference keeps it alive for as long as the plan
+            // is — through Lay and Write. Without it a collection inside Lay
+            // (its lists grow) freed a message nobody else held, the
+            // temporary in `writer.Copy(Build())`, and Write copied freed
+            // memory (found by GC stress).
+            internal object Root;
             internal List<ulong> Objects = new List<ulong>();
             internal List<ulong> Offsets = new List<ulong>();
             internal Dictionary<ulong, int> Index = new Dictionary<ulong, int>();
@@ -64,6 +71,7 @@ namespace SharpOS.Std.Exchange
             }
 
             var plan = new Plan();
+            plan.Root = root;
             var buffer = new ulong[64];
             var frontier = new Stack<ulong>();
             frontier.Push(AddressOf(root));

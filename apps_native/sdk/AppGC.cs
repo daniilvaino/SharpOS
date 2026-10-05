@@ -60,23 +60,8 @@ namespace SharpOS.AppSdk
         /// something approximate: a collection that cannot see the stack frees
         /// live objects, and the damage surfaces far from here.
         /// </summary>
-        /// <summary>
-        /// While set, a collection request is declined and the allocation that
-        /// asked for it grows the heap or fails. Set around allocations made
-        /// where the root walk cannot see the whole stack.
-        /// </summary>
-        public static bool Held;
-
-        /// <summary>Walk the heap before the mark and after the sweep, and say which broke it. Debugging.</summary>
-        public static bool VerifyHeap;
-        public static nint FirstBroken;
-        public static int BrokenPhase;   // 1: before the mark (the program broke it); 2: after the sweep (the collector did)
-
         public static void Collect()
         {
-            if (Held)
-                return;
-
             AppServiceTable* services = AppRuntime.Services;
             if (services == null || services->GcWalkRootsAddress == 0)
             {
@@ -91,11 +76,6 @@ namespace SharpOS.AppSdk
             uint afterStatics;
             try
             {
-                if (VerifyHeap && FirstBroken == 0)
-                {
-                    nint broken = GcHeap.FindBrokenObject(GcMark.MethodTableLow, GcMark.MethodTableHigh);
-                    if (broken != 0) { FirstBroken = broken; BrokenPhase = 1; }
-                }
                 GcMark.Begin();
                 GcRoots.MarkStaticRootsOnly();
                 afterStatics = GcMark.LastMarkedCount;
@@ -106,12 +86,6 @@ namespace SharpOS.AppSdk
                 s_afterStatics = afterStatics;
 
                 GcSweep.Run();
-
-                if (VerifyHeap && FirstBroken == 0)
-                {
-                    nint broken = GcHeap.FindBrokenObject(GcMark.MethodTableLow, GcMark.MethodTableHigh);
-                    if (broken != 0) { FirstBroken = broken; BrokenPhase = 2; }
-                }
             }
             finally
             {
@@ -121,7 +95,9 @@ namespace SharpOS.AppSdk
             s_lastWalkOk = true;
             s_collections++;
 
-            Report();
+            // One line per collection is a flood at a collection per allocation.
+            if (GcStress.Every == 0)
+                Report();
         }
 
         // Said at the moment it happens, not later from the idle loop: a

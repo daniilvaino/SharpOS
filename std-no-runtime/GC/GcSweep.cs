@@ -115,14 +115,6 @@ namespace SharpOS.Std.NoRuntime
             block->RawMethodTable = freeMt;
             block->Length = (uint)runBytes - 12;   // ComputeSize == runBytes
 
-            // A detector: whatever still uses a swept object reads 0xCC…
-            // instead of its old fields and faults at the first reference it
-            // follows, where its own stack says who held it. The allocator
-            // zeroes what it hands out, so this changes nothing for live code.
-            if (PoisonFreed)
-                for (nint q = runStart + 20; q < runStart + runBytes; q++)
-                    *(byte*)q = 0xCC;
-
             GcHeap.LinkFreeBlock(runStart, (uint)runBytes);
 
             runStart = 0;
@@ -198,7 +190,20 @@ namespace SharpOS.Std.NoRuntime
                         // reuse, and a free block that already existed is
                         // exactly what a neighbour should merge with.
                         if (!isAlreadyFree)
+                        {
                             s_sweptCount++;
+
+                            // A detector: whatever still uses a swept object
+                            // reads 0xCC… instead of its old fields and faults
+                            // at the first reference it follows, where its own
+                            // stack says who held it. Only what died in this
+                            // sweep: a block free from before was filled then,
+                            // and refilling every free byte on every collection
+                            // made a kernel collection cost megabytes of stores.
+                            // The allocator zeroes what it hands out.
+                            if (PoisonFreed)
+                                MemoryPrimitives.Memset((void*)p, 0xCC, aligned);
+                        }
 
                         if (runStart == 0)
                             runStart = p;
@@ -214,6 +219,9 @@ namespace SharpOS.Std.NoRuntime
 
                 seg = seg->Next;
             }
+
+            if (GcStress.VerifyHeap)
+                GcStress.Check(2);
         }
     }
 }

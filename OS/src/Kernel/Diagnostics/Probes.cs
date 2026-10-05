@@ -616,5 +616,16 @@
         // (SharpOSHost_ReadConsoleInput). Bounded to the first few events so a
         // stuck read is distinguishable from keys that never arrive at all.
         public const bool ConsoleInputTrace = false;
+
+        // GC stress for the kernel heap from Phase 4 on: a collection before
+        // every N-th allocation, the heap walked around each, freed blocks
+        // poisoned (SharpOS.Std.NoRuntime.GcStress). 0 is off. An app can
+        // switch it on for its own run (PipeProbe op 11, AotTests --gc-stress).
+        public const uint GcStressEvery = 0;
+
+        // The collector's hard places checked under stress at every boot
+        // (GcStressProbe): the hardware-fault path, refs into objects, the
+        // byref region barrier, kernel threads. Seconds of boot time.
+        public const bool GcStressPaths = true;
     }
 }

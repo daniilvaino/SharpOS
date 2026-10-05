@@ -581,6 +581,9 @@ namespace SharpOS.Std.NoRuntime
             if (size == 0 || size > MaxAllocationSize)
                 return null;
 
+            if (GcStress.Every != 0)
+                GcStress.BeforeAllocation();
+
             // Remembered for the refusal report: by the time OutOfMemory() is
             // asked for the exception, the size that could not be met is gone.
             s_lastRequest = size;
