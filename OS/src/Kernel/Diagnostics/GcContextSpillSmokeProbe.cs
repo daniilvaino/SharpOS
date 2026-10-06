@@ -146,7 +146,7 @@ namespace OS.Kernel.Diagnostics
                 bool isLive = isUntracked || (inRange && i < live.Length && live[i]);
                 if (!isLive) continue;
 
-                ulong value = CoffGcInfoResolver.ResolveSlotValue(in slots[i], ctx, in hdr);
+                ulong value = CoffGcInfoResolver.ResolveSlotValue(in slots[i], ctx, in hdr, 0);
 
                 Log.Begin(LogLevel.Info);
                 Console.Write("[ctxspill]     root[");

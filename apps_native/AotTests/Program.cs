@@ -116,6 +116,9 @@ namespace AotTests
             //   --untranslated-interface1..4  ISingle, IRanked, ITriple, ILabelled.
             // A pipe writer that ends with its queue full (pipe test 2): normal
             // exit (0) or an unhandled exception (134).
+            if (arguments.Length > 0 && arguments[0] == "--dynamic")
+                return RunDynamicOnly();
+
             if (arguments.Length > 1 && arguments[0] == "--pipe-stress")
                 return RunPipeStress(int.Parse(arguments[1]));
 
@@ -333,6 +336,7 @@ namespace AotTests
             CheckRegion();
             CheckRegionFromKernel();
             CheckPipes();
+            CheckDynamic();
 
             // The error stream (step 167). The check can only see that the
             // kernel offers it; whether the marker reached last_err.log and not

@@ -106,6 +106,30 @@ namespace OS.Kernel.Memory
             fixed (SkipTable* t = &s_skipped) return t->From[index];
         }
 
+        // The frame being marked while the walk's context moves on to its caller.
+        private static Context s_frameSnapshot;
+
+        // Every place an app's walk loses roots, said (the first 40 of a
+        // boot). The counters alone are printed only outside GC stress, and a
+        // root lost in silence surfaces later as a stranger's object.
+        private static int s_lostSaid;
+
+        private static void SayLost(string what, ulong rip, ulong from = 0)
+        {
+            if (s_markRoot == null || s_lostSaid >= 40) return;   // the app's walks only
+            s_lostSaid++;
+            OS.Hal.Console.Write("[gc] ");
+            OS.Hal.Console.Write(what);
+            OS.Hal.Console.Write(" rip=0x");
+            OS.Hal.Console.WriteHex(rip);
+            if (from != 0)
+            {
+                OS.Hal.Console.Write(" after a frame at 0x");
+                OS.Hal.Console.WriteHex(from);
+            }
+            OS.Hal.Console.WriteLine("");
+        }
+
         private static void NoteSkipped(ulong rip, ulong from)
         {
             if (s_skippedCount >= SkipCapacity) return;
@@ -157,11 +181,22 @@ namespace OS.Kernel.Memory
 
         public static void RunFromCurrentFrame() => RunFromCurrentFrame(null);
 
+        // Method starts of the throw and rethrow stubs (see WalkFrames).
+        private static byte* s_throwStub, s_rethrowStub;
+
+        private static void FindThrowStubs()
+        {
+            if (s_throwStub != null) return;
+            s_throwStub = (byte*)OS.Boot.EH.ThrowExStub.GetMethodAddress();
+            s_rethrowStub = (byte*)OS.Boot.EH.RethrowStub.GetMethodAddress();
+        }
+
         public static void RunFromCurrentFrame(delegate* unmanaged<nuint, void> markRoot)
         {
             ResetTelemetry();
 
             if (!IsAvailable) return;
+            FindThrowStubs();
 
             s_markRoot = markRoot;
             s_topFrameIsActive = false;
@@ -214,6 +249,17 @@ namespace OS.Kernel.Memory
                 }
                 if (e->Exception != 0)
                     MarkCandidate(e->Exception, markRoot);
+
+                // A software throw: the frames from the throw site down. The
+                // throw stub's own frame is shellcode in a C# method's body,
+                // and unwinding it by that method's codes lands on garbage —
+                // so a walk from a catch funclet (which allocates) ended
+                // there, and the method that catches, with every caller below
+                // it, was never marked (step193: `dynamic`'s cases lost their
+                // closures under GC stress). The stub kept the thrower's
+                // context; the walk resumes from it.
+                if (e->Kind != OS.Boot.EH.ExInfo.KindHardwareFault && e->ExContext != null)
+                    RunFromThrowSite(e->ExContext, markRoot);
 
                 if (e->Kind == OS.Boot.EH.ExInfo.KindHardwareFault && e->FaultFrame != null)
                 {
@@ -411,6 +457,7 @@ namespace OS.Kernel.Memory
                                                  delegate* unmanaged<nuint, void> markRoot)
         {
             if (!IsAvailable || frame == null) return;
+            FindThrowStubs();
 
             ulong* f = (ulong*)frame;
 
@@ -437,6 +484,31 @@ namespace OS.Kernel.Memory
 
             s_markRoot = markRoot;
             s_topFrameIsActive = true;
+            WalkFrames(&ctx);
+            s_markRoot = null;
+        }
+
+        /// <summary>A walk from where a managed throw entered the runtime: the thrower's return address and registers.</summary>
+        private static void RunFromThrowSite(OS.Boot.EH.PalLimitedContext* site, delegate* unmanaged<nuint, void> markRoot)
+        {
+            if (!IsAvailable || site == null || site->IP == 0 || site->Rsp == 0) return;
+            FindThrowStubs();
+            if (((ulong)site & 7) != 0 || ((ulong)site >> 47) != 0) return;
+
+            Context ctx = default;
+            ctx.Rip = site->IP;
+            ctx.Rsp = site->Rsp;
+            ctx.Rbp = site->Rbp;
+            ctx.Rdi = site->Rdi;
+            ctx.Rsi = site->Rsi;
+            ctx.Rbx = site->Rbx;
+            ctx.R12 = site->R12;
+            ctx.R13 = site->R13;
+            ctx.R14 = site->R14;
+            ctx.R15 = site->R15;
+
+            s_markRoot = markRoot;
+            s_topFrameIsActive = false;   // a return address: the call into the throw stub
             WalkFrames(&ctx);
             s_markRoot = null;
         }
@@ -478,6 +550,11 @@ namespace OS.Kernel.Memory
                 if (frameIdx >= MaxFrames)
                 {
                     LastFrameCapHits++;
+                    OS.Hal.Console.Write("[gc] stack walk stopped at the frame cap (");
+                    OS.Hal.Console.WriteUInt((uint)MaxFrames);
+                    OS.Hal.Console.Write(") at rip=0x");
+                    OS.Hal.Console.WriteHex(ctx->Rip);
+                    OS.Hal.Console.WriteLine(": the roots below are lost");
                     return;
                 }
 
@@ -524,7 +601,19 @@ namespace OS.Kernel.Memory
 
                     LastFramesUnresolved++;
                     NoteSkipped(ctx->Rip, prevRip);
+                    SayLost("walk ended at an unresolved frame", ctx->Rip, prevRip);
                     if (trace) Trace("end: unresolved", ctx, 0);
+                    return;
+                }
+
+                // The throw and rethrow stubs: shellcode in a C# method's body,
+                // which that method's unwind codes do not describe. The walk
+                // ends here; the frames from the throw site down are walked
+                // from the context the stub saved (MarkExceptionChain).
+                if (r.MethodStart == s_throwStub || r.MethodStart == s_rethrowStub)
+                {
+                    LastBottomsReached++;
+                    if (trace) Trace("end: throw stub", ctx, 0);
                     return;
                 }
 
@@ -542,45 +631,59 @@ namespace OS.Kernel.Memory
                 LastFramesWalked++;
                 prevRip = ctx->Rip;
 
-                // A frame with no slot table is stepped, not marked. Its
-                // unwind codes below are genuine and move to the caller
-                // correctly; what it does not have is anything to tell us
-                // which of its slots hold references.
-                int rootsBefore = LastRootsMarked;
-                int skippedBefore = LastFramesSkippedOutOfRange;
-                if (r.HasGcInfo)
+                // The frame as it stands is kept; the context is unwound to the
+                // caller first, because the caller's SP is the base of the
+                // slots the frame describes relative to its caller (its
+                // stack-passed arguments). The walk is single-threaded under a
+                // stopped world, so one static snapshot serves every frame.
+                fixed (Context* frame = &s_frameSnapshot)
                 {
-                    MarkOneFrame(ctx, in r, gcInfoVersion,
-                                 isActiveFrame: frameIdx == 0 && s_topFrameIsActive);
-                }
-                else
-                {
-                    LastFramesWithoutGcInfo++;
-                }
-                if (trace)
-                    Trace(!r.HasGcInfo ? "frame (no gcinfo)"
-                          : LastFramesSkippedOutOfRange != skippedBefore ? "frame OUT OF RANGE" : "frame",
-                          ctx, LastRootsMarked - rootsBefore);
+                    *frame = *ctx;
 
-                // Image base PER FRAME, not one fixed base for the whole walk.
-                // A stack that crosses from an app into the kernel (or back)
-                // has frames from different PE images, and unwinding one with
-                // another's base decodes garbage. The lookup table already
-                // knows which image a record came from — it just was not being
-                // asked.
-                byte* imageBase = CoffRuntimeFunctionTable.ImageBaseForRecord(r.RuntimeFunction);
-                if (imageBase == null) return;
+                    // Image base PER FRAME, not one fixed base for the whole walk.
+                    // A stack that crosses from an app into the kernel (or back)
+                    // has frames from different PE images, and unwinding one with
+                    // another's base decodes garbage. The lookup table already
+                    // knows which image a record came from — it just was not being
+                    // asked.
+                    byte* imageBase = CoffRuntimeFunctionTable.ImageBaseForRecord(r.RuntimeFunction);
+                    if (imageBase != null)
+                    {
+                        ulong establisher = 0;
+                        void* handlerData = null;
+                        SehUnwind.VirtualUnwind(
+                            0,
+                            (ulong)imageBase,
+                            ctx->Rip,
+                            (OS.PAL.SharpOSHost.RuntimeFunction*)r.RuntimeFunction,
+                            ctx,
+                            &handlerData,
+                            &establisher);
+                    }
 
-                ulong establisher = 0;
-                void* handlerData = null;
-                SehUnwind.VirtualUnwind(
-                    0,
-                    (ulong)imageBase,
-                    ctx->Rip,
-                    (OS.PAL.SharpOSHost.RuntimeFunction*)r.RuntimeFunction,
-                    ctx,
-                    &handlerData,
-                    &establisher);
+                    // A frame with no slot table is stepped, not marked. Its
+                    // unwind codes are genuine and move to the caller correctly;
+                    // what it does not have is anything to tell us which of its
+                    // slots hold references.
+                    int rootsBefore = LastRootsMarked;
+                    int skippedBefore = LastFramesSkippedOutOfRange;
+                    if (r.HasGcInfo)
+                    {
+                        MarkOneFrame(frame, in r, gcInfoVersion,
+                                     isActiveFrame: frameIdx == 0 && s_topFrameIsActive,
+                                     callerSp: imageBase != null ? ctx->Rsp : 0);
+                    }
+                    else
+                    {
+                        LastFramesWithoutGcInfo++;
+                    }
+                    if (trace)
+                        Trace(!r.HasGcInfo ? "frame (no gcinfo)"
+                              : LastFramesSkippedOutOfRange != skippedBefore ? "frame OUT OF RANGE" : "frame",
+                              frame, LastRootsMarked - rootsBefore);
+
+                    if (imageBase == null) return;
+                }
             }
         }
 
@@ -589,7 +692,7 @@ namespace OS.Kernel.Memory
             => reg == 0 || reg == 1 || reg == 2 || (reg >= 8 && reg <= 11);
 
         private static void MarkOneFrame(Context* ctx, in CoffMethodGcInfo.Result r, int gcInfoVersion,
-                                         bool isActiveFrame)
+                                         bool isActiveFrame, ulong callerSp)
         {
             CoffGcInfoDecoder.DecodeHeader(r.GcInfo, gcInfoVersion, out CoffGcInfoHeader hdr);
 
@@ -642,6 +745,7 @@ namespace OS.Kernel.Memory
             {
                 LastFramesSkippedOutOfRange++;
                 NoteSkipped(ctx->Rip, 0);
+                SayLost("frame skipped (not at a safe point)", ctx->Rip);
                 return;
             }
 
@@ -663,7 +767,7 @@ namespace OS.Kernel.Memory
                 bool isLive = isUntracked || (i < trackedCount && live[i]);
                 if (Tracing)
                 {
-                    ulong v = CoffGcInfoResolver.ResolveSlotValue(in slots[i], ctx, in hdr);
+                    ulong v = CoffGcInfoResolver.ResolveSlotValue(in slots[i], ctx, in hdr, callerSp);
                     OS.Hal.Console.Write("[walk-trace]   slot "); OS.Hal.Console.WriteUInt((uint)i);
                     OS.Hal.Console.Write(" kind="); OS.Hal.Console.WriteUInt(slots[i].Kind);
                     OS.Hal.Console.Write(" base="); OS.Hal.Console.WriteUInt(slots[i].SpBase);
@@ -682,7 +786,7 @@ namespace OS.Kernel.Memory
                 if (!isActiveFrame && slots[i].Kind == 0 && IsScratchRegister(slots[i].RegOrOffset))
                     continue;
 
-                ulong value = CoffGcInfoResolver.ResolveSlotValue(in slots[i], ctx, in hdr);
+                ulong value = CoffGcInfoResolver.ResolveSlotValue(in slots[i], ctx, in hdr, callerSp);
                 if (value == 0) continue;
 
                 if (s_markRoot != null) s_markRoot((nuint)value);

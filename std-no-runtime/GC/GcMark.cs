@@ -36,11 +36,18 @@ namespace SharpOS.Std.NoRuntime
 
         public static uint LastMarkedCount => s_markedCount;
 
-        // References the mark stack had no room for. Every one of them is a
-        // subgraph the sweep is about to free while it is still reachable,
-        // so a non-zero value here is not a statistic — it is the explanation
-        // for whatever corruption follows.
+        // References the mark stack had no room for. Each was the child of an
+        // object already marked, and is found again by the overflow rescans
+        // (RecoverOverflow); until step193 nothing found it, and the sweep
+        // freed live subgraphs — `dynamic`'s member tables lost their Type
+        // objects under GC stress.
         public static uint LastDroppedCount => s_droppedCount;
+
+        // Heap passes the last collection made to recover from overflow.
+        public static uint LastOverflowRescans => s_overflowRescans;
+
+        private static bool s_overflow;
+        private static uint s_overflowRescans;
 
         // Where MethodTables live, [low, high). Every object on a heap this
         // collector manages has its type in one image — the kernel's for the
@@ -59,6 +66,8 @@ namespace SharpOS.Std.NoRuntime
             s_count = 0;
             s_markedCount = 0;
             s_droppedCount = 0;
+            s_overflow = false;
+            s_overflowRescans = 0;
         }
 
         // Push a root pointer and drain the mark stack until empty. Safe to
@@ -71,6 +80,41 @@ namespace SharpOS.Std.NoRuntime
 
             Push(rootPtr);
             Drain();
+            if (s_overflow)
+                RecoverOverflow();
+        }
+
+        // Mark-stack overflow, as the stock GC recovers from it
+        // (process_mark_overflow): whatever was dropped is a child of an object
+        // already marked. Walk the heap and push the children of every marked
+        // object again, draining as we go, until a pass drops nothing.
+        private static void RecoverOverflow()
+        {
+            while (s_overflow)
+            {
+                s_overflow = false;
+                s_overflowRescans++;
+                for (GcSegmentHeader* seg = GcHeap.FirstSegment; seg != null; seg = seg->Next)
+                {
+                    nint p = seg->ObjectStart;
+                    nint end = seg->Current;
+                    while (p < end)
+                    {
+                        GcObject* o = (GcObject*)p;
+                        if (o->MethodTable == null)
+                            break;   // unreadable: the segment walk stops, as in UnmarkAllObjects
+                        uint size = o->ComputeSize();
+                        if (size == 0)
+                            break;
+                        if (o->IsMarked())
+                        {
+                            GcObject.EnumerateObjectReferences(o, &PushUnmarked);
+                            Drain();
+                        }
+                        p += (nint)((size + 15u) & ~15u);
+                    }
+                }
+            }
         }
 
         private static void Drain()
@@ -158,6 +202,7 @@ namespace SharpOS.Std.NoRuntime
             if (s_count >= StackCapacity)
             {
                 s_droppedCount++;
+                s_overflow = true;
                 return;
             }
 
@@ -167,6 +212,16 @@ namespace SharpOS.Std.NoRuntime
                 slots[s_count] = ptr;
                 s_count++;
             }
+        }
+
+        // The rescans push only what is not marked yet: an object with more
+        // children than the stack holds would otherwise overflow it again on
+        // every pass, and the rescans would never end.
+        private static void PushUnmarked(nint ptr)
+        {
+            if (GcHeap.FindSegmentContaining(ptr) == null) return;
+            if (((GcObject*)ptr)->IsMarked()) return;
+            Push(ptr);
         }
 
         private static nint Pop()

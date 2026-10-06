@@ -23,11 +23,21 @@
 //                     compilation — one whose body stores it
 //   SOSR005  warning  a local Region<T> that on some path is neither disposed,
 //                     moved, passed on, nor returned
+//   SOSR007  error    ToHeap() on a value whose type is not in the catalog:
+//                     nothing of that type can come out of a message
 //   SOSR006  error    stored into a field, element or property of a region
 //                     reference: a value that is not a reference into that
 //                     region or null — a heap object, a literal, another
 //                     region's object. Catches the literal, which ILC stores
 //                     without calling the barrier.
+//
+// Bound to a loop's step as well: every value of type View (a view into an
+// untranslated region), and the variable of a loop over a pipe reader — the
+// message (`foreach (T e in reader)`) or the region (`… in reader.Regions`).
+// The loop lets the region go at the next step. A user-defined conversion out
+// of a view (to a number, a string, an Expando) is a copy and is free; so are
+// ToHeap and Into. The library's own code (namespace SharpOS.Std.Pipes) is the
+// mechanism these rules describe and is not checked by them.
 //
 // Known limit: paths are not correlated. `if (b) r.Dispose(); ... if (!b) use`
 // is reported, and a local assigned a region reference on one path and a heap
@@ -50,6 +60,28 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
     private const string Category = "SharpOS.Pipes";
     private const string RegionName = "SharpOS.Std.Pipes.Region<T>";
     private const string RetainsName = "SharpOS.Std.Pipes.RetainsAttribute";
+    private const string ViewName = "SharpOS.Std.Pipes.View";
+
+    internal static bool IsViewType(ITypeSymbol? t) => t?.ToDisplayString() == ViewName;
+
+    private static bool IsDynamic(ITypeSymbol? t) => t?.TypeKind == TypeKind.Dynamic;
+
+    // A loop over these hands out views: with a `dynamic` variable, a boxed
+    // view of the step (step 193).
+    private static bool YieldsViews(ITypeSymbol? t)
+    {
+        string? name = (t as INamedTypeSymbol)?.OriginalDefinition.ToDisplayString();
+        return name == "SharpOS.Std.Pipes.RawPipeReader" || name == "SharpOS.Std.Pipes.RawQuery";
+    }
+
+    // A loop over these hands out the step's message or region.
+    private static bool IsStepLoop(ITypeSymbol? t)
+    {
+        if (t is not INamedTypeSymbol n) return false;
+        string name = n.OriginalDefinition.ToDisplayString();
+        return name == "SharpOS.Std.Pipes.PipeReader<T>" || name == "SharpOS.Std.Pipes.PipeQuery<T>"
+               || name == "SharpOS.Std.Pipes.PipeReader<T>.RegionLoop";
+    }
 
     public static readonly DiagnosticDescriptor NotMessage = new(
         "SOSR001", "Pipe type argument is not a message",
@@ -70,8 +102,12 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
         "SOSR006", "Foreign reference stored into a region",
         "'{0}' is stored into region memory but is not {1}: the region would refer outside its block", Category, DiagnosticSeverity.Error, true);
 
+    public static readonly DiagnosticDescriptor HeapCopyOutside = new(
+        "SOSR007", "ToHeap on a type outside the catalog",
+        "ToHeap() on '{0}', which is not in the pipe catalog: no message holds one", Category, DiagnosticSeverity.Error, true);
+
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
-        => ImmutableArray.Create(NotMessage, Escapes, UsedAfterRelease, Retained, NotReleased, Foreign);
+        => ImmutableArray.Create(NotMessage, Escapes, UsedAfterRelease, Retained, NotReleased, Foreign, HeapCopyOutside);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -99,6 +135,10 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
         if (ctx.Operation is IInvocationOperation inv)
         {
             IMethodSymbol m = inv.TargetMethod;
+            if (m.Name == "ToHeap" && m.ContainingType?.ToDisplayString() == "SharpOS.Std.Pipes.MessageObjects"
+                && m.TypeArguments.Length == 1 && m.TypeArguments[0].TypeKind != TypeKind.TypeParameter
+                && !MessageGenerator.InCatalog(m.TypeArguments[0]))
+                ctx.ReportDiagnostic(Diagnostic.Create(HeapCopyOutside, inv.Syntax.GetLocation(), m.TypeArguments[0].ToDisplayString()));
             if (m.ContainingType?.ToDisplayString() == "SharpOS.Std.Pipes.Pipe" && m.Name == "Create" && m.TypeArguments.Length == 1)
                 Report(ctx, m.TypeArguments[0], inv.Syntax.GetLocation());
             // Only the static entry points name the type: an instance call on a
@@ -129,6 +169,8 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
 
     private static void AnalyzeBlock(OperationBlockAnalysisContext ctx, RetainCache retains)
     {
+        if (ctx.OwningSymbol.ContainingNamespace?.ToDisplayString() == "SharpOS.Std.Pipes")
+            return;
         var reported = new HashSet<(string, int)>();
         void Say(DiagnosticDescriptor d, Location l, params object[] args)
         {
@@ -164,6 +206,9 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
     {
         public readonly Dictionary<ISymbol, ISymbol?> Locals = new(SymbolEqualityComparer.Default);
 
+        /// <summary>Variables of loops over a reader: the loop lets their regions go.</summary>
+        public readonly HashSet<ISymbol> StepVariables = new(SymbolEqualityComparer.Default);
+
         public void Learn(IOperation root)
         {
             for (int pass = 0; pass < 3; pass++)
@@ -182,6 +227,12 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
                             break;
                         case IForEachLoopOperation f when f.LoopControlVariable is IVariableDeclaratorOperation v:
                             if (TrySource(f.Collection, out ISymbol? r4)) Bind(v.Symbol, r4);
+                            else if (IsStepLoop(Strip(f.Collection)?.Type)
+                                     || (IsDynamic(v.Symbol.Type) && YieldsViews(Strip(f.Collection)?.Type)))
+                            {
+                                Bind(v.Symbol, null);
+                                StepVariables.Add(v.Symbol);
+                            }
                             break;
                     }
                 }
@@ -201,7 +252,9 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
         public bool TrySource(IOperation? op, out ISymbol? region)
         {
             region = null;
+            if (CopiedOut(op)) return false;
             op = Strip(op);
+            if (op != null && IsViewType(op.Type)) return true;
             switch (op)
             {
                 case IPropertyReferenceOperation p when p.Property.Name == "Root" && IsRegionType(p.Property.ContainingType):
@@ -218,6 +271,11 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
                     return TrySource(e.ArrayReference, out region);
                 case IConditionalAccessOperation ca:
                     return TrySource(ca.WhenNotNull, out region);
+                // A member or an element of a dynamic view is a view of the same step.
+                case IDynamicMemberReferenceOperation dm when dm.Instance != null:
+                    return TrySource(dm.Instance, out region);
+                case IDynamicIndexerAccessOperation di:
+                    return TrySource(di.Operation, out region);
                 case IConditionalAccessInstanceOperation ci:
                     return TrySource(AccessedBy(ci), out region);
                 // A struct built from region references carries them.
@@ -326,6 +384,19 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
         return false;
     }
 
+    // A user-defined conversion (View to int, string, Expando) makes a copy:
+    // what comes out is not bound to the region.
+    private static bool CopiedOut(IOperation? op)
+    {
+        while (op is IParenthesizedOperation p) op = p.Operand;
+        if (op is not IConversionOperation c) return false;
+        if (c.OperatorMethod != null && !IsViewType(c.Type)) return true;
+        // Out of dynamic into a number, a string, an Expando, a class: a copy.
+        // Into object or View it is still the view.
+        return IsDynamic(c.Operand.Type) && c.Type != null && !IsDynamic(c.Type)
+               && c.Type.SpecialType != SpecialType.System_Object && !IsViewType(c.Type);
+    }
+
     private static IOperation? Strip(IOperation? op)
     {
         while (op is IConversionOperation c) op = c.Operand;
@@ -371,7 +442,7 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
             case IReturnOperation r when r.ReturnedValue != null && t.TrySource(r.ReturnedValue, out _):
                 say(Escapes, r.Syntax.GetLocation(), "returned from the method");
                 break;
-            case ILocalReferenceOperation l when t.Locals.ContainsKey(l.Local) && CapturedBy(l, l.Local):
+            case ILocalReferenceOperation l when (t.Locals.ContainsKey(l.Local) || IsViewType(l.Local.Type)) && CapturedBy(l, l.Local):
                 say(Escapes, l.Syntax.GetLocation(), "captured by a lambda or a local function");
                 break;
             case IPropertyReferenceOperation p when p.Property.Name == "Root" && IsRegionType(p.Property.ContainingType)
@@ -407,7 +478,7 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
             case ICoalesceAssignmentOperation c: target = c.Target; value = c.Value; break;
             default: return;
         }
-        if (!CarriesReferences(target.Type)) return;
+        if (!CarriesReferences(target.Type) || IsViewType(target.Type)) return;
 
         ISymbol? into;
         switch (Strip(target))
@@ -743,7 +814,7 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
                 case ISimpleAssignmentOperation asg:
                 {
                     ISymbol? target = SymbolOf(asg.Target);
-                    if (target is ILocalSymbol tl && IsRegionType(tl.Type))
+                    if (target is ILocalSymbol tl && IsRegionType(tl.Type) && !t.StepVariables.Contains(tl))
                     {
                         killed.Remove(tl);
                         if (IsNull(asg.Value)) live.Remove(tl);

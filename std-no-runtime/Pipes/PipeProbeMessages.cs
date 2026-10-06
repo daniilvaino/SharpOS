@@ -229,6 +229,149 @@ namespace SharpOS.Std.Pipes.Probe
     }
 }
 
+namespace SharpOS.Std.Pipes.Probe
+{
+    /// <summary>An enum both sides have: its member names travel in the description.</summary>
+    [Message]
+    public enum ProbeMood { Calm = 1, Deep = 2 }
+
+    /// <summary>
+    /// The view test, the same code on both sides. Each side has its own
+    /// report class the other does not — the kernel's KernelReport, the app's
+    /// AppReport — with the same field names and these values, and an Expando
+    /// carrying the same; one check, through a view, reads all three.
+    /// </summary>
+    public static class ViewProbe
+    {
+        public const byte B = 200;
+        public const sbyte SB = -100;
+        public const short S = -30000;
+        public const ushort US = 60000;
+        public const int I = -2_000_000_000;
+        public const uint UI = 4_000_000_000;
+        public const long L = -9_000_000_000_000;
+        public const ulong UL = 18_000_000_000_000_000_000;
+        public const float F = 1.5f;
+        public const double D = -2.25;
+        public const char C = 'ж';
+        public const string Text = "отчёт";
+        public static System.DateTime When => new System.DateTime(2026, 10, 6, 8, 0, 0);
+        public static int[] Numbers => new[] { 1, 2, 3 };
+        public static string[] Words => new[] { "a", "b" };
+        public static ProbeMood[] Moods => new[] { ProbeMood.Deep, ProbeMood.Calm };
+
+        public static Expando Sample()
+        {
+            var where = new Expando();
+            where["Name"] = "hall";
+            where["Floor"] = 3;
+            var a = new Expando();
+            a["Name"] = "a";
+            a["Floor"] = 4;
+            var b = new Expando();
+            b["Name"] = "b";
+            b["Floor"] = 5;
+
+            var e = new Expando();
+            e["B"] = B; e["SB"] = SB; e["S"] = S; e["US"] = US; e["I"] = I; e["UI"] = UI;
+            e["L"] = L; e["UL"] = UL; e["F"] = F; e["D"] = D; e["Flag"] = true; e["C"] = C;
+            e["Text"] = Text;
+            e["Mood"] = ProbeMood.Deep;
+            e["Moods"] = Moods;
+            e["Where"] = where;
+            e["Nowhere"] = null;
+            e["Numbers"] = Numbers;
+            e["Words"] = Words;
+            e["Places"] = new object[] { a, b };
+            e["When"] = When;
+            e["Next"] = e;
+            return e;
+        }
+
+        /// <summary>Null when the view shows a report with these values; otherwise the first field that does not.</summary>
+        public static string Check(View v)
+        {
+            if (v.Kind != ViewKind.Object) return "kind " + v.Kind.ToString();
+            if (!(v["B"] == B) || (byte)v["B"] != B) return "B";
+            if (!(v["SB"] == SB)) return "SB";
+            if (!(v["S"] == S)) return "S";
+            if (!(v["US"] == US)) return "US";
+            if (!(v["I"] == I) || (int)v["I"] != I) return "I";
+            if (!(v["UI"] == UI)) return "UI";
+            if (!(v["L"] == L)) return "L";
+            if ((ulong)v["UL"] != UL) return "UL";
+            if (!(v["F"] == 1.5) || (float)v["F"] != F) return "F";
+            if (!(v["D"] == D) || !(v["D"] < 0)) return "D";
+            if (!v["Flag"] || !(v["Flag"] == true)) return "Flag";
+            if ((char)v["C"] != C) return "C";
+            if (!(v["Text"] == Text) || (string)v["Text"] != Text || v["Text"].Kind != ViewKind.String) return "Text";
+            if (!(v["Mood"] == 2) || v["Mood"].ToString() != "Deep") return "Mood";
+            View moods = v["Moods"];
+            if (moods.Length != 2 || !(moods[1] == 1) || moods[1].ToString() != "Calm") return "Moods";
+            if (!(v["Where"]["Name"] == "hall") || !(v["Where"]["Floor"] == 3)) return "Where";
+            if (!v["Nowhere"].IsNull) return "Nowhere";
+            View numbers = v["Numbers"];
+            if (numbers.Kind != ViewKind.Array || numbers.Length != 3 || !(numbers[2] == 3)) return "Numbers";
+            if (v["Words"].Length != 2 || !(v["Words"][1] == "b")) return "Words";
+            View places = v["Places"];
+            if (places.Length != 2 || !(places[1]["Floor"] == 5) || !(places[0]["Name"] == "a")) return "Places";
+            if (!(v["When"]["_ticks"] == When.Ticks)) return "When";
+            if (!(v["Next"]["I"] == I) || !(v["Next"]["Next"]["Text"] == Text)) return "Next";
+            if (v.Has("Missing") || !v.Has("Text")) return "Has";
+            int named = 0;
+            foreach (ViewField f in v.Fields)
+                if (f.Name == "Text" || f.Name == "Mood") named++;
+            if (named != 2) return "Fields";
+            return null;
+        }
+    }
+}
+
+namespace SharpOS.Std.Pipes.Probe
+{
+    // The devirtualization detector. ILC sees the whole program and knows which
+    // types it constructs; a type an image only RECEIVES — through a pipe, Into,
+    // ToHeap — is never constructed there. Each side constructs only some of
+    // these: the kernel B, the app A; C is what the app's Into produces.
+    public abstract class DevirtBase
+    {
+        public abstract int Value();
+        public virtual string Name() => "base";
+    }
+
+    public interface IDevirt
+    {
+        int Kind();
+    }
+
+    [Message]
+    public sealed class DevirtA : DevirtBase, IDevirt
+    {
+        public int X;
+        public override int Value() => 100 + X;
+        public override string Name() => "A";
+        public int Kind() => 1;
+    }
+
+    [Message]
+    public sealed class DevirtB : DevirtBase, IDevirt
+    {
+        public int X;
+        public override int Value() => 200 + X;
+        public override string Name() => "B";
+        public int Kind() => 2;
+    }
+
+    [Message]
+    public sealed class DevirtC : DevirtBase, IDevirt
+    {
+        public int X;
+        public override int Value() => 300 + X;
+        public override string Name() => "C";
+        public int Kind() => 3;
+    }
+}
+
 namespace SharpOS.Std.Pipes.Probe.A
 {
     /// <summary>Same short name and layout as B.Twin; the full name tells them apart.</summary>

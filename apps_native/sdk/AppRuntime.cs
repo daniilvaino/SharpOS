@@ -267,6 +267,13 @@
         {
             AppHost.WriteError("[gcstress] app heap broken at 0x");
             AppHost.WriteHex((ulong)at);
+            // What lies there: a header, then what overwrote it.
+            for (int i = 0; i < 6; i++)
+            {
+                AppHost.WriteError(i == 0 ? " bytes 0x" : " 0x");
+                AppHost.WriteHex(*(ulong*)(at + i * 8));
+            }
+            AppHost.WriteError("\n");
             Fatal(phase == 1 ? "found before a mark: the program wrote it"
                              : "found after a sweep: the collector wrote it");
         }

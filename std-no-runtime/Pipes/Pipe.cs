@@ -5,7 +5,7 @@ using SharpOS.Std.Exchange;
 namespace SharpOS.Std.Pipes
 {
     /// <summary>Pipe-wide settings and the pair constructor.</summary>
-    public static class Pipe
+    public static partial class Pipe
     {
         /// <summary>
         /// Overwrite the table words of a block returned to the exchange heap
@@ -113,13 +113,33 @@ namespace SharpOS.Std.Pipes
     public sealed unsafe class RawRegion : IDisposable
     {
         private bool _gone;
+        private readonly ViewScope _scope;
 
-        internal RawRegion(byte* block, ulong length, byte[] schema, uint droppedBefore)
+        internal RawRegion(byte* block, ulong length, byte[] schema, uint droppedBefore, RegionShapes shapes)
         {
             Block = block;
             Length = length;
             Schema = schema;
             DroppedBefore = droppedBefore;
+            if (shapes != null) _scope = new ViewScope(block, length, shapes);
+        }
+
+        /// <summary>The root object, as a view: read and written in place, never translated.</summary>
+        public View Root
+        {
+            get
+            {
+                if (_gone) throw new ObjectDisposedException("RawRegion", "the region was disposed");
+                if (_scope == null) throw new InvalidOperationException("the region was not checked against its pipe's description");
+                return _scope.Root;
+            }
+        }
+
+        /// <summary>Ends the region's views: the block went on to another pipe, or the loop moved past it.</summary>
+        internal void End(string because)
+        {
+            _gone = true;
+            _scope?.End(because);
         }
 
         public byte* Block { get; }
@@ -137,7 +157,7 @@ namespace SharpOS.Std.Pipes
         public void Dispose()
         {
             if (_gone) return;
-            _gone = true;
+            End("the region was disposed");
             if (Pipe.ScrubOnDispose)
                 Region.Scrub(Block, Length);
             PipeTransport.Free(Block);
@@ -249,7 +269,7 @@ namespace SharpOS.Std.Pipes
     }
 
     /// <summary>The reading end of a native pipe carrying <typeparamref name="T"/>.</summary>
-    public sealed unsafe class PipeReader<T> : IDisposable where T : class
+    public sealed unsafe partial class PipeReader<T> : IDisposable where T : class
     {
         private int _handle;
         private readonly ulong _key;
@@ -315,8 +335,12 @@ namespace SharpOS.Std.Pipes
             MessageCatalog.Ensure();
             PipeStatus status = PipeTransport.Receive(_handle, wait, out void* raw, out ulong length, out uint dropped);
             if (status == PipeStatus.EndOfStream || status == PipeStatus.Broken)
+            {
                 DroppedAtEnd = dropped;
+                Dropped += dropped;
+            }
             if (status != PipeStatus.Ok) return status;
+            Dropped += dropped;
 
             byte* block = (byte*)raw;
             if (*(ulong*)(block + Region.HeaderSize) != _key)
@@ -325,9 +349,10 @@ namespace SharpOS.Std.Pipes
                 PipeTransport.Free(block);
                 return PipeStatus.Refused;
             }
-            if (!Region.Resolve(block, length, out object root, out string complaint))
+            if (!Region.Resolve(block, length, out object root, out string complaint, out ulong missing))
             {
-                LastError = complaint;
+                LastError = missing != 0 ? "type " + WriterTypeName(missing) + " in the message is not this image's: "
+                                           + "it is not in the catalog here, or its layout differs" : complaint;
                 PipeTransport.Free(block);
                 return PipeStatus.Refused;
             }
@@ -342,6 +367,17 @@ namespace SharpOS.Std.Pipes
             _handle = 0;
         }
 
+        /// <summary>Messages the pipe lost: dropped before the ones received, and after the last.</summary>
+        public long Dropped { get; private set; }
+
+        // The writer's name for a key, from the description it declared.
+        private string WriterTypeName(ulong key)
+        {
+            byte[] schema = PipeTransport.Schema(_handle, out _);
+            var types = schema == null ? null : RegionSchema.Parse(schema, out _);
+            return types != null && types.TryGetValue(key, out TypeKeys.Description d) ? d.Name : "0x" + key.ToString("x");
+        }
+
         private void ThrowIfClosed()
         {
             if (_handle == 0) throw new ObjectDisposedException("PipeReader", "the pipe end is closed");
@@ -349,7 +385,7 @@ namespace SharpOS.Std.Pipes
     }
 
     /// <summary>A reader without the class: regions stay untranslated and are read by the description.</summary>
-    public sealed unsafe class RawPipeReader : IDisposable
+    public sealed unsafe partial class RawPipeReader : IDisposable
     {
         private int _handle;
 
@@ -371,14 +407,51 @@ namespace SharpOS.Std.Pipes
             return status;
         }
 
-        /// <summary>The next region, waiting for it; null when the stream ended (see Status).</summary>
+        private RegionShapes _shapes;
+
+        /// <summary>The root type's key the writer declared: what a pipe this one forwards to carries.</summary>
+        internal ulong RootKey { get; private set; }
+
+        /// <summary>Why the last receive could not deliver a region.</summary>
+        public string LastError { get; private set; }
+
+        /// <summary>Messages the pipe lost: dropped before the ones received, and after the last.</summary>
+        public long Dropped { get; private set; }
+
+        /// <summary>
+        /// The next region, waiting for it; null when the stream ended or a
+        /// message was refused (see Status). The block is checked against the
+        /// pipe's description first: a record without a description, a size or
+        /// a reference outside the block refuses it, and it goes back.
+        /// </summary>
         public RawRegion Receive()
         {
             if (_handle == 0) throw new ObjectDisposedException("RawPipeReader", "the pipe end is closed");
+            LastError = null;
             Status = PipeTransport.Receive(_handle, true, out void* raw, out ulong length, out uint dropped);
+            Dropped += dropped;
             if (Status != PipeStatus.Ok) return null;
-            Schema ??= PipeTransport.Schema(_handle, out _);
-            return new RawRegion((byte*)raw, length, Schema, dropped);
+            if (Schema == null)
+            {
+                Schema = PipeTransport.Schema(_handle, out ulong rootKey);
+                RootKey = rootKey;
+            }
+            if (_shapes == null)
+            {
+                _shapes = RegionShapes.Parse(Schema, out string bad);
+                if (_shapes == null) return Refuse(raw, "the pipe's description is malformed: " + bad);
+            }
+            if (!_shapes.Validate((byte*)raw, length, out string complaint))
+                return Refuse(raw, "a malformed message: " + complaint);
+            return new RawRegion((byte*)raw, length, Schema, dropped, _shapes);
+        }
+
+        private RawRegion Refuse(void* block, string why)
+        {
+            PipeTransport.Free(block);
+            Status = PipeStatus.Refused;
+            LastError = why;
+            return null;
         }
 
         public void Dispose()

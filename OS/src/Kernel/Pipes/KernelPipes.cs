@@ -381,6 +381,25 @@ namespace OS.Kernel.Pipes
         }
 
         /// <summary>
+        /// Closes an end as a holder that died would leave it: the reader sees
+        /// the stream broken, not ended. For tests of the break.
+        /// </summary>
+        public static PipeStatus Break(uint holder, int handle)
+        {
+            Preemption.Suppress();
+            try
+            {
+                if (!TryEnd(holder, handle, (PipeRole)0, out _)) return PipeStatus.BadHandle;
+                CloseEnd(handle - 1, broke: true);
+                return PipeStatus.Ok;
+            }
+            finally
+            {
+                Preemption.Allow();
+            }
+        }
+
+        /// <summary>
         /// A run ended: every end it still holds closes — as Close would after a
         /// normal exit, broken after a failed one (pipe spec Р25). Returns how many.
         /// </summary>

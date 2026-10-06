@@ -9,7 +9,7 @@ namespace SharpOS.Std.Pipes
     /// <summary>
     /// A set of named values with no class of its own (pipe spec Р31, Р32): a
     /// filter builds one from the fields of another object, a parser emits
-    /// them. Access is by name through the indexer — there is no `dynamic`.
+    /// them. Access is by name through the indexer, or as `dynamic`.
     /// </summary>
     /// <remarks>
     /// It is in std, so every image has the same type under the same key: it
@@ -28,8 +28,9 @@ namespace SharpOS.Std.Pipes
     /// value — a number too, since it is boxed on the heap — is refused by the
     /// write barrier (RegionReferenceException): take ToHeap, change, Copy.
     ///
-    /// Not System.Dynamic.ExpandoObject: no DLR here, and the name stays out of
-    /// System because the behaviour is not that type's.
+    /// Not System.Dynamic.ExpandoObject: no DLR here (`dynamic` binds through
+    /// SharpOS.Std.Dynamic), and the name stays out of System because the
+    /// behaviour is not that type's.
     /// </remarks>
     [Message]
     public sealed partial class Expando : IDictionary<string, object>

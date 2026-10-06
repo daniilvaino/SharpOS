@@ -38,6 +38,14 @@ namespace SharpOS.Std.Exchange
                     Str(buffer, f.Name);
                     Str(buffer, f.Type);
                     U32(buffer, (uint)f.Offset);
+                    Str(buffer, f.Enum);
+                }
+                int members = d.EnumNames == null ? 0 : d.EnumNames.Length;
+                U16(buffer, members);
+                for (int m = 0; m < members; m++)
+                {
+                    Str(buffer, d.EnumNames[m]);
+                    U64(buffer, (ulong)d.EnumValues[m]);
                 }
             }
             return buffer.ToArray();
@@ -65,9 +73,22 @@ namespace SharpOS.Std.Exchange
                 {
                     string name = reader.Str();
                     string type = reader.Str();
-                    fields[f] = new TypeKeys.Field(name, type, (int)reader.U32());
+                    int offset = (int)reader.U32();
+                    string enumType = reader.Str();
+                    fields[f] = new TypeKeys.Field(name, type, offset, enumType.Length == 0 ? null : enumType);
                 }
                 d.Fields = fields;
+                int members = reader.Ok ? reader.U16() : 0;
+                if (members > 0)
+                {
+                    d.EnumNames = new string[members];
+                    d.EnumValues = new long[members];
+                    for (int m = 0; m < members && reader.Ok; m++)
+                    {
+                        d.EnumNames[m] = reader.Str();
+                        d.EnumValues[m] = (long)reader.U64();
+                    }
+                }
                 if (reader.Ok)
                     map[d.Key] = d;
             }

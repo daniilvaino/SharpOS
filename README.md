@@ -153,7 +153,8 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `typeof(T)` / `System.Type` | 🔴 | 🟡 | ✅ | в приложениях только сравнение через `==`: ни `Name`, ни членов |
 | `record`, `init`-аксессоры | 🔴 | ✅ | ✅ | записям нужен `typeof`, а в ядре его нет |
 | Рефлексия: `System.Reflection`, `Activator.CreateInstance(Type)`, `Type.GetType(string)` | 🔴 | 🔴 | ✅ | в AOT нет метаданных |
-| `Reflection.Emit`, `dynamic` / DLR, `Expression<T>.Compile()` | 🚫 | 🚫 | ✅ | нужен JIT |
+| `dynamic` | 🔴 | 🟡 | ✅ | AOT: свой связыватель без DLR, переходники и таблицы членов пишет генератор (step193); нет вывода типов обобщённых методов, событий, `ref`/`out` и именованных аргументов; в ядре не гонялось |
+| `Reflection.Emit`, DLR, `Expression<T>.Compile()` | 🚫 | 🚫 | ✅ | нужен JIT |
 | `AssemblyLoadContext` (несколько ALC) | 🚫 | 🚫 | ⏳ | нужен JIT |
 
 ### Сборка мусора

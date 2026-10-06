@@ -13,5 +13,7 @@
     <Compile Include="AsyncShape.cs" />
     <Compile Include="PipeTests.cs" />
     <Compile Include="CollectorTests.cs" />
+    <Compile Include="DynamicTests.cs" />
+    <Compile Include="DynamicCases.cs" />
   </ItemGroup>
 </Project>

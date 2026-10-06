@@ -40,6 +40,22 @@ namespace SharpOS.Std.Pipes
         }
     }
 
+    /// <summary>
+    /// A pipe operation of the convenient layer that failed: the other end is
+    /// gone, the types differ, a message cannot be taken. <see cref="Status"/>
+    /// is the low layer's answer.
+    /// </summary>
+    public sealed class PipeException : System.Exception
+    {
+        public PipeStatus Status { get; }
+
+        public PipeException(PipeStatus status, string message)
+            : base(message)
+        {
+            Status = status;
+        }
+    }
+
     /// <summary>Which end of a pipe.</summary>
     public enum PipeRole
     {

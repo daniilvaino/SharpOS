@@ -154,9 +154,14 @@ namespace SharpOS.Std.Exchange
         /// impossible by construction. The second writes.
         /// </remarks>
         public static bool Resolve(byte* at, ulong size, out object root, out string complaint)
+            => Resolve(at, size, out root, out complaint, out _);
+
+        /// <summary>The same; <paramref name="missingKey"/> is the key this image has no type for, when that was the refusal.</summary>
+        public static bool Resolve(byte* at, ulong size, out object root, out string complaint, out ulong missingKey)
         {
             root = null;
             complaint = null;
+            missingKey = 0;
             if (size < HeaderSize + 8)
             {
                 complaint = "region too small";
@@ -180,6 +185,7 @@ namespace SharpOS.Std.Exchange
                 if (table == 0)
                 {
                     complaint = $"key 0x{key:x} not declared here (record at {cursor})";
+                    missingKey = key;
                     return false;
                 }
                 ulong next = cursor + HeaderSize + PayloadSize(objectAt, table);
@@ -357,6 +363,74 @@ namespace SharpOS.Std.Exchange
                 }
             }
             return copies.Length == 0 ? null : copies[0];
+        }
+
+        /// <summary>
+        /// A copy in this image's heap of the graph under one object of a
+        /// translated region: that object and everything it reaches inside the
+        /// region; references leaving the region are kept as they are.
+        /// </summary>
+        public static object ToHeapFrom(ulong start)
+        {
+            if (!ExchangeArena.TryBlock(start, out ulong low, out ulong high))
+                return null;
+
+            var sources = new List<ulong>();
+            var index = new Dictionary<ulong, int>();
+            int maxReferences = 1;
+            sources.Add(start);
+            index[start] = 0;
+            var scan = new ulong[64];
+            for (int n = 0; n < sources.Count; n++)
+            {
+                ulong objectAt = sources[n];
+                ulong table = *(ulong*)objectAt & ~1UL;
+                int max = ObjectLayout.MaxReferences(objectAt, table);
+                if (max > maxReferences) maxReferences = max;
+                if (scan.Length < max) scan = new ulong[max];
+                int found = ObjectLayout.ReferenceSlots(objectAt, table, scan);
+                for (int i = 0; i < found; i++)
+                {
+                    ulong target = *(ulong*)scan[i];
+                    if (target >= low && target < high && !index.ContainsKey(target))
+                    {
+                        index[target] = sources.Count;
+                        sources.Add(target);
+                    }
+                }
+            }
+
+            var copies = new object[sources.Count];
+            for (int n = 0; n < sources.Count; n++)
+            {
+                ulong objectAt = sources[n];
+                ulong table = *(ulong*)objectAt & ~1UL;
+                var mt = (SharpOS.Std.NoRuntime.GcMethodTable*)table;
+                uint full = (uint)(PayloadSize(objectAt, table) + 8);
+                void* raw = mt->HasComponentSize
+                    ? SharpOS.Std.NoRuntime.GcHeap.AllocateArray(full, mt, *(int*)(objectAt + 8))
+                    : SharpOS.Std.NoRuntime.GcHeap.AllocateObject(full, mt);
+                if (raw == null) throw new OutOfMemoryException();
+                nint address = (nint)raw;
+                copies[n] = System.Runtime.CompilerServices.Unsafe.As<nint, object>(ref address);
+            }
+
+            var slots = new ulong[maxReferences];
+            for (int n = 0; n < sources.Count; n++)
+            {
+                ulong objectAt = sources[n];
+                ulong table = *(ulong*)objectAt & ~1UL;
+                ulong copy = AddressOf(copies[n]);
+                SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy((void*)(copy + 8), (void*)(objectAt + 8), PayloadSize(objectAt, table) - 8);
+                int found = ObjectLayout.ReferenceSlots(copy, table, slots);
+                for (int i = 0; i < found; i++)
+                {
+                    ulong* slot = (ulong*)slots[i];
+                    if (index.TryGetValue(*slot, out int target))
+                        *slot = AddressOf(copies[target]);
+                }
+            }
+            return copies[0];
         }
 
         /// <summary>

@@ -135,6 +135,20 @@ namespace SharpOS.Std.Pipes
         public static TypeKeys.Field Field<T>(string name, string type, object owner, ref T field)
             => new TypeKeys.Field(name, type, TypeKeys.Offset(owner, ref field));
 
+        /// <summary>The same, for a field declared as an enum: <paramref name="type"/> is its underlying number.</summary>
+        public static TypeKeys.Field Field<T>(string name, string type, object owner, ref T field, string enumType)
+            => new TypeKeys.Field(name, type, TypeKeys.Offset(owner, ref field), enumType);
+
+        /// <summary>An enum, by a boxed value: its number's layout, and its members' names in the description.</summary>
+        public static void RegisterEnum(string fullName, object box, string underlying, string[] names, long[] values)
+        {
+            if (TypeKeys.Declare(fullName, box, new[] { new TypeKeys.Field("value", underlying, 8) }) is ulong key && key != 0)
+                TypeKeys.DescribeEnum(key, names, values);
+            else
+                Problems.Add(fullName + ": key or table already taken");
+            s_schema = null;
+        }
+
         public static void Register(string fullName, object witness, TypeKeys.Field[] fields)
         {
             if (TypeKeys.Declare(fullName, witness, fields) == 0)
@@ -188,7 +202,15 @@ namespace SharpOS.Std.Pipes
 
         /// <summary>Registers an array type by an instance, element type named.</summary>
         public static void RegisterArray<T>(T[] witness, string elementName)
+            => RegisterArray(witness, elementName, elementName);
+
+        /// <summary>
+        /// The same, when the array's name and its elements' type differ: an
+        /// array of an enum is named by the enum and holds its underlying number.
+        /// </summary>
+        public static void RegisterArray<T>(T[] witness, string elementName, string elementType)
             => Register(elementName + "[]", witness,
-                        new[] { Field("[]", elementName, witness, ref MemoryMarshal.GetArrayDataReference(witness)) });
+                        new[] { Field("[]", elementType, witness, ref MemoryMarshal.GetArrayDataReference(witness),
+                                      elementType == elementName ? null : elementName) });
     }
 }

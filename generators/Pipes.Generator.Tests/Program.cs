@@ -20,7 +20,7 @@ namespace SharpOS.Std.Exchange
 {
     public static class TypeKeys
     {
-        public readonly struct Field { public Field(string n, string t, int o) { } }
+        public readonly struct Field { public Field(string n, string t, int o) { } public Field(string n, string t, int o, string e) { } }
         public static int StructOffset<TS, TF>(ref TS v, ref TF f) => 0;
     }
 }
@@ -35,8 +35,11 @@ namespace SharpOS.Std.Pipes
         static partial void RegisterGenerated();
         public static object Witness(Type t) => null;
         public static SharpOS.Std.Exchange.TypeKeys.Field Field<T>(string n, string t, object o, ref T f) => default;
+        public static SharpOS.Std.Exchange.TypeKeys.Field Field<T>(string n, string t, object o, ref T f, string e) => default;
+        public static void RegisterEnum(string n, object b, string u, string[] names, long[] values) { }
         public static void Register(string n, object w, SharpOS.Std.Exchange.TypeKeys.Field[] f) { }
         public static void RegisterArray<T>(T[] w, string e) { }
+        public static void RegisterArray<T>(T[] w, string e, string t) { }
     }
     public sealed class Region<T> : IDisposable where T : class
     {
@@ -56,6 +59,34 @@ namespace SharpOS.Std.Pipes
         public static int Connect(string name, out PipeReader<T> r) { r = null; return 0; }
         public Region<T> Receive() => null;
         public void Dispose() { }
+        public Enumerator GetEnumerator() => default;
+        public struct Enumerator { public T Current => null; public bool MoveNext() => false; }
+        public RegionLoop Regions => default;
+        public readonly struct RegionLoop { public RegionEnumerator GetEnumerator() => default; }
+        public struct RegionEnumerator { public Region<T> Current => null; public bool MoveNext() => false; }
+    }
+    public sealed class Expando { }
+    public readonly struct View
+    {
+        public View this[string n] { get => default; set { } }
+        public static implicit operator View(int v) => default;
+        public static implicit operator View(bool v) => default;
+        public static explicit operator int(View v) => 0;
+        public static explicit operator string(View v) => null;
+        public static implicit operator Expando(View v) => null;
+        public T Into<T>() where T : class => null;
+    }
+    public sealed class RawPipeReader
+    {
+        public Enumerator GetEnumerator() => default;
+        public struct Enumerator { public View Current => default; public bool MoveNext() => false; }
+        public IntoLoop<T> Into<T>() where T : class => default;
+        public readonly struct IntoLoop<T> where T : class { public IntoEnumerator<T> GetEnumerator() => default; }
+        public struct IntoEnumerator<T> where T : class { public T Current => null; public bool MoveNext() => false; }
+    }
+    public static class MessageObjects
+    {
+        public static T ToHeap<T>(this T value) where T : class => value;
     }
     public static class Pipe
     {
@@ -185,6 +216,72 @@ class C
         }
     }
 }");
+
+        // ---- step 192: views and loop variables are bound to the step ----
+        Expect("SOSR002: a view kept in a field", new[] { "SOSR002" }, @"
+class C { View keep; void M(RawPipeReader p) { foreach (View v in p) keep = v; } }");
+        Expect("SOSR002: a nested view kept in a field", new[] { "SOSR002" }, @"
+class C { View keep; void M(RawPipeReader p) { foreach (View v in p) { View o = v[""Origin""]; keep = o; } } }");
+        Expect("SOSR004: a view into a retaining parameter", new[] { "SOSR004" }, @"
+class C { static void Keep([Retains] object o) { } void M(RawPipeReader p) { foreach (View v in p) Keep(v); } }");
+        Expect("SOSR002: a view returned", new[] { "SOSR002" }, @"
+class C { View M(RawPipeReader p) { foreach (View v in p) return v; return default; } }");
+        Expect("SOSR002: a view captured by a lambda", new[] { "SOSR002" }, @"
+class C { void M(RawPipeReader p) { foreach (View v in p) { Func<int> f = () => (int)v[""I""]; f(); } } }");
+        Expect("SOSR002: a typed loop's message kept in a field", new[] { "SOSR002" }, @"
+class C { void M(PipeReader<Node> p, Holder h) { foreach (Node n in p) h.Keep = n; } }");
+        Expect("SOSR002: a loop's region kept in a static", new[] { "SOSR002" }, @"
+class C { static Region<Node> s_last; void M(PipeReader<Node> p) { foreach (Region<Node> m in p.Regions) s_last = m; } }");
+        Expect("correct: copies out of a view and a loop; writes through a view", new string[0], @"
+class C
+{
+    static string s_text; static int s_n; static Expando s_bag; static Node s_node; static Plain s_plain;
+    void M(RawPipeReader raw, PipeReader<Node> typed)
+    {
+        foreach (View v in raw)
+        {
+            s_text = (string)v[""Text""];
+            s_n = (int)v[""I""];
+            s_bag = v;
+            v[""Seen""] = true;
+            View o = v[""Origin""];
+            o[""Thread""] = 7;
+        }
+        foreach (Expando x in raw) s_bag = x;
+        foreach (Node n in raw.Into<Node>()) s_node = n;
+        foreach (Node n in typed) s_node = n.ToHeap();
+        foreach (Region<Node> m in typed.Regions) s_node = m.Root.ToHeap();
+    }
+}");
+
+        // ---- step 193: a dynamic loop variable over a raw reader is the step's view ----
+        Expect("SOSR002: a dynamic view kept in a field", new[] { "SOSR002" }, @"
+class C { object keep; void M(RawPipeReader p) { foreach (dynamic v in p) keep = v; } }");
+        Expect("SOSR002: a dynamic view's member kept in a field", new[] { "SOSR002" }, @"
+class C { object keep; void M(RawPipeReader p) { foreach (dynamic v in p) keep = v.Origin; } }");
+        Expect("SOSR002: a dynamic view's element returned", new[] { "SOSR002" }, @"
+class C { object M(RawPipeReader p) { foreach (dynamic v in p) return v.Tags[0]; return null; } }");
+        Expect("SOSR002: a dynamic view captured by a lambda", new[] { "SOSR002" }, @"
+class C { void M(RawPipeReader p) { foreach (dynamic v in p) { Func<object> f = () => v.I; f(); } } }");
+        Expect("correct: values out of a dynamic view; writes through it", new string[0], @"
+class C
+{
+    static string s_text; static int s_n; static Expando s_bag;
+    void M(RawPipeReader raw)
+    {
+        foreach (dynamic v in raw)
+        {
+            s_text = v.Text;
+            s_n = v.Origin.Thread;
+            s_bag = v;
+            v.Seen = true;
+            v.Origin.Thread = 7;
+        }
+    }
+}");
+
+        Expect("SOSR007: ToHeap on a type outside the catalog", new[] { "SOSR007" }, @"
+class C { void M(Plain p) { var q = p.ToHeap(); } }");
 
         // ---- SOSR005 ----
         Expect("SOSR005: not released on an early return", new[] { "SOSR005" }, @"

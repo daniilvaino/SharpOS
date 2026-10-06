@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Compile-time side of `dynamic`, in every image (std-no-runtime/Std.props):
+       DynamicGenerator writes a call-site thunk for every delegate type the
+       compiler lowers a dynamic operation to, and the member tables the binder
+       resolves names against; DynamicAnalyzer reports the operations it cannot
+       serve (SOSD rules).
+
+       netstandard2.0 is what the Roslyn analyzer host loads. -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <!-- Rule ids are documented in the analyzer header, not in release-tracking files. -->
+    <NoWarn>$(NoWarn);RS2008</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

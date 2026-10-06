@@ -9,6 +9,7 @@ using SharpOS.Std.Exchange;
 using SharpOS.Std.Exchange.Probe;
 using SharpOS.Std.Pipes;
 using SharpOS.Std.Pipes.Probe;
+using SharpOS.Probe.Kernel;
 
 namespace SharpOS.Probe
 {
@@ -26,6 +27,79 @@ namespace SharpOS.Probe
     public sealed class Different
     {
         public int Z;
+    }
+}
+
+namespace SharpOS.Probe
+{
+    /// <summary>The kernel's version of the nested-type test: the app's Inner has a long.</summary>
+    [Message]
+    public sealed class Outer
+    {
+        public Inner I;
+        public int Tag;
+    }
+
+    [Message]
+    public sealed class Inner
+    {
+        public int A;
+    }
+}
+
+namespace SharpOS.Probe.Kernel
+{
+    /// <summary>The `dynamic` task's own example (step 193): a log line the app has no class for.</summary>
+    [Message]
+    public sealed class LogLine
+    {
+        public int Level;
+        public string Text;
+        public LogOrigin Origin;
+        public string[] Tags;
+        public bool Seen;
+    }
+
+    [Message]
+    public sealed class LogOrigin
+    {
+        public string App;
+        public int Thread;
+    }
+
+    /// <summary>A report only the kernel has: the app reads it through a view (ViewProbe).</summary>
+    [Message]
+    public sealed class KernelReport
+    {
+        public byte B;
+        public sbyte SB;
+        public short S;
+        public ushort US;
+        public int I;
+        public uint UI;
+        public long L;
+        public ulong UL;
+        public float F;
+        public double D;
+        public bool Flag;
+        public char C;
+        public string Text;
+        public SharpOS.Std.Pipes.Probe.ProbeMood Mood;
+        public SharpOS.Std.Pipes.Probe.ProbeMood[] Moods;
+        public KernelPlace Where;
+        public KernelPlace Nowhere;
+        public int[] Numbers;
+        public string[] Words;
+        public KernelPlace[] Places;
+        public System.DateTime When;
+        public KernelReport Next;
+    }
+
+    [Message]
+    public sealed class KernelPlace
+    {
+        public string Name;
+        public int Floor;
     }
 }
 
@@ -139,6 +213,14 @@ namespace OS.Kernel.Diagnostics
                     if (answer == null) return (int)PipeStatus.BadHandle;
                     answer[0] = SharpOS.Std.NoRuntime.GcStress.Every;
                     return 0;
+                case 16: return ViewOut();
+                case 17: return BadBlocks();
+                case 18: return LoopFeed((int)argument);
+                case 19: return NestedOut();
+                case 20: return DevirtOut();
+                case 21: return DynamicOut();
+                case 22: return (int)Send("probe.dynamic.bench", Report(), 1);
+                case 23: return LogOut();
                 case 12:
                     // The byref barrier test, run by the kernel on its own pipe.
                     return ByRefProbe.RunOnPipe();
@@ -204,6 +286,17 @@ namespace OS.Kernel.Diagnostics
                     connected = PipeReader<Expando>.Connect("probe.std.expando", out PipeReader<Expando> expando, out error);
                     reader = expando;
                     break;
+                case 23:
+                case 24:
+                    connected = RawPipeReader.Connect(test == 23 ? "probe.app.report" : "probe.app.expando", out RawPipeReader raw, out error);
+                    reader = raw;
+                    break;
+                case 25:
+                    // With its class: a pipe the app forwarded to carries the
+                    // input's description and root type, checked as usual.
+                    connected = PipeReader<KernelReport>.Connect("probe.view.back", out PipeReader<KernelReport> back, out error);
+                    reader = back;
+                    break;
                 default:
                     return (int)PipeStatus.BadHandle;
             }
@@ -244,6 +337,9 @@ namespace OS.Kernel.Diagnostics
                     case 15: StdText((PipeReader<string>)reader); break;
                     case 16: StdBytes((PipeReader<byte[]>)reader); break;
                     case 17: StdExpando((PipeReader<Expando>)reader); break;
+                    case 23:
+                    case 24: ViewCheck(test, (RawPipeReader)reader); break;
+                    case 25: EditedBack((PipeReader<KernelReport>)reader); break;
                 }
             }
             catch (Exception e)
@@ -269,8 +365,10 @@ namespace OS.Kernel.Diagnostics
                     {
                         if (count < 3)
                             region.Print(line => Console.WriteLine("[pipe-journal] " + line), out _);
-                        ok &= ReadInt(region, "Seq") == count
-                              && ReadString(region, "Text") == "entry " + count.ToString();
+                        // Through a view: the pipe's description is parsed once,
+                        // not per field (it is the writer's whole catalog).
+                        View entry = region.Root;
+                        ok &= entry["Seq"] == count && entry["Text"] == "entry " + count.ToString();
                         count++;
                     }
                 }
@@ -412,6 +510,60 @@ namespace OS.Kernel.Diagnostics
             }
         }
 
+        // Tests 23-25: the app's report (a class the kernel lacks), the same as
+        // an Expando, and the kernel's own report edited by the app through a
+        // view and forwarded — every one read here through a view.
+        private static void ViewCheck(int test, RawPipeReader reader)
+        {
+            using (reader)
+            {
+                int count = 0;
+                string bad = null;
+                ulong block = 0;
+                RawRegion region;
+                while ((region = reader.Receive()) != null)
+                {
+                    using (region)
+                    {
+                        bad ??= ViewProbe.Check(region.Root);
+                        if (count == 0) Say("view " + test.ToString() + ": " + region.Root.ToString());
+                        block = (ulong)region.Block;
+                        count++;
+                    }
+                }
+                if (reader.Status == PipeStatus.Refused) bad ??= reader.LastError;
+                Say($"view {test}: {count} message(s), {bad ?? "as expected"}, end {(int)reader.Status}");
+                Finish(test, count, bad == null, reader.Status, 0);
+            }
+        }
+
+        // Test 25: the kernel's report, edited by the app through a view and
+        // forwarded as it was, read back with the class: the new values, and
+        // the very block the kernel sent.
+        private static void EditedBack(PipeReader<KernelReport> reader)
+        {
+            using (reader)
+            {
+                int count = 0;
+                string bad = null;
+                Region<KernelReport> region;
+                while ((region = reader.Receive()) != null)
+                {
+                    using (region)
+                    {
+                        KernelReport r = region.Root;
+                        bad ??= r.I != 77 ? "I" : r.Where.Floor != 9 ? "Where.Floor" : r.Next != null ? "Next"
+                              : r.Flag ? "Flag" : r.Numbers[0] != 100 ? "Numbers" : r.Text != ViewProbe.Text ? "Text"
+                              : (ulong)region.Block != s_editBlock ? "the block moved: a copy, not the block itself" : null;
+                        count++;
+                    }
+                }
+                if (reader.Status == PipeStatus.Refused) bad ??= reader.LastError;
+                Say($"view 25: {count} message(s) read back with the class, {bad ?? "as edited, same block"}, end {(int)reader.Status}");
+                Finish(25, count, bad == null, reader.Status, 0);
+            }
+        }
+
         // ---- writers: in the service call ----
 
         private static int Feed(int count)
@@ -485,6 +637,189 @@ namespace OS.Kernel.Diagnostics
                 return (int)text.Copy(StdProbe.Text(1));
         }
 
+        private static KernelReport Report()
+        {
+            var r = new KernelReport
+            {
+                B = ViewProbe.B, SB = ViewProbe.SB, S = ViewProbe.S, US = ViewProbe.US, I = ViewProbe.I, UI = ViewProbe.UI,
+                L = ViewProbe.L, UL = ViewProbe.UL, F = ViewProbe.F, D = ViewProbe.D, Flag = true, C = ViewProbe.C,
+                Text = ViewProbe.Text, Mood = ProbeMood.Deep, Moods = ViewProbe.Moods,
+                Where = new KernelPlace { Name = "hall", Floor = 3 },
+                Numbers = ViewProbe.Numbers, Words = ViewProbe.Words,
+                Places = new[] { new KernelPlace { Name = "a", Floor = 4 }, new KernelPlace { Name = "b", Floor = 5 } },
+                When = ViewProbe.When,
+            };
+            r.Next = r;
+            return r;
+        }
+
+        private static ulong s_editBlock;
+
+        // The kernel's report for the app's views: as itself, as an Expando, twice
+        // for Into, twice for the view that outlives its step, and once in a
+        // block whose address is kept — the one the app edits and sends back.
+        private static int ViewOut()
+        {
+            MessageCatalog.Ensure();
+            PipeStatus s = Send("probe.view.report", Report(), 1);
+            if (s == PipeStatus.Ok) s = SendExpando("probe.view.expando");
+            if (s == PipeStatus.Ok) s = Send("probe.view.into", Report(), 2);
+            if (s == PipeStatus.Ok) s = Send("probe.view.gone", Report(), 2);
+            if (s == PipeStatus.Ok) s = Send("probe.view.bench", Report(), 1);
+            if (s != PipeStatus.Ok) return (int)s;
+
+            if (PipeWriter<KernelReport>.Connect("probe.view.edit", out PipeWriter<KernelReport> edit, out _) != PipeStatus.Ok)
+                return (int)PipeStatus.Refused;
+            using (edit)
+            {
+                byte* block = Lay(Report(), out ulong size);
+                if (block == null) return (int)PipeStatus.NoMemory;
+                s_editBlock = (ulong)block;
+                return (int)PipeTransport.Send(edit.Handle, block, size);
+            }
+        }
+
+        // The kernel's report for the app's `dynamic` (step 193): three of one
+        // shape (a call site binds a field once per shape), and an Expando;
+        // op 22 sends one more for the timings.
+        private static int DynamicOut()
+        {
+            MessageCatalog.Ensure();
+            PipeStatus s = Send("probe.dynamic.report", Report(), 3);
+            if (s == PipeStatus.Ok) s = SendExpando("probe.dynamic.expando");
+            return (int)s;
+        }
+
+        // Two lines into "myapp.log", as the task writes its example.
+        private static int LogOut()
+        {
+            MessageCatalog.Ensure();
+            if (PipeWriter<LogLine>.Connect("myapp.log", out PipeWriter<LogLine> log, out _) != PipeStatus.Ok)
+                return (int)PipeStatus.Refused;
+            using (log)
+            {
+                PipeStatus s = log.Copy(new LogLine
+                {
+                    Level = 3, Text = "диск почти полон", Origin = new LogOrigin { App = "storage", Thread = 2 },
+                    Tags = new[] { "disk", "warn" },
+                });
+                if (s == PipeStatus.Ok)
+                    s = log.Copy(new LogLine { Level = 1, Text = "ok", Origin = new LogOrigin { App = "net", Thread = 3 }, Tags = new[] { "net" } });
+                return (int)s;
+            }
+        }
+
+        private static PipeStatus Send(string name, KernelReport report, int times)
+        {
+            if (PipeWriter<KernelReport>.Connect(name, out PipeWriter<KernelReport> writer, out _) != PipeStatus.Ok)
+                return PipeStatus.Refused;
+            using (writer)
+                for (int i = 0; i < times; i++)
+                {
+                    PipeStatus s = writer.Copy(report);
+                    if (s != PipeStatus.Ok) return s;
+                }
+            return PipeStatus.Ok;
+        }
+
+        private static PipeStatus SendExpando(string name)
+        {
+            if (PipeWriter<Expando>.Connect(name, out PipeWriter<Expando> writer, out _) != PipeStatus.Ok)
+                return PipeStatus.Refused;
+            using (writer)
+                return writer.Copy(ViewProbe.Sample());
+        }
+
+        // A report laid out in a block of the kernel's own: what Copy does,
+        // with the block's address in hand.
+        private static byte* Lay(KernelReport report, out ulong size)
+        {
+            size = 0;
+            Region.Plan plan = Region.Lay(report, out _);
+            if (plan == null) return null;
+            byte* block = (byte*)PipeTransport.Allocate(plan.Size);
+            if (block == null) return null;
+            Region.Write(plan, block);
+            size = plan.Size;
+            return block;
+        }
+
+        // Three spoiled reports, each on its own pipe: a key nobody described, a
+        // string whose length runs past the block, a reference into the middle
+        // of a record. The app's view reader must refuse each at receive.
+        private static int BadBlocks()
+        {
+            MessageCatalog.Ensure();
+            TypeKeys.Description d = TypeKeys.DescriptionOf(MessageCatalog.KeyOf(typeof(KernelReport)));
+            int textAt = 0, whereAt = 0;
+            foreach (TypeKeys.Field f in d.Fields)
+            {
+                if (f.Name == "Text") textAt = f.Offset;
+                if (f.Name == "Where") whereAt = f.Offset;
+            }
+            for (int kind = 0; kind < 3; kind++)
+            {
+                string name = kind == 0 ? "probe.bad.key" : kind == 1 ? "probe.bad.size" : "probe.bad.ref";
+                if (PipeWriter<KernelReport>.Connect(name, out PipeWriter<KernelReport> writer, out _) != PipeStatus.Ok)
+                    return (int)PipeStatus.Refused;
+                using (writer)
+                {
+                    byte* block = Lay(Report(), out ulong size);
+                    if (block == null) return (int)PipeStatus.NoMemory;
+                    byte* root = block + Region.HeaderSize;
+                    if (kind == 0) *(ulong*)root = 0x8000_0000_1234_5679UL;
+                    else if (kind == 1) *(int*)(block + *(ulong*)(root + textAt) + 8) = 0x7FFF_FFF0;
+                    else *(ulong*)(root + whereAt) += 8;
+                    PipeStatus s = PipeTransport.Send(writer.Handle, block, size);
+                    if (s != PipeStatus.Ok) return (int)s;
+                }
+            }
+            return 0;
+        }
+
+        // Five notes for a loop, then the end: closed (0), broken (1), or six
+        // for the regions loop (2).
+        private static int LoopFeed(int mode)
+        {
+            string name = mode == 0 ? "probe.loop.end" : mode == 1 ? "probe.loop.broken" : "probe.loop.regions";
+            if (PipeWriter<Note>.Connect(name, out PipeWriter<Note> writer, out _) != PipeStatus.Ok)
+                return (int)PipeStatus.Refused;
+            int count = mode == 2 ? 6 : 5;
+            for (int i = 0; i < count; i++)
+            {
+                PipeStatus s = writer.Copy(new Note { Seq = i, Text = "loop " + i.ToString(), Values = new[] { i, 2 * i } });
+                if (s != PipeStatus.Ok) { writer.Dispose(); return (int)s; }
+            }
+            if (mode == 1) return (int)KernelPipes.Break(ExchangeHeap.OwnerKernel, writer.Handle);
+            writer.Dispose();
+            return 0;
+        }
+
+        // The devirtualization detector: B, which only the kernel constructs.
+        private static int DevirtOut()
+        {
+            if (PipeWriter<DevirtB>.Connect("probe.devirt", out PipeWriter<DevirtB> typed, out _) != PipeStatus.Ok)
+                return (int)PipeStatus.Refused;
+            using (typed)
+            {
+                PipeStatus s = typed.Copy(new DevirtB { X = 7 });
+                if (s != PipeStatus.Ok) return (int)s;
+            }
+            if (PipeWriter<DevirtB>.Connect("probe.devirt.raw", out PipeWriter<DevirtB> raw, out _) != PipeStatus.Ok)
+                return (int)PipeStatus.Refused;
+            using (raw)
+                return (int)raw.Copy(new DevirtB { X = 7 });
+        }
+
+        // The kernel's Outer, whose Inner is not the app's.
+        private static int NestedOut()
+        {
+            if (PipeWriter<SharpOS.Probe.Outer>.Connect("probe.nested", out PipeWriter<SharpOS.Probe.Outer> writer, out _) != PipeStatus.Ok)
+                return (int)PipeStatus.Refused;
+            using (writer)
+                return (int)writer.Copy(new SharpOS.Probe.Outer { I = new SharpOS.Probe.Inner { A = 5 }, Tag = 1 });
+        }
+
         // Test 9: pending typed readers the app's writer meets.
         private static int Typed(bool on, ulong* answer)
         {
@@ -552,37 +887,6 @@ namespace OS.Kernel.Diagnostics
         }
 
         // A field of the root record by the pipe's description.
-        private static int ReadInt(RawRegion region, string field)
-        {
-            if (!FieldAt(region, field, out ulong at)) return int.MinValue;
-            return *(int*)at;
-        }
-
-        private static string ReadString(RawRegion region, string field)
-        {
-            if (!FieldAt(region, field, out ulong at)) return null;
-            ulong offset = *(ulong*)at;
-            if (offset == 0 || offset >= region.Length) return null;
-            ulong text = (ulong)region.Block + offset;
-            int length = *(int*)(text + 8);
-            return new string(new ReadOnlySpan<char>((void*)(text + 12), length));
-        }
-
-        private static bool FieldAt(RawRegion region, string field, out ulong at)
-        {
-            at = 0;
-            Dictionary<ulong, TypeKeys.Description> types = RegionSchema.Parse(region.Schema, out _);
-            ulong root = (ulong)region.Block + (ulong)Region.HeaderSize;
-            if (types == null || !types.TryGetValue(*(ulong*)root, out TypeKeys.Description d)) return false;
-            foreach (TypeKeys.Field f in d.Fields)
-                if (f.Name == field)
-                {
-                    at = root + (ulong)f.Offset;
-                    return true;
-                }
-            return false;
-        }
-
         private static void Say(string line) => Console.WriteLine("[pipe] " + line);
     }
 }

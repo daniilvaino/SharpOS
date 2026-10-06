@@ -210,13 +210,18 @@ namespace OS.Boot.EH
             if (hdr.HasGenericsInstContext)
                 hdr.GenericsInstContextStackSlot = r.DecodeVarLengthSigned(CoffGcInfoTypes.GenericsInstContextStackSlotEncBase);
 
-            // ---- Stack base register (FP), only in fat header ----
+            // ---- Stack base register (FP) ----
             // Stored as denormalized AMD64 reg index (RBP=5 for encoded 0,
             // RSP=4 for encoded 1). Resolver uses it directly with
-            // ReadGpReg without further translation.
-            if (hdr.HasStackBaseRegister && !hdr.SlimHeader)
+            // ReadGpReg without further translation. A slim header says only
+            // THAT there is one, and then it is the encoded 0 — RBP (stock
+            // GcInfoDecoder: DENORMALIZE_STACK_BASE_REGISTER(0)). Until step193
+            // the slim case was left at "none", every frame-relative slot of
+            // such a method resolved to 0, and its RBP-held references were
+            // never marked.
+            if (hdr.HasStackBaseRegister)
             {
-                uint raw = r.DecodeVarLengthUnsigned(CoffGcInfoTypes.StackBaseRegisterEncBase);
+                uint raw = hdr.SlimHeader ? 0u : r.DecodeVarLengthUnsigned(CoffGcInfoTypes.StackBaseRegisterEncBase);
                 hdr.StackBaseRegister = CoffGcInfoTypes.DenormalizeStackBaseRegister(raw);
             }
 

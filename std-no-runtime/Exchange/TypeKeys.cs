@@ -28,13 +28,24 @@ namespace SharpOS.Std.Exchange
     public static unsafe class TypeKeys
     {
         /// <summary>A named field and its offset from the start of the object (its table word).</summary>
+        /// <remarks>
+        /// <see cref="Enum"/> names the enum a field (or an array's elements)
+        /// is declared as; <see cref="Type"/> is then its underlying number.
+        /// Description only — not in the key: the layout is the number's.
+        /// </remarks>
         public readonly struct Field
         {
             public readonly string Name;
             public readonly string Type;
             public readonly int Offset;
+            public readonly string Enum;
 
-            public Field(string name, string type, int offset) { Name = name; Type = type; Offset = offset; }
+            public Field(string name, string type, int offset) { Name = name; Type = type; Offset = offset; Enum = null; }
+
+            public Field(string name, string type, int offset, string enumType)
+            {
+                Name = name; Type = type; Offset = offset; Enum = enumType;
+            }
         }
 
         /// <summary>What a reader needs to print an object it has no type for.</summary>
@@ -46,6 +57,19 @@ namespace SharpOS.Std.Exchange
             public ushort ComponentSize;
             public bool IsValueType;
             public Field[] Fields;
+
+            /// <summary>An enum's members, names and values; null for anything else. Description only.</summary>
+            public string[] EnumNames;
+            public long[] EnumValues;
+        }
+
+        /// <summary>Attaches an enum's member names to its declared description (not to its key).</summary>
+        public static void DescribeEnum(ulong key, string[] names, long[] values)
+        {
+            Description d = DescriptionOf(key);
+            if (d == null) return;
+            d.EnumNames = names;
+            d.EnumValues = values;
         }
 
         private sealed class RawObject { public byte Data; }

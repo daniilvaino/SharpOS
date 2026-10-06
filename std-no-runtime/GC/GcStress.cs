@@ -41,9 +41,6 @@ namespace SharpOS.Std.NoRuntime
         {
             if (s_collecting || GC.s_collectHook == null)
                 return;
-            // Where allocating is allowed but collecting is not (an interrupt
-            // handler), the host's collector declines anyway; asking would
-            // only count a decline per allocation.
             if (GcHeap.s_allocationAllowed != null && !GcHeap.s_allocationAllowed())
                 return;
             if (++s_countdown < Every)
@@ -61,6 +58,8 @@ namespace SharpOS.Std.NoRuntime
             if (FirstBroken != 0)
                 return;
             nint broken = GcHeap.FindBrokenObject(GcMark.MethodTableLow, GcMark.MethodTableHigh);
+            if (broken == 0)
+                broken = GcHeap.FindBrokenFreeNode();
             if (broken == 0)
                 return;
             FirstBroken = broken;

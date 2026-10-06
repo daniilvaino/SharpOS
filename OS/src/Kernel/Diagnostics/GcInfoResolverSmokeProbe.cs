@@ -98,7 +98,7 @@ namespace OS.Kernel.Diagnostics
                 }
                 if (!isLive) continue;
 
-                ulong value = CoffGcInfoResolver.ResolveSlotValue(in slots[i], &ctx, in hdr);
+                ulong value = CoffGcInfoResolver.ResolveSlotValue(in slots[i], &ctx, in hdr, 0);
 
                 Log.Begin(LogLevel.Info);
                 Console.Write("[gcresolve] slot[");

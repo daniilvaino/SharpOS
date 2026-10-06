@@ -46,13 +46,16 @@ namespace OS.Boot.EH
 
         // Resolve a slot to its current pointer value.
         //
-        // hdr is needed for SpBase==CallerSp (offset by
-        // SizeOfStackOutgoingAndScratchArea above current SP) and for
-        // SpBase==FpBase (decoded FP register lives in hdr.StackBaseRegister).
+        // callerSp is the frame's caller SP — the SP once the frame is
+        // unwound (stock GcInfoDecoder::GetStackSlot: GET_CALLER_SP(pRD)).
+        // Stack-passed arguments (the fifth and later on Win64) are described
+        // relative to it. Zero: not known, and such a slot reads as 0. hdr
+        // gives the frame register for SpBase==FpBase.
         public static ulong ResolveSlotValue(
             in CoffGcSlot slot,
             Context* ctx,
-            in CoffGcInfoHeader hdr)
+            in CoffGcInfoHeader hdr,
+            ulong callerSp)
         {
             if (slot.Kind == 0)
             {
@@ -60,7 +63,7 @@ namespace OS.Boot.EH
             }
             else
             {
-                ulong addr = ResolveSlotAddress(in slot, ctx, in hdr);
+                ulong addr = ResolveSlotAddress(in slot, ctx, in hdr, callerSp);
                 if (addr == 0) return 0;
                 return *(ulong*)addr;
             }
@@ -71,7 +74,8 @@ namespace OS.Boot.EH
         public static ulong ResolveSlotAddress(
             in CoffGcSlot slot,
             Context* ctx,
-            in CoffGcInfoHeader hdr)
+            in CoffGcInfoHeader hdr,
+            ulong callerSp)
         {
             if (slot.Kind != 1) return 0;
 
@@ -79,9 +83,13 @@ namespace OS.Boot.EH
             switch (slot.SpBase)
             {
                 case CoffGcStackSlotBase.Caller:
-                    // Caller's SP sits above current SP by the outgoing/scratch
-                    // area. Header carries that exact value (zeroed if slim).
-                    baseValue = ctx->Rsp + hdr.SizeOfStackOutgoingAndScratchArea;
+                    // Until step193 this was Rsp + SizeOfStackOutgoingAndScratchArea,
+                    // which is not the caller's SP but a point inside the frame:
+                    // a reference held only in a stack-passed argument was read
+                    // from the wrong cell and its object swept (DynamicBinder's
+                    // eighth parameter under GC stress).
+                    if (callerSp == 0) return 0;
+                    baseValue = callerSp;
                     break;
                 case CoffGcStackSlotBase.CurrentSp:
                     baseValue = ctx->Rsp;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using SharpOS.AppSdk;
 using SharpOS.Std.Exchange;
@@ -8,6 +9,17 @@ using SharpOS.Std.Pipes.Probe;
 
 namespace AotTests
 {
+    [Message]
+    public enum Shade { Pale = 1, Deep = 2, Dark = 3 }
+
+    /// <summary>An array of an enum as a field: registered under its own name, not its underlying type's.</summary>
+    [Message]
+    public sealed class Shades
+    {
+        public Shade One;
+        public Shade[] Many;
+    }
+
     /// <summary>The journal entry only this app knows: the kernel reads it by the description.</summary>
     [Message]
     public sealed class JournalEntry
@@ -16,6 +28,95 @@ namespace AotTests
         public string Text;
         public long Stamp;
         public int[] Values;
+    }
+}
+
+namespace AotTests
+{
+    /// <summary>A report only the app has: the kernel reads it through a view (ViewProbe).</summary>
+    [Message]
+    public sealed class AppReport
+    {
+        public byte B;
+        public sbyte SB;
+        public short S;
+        public ushort US;
+        public int I;
+        public uint UI;
+        public long L;
+        public ulong UL;
+        public float F;
+        public double D;
+        public bool Flag;
+        public char C;
+        public string Text;
+        public ProbeMood Mood;
+        public ProbeMood[] Moods;
+        public AppPlace Where;
+        public AppPlace Nowhere;
+        public int[] Numbers;
+        public string[] Words;
+        public AppPlace[] Places;
+        public System.DateTime When;
+        public AppReport Next;
+    }
+
+    [Message]
+    public sealed class AppPlace
+    {
+        public string Name;
+        public int Floor;
+    }
+
+    /// <summary>
+    /// What Into lays the kernel's report into: fewer fields, another order,
+    /// numbers widened (int to long, float to double, int[] to long[]), a field
+    /// the source lacks, nesting, a cycle.
+    /// </summary>
+    [Message]
+    public sealed class ReportLite
+    {
+        public string Text;
+        public long I;
+        public double F;
+        public PlaceLite Where;
+        public long[] Numbers;
+        public ReportLite Next;
+        public string Missing;
+        public ProbeMood Mood;
+        public System.DateTime When;
+        public ProbeMood[] Moods;
+    }
+
+    [Message]
+    public sealed class PlaceLite
+    {
+        public int Floor;
+        public string Name;
+    }
+
+    /// <summary>A field whose type cannot take the source's: I is an int there.</summary>
+    [Message]
+    public sealed class IntoBad
+    {
+        public string I;
+    }
+}
+
+namespace SharpOS.Probe
+{
+    /// <summary>The app's version of the nested-type test: the kernel's Inner has an int.</summary>
+    [Message]
+    public sealed class Outer
+    {
+        public Inner I;
+        public int Tag;
+    }
+
+    [Message]
+    public sealed class Inner
+    {
+        public long A;
     }
 }
 
@@ -146,6 +247,13 @@ namespace AotTests
             Clean("6 echo", PipeEcho);
             Clean("7 byref", PipeByRef);
             Clean("12 std types", PipeStdTypes);
+            Clean("13 views", PipeViews);
+            Clean("14 spoiled blocks", PipeBadBlocks);
+            Clean("15 loops", PipeLoops);
+            Clean("16 regions", PipeRegions);
+            Clean("17 nested type", PipeNested);
+            Clean("18 expando graph", PipeExpandoGraph);
+            Clean("19 devirtualization", PipeDevirt);
 
             if (!s_stress)
             {
@@ -631,6 +739,451 @@ namespace AotTests
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static void WriteIntoExpando(Expando e) => e["Count"] = 9;
 
+        // ---- step 192: views, Expando, Into, the convenient layer ----
+
+        private static AppReport AppReportSample()
+        {
+            var r = new AppReport
+            {
+                B = ViewProbe.B, SB = ViewProbe.SB, S = ViewProbe.S, US = ViewProbe.US, I = ViewProbe.I, UI = ViewProbe.UI,
+                L = ViewProbe.L, UL = ViewProbe.UL, F = ViewProbe.F, D = ViewProbe.D, Flag = true, C = ViewProbe.C,
+                Text = ViewProbe.Text, Mood = ProbeMood.Deep, Moods = ViewProbe.Moods,
+                Where = new AppPlace { Name = "hall", Floor = 3 },
+                Numbers = ViewProbe.Numbers, Words = ViewProbe.Words,
+                Places = new[] { new AppPlace { Name = "a", Floor = 4 }, new AppPlace { Name = "b", Floor = 5 } },
+                When = ViewProbe.When,
+            };
+            r.Next = r;
+            return r;
+        }
+
+        private static string CheckLite(ReportLite r)
+        {
+            if (r == null) return "null";
+            if (r.I != ViewProbe.I) return "I";
+            if (r.Text != ViewProbe.Text) return "Text";
+            if (r.F != 1.5) return "F";
+            if (r.Where == null || r.Where.Floor != 3 || r.Where.Name != "hall") return "Where";
+            if (r.Numbers == null || r.Numbers.Length != 3 || r.Numbers[2] != 3L) return "Numbers";
+            if (!ReferenceEquals(r.Next, r)) return "Next (cycle)";
+            if (r.Missing != null) return "Missing";
+            if (r.Mood != ProbeMood.Deep) return "Mood";
+            if (r.When != ViewProbe.When) return "When";
+            if (r.Moods == null || r.Moods.Length != 2 || r.Moods[1] != ProbeMood.Calm) return "Moods";
+            return null;
+        }
+
+        private static void Report(string what, string bad)
+        {
+            if (bad != null) AppHost.WriteString("[pipe] " + what + ": " + bad + "\n");
+        }
+
+        // Tests 13: views over a class the app does not have; the same over an
+        // Expando; ToExpando and Into; a view after its region; values written
+        // through a view and the block forwarded; the app's own class and an
+        // Expando read by the kernel through views.
+#pragma warning disable SOSR002, SOSR003, SOSR006
+        private static void PipeViews()
+        {
+            // The readers first: the kernel's writers then meet them.
+            RawPipeReader report = Pipe.Read("probe.view.report");
+            RawPipeReader bag = Pipe.Read("probe.view.expando");
+            RawPipeReader into = Pipe.Read("probe.view.into");
+            RawPipeReader gone = Pipe.Read("probe.view.gone");
+            RawPipeReader bench = Pipe.Read("probe.view.bench");
+            RawPipeReader edit = Pipe.Read("probe.view.edit");
+            Probe(1, 25, null);
+            int sent = Probe(16, 0, null);
+
+            string fromKernel = "nothing received", typeName = null, intoOne = "nothing", writes = "nothing";
+            bool incompatible = false;
+            Expando copy = null;
+            foreach (View v in report)
+            {
+                fromKernel = ViewProbe.Check(v);
+                typeName = v.TypeName;
+                intoOne = CheckLite(v.Into<ReportLite>());
+                try { v.Into<IntoBad>(); }
+                catch (InvalidCastException e) { incompatible = e.Message.Contains("'I'"); }
+                copy = v;
+                writes = WritesRefused(v);
+                v["I"] = ViewProbe.I;             // a write on the loop's own variable
+            }
+            Report("view of the kernel's report", fromKernel);
+            Check("pipe 13: a kernel class the app lacks, read through a view: every kind of field",
+                  sent == 0 && fromKernel == null && typeName == "SharpOS.Probe.Kernel.KernelReport");
+
+            string fromBag = "nothing received";
+            foreach (View v in bag) fromBag = ViewProbe.Check(v);
+            Report("view of the kernel's Expando", fromBag);
+            Check("pipe 13: the same read from an Expando, by the same code", fromBag == null);
+
+            bool copyOk = copy != null && copy["Where"] is Expando where && where["Floor"] is int floor && floor == 3
+                          && ReferenceEquals(copy["Next"], copy)
+                          && copy["Places"] is object[] places && places.Length == 2 && places[1] is Expando pb && pb["Floor"] is int pf && pf == 5
+                          && copy["Mood"] is int mood && mood == 2
+                          && copy["When"] is DateTime when && when == ViewProbe.When
+                          && copy["Numbers"] is int[] numbers && numbers[2] == 3
+                          && copy["Words"] is string[] words && words[1] == "b"
+                          && copy["UL"] is ulong ul && ul == ViewProbe.UL;
+            Check("pipe 13: a view into an Expando: a deep copy, the cycle kept, an enum as its number, a DateTime as itself", copyOk);
+            Report("Into<ReportLite>", intoOne);
+            Check("pipe 13: Into<T> by name: fewer fields, another order, widening, nesting, arrays, a cycle", intoOne == null);
+            Check("pipe 13: Into<T> with an incompatible field throws, naming it", incompatible);
+            Report("writes through a view", writes);
+            Check("pipe 13: a reference, a wrong type, an out-of-range number through a view: refused, explained", writes == null);
+
+            int intoCount = 0;
+            string intoAll = null;
+            foreach (ReportLite lite in into.Into<ReportLite>())
+            {
+                intoAll ??= CheckLite(lite);
+                intoCount++;
+            }
+            System.GC.Collect();
+            Check("pipe 13: a reader's Into<T>: the app's own objects", intoCount == 2 && intoAll == null);
+
+            // Into with the writer's own class, and ToHeap of a nested object.
+            RawPipeReader own = Pipe.Read("app.view.own");
+            PipeReader<AppReport> ownTyped = Pipe.Read<AppReport>("app.view.owntyped");
+            using (PipeWriter<AppReport> w = Pipe.Write<AppReport>("app.view.own")) w.Copy(AppReportSample());
+            using (PipeWriter<AppReport> w = Pipe.Write<AppReport>("app.view.owntyped")) w.Copy(AppReportSample());
+            AppReport mine = null;
+            foreach (AppReport r in own.Into<AppReport>()) mine = r;
+            AppPlace place = null;
+            foreach (AppReport r in ownTyped) place = r.Where.ToHeap();
+            Churn(32);
+            System.GC.Collect();
+            Check("pipe 13: Into<T> with the writer's own class: the same objects, in the app's heap",
+                  mine != null && mine.I == ViewProbe.I && mine.UL == ViewProbe.UL && mine.Where.Floor == 3
+                  && ReferenceEquals(mine.Next, mine) && mine.Places[1].Name == "b" && mine.Mood == ProbeMood.Deep);
+            Check("pipe 13: ToHeap of a nested object outlives its step and a collection",
+                  place != null && place.Floor == 3 && place.Name == "hall");
+
+            View kept = default;
+            bool goneOnStep = false, goneAfter = false;
+            int step = 0;
+            foreach (View v in gone)
+            {
+                if (step++ == 0) kept = v;
+                else
+                {
+                    try { _ = kept["I"]; }
+                    catch (ObjectDisposedException) { goneOnStep = true; }
+                }
+            }
+            try { _ = kept["I"]; }
+            catch (ObjectDisposedException) { goneAfter = true; }
+            Check("pipe 13: a view at the next step and after the loop throws ObjectDisposedException", goneOnStep && goneAfter);
+
+            foreach (View v in bench) BenchView(v);
+
+            edit.Where(v =>
+            {
+                v["I"] = 77;
+                View o = v["Where"];
+                o["Floor"] = 9;
+                v["Next"] = null;
+                v["Flag"] = false;
+                View numbers = v["Numbers"];
+                numbers[0] = 100;
+                return true;
+            }).WriteTo("probe.view.back");
+            bool back = Verdict(25, out int n25, out bool ok25, out PipeStatus e25, out _) && n25 == 1 && ok25 && e25 == PipeStatus.EndOfStream;
+            Check("pipe 13: values written through a view, the block itself sent on, read by the kernel", back);
+
+            // The other way: the app's own class and an Expando, read by the kernel.
+            Probe(1, 23, null);
+            Probe(1, 24, null);
+            using (PipeWriter<AppReport> w = Pipe.Write<AppReport>("probe.app.report"))
+                w.Copy(AppReportSample());
+            using (PipeWriter<Expando> w = Pipe.Write<Expando>("probe.app.expando"))
+                w.Copy(ViewProbe.Sample());
+            bool t23 = Verdict(23, out int n23, out bool ok23, out PipeStatus e23, out _) && n23 == 1 && ok23 && e23 == PipeStatus.EndOfStream;
+            bool t24 = Verdict(24, out int n24, out bool ok24, out PipeStatus e24, out _) && n24 == 1 && ok24 && e24 == PipeStatus.EndOfStream;
+            Check("pipe 13: the app's class and an Expando read by the kernel through views", t23 && t24);
+        }
+
+        // Null when every write a view must refuse is refused with a reason.
+        private static string WritesRefused(View v)
+        {
+            try { v["Text"] = "x"; return "a string into a reference went through"; }
+            catch (InvalidOperationException) { }
+            try { v["B"] = 300; return "300 into a byte went through"; }
+            catch (OverflowException) { }
+            try { v["I"] = 1.5; return "1.5 into an int went through"; }
+            catch (InvalidCastException) { }
+            try { v["Flag"] = 1; return "1 into a bool went through"; }
+            catch (InvalidCastException) { }
+            try { v["When"] = 0; return "a number into a struct went through"; }
+            catch (InvalidOperationException) { }
+            return (byte)v["B"] == ViewProbe.B && v["I"] == ViewProbe.I ? null : "a refused write changed a value";
+        }
+
+        // Measured, not asserted: a field through a view, Into, ToExpando — per object.
+        private static void BenchView(View v)
+        {
+            const int Reads = 2000, Copies = 200;
+            var watch = Stopwatch.StartNew();
+            long sum = 0;
+            for (int i = 0; i < Reads; i++) sum += (int)v["I"];
+            long readNs = watch.ElapsedTicks * 1_000_000_000L / Stopwatch.Frequency / Reads;
+            watch.Restart();
+            for (int i = 0; i < Copies; i++) v.Into<ReportLite>();
+            long intoNs = watch.ElapsedTicks * 1_000_000_000L / Stopwatch.Frequency / Copies;
+            watch.Restart();
+            for (int i = 0; i < Copies; i++) v.ToExpando();
+            long expandoNs = watch.ElapsedTicks * 1_000_000_000L / Stopwatch.Frequency / Copies;
+            AppHost.WriteString("[bench] view: field " + readNs.ToString() + " ns; Into<ReportLite> " + intoNs.ToString()
+                                + " ns; ToExpando " + expandoNs.ToString() + " ns per report (22 fields, 5 objects, 4 arrays)"
+                                + (sum == (long)ViewProbe.I * Reads ? "" : " SUM WRONG") + "\n");
+        }
+
+        // Test 14: spoiled blocks are refused at receive, each with the reason.
+        private static void PipeBadBlocks()
+        {
+            RawPipeReader key = Pipe.Read("probe.bad.key");
+            RawPipeReader size = Pipe.Read("probe.bad.size");
+            RawPipeReader reference = Pipe.Read("probe.bad.ref");
+            int sent = Probe(17, 0, null);
+            string a = Refusal(key), b = Refusal(size), c = Refusal(reference);
+            AppHost.WriteString("[pipe] spoiled blocks: " + a + " | " + b + " | " + c + "\n");
+            Check("pipe 14: a spoiled block — unknown key, size past the end, reference outside — refused at receive",
+                  sent == 0 && a != null && a.Contains("not in the pipe's description") && b != null && b.Contains("runs past")
+                  && c != null && c.Contains("is not a record"));
+        }
+
+        private static string Refusal(RawPipeReader reader)
+        {
+            try
+            {
+                foreach (View v in reader) return null;
+            }
+            catch (PipeException e) when (e.Status == PipeStatus.Refused)
+            {
+                return e.Message;
+            }
+            return null;
+        }
+
+        // Test 15: the loop lets go of everything — break, an exception in the
+        // body, the end, a broken writer.
+        private static void PipeLoops()
+        {
+            ulong* before = stackalloc ulong[6];
+            Probe(6, 0, before);
+
+            PipeReader<Note> r = Pipe.Read<Note>("probe.loop.end");
+            Probe(18, 0, null);
+            int seen = 0;
+            foreach (Note n in r)
+            {
+                seen++;
+                if (n.Seq == 1) break;
+            }
+            Check("pipe 15: break leaves the loop, its reader closed, its blocks back", seen == 2 && Unchanged(before));
+
+            r = Pipe.Read<Note>("probe.loop.end");
+            Probe(18, 0, null);
+            bool thrown = false;
+            try
+            {
+                foreach (Note n in r)
+                    if (n.Seq == 2) throw new InvalidOperationException("the body");
+            }
+            catch (InvalidOperationException) { thrown = true; }
+            Check("pipe 15: an exception in the body: the reader closed, the blocks back", thrown && Unchanged(before));
+
+            r = Pipe.Read<Note>("probe.loop.end");
+            Probe(18, 0, null);
+            int all = 0;
+            bool ordered = true;
+            foreach (Note n in r) ordered &= n.Seq == all++ && n.Text == "loop " + n.Seq.ToString();
+            Check("pipe 15: the end of the stream ends the loop: all five, in order, nothing lost",
+                  all == 5 && ordered && r.Dropped == 0 && Unchanged(before));
+
+            r = Pipe.Read<Note>("probe.loop.broken");
+            Probe(18, 1, null);
+            int drained = 0;
+            PipeStatus broke = PipeStatus.Ok;
+            try
+            {
+                foreach (Note n in r) drained++;
+            }
+            catch (PipeException e) { broke = e.Status; }
+            Check("pipe 15: a broken writer: the queue drained, then PipeException", drained == 5 && broke == PipeStatus.Broken && Unchanged(before));
+
+            // A condition in a loop, and a condition sending what passes on as it is.
+            r = Pipe.Read<Note>("probe.loop.end");
+            Probe(18, 0, null);
+            int odd = 0;
+            foreach (Note n in r.Where(n => n.Seq % 2 == 1)) odd += n.Seq;
+            PipeReader<Note> evens = Pipe.Read<Note>("app.loop.evens");
+            r = Pipe.Read<Note>("probe.loop.end");
+            Probe(18, 0, null);
+            r.Where(n => n.Seq % 2 == 0).WriteTo("app.loop.evens");
+            int even = 0, count = 0;
+            foreach (Note n in evens)
+            {
+                even += n.Seq;
+                count++;
+            }
+            Check("pipe 15: Where in a loop; Where.WriteTo sends what passes on, then ends the output",
+                  odd == 1 + 3 && count == 3 && even == 0 + 2 + 4 && Unchanged(before));
+        }
+
+        private static bool Unchanged(ulong* before)
+        {
+            ulong* now = stackalloc ulong[6];
+            Probe(6, 0, now);
+            bool same = now[0] == before[0] && now[1] == before[1];
+            if (!same)
+                AppHost.WriteString("[pipe] loop left blocks " + before[0].ToString() + " -> " + now[0].ToString()
+                                    + ", pipes " + before[1].ToString() + " -> " + now[1].ToString() + "\n");
+            return same;
+        }
+
+        // Test 16: a loop over regions — Move, ToHeap, nothing — and copies that
+        // outlive their step and a collection.
+        private static void PipeRegions()
+        {
+            var keptRoots = new List<Note>();
+            var keptTexts = new List<string>();
+            var keptValues = new List<int[]>();
+            Pipe.Create<Note>(8, PipeOverflow.DropOldest, out PipeWriter<Note> movedW, out PipeReader<Note> movedR);
+            PipeReader<Note> input = Pipe.Read<Note>("probe.loop.regions");
+            Probe(18, 2, null);
+            foreach (Region<Note> msg in input.Regions)
+            {
+                int seq = msg.Root.Seq;
+                if (seq % 3 == 0) movedW.Move(msg);
+                else if (seq % 3 == 1)
+                {
+                    keptRoots.Add(msg.ToHeap());
+                    keptTexts.Add(msg.Root.Text.ToHeap());
+                    keptValues.Add(msg.Root.Values.ToHeap());
+                }
+            }
+            Churn(64);
+            System.GC.Collect();
+            Churn(64);
+            bool kept = keptRoots.Count == 2 && keptRoots[0].Seq == 1 && keptRoots[1].Text == "loop 4" && keptRoots[1].Values[1] == 8
+                        && keptTexts[0] == "loop 1" && keptTexts[1] == "loop 4" && keptValues[1][0] == 4;
+            movedW.Dispose();
+            int moved = 0;
+            bool movedOk = true;
+            foreach (Note n in movedR)
+            {
+                movedOk &= n.Seq % 3 == 0;
+                moved++;
+            }
+            Check("pipe 16: Regions — two moved on, two copied out, two let go", moved == 2 && movedOk);
+            Check("pipe 16: ToHeap of a root, a string and an array outlives its step and a collection", kept);
+        }
+
+        // Test 17: a nested type that differs from the writer's: the first such message throws, naming it.
+        private static void PipeNested()
+        {
+            PipeReader<SharpOS.Probe.Outer> r = Pipe.Read<SharpOS.Probe.Outer>("probe.nested");
+            Probe(19, 0, null);
+            string message = null;
+            try
+            {
+                foreach (SharpOS.Probe.Outer o in r) { }
+            }
+            catch (PipeException e) { message = e.Message; }
+            Report("nested type", message);
+            Check("pipe 17: a nested type unlike the writer's: PipeException naming it",
+                  message != null && message.Contains("SharpOS.Probe.Inner"));
+        }
+
+        // Test 18: an Expando graph — nested, shared, a cycle, arrays — read in
+        // place with its class and through a view.
+        private static void PipeExpandoGraph()
+        {
+            var shared = new Expando();
+            shared["N"] = 1;
+            var root = new Expando();
+            root["A"] = shared;
+            root["B"] = shared;
+            root["Self"] = root;
+            root["List"] = new object[] { shared, root };
+            root["Ints"] = new[] { 1, 2 };
+
+            PipeReader<Expando> typed = Pipe.Read<Expando>("app.expando.typed");
+            RawPipeReader raw = Pipe.Read("app.expando.raw");
+            using (PipeWriter<Expando> w = Pipe.Write<Expando>("app.expando.typed")) w.Copy(root);
+            using (PipeWriter<Expando> w = Pipe.Write<Expando>("app.expando.raw")) w.Copy(root);
+
+            bool inPlace = false, refused = false, heapOk = false;
+            foreach (Expando e in typed)
+            {
+                inPlace = ReferenceEquals(e["A"], e["B"]) && ReferenceEquals(e["Self"], e)
+                          && e["List"] is object[] list && ReferenceEquals(list[1], e) && e["Ints"] is int[] ints && ints[1] == 2;
+                try { e["Added"] = 5; }
+                catch (RegionReferenceException) { refused = true; }
+                Expando h = e.ToHeap();
+                heapOk = ReferenceEquals(h["A"], h["B"]) && ReferenceEquals(h["Self"], h) && !ReferenceEquals(h, e);
+            }
+            bool viewed = false;
+            foreach (View v in raw)
+            {
+                Expando x = v;
+                viewed = ReferenceEquals(x["A"], x["B"]) && ReferenceEquals(x["Self"], x)
+                         && x["List"] is object[] list && ReferenceEquals(list[1], x) && v["A"]["N"] == 1;
+            }
+            Check("pipe 18: an Expando graph read in place: shared and cyclic references are the same objects", inPlace);
+            Check("pipe 18: writing a new value into a received Expando: RegionReferenceException", refused);
+            Check("pipe 18: ToHeap and a view's Expando keep sharing and the cycle", heapOk && viewed);
+
+            var bags = new List<Expando>();
+            RawPipeReader bagReader = Pipe.Read("app.expando.bags");
+            using (PipeWriter<Expando> w = Pipe.Write<Expando>("app.expando.bags"))
+            {
+                w.Copy(root);
+                w.Copy(shared);
+            }
+            foreach (Expando x in bagReader) bags.Add(x);
+            System.GC.Collect();
+            Check("pipe 18: foreach (Expando x in Pipe.Read(...)) — each message a copy of its own",
+                  bags.Count == 2 && ReferenceEquals(bags[0]["Self"], bags[0]) && bags[1]["N"] is int one && one == 1);
+        }
+#pragma warning restore SOSR002, SOSR003, SOSR006
+
+        // Opaque (Program.cs) hides the static type from the compiler: no cast
+        // or call below can be decided by what the variable was declared as.
+        private static string DescribeDevirt(object o)
+        {
+            string text = o == null ? "null" : "";
+            if (o == null) return text;
+            text += "isA=" + (o is DevirtA ? "1" : "0") + " isB=" + (o is DevirtB ? "1" : "0") + " isC=" + (o is DevirtC ? "1" : "0");
+            text += " asBase=" + ((o as DevirtBase) != null ? "1" : "0") + " asI=" + ((o as IDevirt) != null ? "1" : "0");
+            if (o is DevirtBase b) text += " Value=" + b.Value().ToString() + " Name=" + b.Name();
+            if (o is IDevirt i) text += " Kind=" + i.Kind().ToString();
+            return text;
+        }
+
+        // Test 19: a type this image never constructs, only receives — through
+        // a typed pipe and through Into — called through its base, its
+        // interface, and tested with is/as. The app constructs only DevirtA.
+        private static void PipeDevirt()
+        {
+            string a = DescribeDevirt(Opaque(new DevirtA { X = 1 }));
+            PipeReader<DevirtB> typed = Pipe.Read<DevirtB>("probe.devirt");
+            RawPipeReader raw = Pipe.Read("probe.devirt.raw");
+            int sent = Probe(20, 0, null);
+            string b = "nothing", c = "nothing";
+            foreach (DevirtB received in typed) b = DescribeDevirt(Opaque(received));
+            foreach (View v in raw) c = DescribeDevirt(Opaque(v.Into<DevirtC>()));
+            AppHost.WriteString("[devirt] constructed A: " + a + "\n[devirt] received B: " + b + "\n[devirt] Into C: " + c + "\n");
+            Check("pipe 19: a constructed type answers its own (control)",
+                  a == "isA=1 isB=0 isC=0 asBase=1 asI=1 Value=101 Name=A Kind=1");
+            Check("pipe 19: a type only received through a pipe: is, as, its own virtual and interface methods",
+                  sent == 0 && b == "isA=0 isB=1 isC=0 asBase=1 asI=1 Value=207 Name=B Kind=2");
+            Check("pipe 19: a type only produced by Into: is, as, its own virtual and interface methods",
+                  c == "isA=0 isB=0 isC=1 asBase=1 asI=1 Value=307 Name=C Kind=3");
+        }
+
         private static bool RegionProbeGraphIntact(EchoMessage m)
             => m.Items.Length == 4 && m.Items[1].Key == 1 && m.Items[2].Name == "a2";
 
@@ -732,6 +1285,23 @@ namespace AotTests
             Check("pipe 11: multi-dimensional arrays pass (field and object)", sent == PipeStatus.Ok && ok);
             w.Dispose();
             r.Dispose();
+
+            Pipe.Create<Shades>(4, PipeOverflow.DropOldest, out PipeWriter<Shades> sw, out PipeReader<Shades> sr);
+            PipeStatus shadesSent = sw.Copy(new Shades { One = Shade.Deep, Many = new[] { Shade.Dark, Shade.Pale } });
+            bool shadesOk = false;
+            if (shadesSent == PipeStatus.Ok)
+                using (Region<Shades> region = sr.Receive())
+                    shadesOk = region != null && region.Root.One == Shade.Deep && region.Root.Many.Length == 2
+                               && region.Root.Many[0] == Shade.Dark && region.Root.Many[1] == Shade.Pale;
+            else
+                AppHost.WriteString("[pipe] enum array: " + ((int)shadesSent).ToString() + " " + (sw.LastError ?? "") + "\n");
+            sw.Dispose();
+            sr.Dispose();
+            Check("pipe 11: an array of an enum passes as a field", shadesOk);
+
+            for (int i = 0; i < MessageCatalog.Problems.Count; i++)
+                AppHost.WriteString("[pipe] catalog problem: " + MessageCatalog.Problems[i] + "\n");
+            Check("pipe 11: the catalog registered every type without a collision", MessageCatalog.Problems.Count == 0);
         }
 
         // Test 14: measured, not asserted.

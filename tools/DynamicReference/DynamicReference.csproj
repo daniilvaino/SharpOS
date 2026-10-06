@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The reference for step 193's dynamic cases: the same source, real
+       Microsoft.CSharp binder. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <DefineConstants>$(DefineConstants);DESKTOP</DefineConstants>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\apps_native\AotTests\DynamicCases.cs" />
+  </ItemGroup>
+</Project>

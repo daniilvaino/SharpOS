@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Run after compiling an image (std-no-runtime/Std.props, target
+       SharpOsDynamicCheck): every CallSite<T> in its IL has a thunk. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- Whatever runtime the build host has: only System.Reflection.Metadata is used. -->
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+
+</Project>

@@ -2,8 +2,9 @@
 // src/libraries/System.Private.CoreLib/src/System/String.Manipulation.cs
 // (FormatHelper) — matches the canonical {index[,alignment][:formatString]}
 // parser shape byte-for-byte. Differences from upstream:
-//   - IFormatProvider parameter dropped (we always pass null — no cultures,
-//     no ICustomFormatter resolution path).
+//   - IFormatProvider not consulted (no cultures, no ICustomFormatter
+//     resolution path); the overloads that take one exist because the
+//     compiler calls them (an anonymous type's ToString, step 193).
 //   - ICustomFormatter not consulted (we never have one).
 //   - FormatException carries a plain canned message instead of SR.* keys.
 // IFormattable consumers (Int32.ToString("X"), etc.) still get spec strings
@@ -32,6 +33,18 @@ namespace System
                 ThrowFormatNull(nameof(args));
             return FormatHelper(format, new ParamsArray(args));
         }
+
+        public static string Format(IFormatProvider provider, string format, object arg0)
+            => FormatHelper(format, new ParamsArray(arg0));
+
+        public static string Format(IFormatProvider provider, string format, object arg0, object arg1)
+            => FormatHelper(format, new ParamsArray(arg0, arg1));
+
+        public static string Format(IFormatProvider provider, string format, object arg0, object arg1, object arg2)
+            => FormatHelper(format, new ParamsArray(arg0, arg1, arg2));
+
+        public static string Format(IFormatProvider provider, string format, params object[] args)
+            => Format(format, args);
 
         private static string FormatHelper(string format, ParamsArray args)
         {

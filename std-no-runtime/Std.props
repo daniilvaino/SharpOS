@@ -12,11 +12,14 @@
   <!-- Source generators every image runs (generators/): the kernel and each
        app import this file, so this is the one place that reaches all of
        them. ImageInfo — which image this is; Pipes — [Message] catalog and
-       Region<T> rules. -->
+       Region<T> rules; Dynamic — call-site thunks and member tables of
+       `dynamic`, SOSD rules. -->
   <ItemGroup>
     <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\ImageInfo.Generator\ImageInfo.Generator.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\Pipes.Generator\Pipes.Generator.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\Dynamic.Generator\Dynamic.Generator.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
@@ -66,6 +69,10 @@
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\ExchangeArena.cs" Link="std\Exchange\ExchangeArena.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\MessageCatalog.cs" Link="std\Pipes\MessageCatalog.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\Expando.cs" Link="std\Pipes\Expando.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\View.cs" Link="std\Pipes\View.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\ViewCopy.cs" Link="std\Pipes\ViewCopy.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeLoops.cs" Link="std\Pipes\PipeLoops.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionShapes.cs" Link="std\Exchange\RegionShapes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\Pipe.cs" Link="std\Pipes\Pipe.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeProbeMessages.cs" Link="std\Pipes\PipeProbeMessages.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStatus.cs" Link="std\Pipes\PipeStatus.cs" />
@@ -144,6 +151,12 @@
     <Compile Include="$(MSBuildThisFileDirectory)Number\ValueListBuilder.cs" Link="std\Number\ValueListBuilder.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Numerics\Vector3.cs" Link="std\Numerics\Vector3.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ActionFunc.cs" Link="std\Runtime\ActionFunc.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Dynamic\CompilerSurface.cs" Link="std\Dynamic\CompilerSurface.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Dynamic\DynamicMembers.cs" Link="std\Dynamic\DynamicMembers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Dynamic\DynamicTypes.cs" Link="std\Dynamic\DynamicTypes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Dynamic\DynamicRuntime.cs" Link="std\Dynamic\DynamicRuntime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\View.Dynamic.cs" Link="std\Pipes\View.Dynamic.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\Expando.Dynamic.cs" Link="std\Pipes\Expando.Dynamic.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Array.cs" Link="std\Runtime\Array.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ArrayHelpers.cs" Link="std\Runtime\ArrayHelpers.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ArrayT.cs" Link="std\Runtime\ArrayT.cs" />
@@ -176,6 +189,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\RuntimeImports.Delegate.cs" Link="std\Runtime\RuntimeImports.Delegate.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Span.cs" Link="std\Runtime\Span.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\UnboxHelpers.cs" Link="std\Runtime\UnboxHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\MathHelpers.cs" Link="std\Runtime\MathHelpers.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Unsafe.cs" Link="std\Runtime\Unsafe.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ValueTuple.cs" Link="std\Runtime\ValueTuple.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Security\Sha256.cs" Link="std\Security\Sha256.cs" />
@@ -202,4 +216,17 @@
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Thread.cs" Link="std\Threading.Thread.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.cs" Link="std\Threading.cs" />
   </ItemGroup>
+  <!-- `dynamic`: every CallSite<T> the compiler emitted has a thunk the
+       generator wrote (generators/Dynamic.Check). Runs on the compiled IL,
+       before ILC; a miss fails the build with SOSD100. -->
+  <Target Name="SharpOsDynamicCheck" AfterTargets="CoreCompile" Condition="'$(SharpOsDynamicCheck)' != 'false'">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\generators\Dynamic.Check\Dynamic.Check.csproj" Targets="Build"
+             Properties="Configuration=Release"
+             RemoveProperties="RuntimeIdentifier;Platform;TargetFramework;SelfContained;PublishAot;_IsPublishing;Optimize;DebugType" />
+    <PropertyGroup>
+      <_SharpOsDotnet>$(DOTNET_HOST_PATH)</_SharpOsDotnet>
+      <_SharpOsDotnet Condition="'$(_SharpOsDotnet)' == ''">dotnet</_SharpOsDotnet>
+    </PropertyGroup>
+    <Exec Command="&quot;$(_SharpOsDotnet)&quot; &quot;$(MSBuildThisFileDirectory)..\generators\Dynamic.Check\bin\Release\net8.0\Dynamic.Check.dll&quot; &quot;@(IntermediateAssembly->'%(FullPath)')&quot;" />
+  </Target>
 </Project>

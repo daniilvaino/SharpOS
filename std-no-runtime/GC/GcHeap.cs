@@ -945,6 +945,33 @@ namespace SharpOS.Std.NoRuntime
         /// is neither the free marker nor inside [low, high), or whose size is
         /// impossible. Zero when the heap walks end to end. A debugging check.
         /// </summary>
+        /// <summary>
+        /// The first node of a free list that is not a free block of its
+        /// bucket: what a write into a freed object leaves behind (the
+        /// next-pointer at +12 is the first thing such a write overwrites).
+        /// </summary>
+        public static nint FindBrokenFreeNode()
+        {
+            GcMethodTable* freeMt = GcSweep.FreeObjectMt;
+            nint* heads = BucketHeads();
+            for (int b = 0; b < FreeBucketCount; b++)
+            {
+                uint guard = 0;
+                for (nint cur = heads[b]; cur != 0 && guard < 4000000u; guard++)
+                {
+                    if (((ulong)cur & 15) != 0 || FindSegmentContaining(cur) == null) return cur;
+                    GcObject* o = (GcObject*)cur;
+                    if (o->MethodTable != freeMt) return cur;
+                    uint size = o->ComputeSize();
+                    if (size < MinFreeBlockSize || BucketOf((size + 15u) & ~15u) != b) return cur;
+                    nint next = *(nint*)(cur + FreeNextOffset);
+                    if (next != 0 && (((ulong)next & 15) != 0 || FindSegmentContaining(next) == null)) return cur;
+                    cur = next;
+                }
+            }
+            return 0;
+        }
+
         public static nint FindBrokenObject(nint low, nint high)
         {
             GcMethodTable* freeMt = GcSweep.FreeObjectMt;
