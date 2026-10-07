@@ -149,10 +149,13 @@ namespace SharpOS.Std.NoRuntime
             GcHeap.BeginFreelistRebuild();
 
             GcSegmentHeader* seg = GcHeap.FirstSegment;
+            GcSegmentHeader* previous = null;
             while (seg != null)
             {
                 nint p = seg->ObjectStart;
                 nint end = seg->Current;
+                uint keptBefore = s_keptCount;
+                uint linkedBefore = GcHeap.FreeBlocksLinked;
 
                 // The run of adjacent dead bytes being accumulated. Zero start
                 // means there is none: no object ever lives at address zero.
@@ -213,11 +216,23 @@ namespace SharpOS.Std.NoRuntime
                     p += (nint)aligned;
                 }
 
+                // A segment with nothing alive goes back whole (step196) —
+                // before its one free block is linked: the memory source takes
+                // its pages, and a large object's segment does not sit empty.
+                GcSegmentHeader* next = seg->Next;
+                if (s_keptCount == keptBefore && p >= end && GcHeap.FreeBlocksLinked == linkedBefore
+                    && GcHeap.TryReleaseSegment(seg, previous))
+                {
+                    seg = next;
+                    continue;
+                }
+
                 // The segment ends the run too — never merge across the gap
                 // between two segments.
                 FlushRun(ref runStart, ref runBytes, freeMt);
 
-                seg = seg->Next;
+                previous = seg;
+                seg = next;
             }
 
             if (GcStress.VerifyHeap)

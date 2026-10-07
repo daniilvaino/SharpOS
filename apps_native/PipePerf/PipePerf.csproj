@@ -10,5 +10,6 @@
     <Compile Include="Program.cs" />
     <Compile Include="Tests.cs" />
     <Compile Include="Mixed.cs" />
+    <Compile Include="Upper.cs" />
   </ItemGroup>
 </Project>

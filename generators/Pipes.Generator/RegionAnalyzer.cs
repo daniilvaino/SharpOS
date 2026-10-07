@@ -388,13 +388,19 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
     // what comes out is not bound to the region.
     private static bool CopiedOut(IOperation? op)
     {
-        while (op is IParenthesizedOperation p) op = p.Operand;
-        if (op is not IConversionOperation c) return false;
-        if (c.OperatorMethod != null && !IsViewType(c.Type)) return true;
-        // Out of dynamic into a number, a string, an Expando, a class: a copy.
-        // Into object or View it is still the view.
-        return IsDynamic(c.Operand.Type) && c.Type != null && !IsDynamic(c.Type)
-               && c.Type.SpecialType != SpecialType.System_Object && !IsViewType(c.Type);
+        // Any conversion of a chain counts: `(object)(int)view` boxes a copy.
+        while (true)
+        {
+            while (op is IParenthesizedOperation p) op = p.Operand;
+            if (op is not IConversionOperation c) return false;
+            if (c.OperatorMethod != null && !IsViewType(c.Type)) return true;
+            // Out of dynamic into a number, a string, an Expando, a class: a copy.
+            // Into object or View it is still the view.
+            if (IsDynamic(c.Operand.Type) && c.Type != null && !IsDynamic(c.Type)
+                && c.Type.SpecialType != SpecialType.System_Object && !IsViewType(c.Type))
+                return true;
+            op = c.Operand;
+        }
     }
 
     private static IOperation? Strip(IOperation? op)

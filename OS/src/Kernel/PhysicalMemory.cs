@@ -42,6 +42,26 @@
         /// <summary>Pages sitting in the freelist right now.</summary>
         public static ulong FreeListPages => (ulong)s_freeListTop;
 
+        /// <summary>
+        /// Pages that can still be handed out: the freelist, the rest of the
+        /// current region and every usable region after it (step196: how many
+        /// processes fit).
+        /// </summary>
+        public static ulong AvailablePages()
+        {
+            ulong pages = (ulong)s_freeListTop + CursorRemainingBytes / PageSize;
+            for (uint i = s_nextRegionIndex; s_regions != null && i < s_regionCount; i++)
+            {
+                MemoryRegion* region = &s_regions[i];
+                if (region->Type != MemoryRegionType.Usable || region->PageCount == 0) continue;
+                ulong start = AlignUp(region->PhysicalStart, PageSize);
+                if (start < MinAllocAddress) start = MinAllocAddress;
+                ulong end = region->PhysicalStart + region->PageCount * PageSize;
+                if (end > start) pages += (end - start) / PageSize;
+            }
+            return pages;
+        }
+
         /// <summary>Bytes left in the region the bump cursor is currently in.</summary>
         public static ulong CursorRemainingBytes => s_regionEnd > s_cursor ? s_regionEnd - s_cursor : 0;
 

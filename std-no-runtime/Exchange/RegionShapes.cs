@@ -53,8 +53,48 @@ namespace SharpOS.Std.Exchange
 
         public bool IsArray => Elements != null && !IsString;
 
+        /// <summary>
+        /// A field by name. A name asked before is found by reference (step196):
+        /// a literal is one string object in its image, so the second
+        /// <c>v["A"]</c> compares references and hashes nothing.
+        /// </summary>
         public FieldShape Field(string name)
-            => ByName != null && ByName.TryGetValue(name, out FieldShape f) ? f : null;
+        {
+            NameHit[] hits = _hits;
+            if (hits != null)
+                for (int i = 0; i < hits.Length; i++)
+                    if ((object)hits[i].Name == (object)name) return hits[i].Field;
+            if (ByName == null || name == null || !ByName.TryGetValue(name, out FieldShape f)) return null;
+            if (hits == null || hits.Length < MaxHits)
+            {
+                // Replaced whole, never changed in place: a reader on another
+                // thread sees the old array or the new one.
+                int count = hits == null ? 0 : hits.Length;
+                var grown = new NameHit[count + 1];
+                for (int i = 0; i < count; i++) grown[i] = hits[i];
+                grown[count] = new NameHit(name, f);
+                _hits = grown;
+            }
+            return f;
+        }
+
+        private const int MaxHits = 16;
+        private NameHit[] _hits;
+
+        private sealed class NameHit
+        {
+            public readonly string Name;
+            public readonly FieldShape Field;
+
+            public NameHit(string name, FieldShape field)
+            {
+                Name = name;
+                Field = field;
+            }
+        }
+
+        /// <summary>Plans that copy this type into this image's types (ViewCopy.Into), newest first.</summary>
+        internal object IntoPlans;
 
         /// <summary>The member name for a value of this enum; null when none matches.</summary>
         public string EnumName(long value)
@@ -92,8 +132,55 @@ namespace SharpOS.Std.Exchange
 
         private RegionShapes(byte[] schema) => Schema = schema;
 
+        // A copy for another reader (step196): the types and their index are
+        // read only and shared; the check's buffers are each reader's own.
+        private RegionShapes(RegionShapes parsed, byte[] schema)
+        {
+            Schema = schema;
+            _byKey = parsed._byKey;
+            _byName = parsed._byName;
+            _index = parsed._index;
+        }
+
+        // The last few descriptions parsed: every pipe a writer opens declares
+        // the same catalog, and parsing it is most of a connection's cost.
+        private const int ParsedKept = 4;
+        private static RegionShapes[] s_parsed;
+        private static int s_parsedNext;
+
         /// <summary>Indexes a schema; null and a complaint when it is malformed or implausible.</summary>
         public static RegionShapes Parse(byte[] schema, out string complaint)
+        {
+            RegionShapes[] parsed = s_parsed;
+            if (parsed != null && schema != null)
+            {
+                for (int i = 0; i < parsed.Length; i++)
+                {
+                    RegionShapes known = parsed[i];
+                    if (known != null && SameBytes(known.Schema, schema))
+                    {
+                        complaint = null;
+                        return new RegionShapes(known, schema);
+                    }
+                }
+            }
+            RegionShapes made = ParseNew(schema, out complaint);
+            if (made != null)
+            {
+                RegionShapes[] kept = s_parsed ??= new RegionShapes[ParsedKept];
+                kept[s_parsedNext++ % ParsedKept] = made;
+            }
+            return made;
+        }
+
+        private static bool SameBytes(byte[] a, byte[] b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (a == null || b == null || a.Length != b.Length) return false;
+            return new ReadOnlySpan<byte>(a).SequenceEqual(new ReadOnlySpan<byte>(b));
+        }
+
+        private static RegionShapes ParseNew(byte[] schema, out string complaint)
         {
             Dictionary<ulong, TypeKeys.Description> descriptions = RegionSchema.Parse(schema ?? new byte[4], out complaint);
             if (descriptions == null) return null;

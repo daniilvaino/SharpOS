@@ -20,6 +20,10 @@ namespace System
 
         public static void ReRegisterForFinalize(object obj) { }
 
+        /// <summary>Keeps the object reachable up to this call: the precise walker sees it live here.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void KeepAlive(object? obj) { }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static T[] AllocateUninitializedArray<T>(int length, bool pinned = false)
         {

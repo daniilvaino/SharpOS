@@ -1227,22 +1227,22 @@ namespace AotTests
 
 #pragma warning restore SOSR003
 
+        // The kernel's readers wait first with their own types; this writer
+        // comes second with another. The type is the writer's: it is not
+        // refused, and each reader is, at its receive (step196).
         private static void PipeConnection()
         {
             Probe(8, 1, null);
             PipeStatus layout = PipeWriter<SharpOS.Probe.Versioned>.Connect("probe.typed.layout", out PipeWriter<SharpOS.Probe.Versioned> w1, out string e1);
             PipeStatus other = PipeWriter<SharpOS.Probe.Versioned>.Connect("probe.typed.other", out PipeWriter<SharpOS.Probe.Versioned> w2, out string e2);
-            Probe(8, 0, null);
+            ulong* refused = stackalloc ulong[2];
+            Probe(8, 0, refused);
             w1?.Dispose();
             w2?.Dispose();
-            AppHost.WriteString("[pipe] connection, same type, other layout: " + (e1 ?? "(no error)") + "\n");
-            AppHost.WriteString("[pipe] connection, other type: " + (e2 ?? "(no error)") + "\n");
-            Check("pipe 9: same type, other layout: refused, naming the type and the first field on both sides",
-                  layout == PipeStatus.TypeMismatch
-                  && e1 == "type SharpOS.Probe.Versioned: field #0 differs: writer A:System.Int32@8, reader A:System.Int64@8");
-            Check("pipe 9: another type: refused, naming both",
-                  other == PipeStatus.TypeMismatch
-                  && e2 == "different types: writer sends SharpOS.Probe.Versioned, reader expects SharpOS.Probe.Different");
+            Check("pipe 9: same type, other layout: the writer is not refused; the reader is, naming the type and the first field on both sides",
+                  layout == PipeStatus.Ok && refused[0] == 1);
+            Check("pipe 9: another type: the writer is not refused; the reader is, naming both",
+                  other == PipeStatus.Ok && refused[1] == 1);
         }
 
         private static void PipeRefusal()

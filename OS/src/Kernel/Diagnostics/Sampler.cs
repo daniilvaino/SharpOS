@@ -572,6 +572,12 @@ namespace OS.Kernel.Diagnostics
             WriteULong(OS.Kernel.Threading.Preemption.YieldsWhileSuppressed);
             Serial.WriteString(" critDepth=");
             WriteULong(OS.Kernel.Threading.Preemption.Depth);
+            Serial.WriteString(" switches=");
+            WriteULong(OS.Kernel.Threading.Preemption.Switches);
+            Serial.WriteString(" declined=");
+            WriteULong(OS.Kernel.Threading.Preemption.Declined);
+            Serial.WriteString(" deferred=");
+            WriteULong(OS.Kernel.Threading.Preemption.Deferred);
             Serial.WriteString(" halt=");
             WriteULong(OS.Kernel.Threading.Scheduler.IdleHalts);
             Serial.WriteString(" busy=");

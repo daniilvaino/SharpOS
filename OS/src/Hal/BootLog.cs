@@ -246,6 +246,11 @@ namespace OS.Hal
         /// as it fills rather than being closed off per line — otherwise every
         /// line would cost 512 bytes and the file would read as one message per
         /// screenful of padding.</summary>
+        private static ulong s_deferredFlushes;
+
+        /// <summary>Flushes put off because the volume was busy inside a critical section.</summary>
+        public static ulong DeferredFlushes => s_deferredFlushes;
+
         public static void Flush()
         {
             if (!s_ready || s_inFlush || s_used == 0) return;
@@ -257,12 +262,24 @@ namespace OS.Hal
             for (int i = s_used; i < SectorSize; i++) s_line[i] = (byte)' ';
 
             bool ok;
+            bool busy = false;
             ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
             fixed (byte* p = s_line)
             {
-                ok = Fat32.WriteSectorAt(s_startLba + s_sector, p);
+                // Inside a critical section the volume is not waited for
+                // (waiting yields): a busy volume leaves the line in the
+                // sector buffer, and the next flush writes it.
+                ok = OS.Kernel.Threading.Preemption.Depth != 0
+                    ? Fat32.TryWriteSectorAt(s_startLba + s_sector, p, out busy)
+                    : Fat32.WriteSectorAt(s_startLba + s_sector, p);
             }
             OS.Kernel.Diagnostics.PerfCounters.CountDiskLog(started);
+            if (busy)
+            {
+                s_deferredFlushes++;
+                s_inFlush = false;
+                return;
+            }
 
             if (!ok)
             {

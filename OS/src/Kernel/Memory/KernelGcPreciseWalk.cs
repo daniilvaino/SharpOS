@@ -356,7 +356,32 @@ namespace OS.Kernel.Memory
                                                          delegate* unmanaged<nuint, void> markRoot)
         {
             ulong* f = (ulong*)frame;
-            ulong rsp = f[21];
+            return ScanStackConservatively(thread, f[21], f, markRoot);
+        }
+
+        /// <summary>
+        /// A thread that gave up the CPU to a deferred tick (Preemption
+        /// .TakeDeferred, step196), scanned word by word from its saved stack
+        /// pointer: the callee-saved registers its switch pushed are there.
+        /// </summary>
+        /// <remarks>
+        /// It may have yielded at the end of an allocator's critical section,
+        /// with the object just allocated held only as a raw address — which
+        /// a precise walk does not see. A timer tick at the same instruction
+        /// gets the conservative scan; so does this.
+        /// </remarks>
+        public static bool ScanParkedConservatively(OS.Kernel.Threading.Thread thread, delegate* unmanaged<nuint, void> markRoot)
+        {
+            if (thread.ContextBlock == null) return false;
+            return ScanStackConservatively(thread, *(ulong*)thread.ContextBlock, null, markRoot);
+        }
+
+        // From rsp to the top of whichever stack holds it — the thread's own,
+        // or an app stack it runs app code on — and the registers of an
+        // interrupt frame when there is one.
+        private static bool ScanStackConservatively(OS.Kernel.Threading.Thread thread, ulong rsp, ulong* f,
+                                                    delegate* unmanaged<nuint, void> markRoot)
+        {
             ulong low = (ulong)thread.StackBase;
             ulong high = (ulong)thread.StackTop;
 
@@ -392,11 +417,12 @@ namespace OS.Kernel.Memory
                 OS.Hal.Console.Write("[walk-trace] conservative rsp=0x"); OS.Hal.Console.WriteHex(rsp);
                 OS.Hal.Console.Write(" low=0x"); OS.Hal.Console.WriteHex(low);
                 OS.Hal.Console.Write(" high=0x"); OS.Hal.Console.WriteHex(high);
-                OS.Hal.Console.Write(" rip=0x"); OS.Hal.Console.WriteHex(f[18]);
+                if (f != null) { OS.Hal.Console.Write(" rip=0x"); OS.Hal.Console.WriteHex(f[18]); }
                 OS.Hal.Console.WriteLine("");
             }
-            for (int i = 1; i <= 15; i++)
-                MarkCandidate(f[i], markRoot);
+            if (f != null)
+                for (int i = 1; i <= 15; i++)
+                    MarkCandidate(f[i], markRoot);
             for (ulong p = rsp & ~7UL; p < high; p += 8)
                 MarkCandidate(*(ulong*)p, markRoot);
             return true;

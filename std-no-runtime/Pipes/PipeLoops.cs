@@ -64,7 +64,8 @@ namespace SharpOS.Std.Pipes
             Region<T> region = Receive(reuse);
             if (region != null || Status == PipeStatus.EndOfStream) return region;
             throw new PipeException(Status, Status == PipeStatus.Refused ? "a message could not be taken: " + LastError
-                                                                         : Pipe.Explain(Status));
+                                          : Status == PipeStatus.TypeMismatch ? LastError
+                                          : Pipe.Explain(Status));
         }
 
         /// <summary>
@@ -203,6 +204,9 @@ namespace SharpOS.Std.Pipes
             {
                 output = Pipe.Write<T>(name);
                 Pump(output, "pipe '" + name + "'");
+                // Closed only once its reader has come: closed before, the
+                // pipe goes with whatever it held, the end of the stream too.
+                PipeTransport.WaitPeer(output.Handle);
             }
             finally
             {
@@ -461,6 +465,23 @@ namespace SharpOS.Std.Pipes
                     }
                     region.End(movedOn);
                 }
+
+                // Nothing passed: the output is still opened — under the
+                // input's type, if it is known by now — and closed, so the
+                // next stage sees the end of the stream (step196). By name,
+                // only once that stage has come.
+                if (!declared && !screen)
+                {
+                    byte[] schema = _reader.Schema ?? PipeTransport.Schema(_reader.Handle, out _);
+                    ulong rootKey = _reader.RootKey;
+                    if (schema != null && rootKey == 0) PipeTransport.Schema(_reader.Handle, out rootKey);
+                    if (name != null)
+                        PipeTransport.Connect(name, PipeRole.Writer, 16, PipeOverflow.DropOldest, schema, rootKey,
+                                              out output, out _);
+                    else if (held != 0 && schema != null)
+                        PipeTransport.OpenEnd(held, schema, rootKey, out _);
+                }
+                if (name != null && output != 0) PipeTransport.WaitPeer(output);
             }
             finally
             {

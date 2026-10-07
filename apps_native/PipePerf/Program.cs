@@ -85,6 +85,7 @@ namespace PipeApps
             Baseline("holder", 200, holderObjects, WriteHolder, ReadHolder, holder);
             Baseline("expando", 1000, bagObjects, WriteBag, ReadBag, bag);
 
+            UpperPaths();
             Tests();
 
             Console.WriteLine("[pipeperf] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());

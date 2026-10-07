@@ -295,6 +295,27 @@
         // (SharpOS.Std.Runtime.ExceptionNames). The unhandled-exception report
         // prints it (step194 §3). Zero: an older kernel.
         public ulong SetExceptionNamerAddress;
+
+        // Waits until the other end of a pipe has come (step196): int (int
+        // handle). A stage closing its output by name waits for its reader
+        // first, or the end of the stream goes with the pipe. Zero: older kernel.
+        public ulong PipeWaitPeerAddress;
+
+        // A tick that came while the app suppressed switching (a byte, 1 =
+        // pending), and the switch it asked for: void (). The app's critical
+        // sections end with a look at the byte (step196). Zero: older kernel.
+        public ulong PreemptionPendingAddress;
+        public ulong YieldAddress;
+
+        // The app's heap (step196): a range of addresses in the process's slot,
+        // a budget of pages, and the calls that give pages under it and take
+        // them back — int (ulong address, ulong bytes), 0 = done. The heap no
+        // longer lives in the image. Zero: an older kernel.
+        public ulong HeapBase;
+        public ulong HeapBytes;
+        public ulong HeapBudget;
+        public ulong HeapCommitAddress;
+        public ulong HeapReleaseAddress;
     }
 
     /// <summary>

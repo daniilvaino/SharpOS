@@ -170,6 +170,13 @@ namespace OS.Hal.Idt
             return true;
         }
 
+        /// <summary>Gives a vector's gate an interrupt stack (TSS IST slot 1..7).</summary>
+        public static void SetInterruptStack(int vector, byte ist)
+        {
+            if (!s_installed) return;
+            ((IdtDescriptor*)s_buffer)[vector].IstAndReserved = (byte)(ist & 7);
+        }
+
         /// <summary>
         /// Point one vector above the exception range at our own dispatcher,
         /// replacing the firmware entry inherited at Install. Call only after
@@ -307,6 +314,16 @@ namespace OS.Hal.Idt
                 // Resume stub unavailable: page IS now backed, but we can't
                 // resume — fall through (will surface as AV; should not happen
                 // once the exec buffer is wired, i.e. by the time CLR runs).
+            }
+
+            // A double fault, on its own stack (Tss): an app thread's stack ran
+            // out — the process ends and the machine goes on (step196). Any
+            // other double fault is the kernel's and panics, with the dump
+            // below instead of the silent reset it used to be.
+            if (vector == 8 && OS.Kernel.Exec.JumpStub.TryRecoverStackOverflow(frame))
+            {
+                if (OS.Hal.X64Asm.TryResumeFrame(frame))
+                    return;
             }
 
             if (OS.Boot.EH.HwFaultBridge.IsSupported(vector))

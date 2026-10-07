@@ -59,6 +59,44 @@ namespace OS.Kernel.Process
         // ends then say "broken", not "end of stream".
         public bool Failed;
 
+        // HPET moments of its life (step196, where a start-and-exit goes):
+        // runnable, first instruction of its code, its runtime set up (before
+        // and after the build banner), its code done, its ending done, its
+        // waiters woken.
+        public ulong TRunnable, TEntry, TMark0, TMark1, TCodeDone, TEnded, TWoken;
+
+        // The heap's pages (step196): bytes given, and every range given as a
+        // (start, bytes) pair — what the process's end gives back.
+        public ulong HeapCommitted;
+        public System.Collections.Generic.List<ulong> HeapRanges;
+
+        // Stack windows in use: bit 0 is the main thread's (step196).
+        public ulong StackWindowsUsed = 1;
+
+        /// <summary>A free stack window for a new thread, or -1 when all are taken.</summary>
+        public int TakeStackWindow()
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
+            {
+                for (int i = 1; i < AppProcesses.StackWindows; i++)
+                    if ((StackWindowsUsed & (1UL << i)) == 0)
+                    {
+                        StackWindowsUsed |= 1UL << i;
+                        return i;
+                    }
+                return -1;
+            }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
+
+        public void FreeStackWindow(int window)
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            StackWindowsUsed &= ~(1UL << window);
+            OS.Kernel.Threading.Preemption.Allow();
+        }
+
         // The app's namer for its exceptions (service SetExceptionNamer):
         // nint (nint exception) -> a string of the app's. Zero: none.
         public nint ExceptionNamer;
@@ -95,9 +133,27 @@ namespace OS.Kernel.Process
 
         public static ulong ImageBaseForSlot(int slot) => ImageRegionBase + (ulong)slot * ImageRegionStride;
 
-        // Main stacks: the windows ProcessImageBuilder already spaced 256 GiB
-        // apart (an overrun faults instead of reaching a neighbour).
-        public static ulong StackTopForSlot(int slot) => ProcessImageBuilder.StackMappedTopForDepth((uint)slot);
+        // A slot, from its base (step196):
+        //   [0, 64 MiB)        the image
+        //   [64, 704 MiB)      the heap's addresses, pages given as it grows
+        //   [768 MiB, 1 GiB)   thread stacks, one 4 MiB window each: the stack
+        //                      at the window's top, nothing mapped below it.
+        // The gap below a stack is the guard: compiled code does not probe a
+        // big frame page by page (__chkstk is a no-op here), so a single guard
+        // page would be jumped over; 3 MiB of nothing is not.
+        public const ulong HeapRegionOffset = 64UL << 20;
+        public const ulong HeapRegionBytes = 640UL << 20;
+
+        /// <summary>Pages an app's heap may hold at once: the old pool's 64 MiB.</summary>
+        public const ulong HeapBudgetBytes = 64UL << 20;
+        public const ulong StackWindowBytes = 4UL << 20;
+        public const int StackWindows = 64;
+        public const ulong MainStackBytes = 1UL << 20;
+        public const ulong WorkerStackBytes = 256UL << 10;
+
+        /// <summary>The top of a stack window of a slot; window 0 is the main thread's.</summary>
+        public static ulong StackTopForSlot(int slot, int window = 0)
+            => ImageBaseForSlot(slot) + ImageRegionStride - (ulong)window * StackWindowBytes;
 
         // Made by the first start, not by a class constructor: FindByAddress
         // is asked from interrupt handlers, where nothing may be allocated.
@@ -120,6 +176,15 @@ namespace OS.Kernel.Process
         }
 
         public static int Records => s_records?.Count ?? 0;
+
+        /// <summary>Pages the heaps of the running processes hold.</summary>
+        public static ulong RunningHeapPages()
+        {
+            ulong bytes = 0;
+            for (int i = 0; i < MaxRunning && s_slots != null; i++)
+                if (s_slots[i] != null) bytes += s_slots[i].HeapCommitted;
+            return bytes / 4096;
+        }
 
         /// <summary>A free slot and an id, or -1 when <see cref="MaxRunning"/> are running.</summary>
         public static int TryReserve(AppProcess process)

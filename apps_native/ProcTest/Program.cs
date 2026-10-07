@@ -49,6 +49,8 @@ namespace PipeApps
             if (args.Length > 0 && args[0] == "--child")
                 return Child(args);
             s_quick = args.Length > 0 && args[0] == "--quick";
+            for (int i = 0; i + 1 < args.Length; i++)
+                if (args[i] == "--only") s_only = args[i + 1];
 
             Console.WriteLine("[proctest] begin, process " + Process.CurrentId.ToString()
                               + (StressArgs.Every != 0 ? ", gc-stress " + StressArgs.Every.ToString() : ""));
@@ -57,11 +59,10 @@ namespace PipeApps
             System.Threading.Tasks.Task.Run(() => { }).Wait();
             ulong[] before = Process.KernelStats();
 
-            // Under --gc-stress (test 13): 2-6 and 11 as the task asks, with
-            // 1, 9 and 10 that cost little. Not 7, 8, 12, 14: a child whose
-            // threads collect back to back holds preemption off for most of
-            // every tick, and its other threads starve (a scheduling window
-            // the step's report names); 12 and 14 are long and measure.
+            // Under --gc-stress (test 13): everything but 12 and 14, which are
+            // long and measure. 7 and 8 run too since step196: a tick that
+            // comes while a collector suppresses switching is taken when the
+            // suppression ends, and the other threads are not starved.
             bool full = StressArgs.Every == 0;
             Run("1 addresses", Addresses);
             Run("1 two batteries", TwoBatteries);
@@ -70,11 +71,15 @@ namespace PipeApps
             Run("4 type mismatch", TypeMismatch);
             Run("5 queue limit", QueueLimit);
             Run("6 side deaths", SideDeaths);
-            if (full) Run("7 worker exceptions", WorkerExceptions);
-            if (full) Run("8 kill", KillWithWorkers);
+            Run("7 worker exceptions", WorkerExceptions);
+            Run("8 kill", KillWithWorkers);
+            Run("15 a collector does not starve others", CollectorShare);
+            Run("16 stack overflow", StackOverflow);
+            Run("17 large objects after many small", LargeObjects);
             Run("9 ends", Ends);
             Run("10 stdin and stdout", LauncherTalks);
             Run("11 WriteTo across three", WriteToAcrossThree);
+            Run("11b a stage that passes nothing", EmptyStage);
             if (full) Run("12 resources back", ResourcesBack);
             if (full) Run("14 measurements", Measurements);
 
@@ -90,8 +95,12 @@ namespace PipeApps
         }
 
         // A test that throws fails, and the next one runs.
+        // --only N: just test N (its name's number), for chasing one.
+        private static string s_only;
+
         private static void Run(string name, Action test)
         {
+            if (s_only != null && !name.StartsWith(s_only + " ")) return;
             Console.WriteLine("[proctest] " + name);
             try { test(); }
             catch (Exception e) { Check(name + ": threw " + e.Message, false); }
@@ -239,16 +248,22 @@ namespace PipeApps
 
         private static void TypeMismatch()
         {
-            // By name, the reader waiting: PIPEGEN, second, cannot write.
+            // By name, the reader waiting: the type is the writer's, so
+            // PIPEGEN, second, is not refused; the reader is, at its first
+            // receive (step196).
+            // The writer finishes first (3 fit the queue): a reader refusing
+            // while it still writes would leave it a broken pipe, rightly.
             var waiting = Pipe.Read<LogEntry>("t4.name");
             Process g = Start("PIPEGEN.EXE", A("3", "t4.name"));
-            Check("4: by name, the writer second: its write end throws, exit 134", Finish(g) == 134);
-            waiting.Dispose();
+            int written = Finish(g);
+            string message = Refusal(waiting);
+            Check("4: by name, the writer second: it writes (exit 0); the reader's first receive throws, naming the type and the field",
+                  written == 0 && Mentions(message, "PipeApps.LogEntry", "field"));
 
             // By name, the writer waiting on a full queue: the reader here throws.
             g = Start("PIPEGEN.EXE", A("100", "t4.name2"));
             WaitForNames(1);
-            string message = null;
+            message = null;
             try { Pipe.Read<LogEntry>("t4.name2"); }
             catch (PipeException e) { message = e.Message; }
             Console.WriteLine("[proctest] " + (message ?? "no exception"));
@@ -256,12 +271,15 @@ namespace PipeApps
             Check("4: by name, the reader second: PipeException naming the type and the field",
                   Mentions(message, "PipeApps.LogEntry", "field") && Finish(g) == 137);
 
-            // Standard ends: this end typed first, PIPEGEN's open fails.
+            // Standard ends: this end typed first; PIPEGEN's output is still
+            // its own type, and this reader is refused at its first receive.
             var pair = Pipe.Create();
             var reader = pair.ReadEnd.Read<LogEntry>();
             g = Start("PIPEGEN.EXE", A("3"), output: pair.WriteEnd);
-            Check("4: standard output typed second: PIPEGEN ends with 134", Finish(g) == 134);
-            reader.Dispose();
+            written = Finish(g);
+            message = Refusal(reader);
+            Check("4: standard output typed second: PIPEGEN writes (exit 0), the reader's receive throws, naming the type and the field",
+                  written == 0 && Mentions(message, "PipeApps.LogEntry", "field"));
 
             // Standard ends: PIPEGEN first, this end second.
             pair = Pipe.Create();
@@ -273,6 +291,16 @@ namespace PipeApps
             Console.WriteLine("[proctest] " + (message ?? "no exception"));
             Check("4: an end of a pair typed second: PipeException naming the type and the field",
                   code == 0 && Mentions(message, "PipeApps.LogEntry", "field"));
+        }
+
+        // What a reader's first receive says, when it throws.
+        private static string Refusal(PipeReader<LogEntry> reader)
+        {
+            string message = null;
+            try { foreach (LogEntry e in reader) { } }
+            catch (PipeException e) { message = e.Message; }
+            Console.WriteLine("[proctest] " + (message ?? "no exception"));
+            return message;
         }
 
         // Until n pipes wait by name for their second end: the other process
@@ -413,6 +441,72 @@ namespace PipeApps
             }
         }
 
+        // ---- 15 (step196) ----
+
+        // A thread collecting garbage without a pause in one process, a
+        // counter in another: the counter gets at least a quarter of what it
+        // gets alone. Before the deferred tick it got almost nothing — every
+        // tick landed inside the collector's suppression.
+        private static void CollectorShare()
+        {
+            int alone = Count();
+            Process gc = Start("PROCTEST.EXE", A("--child", "gc-spin"));
+            Thread.Sleep(50);
+            int shared = Count();
+            gc.Kill();
+            int code = Finish(gc);
+            Console.WriteLine("[proctest] counter alone " + alone.ToString() + ", beside a collector " + shared.ToString());
+            Check("15: beside a process collecting without a pause, a counter gets at least a quarter of its time alone",
+                  alone > 0 && shared * 4 >= alone && code == 137);
+        }
+
+        // Thousands of loop turns a counting process makes in one second.
+        private static int Count()
+        {
+            var pair = Pipe.Create();
+            Process c = Start("PROCTEST.EXE", A("--child", "counter"), output: pair.WriteEnd);
+            int turns = 0;
+            foreach (Seq s in pair.ReadEnd.Read<Seq>()) turns = s.N;
+            Finish(c);
+            return turns;
+        }
+
+        // ---- 16 (step196) ----
+
+        // Recursion until the stack runs out, on the main thread and on a
+        // worker: the process ends with 134, and the kernel and the other
+        // processes go on — this one starts more, and the kernel's books close.
+        private static void StackOverflow()
+        {
+            ulong[] before = Process.KernelStats();
+            int main = Finish(Start("PROCTEST.EXE", A("--child", "overflow", "main")));
+            int worker = Finish(Start("PROCTEST.EXE", A("--child", "overflow", "worker")));
+            int after = Finish(Start("PROCTEST.EXE", A("--child", "nop")));
+            Settle();
+            ulong[] now = Process.KernelStats();
+            Check("16: a stack overflow on the main thread ends the process with 134", main == 134);
+            Check("16: on a worker thread too", worker == 134);
+            Check("16: and the machine goes on: another process runs, the kernel's books close",
+                  after == 0 && SameStats(before, now));
+        }
+
+        // ---- 17 (step196) ----
+
+        // A heap carved by small objects and collections still gives a large
+        // one: the child answers which of the three it got (bits), and the
+        // heap's pages go back when it ends.
+        private static void LargeObjects()
+        {
+            ulong[] before = Process.KernelStats();
+            int got = Finish(Start("PROCTEST.EXE", A("--child", "large")));
+            Settle();
+            ulong[] now = Process.KernelStats();
+            Check("17: after 10 000 small allocations and collections: new byte[8 << 20]", (got & 1) != 0);
+            Check("17: a List<int> of a million", (got & 2) != 0);
+            Check("17: a StringBuilder of a megabyte", (got & 4) != 0);
+            Check("17: the heap's pages back at the end", SameStats(before, now));
+        }
+
         // ---- 9 ----
 
         private static void Ends()
@@ -507,6 +601,31 @@ namespace PipeApps
                   Finish(a) == 0 && Finish(b) == 0 && Finish(c) == 0 && side == 11 && sent != 0 && sent == arrived);
         }
 
+        // ---- 11b (step196) ----
+
+        // A view stage (Pipe.Read().WriteTo) whose input ends before any
+        // message: the next stage still gets the end of the stream — on a
+        // standard end, and by name with the reader coming late.
+        private static void EmptyStage()
+        {
+            var input = Pipe.Create(); var output = Pipe.Create();
+            Process s = Start("PROCTEST.EXE", A("--child", "t11-raw"), input: input.ReadEnd, output: output.WriteEnd);
+            input.WriteEnd.Dispose();
+            int n = 0;
+            foreach (View v in output.ReadEnd.Read()) n++;
+            Check("11b: a view stage given nothing: the next one sees the end of the stream (standard ends)",
+                  n == 0 && Finish(s) == 0);
+
+            input = Pipe.Create();
+            s = Start("PROCTEST.EXE", A("--child", "raw-to-name", "t11b.late"), input: input.ReadEnd);
+            input.WriteEnd.Dispose();
+            Thread.Sleep(200);                 // the stage is done with its input before its reader comes
+            n = 0;
+            foreach (Seq q in Pipe.Read<Seq>("t11b.late")) n++;
+            Check("11b: the same by name, its reader coming late: the end of the stream, not a wait",
+                  n == 0 && Finish(s) == 0);
+        }
+
         // ---- 12 ----
 
         private static void ResourcesBack()
@@ -584,15 +703,89 @@ namespace PipeApps
         private static void Measurements()
         {
             const int Starts = 20;
+            Settle();
+            double[] l0 = Process.LifeTimes();
             double[] t0 = Process.StartTimes();
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            for (int i = 0; i < Starts; i++) Finish(Start("PROCTEST.EXE", A("--child", "nop")));
+            long inStart = 0, inFinish = 0;
+            for (int i = 0; i < Starts; i++)
+            {
+                long a = clock.ElapsedTicks;
+                Process child = Start("PROCTEST.EXE", A("--child", "nop"));
+                long b = clock.ElapsedTicks;
+                Finish(child);
+                inStart += b - a;
+                inFinish += clock.ElapsedTicks - b;
+            }
             long startUs = clock.ElapsedTicks * 1000000 / System.Diagnostics.Stopwatch.Frequency / Starts;
+            Console.WriteLine("[perf] proc.launcher.start_call_us=" + (inStart * 1000000 / System.Diagnostics.Stopwatch.Frequency / Starts).ToString()
+                              + " finish_call_us=" + (inFinish * 1000000 / System.Diagnostics.Stopwatch.Frequency / Starts).ToString());
             double[] t1 = Process.StartTimes();
+            double[] l1 = Process.LifeTimes();
             Console.WriteLine("[perf] proc.start_and_exit_us=" + startUs.ToString());
             string[] phases = { "", "read", "load", "build", "sync_low", "rest" };
+            double kernelStart = 0;
             for (int i = 1; i < 6; i++)
+            {
+                kernelStart += t1[i] - t0[i];
                 Console.WriteLine("[perf] proc.start." + phases[i] + "_us=" + ((long)((t1[i] - t0[i]) * 1000 / Starts)).ToString());
+            }
+
+            // After the start (step196): per ended process, and what is left —
+            // the launcher's own side (its Start and WaitForExit calls, the
+            // record's release).
+            double lives = l1[0] - l0[0];
+            double wakes = l1[6] - l0[6];
+            string[] life = { "", "to_entry", "runtime_setup", "banner", "code", "ending" };
+            double accounted = kernelStart / Starts;
+            for (int i = 1; i < 6; i++)
+            {
+                double ms = lives > 0 ? (l1[i] - l0[i]) / lives : 0;
+                accounted += ms;
+                Console.WriteLine("[perf] proc.life." + life[i] + "_us=" + ((long)(ms * 1000)).ToString());
+            }
+            double wake = wakes > 0 ? (l1[7] - l0[7]) / wakes : 0;
+            accounted += wake;
+            Console.WriteLine("[perf] proc.life.wake_us=" + ((long)(wake * 1000)).ToString()
+                              + " lives=" + ((long)lives).ToString() + " wakes=" + ((long)wakes).ToString());
+            Console.WriteLine("[perf] proc.life.launcher_side_us=" + ((long)(startUs - accounted * 1000)).ToString());
+            Console.WriteLine("[perf] proc.start.service_us=" + ((long)((l1[13] - l0[13]) / Starts * 1000)).ToString()
+                              + " start_from_path_us=" + ((long)((l1[14] - l0[14]) / Starts * 1000)).ToString());
+            string[] gaps = { "lock", "args", "start_process", "reserve", "tail", "manifest" };
+            for (int i = 0; i < 6; i++)
+                Console.WriteLine("[perf] proc.start.gap." + gaps[i] + "_us=" + ((long)((l1[15 + i] - l0[15 + i]) / Starts * 1000)).ToString());
+            string[] ending = { "threads", "resources", "heap", "mappings", "log" };
+            for (int i = 0; i < 5; i++)
+                Console.WriteLine("[perf] proc.life.ending." + ending[i] + "_us="
+                                  + (lives > 0 ? (long)((l1[8 + i] - l0[8 + i]) / lives * 1000) : 0).ToString());
+
+            // What an idle process holds — its image, stack, heap and tables —
+            // and so how many fit in what is free (step196). Four children
+            // waiting on their input.
+            const int Idle = 4;
+            Settle();
+            ulong[] m0 = Process.MemoryPages();
+            ulong used0 = Process.KernelStats()[0];
+            var waiting = new Process[Idle];
+            var inputs = new PipeWriteEnd[Idle];
+            for (int i = 0; i < Idle; i++)
+            {
+                var idle = Pipe.Create();
+                inputs[i] = idle.WriteEnd;
+                waiting[i] = Start("PROCTEST.EXE", A("--child", "wait-stdin"), input: idle.ReadEnd);
+            }
+            Thread.Sleep(300);
+            ulong[] m1 = Process.MemoryPages();
+            ulong used1 = Process.KernelStats()[0];
+            ulong perProcess = ((used1 - used0) + (m1[0] - m0[0])) / Idle;
+            for (int i = 0; i < Idle; i++)
+            {
+                inputs[i].Dispose();
+                Finish(waiting[i]);
+            }
+            ulong fit = perProcess == 0 ? 0 : (m1[1] + m1[2]) / perProcess + Idle;
+            Console.WriteLine("[perf] proc.idle_kib=" + (perProcess * 4).ToString() + " free_mib=" + ((m1[1] + m1[2]) / 256).ToString()
+                              + " fit_by_memory=" + fit.ToString() + " slots=16");
 
             // One message — an object with a number and a string — three ways,
             // each side timed apart: 2000 written into a queue that holds them

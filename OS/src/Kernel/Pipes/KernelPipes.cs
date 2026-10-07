@@ -66,6 +66,11 @@ namespace OS.Kernel.Pipes
             public ulong ReaderKey;
             public int Version;
 
+            // The writer's type is not the one the reader declared (step196):
+            // the writer was not refused — the type is its — and the reader's
+            // receives answer TypeMismatch; it builds the text itself.
+            public bool Mismatch;
+
             public uint BlockOwner => PipeOwnerBase | Id;
         }
 
@@ -168,8 +173,16 @@ namespace OS.Kernel.Pipes
                 byte[] readerSchema = role == PipeRole.Reader ? schema : p.ReaderSchema;
                 ulong readerKey = role == PipeRole.Reader ? rootKey : p.ReaderKey;
                 error = TypeCheck.Compare(writerSchema, writerKey, readerSchema, readerKey);
-                if (error != null)
+                // The type is the writer's: a reader that comes second with
+                // another is refused; a writer that comes second is not — the
+                // reader learns of it at its first receive.
+                if (error != null && role == PipeRole.Reader)
                     return PipeStatus.TypeMismatch;
+                if (error != null)
+                {
+                    p.Mismatch = true;
+                    error = null;
+                }
 
                 int end = NewEnd(p, holder, role);
                 if (end < 0) return PipeStatus.NoMemory;
@@ -204,11 +217,10 @@ namespace OS.Kernel.Pipes
                 if (!TryEnd(holder, handle, (PipeRole)0, out Pipe p)) return PipeStatus.BadHandle;
                 if (s_ends[handle - 1].Role == PipeRole.Writer)
                 {
+                    // Never refused: a reader that declared another type is
+                    // told at its next receive (step196).
                     if (p.ReaderSchema != null)
-                    {
-                        error = TypeCheck.Compare(schema, rootKey, p.ReaderSchema, p.ReaderKey);
-                        if (error != null) return PipeStatus.TypeMismatch;
-                    }
+                        p.Mismatch = TypeCheck.Compare(schema, rootKey, p.ReaderSchema, p.ReaderKey) != null;
                     p.Schema = Copy(schema);
                     p.RootKey = rootKey;
                 }
@@ -355,6 +367,7 @@ namespace OS.Kernel.Pipes
             try
             {
                 if (!TryEnd(holder, handle, PipeRole.Reader, out Pipe p)) return PipeStatus.BadHandle;
+                if (p.Mismatch) return PipeStatus.TypeMismatch;
                 while (p.Count == 0)
                 {
                     if (p.WriterGone)
@@ -373,6 +386,7 @@ namespace OS.Kernel.Pipes
                         AddressWait.WaitOnAddress(version, &seen, 4, 0xFFFFFFFFu);
                     Preemption.Suppress();
                     if (!TryEnd(holder, handle, PipeRole.Reader, out _)) return PipeStatus.BadHandle;
+                    if (p.Mismatch) return PipeStatus.TypeMismatch;
                 }
 
                 block = (void*)p.Blocks[p.Head];
@@ -404,6 +418,36 @@ namespace OS.Kernel.Pipes
                 lost = p.Lost;
                 queued = p.Count;
                 return true;
+            }
+            finally
+            {
+                Preemption.Allow();
+            }
+        }
+
+        /// <summary>
+        /// Waits until the other end of a pipe by name has come (or gone):
+        /// a stage that closes its output must not close before its reader
+        /// came, or the end of the stream is lost with the pipe (step196).
+        /// </summary>
+        public static PipeStatus WaitPeer(uint holder, int handle)
+        {
+            Preemption.Suppress();
+            try
+            {
+                if (!TryEnd(holder, handle, (PipeRole)0, out Pipe p)) return PipeStatus.BadHandle;
+                bool writer = s_ends[handle - 1].Role == PipeRole.Writer;
+                while ((writer ? p.ReaderEnd : p.WriterEnd) == -1)
+                {
+                    if (Scheduler.Current?.KillRequested ?? false) return PipeStatus.Broken;
+                    int seen = p.Version;
+                    Preemption.Allow();
+                    fixed (int* version = &p.Version)
+                        AddressWait.WaitOnAddress(version, &seen, 4, 0xFFFFFFFFu);
+                    Preemption.Suppress();
+                    if (!TryEnd(holder, handle, (PipeRole)0, out _)) return PipeStatus.BadHandle;
+                }
+                return PipeStatus.Ok;
             }
             finally
             {

@@ -235,6 +235,20 @@
         // there), and a wait it is in inside the kernel is cut short.
         public bool KillRequested;
 
+        // Its preemption suppression depth while it is switched out (step196):
+        // the depth is the thread's, not the machine's.
+        public uint SavedPreemptionDepth;
+
+        // Switched out by a deferred tick (Preemption.TakeDeferred): the
+        // collectors scan its stack conservatively, as for a preempted one.
+        public bool ParkedAtDeferredTick;
+
+        // The stack this app thread runs the app's code on (step196): a window
+        // in its process's slot. Its own Stack* above is the kernel half.
+        public ulong AppStackBase;
+        public ulong AppStackTop;
+        public int AppStackWindow = -1;
+
         // Phase E5 / E9.c step 102 -- wait state grouped under WaitBlock
         // per docs/threading-architecture.md §3. Currently inline by
         // value (one struct slot on Thread). At E13 SMP this is the

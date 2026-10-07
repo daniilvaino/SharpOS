@@ -345,6 +345,13 @@ namespace OS.Boot
         {
             InitializePager();
             ActivatePagerRootAndLockCpuFeatures();
+
+            // A stack for the double fault (step196): a stack that ran out
+            // ends its thread or process, or panics, instead of resetting.
+            if (Tss.TryInstall())
+                Log.Write(LogLevel.Info, "tss: double fault on its own stack (IST1)");
+            else
+                Log.Write(LogLevel.Warn, "tss: not installed - a stack overflow resets the machine");
             DumpExecBuffers(bootInfo);
             RunPagerValidation();
 

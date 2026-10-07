@@ -856,8 +856,12 @@ namespace SharpOS.Std.NoRuntime
         /// free markers, which is what keeps the heap walk from reading their
         /// stale bytes as a MethodTable (step131).
         /// </remarks>
+        /// <summary>Free blocks linked by sweeps, ever: the sweep tells an untouched segment by it.</summary>
+        public static uint FreeBlocksLinked;
+
         public static void LinkFreeBlock(nint address, uint alignedSize)
         {
+            FreeBlocksLinked++;
             if (address == 0 || alignedSize < MinFreeBlockSize) return;
             nint* heads = BucketHeads();
             s_headsAddrLink = (nint)heads;
@@ -1003,21 +1007,39 @@ namespace SharpOS.Std.NoRuntime
             {
                 nint p = seg->ObjectStart;
                 nint end = seg->Current;
+                BrokenSegment = seg;
+                BrokenPrevious = 0;
                 while (p < end)
                 {
                     GcObject* o = (GcObject*)p;
                     nint mt = (nint)o->MethodTable;
                     if (mt == 0 || (o->MethodTable != freeMt && (mt < low || mt >= high)))
+                    {
+                        BrokenReason = 1;
                         return p;
+                    }
                     uint size = o->ComputeSize();
                     if (size < 16 || size > 64u * 1024 * 1024)
+                    {
+                        BrokenReason = 2;
                         return p;
+                    }
+                    BrokenPrevious = p;
                     p += (nint)((size + 15u) & ~15u);
                 }
-                if (p != end) return p;
+                if (p != end)
+                {
+                    BrokenReason = 3;
+                    return p;
+                }
             }
             return 0;
         }
+
+        /// <summary>Where FindBrokenObject stopped: the segment, the object before, why (1 table, 2 size, 3 past the end).</summary>
+        public static GcSegmentHeader* BrokenSegment;
+        public static nint BrokenPrevious;
+        public static int BrokenReason;
 
         // A bitmap write that would land outside the bitmap, or for an address
         // the segment does not own: stop here, while the stack still says who.
@@ -1066,6 +1088,28 @@ namespace SharpOS.Std.NoRuntime
             }
             return 0;
         }
+
+        /// <summary>
+        /// Gives an empty segment back to the memory source (step196): the
+        /// sweep found no live object in it. Never the first segment nor the
+        /// one being bumped into. Its free blocks were not linked.
+        /// </summary>
+        internal static bool TryReleaseSegment(GcSegmentHeader* seg, GcSegmentHeader* previous)
+        {
+            if (!GcMemorySource.CanRelease || seg == s_firstSegment || seg == s_currentSegment || previous == null)
+                return false;
+            previous->Next = seg->Next;
+            if (s_lastFound == seg) s_lastFound = null;
+            s_segmentCount--;
+            s_releasedSegments++;
+            GcMemorySource.ReleaseBlock((void*)seg->Start, (uint)(seg->End - seg->Start));
+            return true;
+        }
+
+        private static ulong s_releasedSegments;
+
+        /// <summary>Segments given back to the memory source, ever.</summary>
+        public static ulong ReleasedSegments => s_releasedSegments;
 
         private static GcSegmentHeader* AllocateSegment(uint totalSize)
         {

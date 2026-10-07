@@ -96,6 +96,10 @@ namespace OS.Kernel.Pipes
         }
 
         [UnmanagedCallersOnly]
+        public static int WaitPeer(int handle)
+            => (int)KernelPipes.WaitPeer(KernelPipes.CallerHolder(), handle);
+
+        [UnmanagedCallersOnly]
         public static int Close(int handle)
             => (int)KernelPipes.Close(KernelPipes.CallerHolder(), handle);
 

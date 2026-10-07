@@ -29,7 +29,7 @@ namespace SharpOS.Std.Pipes
             if (_text != null) return _text;
             switch (_value)
             {
-                case FieldKind.Bool: return Integer() != 0;
+                case FieldKind.Bool: return SharpOS.Std.NoRuntime.BoolBox.Of(Integer() != 0);
                 case FieldKind.Char: return (char)Integer();
                 case FieldKind.SByte: return (sbyte)Integer();
                 case FieldKind.Byte: return (byte)Integer();

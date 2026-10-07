@@ -18,6 +18,42 @@ namespace OS.Hal
         private static int s_lockOwner;
         private static int s_lockDepth;
 
+        /// <summary>
+        /// Grows with every write to the volume that may change a file read
+        /// from it (step196). A sector write inside a file opened for sector
+        /// writes (TryOpenLinear: the boot log, a write per line) does not
+        /// count — only that file changed, and <see cref="IsSectorWritten"/>
+        /// names it.
+        /// </summary>
+        public static ulong WriteGeneration;
+
+        // Files opened for sector writes: their upper-cased paths and sector runs.
+        // Made on first use: the volume mounts early, statics with initializers come later.
+        private static System.Collections.Generic.List<string> s_linearPaths;
+        private static System.Collections.Generic.List<ulong> s_linearRuns;
+
+        /// <summary>Whether the file was opened for sector writes: its content changes without <see cref="WriteGeneration"/>.</summary>
+        public static bool IsSectorWritten(string upperPath)
+        {
+            Enter();
+            try { return s_linearPaths != null && s_linearPaths.Contains(upperPath); }
+            finally { Leave(); }
+        }
+
+        // Sectors [lba, lba + count) all inside one file opened for sector writes.
+        private static bool InSectorWrittenFile(ulong lba, uint count)
+        {
+            if (s_linearRuns == null) return false;
+            for (int i = 0; i < s_linearRuns.Count; i += 2)
+                if (lba >= s_linearRuns[i] && lba + count <= s_linearRuns[i] + s_linearRuns[i + 1]) return true;
+            return false;
+        }
+
+        private static void Wrote(ulong lba, uint count)
+        {
+            if (!InSectorWrittenFile(lba, count)) WriteGeneration++;
+        }
+
         private static void Enter()
         {
             int me = Scheduler.Current?.Id ?? 0;
@@ -73,28 +109,71 @@ namespace OS.Hal
         public static bool TryOpenLinear(string path, out ulong startLba, out uint sectors)
         {
             Enter();
-            try { return TryOpenLinearLocked(path, out startLba, out sectors); }
+            try
+            {
+                if (!TryOpenLinearLocked(path, out startLba, out sectors)) return false;
+                string key = path.ToUpperInvariant();
+                s_linearPaths ??= new System.Collections.Generic.List<string>();
+                s_linearRuns ??= new System.Collections.Generic.List<ulong>();
+                if (!s_linearPaths.Contains(key))
+                {
+                    s_linearPaths.Add(key);
+                    s_linearRuns.Add(startLba);
+                    s_linearRuns.Add(sectors);
+                }
+                return true;
+            }
+            finally { Leave(); }
+        }
+
+        /// <summary>
+        /// WriteSectorAt that does not wait (step196): false at once when the
+        /// volume is busy. For a writer inside a critical section — the boot
+        /// log written from code that suppressed preemption — where waiting
+        /// means yielding, and yielding there lets another thread into the
+        /// section: an app's collector logging while another thread of it
+        /// held the volume on a long read let its allocator be entered twice.
+        /// </summary>
+        public static bool TryWriteSectorAt(ulong lba, byte* src, out bool busy)
+        {
+            busy = false;
+            int me = Scheduler.Current?.Id ?? 0;
+            if (!(s_lockDepth > 0 && s_lockOwner == me))
+            {
+                fixed (ulong* flag = &s_lock)
+                {
+                    if (X64Asm.CmpXchg64(flag, value: 1UL, comparand: 0UL) != 0UL)
+                    {
+                        busy = true;
+                        return false;
+                    }
+                }
+                s_lockOwner = me;
+                s_lockDepth = 1;
+            }
+            else s_lockDepth++;
+            try { Wrote(lba, 1); return WriteSectorAtLocked(lba, src); }
             finally { Leave(); }
         }
 
         public static bool WriteSectorAt(ulong lba, byte* src)
         {
             Enter();
-            try { return WriteSectorAtLocked(lba, src); }
+            try { Wrote(lba, 1); return WriteSectorAtLocked(lba, src); }
             finally { Leave(); }
         }
 
         public static bool BlankSectors(ulong lba, uint count)
         {
             Enter();
-            try { return BlankSectorsLocked(lba, count); }
+            try { Wrote(lba, count); return BlankSectorsLocked(lba, count); }
             finally { Leave(); }
         }
 
         public static int WriteFileInPlace(string path, byte* src, int len)
         {
             Enter();
-            try { return WriteFileInPlaceLocked(path, src, len); }
+            try { WriteGeneration++; return WriteFileInPlaceLocked(path, src, len); }
             finally { Leave(); }
         }
 
@@ -108,7 +187,7 @@ namespace OS.Hal
         public static bool TryCreateFile(string path, uint sizeBytes)
         {
             Enter();
-            try { return TryCreateFileLocked(path, sizeBytes); }
+            try { WriteGeneration++; return TryCreateFileLocked(path, sizeBytes); }
             finally { Leave(); }
         }
     }

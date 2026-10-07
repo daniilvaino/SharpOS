@@ -35,6 +35,10 @@ namespace SharpOS.Std.Dynamic
         internal ulong[] Keys;
         internal object Shape;
         internal Func<object[], object> Body;
+        // The same binding for one or two operands without an argument array
+        // (step196); null: Body, with the call site's spare array.
+        internal Func<object, object> Body1;
+        internal Func<object, object, object> Body2;
         internal Rule Next;
         internal int Depth;
 
@@ -51,6 +55,23 @@ namespace SharpOS.Std.Dynamic
                 return args[0] is IDynamicShape s && ReferenceEquals(s.Shape, Shape);
             return true;
         }
+
+        // The same test for 1-3 operands, without an array.
+        internal bool Matches(int n, object a0, object a1, object a2, DynamicBinder binder)
+        {
+            ulong[] keys = Keys;
+            if (keys.Length != n) return false;
+            uint statics = binder.StaticMask;
+            if (Key(a0, 0, statics) != keys[0]) return false;
+            if (n > 1 && Key(a1, 1, statics) != keys[1]) return false;
+            if (n > 2 && Key(a2, 2, statics) != keys[2]) return false;
+            if (Shape != null)
+                return a0 is IDynamicShape s && ReferenceEquals(s.Shape, Shape);
+            return true;
+        }
+
+        private static ulong Key(object a, int i, uint statics)
+            => (statics & (1u << i)) != 0 ? (ulong)((Type)a)._handle : DynamicTypes.TableOf(a);
 
         internal static ulong KeyOf(object[] args, int i, DynamicBinder binder)
         {
@@ -100,6 +121,87 @@ namespace SharpOS.Std.Dynamic
             return rule.Body(args);
         }
 
+        // ---- call sites of one to three operands (step196) ----
+        //
+        // The generated thunk passes the operands as they are: a kept binding
+        // runs on them directly when it has a body of that many operands (a
+        // member read or write, a conversion, an operator on numbers), else on
+        // the site's spare array. A member of a value that answers for itself
+        // (an Expando) is asked directly too — such a binding is never kept.
+        // Only a site's first call, or a new type at it, builds the array.
+
+        public static object Run1(CallSite site, object a0, Type[] types)
+        {
+            DynamicBinder binder = Unsafe.As<DynamicBinder>(site._binder);
+            for (Rule r = Unsafe.As<Rule>(site._rules); r != null; r = r.Next)
+                if (r.Matches(1, a0, null, null, binder))
+                    return r.Body1 != null ? r.Body1(a0) : Spare(site, r, 1, a0, null, null);
+            if (binder.Operation == DynamicOperation.GetMember && binder.StaticMask == 0 && Answers(a0, out IDynamicObject self)
+                && Asked() && self.TryGetMember(binder.Name, out object value))
+                return value;
+            return Run(site, new object[] { a0 }, types);
+        }
+
+        public static object Run2(CallSite site, object a0, object a1, Type[] types)
+        {
+            DynamicBinder binder = Unsafe.As<DynamicBinder>(site._binder);
+            for (Rule r = Unsafe.As<Rule>(site._rules); r != null; r = r.Next)
+                if (r.Matches(2, a0, a1, null, binder))
+                    return r.Body2 != null ? r.Body2(a0, a1) : Spare(site, r, 2, a0, a1, null);
+            if (binder.Operation == DynamicOperation.SetMember && binder.StaticMask == 0 && Answers(a0, out IDynamicObject self)
+                && Asked() && self.TrySetMember(binder.Name, a1))
+                return a1;
+            return Run(site, new object[] { a0, a1 }, types);
+        }
+
+        public static object Run3(CallSite site, object a0, object a1, object a2, Type[] types)
+        {
+            DynamicBinder binder = Unsafe.As<DynamicBinder>(site._binder);
+            for (Rule r = Unsafe.As<Rule>(site._rules); r != null; r = r.Next)
+                if (r.Matches(3, a0, a1, a2, binder))
+                    return Spare(site, r, 3, a0, a1, a2);
+            return Run(site, new object[] { a0, a1, a2 }, types);
+        }
+
+        // A value that answers for itself and has no shape: Bind would ask it first.
+        private static bool Answers(object a0, out IDynamicObject self)
+        {
+            self = a0 as IDynamicObject;
+            return self != null && !(a0 is IDynamicShape shaped && shaped.Shape != null);
+        }
+
+        // A kept binding's Body on the site's spare array; a new one when the
+        // spare is in use (a body that reaches the same site again).
+        private static object Spare(CallSite site, Rule r, int n, object a0, object a1, object a2)
+        {
+            bool mine = Interlocked.CompareExchange(ref site._spareBusy, 1, 0) == 0;
+            object[] args = mine ? site._spare : null;
+            if (args == null || args.Length != n)
+            {
+                args = new object[n];
+                if (mine) site._spare = args;
+            }
+            args[0] = a0;
+            if (n > 1) args[1] = a1;
+            if (n > 2) args[2] = a2;
+            try
+            {
+                return r.Body(args);
+            }
+            finally
+            {
+                if (mine)
+                {
+                    args[0] = null;
+                    if (n > 1) args[1] = null;
+                    if (n > 2) args[2] = null;
+                    site._spareBusy = 0;
+                }
+            }
+        }
+
+        private static object Bool(bool value) => BoolBox.Of(value);
+
         private static bool AsksTheValue(DynamicOperation op)
             => op == DynamicOperation.GetMember || op == DynamicOperation.SetMember || op == DynamicOperation.GetIndex
             || op == DynamicOperation.SetIndex || op == DynamicOperation.InvokeMember || op == DynamicOperation.Convert;
@@ -141,12 +243,14 @@ namespace SharpOS.Std.Dynamic
                 case DynamicOperation.Binary: return Binary(b, a);
                 case DynamicOperation.Unary: return Unary(b, a);
                 case DynamicOperation.Convert: return Convert(b, a, out result);
-                case DynamicOperation.IsEvent: return Make(static _ => false);   // no events are bound: `+=` is always arithmetic
+                case DynamicOperation.IsEvent: return Make(static _ => Bool(false), static (object _) => Bool(false));   // no events are bound: `+=` is always arithmetic
             }
             throw DynamicTypes.Error("unknown dynamic operation");
         }
 
         private static Rule Make(Func<object[], object> body) => new Rule { Body = body };
+        private static Rule Make(Func<object[], object> body, Func<object, object> body1) => new Rule { Body = body, Body1 = body1 };
+        private static Rule Make(Func<object[], object> body, Func<object, object, object> body2) => new Rule { Body = body, Body2 = body2 };
 
         private static bool Asked()
         {
@@ -213,14 +317,14 @@ namespace SharpOS.Std.Dynamic
             {
                 DynamicMember s = FindMember(a[0].Type, name, true);
                 if (s == null || s.Get == null) throw NoDefinition(a[0].Type, name);
-                return Make(args => s.Get(null));
+                return Make(args => s.Get(null), _ => s.Get(null));
             }
             object receiver = a[0].Value;
             if (receiver == null) throw NullReceiver();
             if (receiver is IDynamicShape shaped && shaped.Shape != null && Asked() && shaped.TryCell(name, out object cell))
             {
                 shape = shaped.Shape;
-                return Make(args => Unsafe.As<IDynamicShape>(args[0]).GetCell(cell));
+                return Make(args => Unsafe.As<IDynamicShape>(args[0]).GetCell(cell), a0 => Unsafe.As<IDynamicShape>(a0).GetCell(cell));
             }
             if (receiver is IDynamicObject self && Asked() && self.TryGetMember(name, out result)) return null;
 
@@ -234,7 +338,7 @@ namespace SharpOS.Std.Dynamic
             if (m.Get == null)
                 throw DynamicTypes.Error("The property or indexer '" + N(m.Owner) + "." + name + "' cannot be used in this context because it lacks the get accessor");
             Func<object, object> get = m.Get;
-            return Make(args => get(args[0]));
+            return Make(args => get(args[0]), get);
         }
 
         private static bool HasMethod(Type t, string name)
@@ -270,6 +374,10 @@ namespace SharpOS.Std.Dynamic
                     {
                         Unsafe.As<IDynamicShape>(args[0]).SetCell(cell, args[1]);
                         return args[1];
+                    }, (a0, a1) =>
+                    {
+                        Unsafe.As<IDynamicShape>(a0).SetCell(cell, a1);
+                        return a1;
                     });
                 }
                 if (receiver is IDynamicObject self && Asked() && self.TrySetMember(name, a[1].Value))
@@ -292,6 +400,13 @@ namespace SharpOS.Std.Dynamic
                 v.Value = args[1];
                 object converted = Assign(v, to, compound, isChecked);
                 set(args[0], converted);
+                return converted;
+            }, (a0, a1) =>
+            {
+                Arg v = value;
+                v.Value = a1;
+                object converted = Assign(v, to, compound, isChecked);
+                set(a0, converted);
                 return converted;
             });
         }
@@ -839,16 +954,16 @@ namespace SharpOS.Std.Dynamic
             if (v == null)
             {
                 if (DynamicTypes.IsValueType(to) && !DynamicTypes.IsNullable(to)) throw CannotImplicit(null, to);
-                return Make(static _ => null);
+                return Make(static _ => null, static (object _) => null);
             }
             if (v is IDynamicObject self && self.TryConvert(to, isExplicit, out result)) return null;
             Type from = a[0].Type;
             Type target = DynamicTypes.IsNullable(to) ? DynamicMembers.NullableOf(to) ?? to : to;
-            if (DynamicTypes.IsAssignable(from, target)) return Make(static xs => xs[0]);
+            if (DynamicTypes.IsAssignable(from, target)) return Make(static xs => xs[0], static (object x) => x);
             if (DynamicTypes.ImplicitNumeric(from, target))
-                return Make(xs => DynamicTypes.ConvertNumeric(xs[0], target, false));
+                return Make(xs => DynamicTypes.ConvertNumeric(xs[0], target, false), x => DynamicTypes.ConvertNumeric(x, target, false));
             if (isExplicit && IsNumberLike(from) && IsNumberLike(target))
-                return Make(xs => DynamicTypes.ConvertNumeric(xs[0], target, isChecked));
+                return Make(xs => DynamicTypes.ConvertNumeric(xs[0], target, isChecked), x => DynamicTypes.ConvertNumeric(x, target, isChecked));
             DynamicMethod op = UserConversion(from, target, isExplicit);
             if (op != null)
                 return Make(xs =>
@@ -1003,23 +1118,23 @@ namespace SharpOS.Std.Dynamic
             Type tx = x.Type, ty = y.Type;
             // Strings: + concatenates anything with a string; == and != compare text.
             if (op == Expr.Add && (tx == typeof(string) || ty == typeof(string)))
-                return Make(static xs => string.Concat(Text(xs[0]), Text(xs[1])));
+                return Make(static xs => string.Concat(Text(xs[0]), Text(xs[1])), static (x, y) => string.Concat(Text(x), Text(y)));
             if ((op == Expr.Equal || op == Expr.NotEqual)
                 && (tx == typeof(string) || tx == null) && (ty == typeof(string) || ty == null) && (tx != null || ty != null))
             {
                 bool eq = op == Expr.Equal;
-                return Make(xs => string.Equals((string)xs[0], (string)xs[1]) == eq);
+                return Make(xs => Bool(string.Equals((string)xs[0], (string)xs[1]) == eq), (x, y) => Bool(string.Equals((string)x, (string)y) == eq));
             }
             // bool
             if (tx == typeof(bool) && ty == typeof(bool))
             {
                 switch (op)
                 {
-                    case Expr.And: return Make(static xs => (bool)xs[0] & (bool)xs[1]);
-                    case Expr.Or: return Make(static xs => (bool)xs[0] | (bool)xs[1]);
-                    case Expr.ExclusiveOr: return Make(static xs => (bool)xs[0] ^ (bool)xs[1]);
-                    case Expr.Equal: return Make(static xs => (bool)xs[0] == (bool)xs[1]);
-                    case Expr.NotEqual: return Make(static xs => (bool)xs[0] != (bool)xs[1]);
+                    case Expr.And: return Make(static xs => Bool((bool)xs[0] & (bool)xs[1]), static (x, y) => Bool((bool)x & (bool)y));
+                    case Expr.Or: return Make(static xs => Bool((bool)xs[0] | (bool)xs[1]), static (x, y) => Bool((bool)x | (bool)y));
+                    case Expr.ExclusiveOr: return Make(static xs => Bool((bool)xs[0] ^ (bool)xs[1]), static (x, y) => Bool((bool)x ^ (bool)y));
+                    case Expr.Equal: return Make(static xs => Bool((bool)xs[0] == (bool)xs[1]), static (x, y) => Bool((bool)x == (bool)y));
+                    case Expr.NotEqual: return Make(static xs => Bool((bool)xs[0] != (bool)xs[1]), static (x, y) => Bool((bool)x != (bool)y));
                 }
                 throw OperatorError(op, logical, tx, ty);
             }
@@ -1028,12 +1143,12 @@ namespace SharpOS.Std.Dynamic
             {
                 switch (op)
                 {
-                    case Expr.Equal: return Make(static _ => false);
-                    case Expr.NotEqual: return Make(static _ => true);
+                    case Expr.Equal: return Make(static _ => Bool(false));
+                    case Expr.NotEqual: return Make(static _ => Bool(true));
                     case Expr.LessThan:
                     case Expr.GreaterThan:
                     case Expr.LessThanOrEqual:
-                    case Expr.GreaterThanOrEqual: return Make(static _ => false);
+                    case Expr.GreaterThanOrEqual: return Make(static _ => Bool(false));
                     default: return Make(static _ => null);
                 }
             }
@@ -1048,7 +1163,7 @@ namespace SharpOS.Std.Dynamic
                     || DynamicTypes.IsInterface(tx) || DynamicTypes.IsInterface(ty)))
             {
                 bool eq = op == Expr.Equal;
-                return Make(xs => ReferenceEquals(xs[0], xs[1]) == eq);
+                return Make(xs => Bool(ReferenceEquals(xs[0], xs[1]) == eq), (x, y) => Bool(ReferenceEquals(x, y) == eq));
             }
             throw OperatorError(op, logical, tx, ty);
         }
@@ -1075,7 +1190,7 @@ namespace SharpOS.Std.Dynamic
                 return Make(xs =>
                 {
                     int count = (int)DynamicTypes.ConvertNumeric(xs[1], typeof(int), false);
-                    long v = DynamicTypes.Integer(xs[0], DynamicTypes.Element(DynamicTypes.Of(xs[0])));
+                    long v = DynamicTypes.Integer(xs[0], DynamicTypes.ElementTypeOf(xs[0]));
                     if (left == typeof(int)) return shl ? (int)v << count : (int)v >> count;
                     if (left == typeof(uint)) return shl ? (uint)v << count : (uint)v >> count;
                     if (left == typeof(long)) return shl ? v << count : v >> count;
@@ -1088,7 +1203,7 @@ namespace SharpOS.Std.Dynamic
             if ((op == Expr.And || op == Expr.Or || op == Expr.ExclusiveOr) && !integral)
                 throw OperatorError(op, logical, tx, ty);
             if (logical || (!IsComparison(op) && OperatorName(op) == null)) throw OperatorError(op, logical, tx, ty);
-            return Make(xs => Arithmetic(op, p, xs[0], xs[1], isChecked));
+            return Make(xs => Arithmetic(op, p, xs[0], xs[1], isChecked), (x, y) => Arithmetic(op, p, x, y, isChecked));
         }
 
         // Binary promotion with C#'s constant rule: an int constant that fits the other operand's
@@ -1105,7 +1220,7 @@ namespace SharpOS.Std.Dynamic
 
         private static object Arithmetic(Expr op, Type p, object a, object b, bool isChecked)
         {
-            GcEETypeElementType ea = DynamicTypes.Element(DynamicTypes.Of(a)), eb = DynamicTypes.Element(DynamicTypes.Of(b));
+            GcEETypeElementType ea = DynamicTypes.ElementTypeOf(a), eb = DynamicTypes.ElementTypeOf(b);
             if (p == typeof(double) || p == typeof(float))
             {
                 double x = DynamicTypes.Float(a, ea), y = DynamicTypes.Float(b, eb);
@@ -1203,12 +1318,12 @@ namespace SharpOS.Std.Dynamic
         {
             switch (op)
             {
-                case Expr.Equal: return c == 0;
-                case Expr.NotEqual: return c != 0;
-                case Expr.LessThan: return c == -1;
-                case Expr.GreaterThan: return c == 1;
-                case Expr.LessThanOrEqual: return c == -1 || c == 0;
-                case Expr.GreaterThanOrEqual: return c == 1 || c == 0;
+                case Expr.Equal: return Bool(c == 0);
+                case Expr.NotEqual: return Bool(c != 0);
+                case Expr.LessThan: return Bool(c == -1);
+                case Expr.GreaterThan: return Bool(c == 1);
+                case Expr.LessThanOrEqual: return Bool(c == -1 || c == 0);
+                case Expr.GreaterThanOrEqual: return Bool(c == 1 || c == 0);
             }
             throw DynamicTypes.Error("operator not defined");
         }
@@ -1238,7 +1353,7 @@ namespace SharpOS.Std.Dynamic
             throw OperatorError(op, logical, tx, ty);
         }
 
-        private static object AsLong(object v) => DynamicTypes.Integer(v, DynamicTypes.Element(DynamicTypes.Of(v)));
+        private static object AsLong(object v) => DynamicTypes.Integer(v, DynamicTypes.ElementTypeOf(v));
 
         private static Type UnderlyingOf(Type e)
         {
@@ -1265,9 +1380,9 @@ namespace SharpOS.Std.Dynamic
             {
                 switch (op)
                 {
-                    case Expr.Not: return Make(static xs => !(bool)xs[0]);
-                    case Expr.IsTrue: return Make(static xs => (bool)xs[0]);
-                    case Expr.IsFalse: return Make(static xs => !(bool)xs[0]);
+                    case Expr.Not: return Make(static xs => Bool(!(bool)xs[0]), static (object x) => Bool(!(bool)x));
+                    case Expr.IsTrue: return Make(static xs => xs[0], static (object x) => x);
+                    case Expr.IsFalse: return Make(static xs => Bool(!(bool)xs[0]), static (object x) => Bool(!(bool)x));
                 }
             }
             DynamicMethod user = t == null ? null : UserOperator(OperatorName(op), a);
@@ -1279,7 +1394,7 @@ namespace SharpOS.Std.Dynamic
                 if (t != null && CanImplicit(x, typeof(bool)))
                 {
                     bool negate = op == Expr.IsFalse;
-                    return Make(xs => (bool)ConvertImplicit(new Arg { Value = xs[0], Type = DynamicTypes.Of(xs[0]) }, typeof(bool)) != negate);
+                    return Make(xs => Bool((bool)ConvertImplicit(new Arg { Value = xs[0], Type = DynamicTypes.Of(xs[0]) }, typeof(bool)) != negate));
                 }
                 throw CannotImplicit(t, typeof(bool));
             }

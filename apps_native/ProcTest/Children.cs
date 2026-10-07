@@ -139,6 +139,54 @@ namespace PipeApps
                     Thread.Sleep(600000);
                     return 0;
                 }
+                // Test 15: a collector that never stops, and a counter.
+                case "gc-spin":
+                    while (true) GC.Collect();
+                case "counter":
+                {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    long turns = 0;
+                    while (clock.ElapsedMilliseconds < 1000)
+                        for (int i = 0; i < 1000; i++) turns++;
+                    using var o = Pipe.Write<Seq>();
+                    o.Copy(new Seq { N = (int)(turns / 1000) });
+                    return 0;
+                }
+                // Test 17: small objects, kept and dropped, collected — then
+                // three large ones. The answer: a bit for each that came whole.
+                case "large":
+                {
+                    object[] keep = new object[1000];
+                    for (int i = 0; i < 10000; i++)
+                    {
+                        object o = (i & 1) == 0 ? new int[i % 64 + 1] : (object)("s" + i.ToString());
+                        if (i % 10 == 0) keep[i / 10] = o;
+                        if (i % 1000 == 999) GC.Collect();
+                    }
+                    int answer = 0;
+                    byte[] big = new byte[8 << 20];
+                    big[0] = 1; big[big.Length - 1] = 2;
+                    if (big.Length == 8 << 20 && big[0] + big[big.Length - 1] == 3) answer |= 1;
+                    var list = new System.Collections.Generic.List<int>();
+                    for (int i = 0; i < 1000000; i++) list.Add(i);
+                    if (list.Count == 1000000 && list[999999] == 999999 && list[123456] == 123456) answer |= 2;
+                    var sb = new System.Text.StringBuilder();
+                    while (sb.Length < 1 << 20) sb.Append("0123456789abcdef");
+                    string s = sb.ToString();
+                    if (s.Length == 1 << 20 && s[(1 << 20) - 1] == 'f') answer |= 4;
+                    GC.KeepAlive(keep);
+                    return answer;
+                }
+
+                // Test 16: recursion until the stack is gone.
+                case "overflow":
+                    if (a2 == "worker")
+                    {
+                        AppThreads.Spawn(&Overflowing);
+                        Thread.Sleep(60000);
+                        return 0;
+                    }
+                    return Deep(0);
                 case "readfile":
                     return System.IO.File.ReadAllBytes(BigFile).Length > 0 ? 0 : 1;
 
@@ -195,6 +243,9 @@ namespace PipeApps
                 case "t11-raw":
                     Pipe.Read().WriteTo();
                     return 0;
+                case "raw-to-name":
+                    Pipe.Read().WriteTo(a2);
+                    return 0;
 
                 // Test 12: lives until its input closes.
                 case "wait-stdin":
@@ -225,6 +276,18 @@ namespace PipeApps
         {
             Thread.Sleep(50);
             throw new InvalidOperationException("a worker's unhandled exception");
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void Overflowing() => Deep(0);
+
+        // A frame of a kilobyte per level, and no end.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int Deep(int n)
+        {
+            System.Span<byte> frame = stackalloc byte[1024];
+            frame[n & 1023] = (byte)n;
+            return Deep(n + 1) + frame[(n * 7) & 1023];
         }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]

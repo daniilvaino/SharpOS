@@ -324,6 +324,8 @@ namespace OS.Kernel.Process
             }
 
             table.PreemptionDepthAddress = (ulong)OS.Kernel.Threading.Preemption.DepthAddress;
+            table.PreemptionPendingAddress = (ulong)OS.Kernel.Threading.Preemption.PendingAddress;
+            table.YieldAddress = (ulong)(nint)(delegate* unmanaged<void>)&AppYield;
 
             table.RegionByRefBarrierAddress = (ulong)OS.Kernel.Memory.RegionBarrier.Entry;
             if (OS.Kernel.Memory.ExchangeHeap.EnsureArena())
@@ -345,6 +347,7 @@ namespace OS.Kernel.Process
                 table.PipeCloseAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.Close;
                 table.PipeSchemaAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, ulong, ulong*, int>)&OS.Kernel.Pipes.PipeServices.Schema;
                 table.PipeOpenEndAddress = (ulong)(nint)(delegate* unmanaged<ulong*, int>)&OS.Kernel.Pipes.PipeServices.OpenEnd;
+                table.PipeWaitPeerAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.WaitPeer;
                 table.ProcessAddress = (ulong)(nint)(delegate* unmanaged<int, ulong*, int>)&ProcessService;
                 if (OS.Kernel.Diagnostics.Probes.PipeProbe)
                     table.PipeProbeAddress = (ulong)(nint)(delegate* unmanaged<int, ulong, ulong*, int>)&OS.Kernel.Diagnostics.PipeProbe.Service;
@@ -1132,7 +1135,9 @@ namespace OS.Kernel.Process
             if (entryAddress == 0)
                 return (uint)AppServiceStatus.InvalidParameter;
 
-            const uint AppThreadStackBytes = 64 * 1024;
+            // The kernel half only: the app's code runs on a stack in the
+            // process's slot (AppThreadThunk).
+            const uint AppThreadStackBytes = 32 * 1024;
 
             // Created suspended so that where it enters the app and which run
             // it belongs to are on the thread before it can run. The entry used
@@ -1162,12 +1167,59 @@ namespace OS.Kernel.Process
         {
             global::OS.Kernel.Threading.Thread? self = global::OS.Kernel.Threading.Scheduler.Current;
             ulong entryAddress = self == null ? 0 : self.AppEntry;
+            AppProcess proc = self?.App;
 
-            if (entryAddress != 0 && !(self?.KillRequested ?? false))
-                ((delegate* unmanaged<void>)entryAddress)();
+            // The app's code runs on a stack of the process's own (step196),
+            // entered the way the main thread enters: an overflow there faults
+            // into a gap with this kernel stack left whole to leave on, and a
+            // thread ended anywhere comes back here through the run's abort.
+            if (entryAddress != 0 && proc != null && !self.KillRequested && TryMapWorkerStack(self, proc))
+            {
+                global::OS.Kernel.Exec.JumpStub.Run(entryAddress, self.AppStackTop, 0, proc.PagerCr3, out _,
+                                                    self.AppStackBase, proc.ImageBase, proc.ImageEnd);
+                ReleaseWorkerStack(self, proc);
+            }
 
-            OnAppThreadGone(self?.App);
+            OnAppThreadGone(proc);
             global::OS.Kernel.Threading.Scheduler.Exit();
+        }
+
+        private static bool TryMapWorkerStack(global::OS.Kernel.Threading.Thread t, AppProcess proc)
+        {
+            int window = proc.TakeStackWindow();
+            if (window < 0)
+            {
+                DebugLog.Write(LogLevel.Warn, "app thread not started: the process has no stack window left");
+                return false;
+            }
+            ulong top = AppProcesses.StackTopForSlot(proc.Slot, window);
+            ulong bottom = top - AppProcesses.WorkerStackBytes;
+            for (ulong va = bottom; va < top; va += 4096)
+            {
+                ulong pa = global::OS.Kernel.PhysicalMemory.AllocPage();
+                if (pa == 0 || !Pager.Map(va, pa, PageFlags.Writable | PageFlags.NoExecute))
+                {
+                    if (pa != 0) global::OS.Kernel.PhysicalMemory.FreePage(pa);
+                    UnmapMappedRange(bottom, va, returnPhysicalPages: true);
+                    proc.FreeStackWindow(window);
+                    DebugLog.Write(LogLevel.Warn, "app thread not started: no memory for its stack");
+                    return false;
+                }
+                OS.Kernel.Util.Memory.Zero((void*)va, 4096);
+            }
+            t.AppStackBase = bottom;
+            t.AppStackTop = top;
+            t.AppStackWindow = window;
+            return true;
+        }
+
+        private static void ReleaseWorkerStack(global::OS.Kernel.Threading.Thread t, AppProcess proc)
+        {
+            if (t.AppStackWindow < 0) return;
+            UnmapMappedRange(t.AppStackBase, t.AppStackTop, returnPhysicalPages: true);
+            proc.FreeStackWindow(t.AppStackWindow);
+            t.AppStackWindow = -1;
+            t.AppStackBase = t.AppStackTop = 0;
         }
 
         // Sleeping is half of what a thread is for here: a background loop that
@@ -1214,6 +1266,22 @@ namespace OS.Kernel.Process
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void AppSetHwExceptionFactory(void* factory)
             => global::OS.Kernel.Exec.JumpStub.SetHwExceptionFactory((nint)factory);
+
+        // The end of an app's critical section with a tick waiting (step196).
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void AppYield()
+        {
+            global::OS.Kernel.Threading.Preemption.TakeDeferred();
+            // The app calls this where its own critical section ended and it
+            // holds nothing: a thread of an ended process leaves here, as on
+            // a service thunk's return (step196). Without it a thread that is
+            // always inside a collection or a raw service — every tick
+            // deferred, never one in its code — was never taken off: Kill
+            // under --gc-stress waited forever (PROCTEST 8).
+            global::OS.Kernel.Threading.Thread self = global::OS.Kernel.Threading.Scheduler.Current;
+            if (self != null && self.KillRequested && self.App != null && self.Jump != null)
+                OS.Kernel.Exec.JumpStub.LeaveApp(self, self.App.KillCode);
+        }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void AppSetExceptionNamer(void* namer)
@@ -1688,8 +1756,14 @@ namespace OS.Kernel.Process
             return true;
         }
 
+        // Since E1 the kernel and the pager share one root, so the first sync
+        // finds every low page mapped and the rest only walk 128k pages per
+        // start (26 ms of a 94 ms start, step196): once per boot.
+        private static bool s_lowMappingsSynced;
+
         private static bool TrySyncKernelLowMappings(ref ProcessImage processImage)
         {
+            if (s_lowMappingsSynced) return true;
             for (ulong current = KernelLowSyncStart; current < KernelLowSyncEndExclusive; current += PageSize)
             {
                 if (IsInRange(current, processImage.ImageStart, processImage.ImageEnd))
@@ -1714,6 +1788,7 @@ namespace OS.Kernel.Process
                     return false;
             }
 
+            s_lowMappingsSynced = true;
             return true;
         }
 

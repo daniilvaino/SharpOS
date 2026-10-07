@@ -235,13 +235,14 @@ class C { static Region<Node> s_last; void M(PipeReader<Node> p) { foreach (Regi
         Expect("correct: copies out of a view and a loop; writes through a view", new string[0], @"
 class C
 {
-    static string s_text; static int s_n; static Expando s_bag; static Node s_node; static Plain s_plain;
+    static string s_text; static int s_n; static object s_boxed; static Expando s_bag; static Node s_node; static Plain s_plain;
     void M(RawPipeReader raw, PipeReader<Node> typed)
     {
         foreach (View v in raw)
         {
             s_text = (string)v[""Text""];
             s_n = (int)v[""I""];
+            s_boxed = (int)v[""I""];
             s_bag = v;
             v[""Seen""] = true;
             View o = v[""Origin""];

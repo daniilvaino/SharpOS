@@ -1,13 +1,17 @@
 using System.Collections.Generic;
 using SharpOS.Std.Exchange;
 
-namespace OS.Kernel.Pipes
+namespace SharpOS.Std.Pipes
 {
     // The type check when two ends meet (pipe spec Р22). The writer declared
     // its schema and root key, the reader its own description of the type it
     // expects. Equal keys: equal layouts, nothing to say. Otherwise the error
     // names the type and the first field that differs, with name, type and
     // offset from both sides. No conversion is attempted.
+    //
+    // In std, not the kernel (step196): the type is the writer's, and only
+    // the reader is refused. When the writer's type arrives after the reader,
+    // the kernel marks the pipe and the reader makes this check itself.
     internal static class TypeCheck
     {
         /// <summary>Null when the reader may read what the writer sends; otherwise why not.</summary>

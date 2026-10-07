@@ -664,7 +664,7 @@ exceptions/reflection/System.Text.Json/yield/Unicode/Regex) — рабочее
 на голом железе; PAL-пробелы в OS-сервисы в основном **деградируют
 управляемо** (catchable SEH / чистые BCL-исключения). Некатчабл-корень
 §11 закрыт step112. Приоритет фронтов теперь: Release/D10-D11 hardening
-→ IST для #PF/#DF → finalizers/GC-production или Roslyn resolver+IO.
+→ IST для #PF (#DF на своём стеке с step196: TSS, IST1) → finalizers/GC-production или Roslyn resolver+IO.
 
 ---
 

@@ -184,17 +184,30 @@ namespace SharpOS.AppSdk
     internal static unsafe class AppPreemption
     {
         private static uint* s_depth;
+        private static byte* s_pending;
+        private static delegate* unmanaged<void> s_yield;
 
         public static void Install(ulong depthAddress) => s_depth = (uint*)depthAddress;
+
+        /// <summary>The kernel's deferred-tick flag and the switch to take it (step196).</summary>
+        public static void InstallDeferred(ulong pendingAddress, ulong yieldAddress)
+        {
+            s_pending = (byte*)pendingAddress;
+            s_yield = (delegate* unmanaged<void>)yieldAddress;
+        }
 
         public static void Suppress()
         {
             if (s_depth != null) (*s_depth)++;
         }
 
+        // A tick that came during the section is taken now: a collector that
+        // runs back to back would otherwise keep the CPU from every other thread.
         public static void Allow()
         {
             if (s_depth != null && *s_depth != 0) (*s_depth)--;
+            if (s_depth != null && *s_depth == 0 && s_pending != null && *s_pending != 0 && s_yield != null)
+                s_yield();
         }
     }
 }

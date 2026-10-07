@@ -139,8 +139,8 @@ namespace OS.Kernel.Diagnostics
         private static object s_armed;
         private static volatile bool s_gcLoad;
         private static volatile int s_gcThreads;
-        private static int s_typedLayout;
-        private static int s_typedOther;
+        private static PipeReader<SharpOS.Probe.Versioned> s_typedLayout;
+        private static PipeReader<SharpOS.Probe.Different> s_typedOther;
 
         [UnmanagedCallersOnly]
         public static int Service(int op, ulong argument, ulong* answer)
@@ -821,20 +821,39 @@ namespace OS.Kernel.Diagnostics
         }
 
         // Test 9: pending typed readers the app's writer meets.
+        // Two kernel readers wait by name, each for a writer of another type
+        // or layout. The writer is not refused (the type is its own, step196);
+        // each reader is, at its receive — the off call receives once and
+        // answers [0], [1] = 1 when the refusal and its text were the right ones.
         private static int Typed(bool on, ulong* answer)
         {
             if (!on)
             {
-                if (s_typedLayout != 0) KernelPipes.Close(ExchangeHeap.OwnerKernel, s_typedLayout);
-                if (s_typedOther != 0) KernelPipes.Close(ExchangeHeap.OwnerKernel, s_typedOther);
-                s_typedLayout = s_typedOther = 0;
+                if (answer != null)
+                {
+                    answer[0] = Refused(s_typedLayout,
+                        "type SharpOS.Probe.Versioned: field #0 differs: writer A:System.Int32@8, reader A:System.Int64@8") ? 1UL : 0UL;
+                    answer[1] = Refused(s_typedOther,
+                        "different types: writer sends SharpOS.Probe.Versioned, reader expects SharpOS.Probe.Different") ? 1UL : 0UL;
+                }
+                s_typedLayout?.Dispose();
+                s_typedOther?.Dispose();
+                s_typedLayout = null;
+                s_typedOther = null;
                 return 0;
             }
-            PipeStatus a = PipeReader<SharpOS.Probe.Versioned>.Connect("probe.typed.layout", out PipeReader<SharpOS.Probe.Versioned> layout, out _);
-            PipeStatus b = PipeReader<SharpOS.Probe.Different>.Connect("probe.typed.other", out PipeReader<SharpOS.Probe.Different> other, out _);
-            s_typedLayout = layout == null ? 0 : layout.Handle;
-            s_typedOther = other == null ? 0 : other.Handle;
+            PipeStatus a = PipeReader<SharpOS.Probe.Versioned>.Connect("probe.typed.layout", out s_typedLayout, out _);
+            PipeStatus b = PipeReader<SharpOS.Probe.Different>.Connect("probe.typed.other", out s_typedOther, out _);
             return a == PipeStatus.Ok && b == PipeStatus.Ok ? 0 : (int)PipeStatus.Refused;
+        }
+
+        private static bool Refused<T>(PipeReader<T> reader, string expected) where T : class
+        {
+            if (reader == null) return false;
+            PipeStatus status = reader.TryReceive(out Region<T> region);
+            region?.Dispose();
+            OS.Hal.Console.WriteLine("[pipe] kernel reader, writer of another type: " + (reader.LastError ?? "(no error)"));
+            return status == PipeStatus.TypeMismatch && reader.LastError == expected;
         }
 
         // ---- the kernel collector under the exchange ----

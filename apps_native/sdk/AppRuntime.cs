@@ -92,6 +92,8 @@
             // and two of this app's threads must not be inside the heap at
             // once. The kernel heap does the same with Preemption.Suppress.
             AppPreemption.Install(s_services->PreemptionDepthAddress);
+            if (s_services->PreemptionPendingAddress != 0 && s_services->YieldAddress != 0)
+                AppPreemption.InstallDeferred(s_services->PreemptionPendingAddress, s_services->YieldAddress);
 
             // The exchange heap, for the write barrier: stores into a region
             // are checked, everything else passes on one compare.
@@ -196,11 +198,13 @@
             // over the screen. The kernel prints its own id in the banner; an
             // app built from a different tree used to be indistinguishable
             // from one built with it, and on 2026-09-24 that cost an evening.
+            Process.Mark(0);
             AppHost.WriteString("[app] ");
             AppHost.WriteString(AppBuildInfo.Name);
             AppHost.WriteString(" build ");
             AppHost.WriteString(AppBuildInfo.Id);
             AppHost.WriteChar('\n');
+            Process.Mark(1);
         }
 
         /// <summary>Ticks of 100 ns since DateTime.MinValue, from the HPET.</summary>
@@ -291,6 +295,22 @@
                 AppHost.WriteError(i == 0 ? " bytes 0x" : " 0x");
                 AppHost.WriteHex(*(ulong*)(at + i * 8));
             }
+            // Why, the segment (start, objects, bump, end) and the object before.
+            var seg = SharpOS.Std.NoRuntime.GcHeap.BrokenSegment;
+            AppHost.WriteError(" why ");
+            AppHost.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.BrokenReason);
+            if (seg != null)
+            {
+                AppHost.WriteHex((ulong)seg->Start);
+                AppHost.WriteHex((ulong)seg->ObjectStart);
+                AppHost.WriteHex((ulong)seg->Current);
+                AppHost.WriteHex((ulong)seg->End);
+            }
+            nint prev = SharpOS.Std.NoRuntime.GcHeap.BrokenPrevious;
+            AppHost.WriteHex((ulong)prev);
+            if (prev != 0)
+                for (int i = 0; i < 3; i++) AppHost.WriteHex(*(ulong*)(prev + i * 8));
+            AppHost.WriteHex((ulong)phase);
             AppHost.WriteError("\n");
             Fatal(phase == 1 ? "found before a mark: the program wrote it"
                              : "found after a sweep: the collector wrote it");

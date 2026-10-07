@@ -147,6 +147,13 @@ namespace SharpOS.Std.Pipes
             return 0;
         }
 
+        /// <summary>Waits until the other end of the pipe has come; at once on an older kernel.</summary>
+        public static PipeStatus WaitPeer(int handle)
+        {
+            if (!Available || Services->PipeWaitPeerAddress == 0) return PipeStatus.Ok;
+            return (PipeStatus)((delegate* unmanaged<int, int>)Services->PipeWaitPeerAddress)(handle);
+        }
+
         /// <summary>A line on the screen: where a message goes when there is no output to send it to.</summary>
         public static void Print(string line) => System.Console.WriteLine(line);
 

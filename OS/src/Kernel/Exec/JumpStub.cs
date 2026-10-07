@@ -72,7 +72,10 @@ namespace OS.Kernel.Exec
             ulong stackTopVirtualAddress,
             ulong startupBlockVirtualAddress,
             ulong pagerCr3,
-            out int exitCode)
+            out int exitCode,
+            ulong appStackBase = 0,
+            ulong imageBase = 0,
+            ulong imageEnd = 0)
         {
             exitCode = 0;
 
@@ -96,12 +99,20 @@ namespace OS.Kernel.Exec
             // The app's image bounds, for telling its faults from the kernel's.
             // Readable by virtual address only under the pager root; without it
             // the bounds stay empty and every fault keeps the kernel's type.
-            if (Pager.IsPagerRootActive())
+            if (startupBlockVirtualAddress != 0 && Pager.IsPagerRootActive())
             {
                 OS.Kernel.Process.ProcessStartupBlock* startup = (OS.Kernel.Process.ProcessStartupBlock*)startupBlockVirtualAddress;
                 context.ImageBase = startup->ImageBase;
                 context.ImageEnd = startup->ImageEnd;
                 context.AppStackBase = startup->StackBase;
+            }
+            else
+            {
+                // A worker thread of a process (step196): no startup block,
+                // the bounds are given.
+                context.ImageBase = imageBase;
+                context.ImageEnd = imageEnd;
+                context.AppStackBase = appStackBase;
             }
             OS.Kernel.Threading.Thread? self = OS.Kernel.Threading.Scheduler.Current;
             context.OwnerThreadId = self?.Id ?? 0;
@@ -238,8 +249,10 @@ namespace OS.Kernel.Exec
         /// </summary>
         internal static void LeaveApp(OS.Kernel.Threading.Thread self, int exitCode)
         {
+            // Every app thread is inside a run since step196 — workers too —
+            // and leaves through its abort, back onto its kernel stack.
             JumpContext* context = self.Jump;
-            if (self == self.App?.MainThread && context != null)
+            if (context != null)
             {
                 OS.Boot.EH.ExInfoHead.s_head = context->ExInfoHead;
                 OS.Kernel.Threading.Preemption.RestoreDepth(context->PreemptionDepth);
@@ -249,6 +262,54 @@ namespace OS.Kernel.Exec
             OS.Kernel.Threading.Preemption.RestoreDepth(0);
             OS.Kernel.Process.AppServiceBuilder.OnAppThreadGone(self.App);
             OS.Kernel.Threading.Scheduler.Exit();
+        }
+
+        /// <summary>
+        /// A double fault on an app thread whose stack pointer is below its
+        /// app stack, in the window's gap: the stack overflowed (step196). The
+        /// process ends with 134; the thread is turned to leave on its kernel
+        /// stack, which the overflow did not touch. False for anything else —
+        /// the caller panics.
+        /// </summary>
+        /// <remarks>
+        /// Reached on the double fault's own stack (Tss, IST1): the #PF that
+        /// found the stack gone could not push its frame there.
+        /// </remarks>
+        public static bool TryRecoverStackOverflow(OS.Hal.Idt.InterruptFrame* frame)
+        {
+            OS.Kernel.Threading.Thread? self = OS.Kernel.Threading.Scheduler.Current;
+            OS.Kernel.Process.AppProcess? p = self?.App;
+            JumpContext* context = self == null ? null : self.Jump;
+            if (p == null || context == null || context->KernelRsp == 0 || context->AppStackBase == 0)
+                return false;
+            ulong rsp = frame->Rsp;
+            if (rsp >= context->AppStackBase || context->AppStackBase - rsp > OS.Kernel.Process.AppProcesses.StackWindowBytes)
+                return false;
+
+            Console.Write("[app] ");
+            Console.Write(p.Name);
+            Console.Write(": stack overflow on thread ");
+            Console.WriteUInt((uint)self.Id);
+            Console.Write(" (rsp=0x");
+            Console.WriteHex(rsp);
+            Console.Write(", stack from 0x");
+            Console.WriteHex(context->AppStackBase);
+            Console.Write("): process ended, exit code ");
+            Console.WriteUInt(UnhandledExitCode);
+            Console.WriteLine("");
+
+            OS.Kernel.Process.AppServiceBuilder.RequestEnd(p, UnhandledExitCode, failed: true);
+            delegate* unmanaged<void> leave = &LeaveOverflowed;
+            frame->Rip = (ulong)leave;
+            frame->Rsp = ((context->KernelRsp - 0x1000) & ~0xFUL) - 8;   // as after a call, below the run's frame
+            return true;
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void LeaveOverflowed()
+        {
+            OS.Kernel.Threading.Thread self = OS.Kernel.Threading.Scheduler.Current;
+            LeaveApp(self, UnhandledExitCode);
         }
 
         private static bool TryInitialize()

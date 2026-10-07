@@ -70,6 +70,84 @@ namespace SharpOS.Std.Pipes
             }
         }
 
+        private static Dictionary<ulong, byte[]> s_writerSchemas;
+
+        /// <summary>
+        /// What a typed writer of the type declares (step196): the type and
+        /// every type its messages can hold — its fields' types, theirs, the
+        /// enums named. A field that may hold a type not known in advance
+        /// (object, a class with subclasses in the catalog, a type outside it)
+        /// makes it the whole catalog, as before. A reader parses only this.
+        /// </summary>
+        public static byte[] WriterSchema(ulong key)
+        {
+            Ensure();
+            lock (s_closureLock)
+            {
+                s_writerSchemas ??= new Dictionary<ulong, byte[]>();
+                if (s_writerSchemas.TryGetValue(key, out byte[] known)) return known;
+                List<TypeKeys.Description> closure = Closure(key);
+                byte[] schema = closure == null ? Schema : RegionSchema.Build(closure);
+                s_writerSchemas[key] = schema;
+                return schema;
+            }
+        }
+
+        private static readonly object s_closureLock = new object();
+
+        // Null when the closure is open: the whole catalog then.
+        private static List<TypeKeys.Description> Closure(ulong key)
+        {
+            TypeKeys.Description root = TypeKeys.DescriptionOf(key);
+            if (root == null) return null;
+            var byName = new Dictionary<string, TypeKeys.Description>();
+            foreach (TypeKeys.Description d in TypeKeys.Declared) byName[d.Name] = d;
+
+            var result = new List<TypeKeys.Description>();
+            var seen = new Dictionary<string, bool>();
+            var queue = new List<TypeKeys.Description> { root };
+            seen[root.Name] = true;
+            for (int q = 0; q < queue.Count; q++)
+            {
+                TypeKeys.Description d = queue[q];
+                if (!d.IsValueType && HasSubclass(d)) return null;
+                result.Add(d);
+                foreach (TypeKeys.Field f in d.Fields)
+                {
+                    if (f.Enum != null && !seen.ContainsKey(f.Enum) && byName.TryGetValue(f.Enum, out TypeKeys.Description e))
+                    {
+                        seen[f.Enum] = true;
+                        queue.Add(e);
+                    }
+                    if (IsPrimitive(f.Type) || seen.ContainsKey(f.Type)) continue;
+                    if (f.Type == "System.Object" || !byName.TryGetValue(f.Type, out TypeKeys.Description t)) return null;
+                    seen[f.Type] = true;
+                    queue.Add(t);
+                }
+            }
+            return result;
+        }
+
+        private static bool IsPrimitive(string type)
+            => type == "System.Boolean" || type == "System.Char" || type == "System.SByte" || type == "System.Byte"
+               || type == "System.Int16" || type == "System.UInt16" || type == "System.Int32" || type == "System.UInt32"
+               || type == "System.Int64" || type == "System.UInt64" || type == "System.Single" || type == "System.Double";
+
+        // A class another catalog type derives from: a field of it may hold either.
+        private static bool HasSubclass(TypeKeys.Description d)
+        {
+            if (!TypeKeys.TryTable(d.Key, out ulong table)) return true;
+            foreach (TypeKeys.Description other in TypeKeys.Declared)
+            {
+                if (other == d || other.IsValueType || !TypeKeys.TryTable(other.Key, out ulong t)) continue;
+                var mt = (SharpOS.Std.NoRuntime.GcMethodTable*)t;
+                if (mt->IsArray) continue;
+                for (SharpOS.Std.NoRuntime.GcMethodTable* b = mt->GetBaseType(); b != null; b = b->GetBaseType())
+                    if ((ulong)b == table) return true;
+            }
+            return false;
+        }
+
         /// <summary>The description of one type: what a typed reader declares.</summary>
         public static byte[] SchemaOf(ulong key)
         {

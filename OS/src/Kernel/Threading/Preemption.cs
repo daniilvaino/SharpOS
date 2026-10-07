@@ -64,6 +64,40 @@ namespace OS.Kernel.Threading
         public static void Allow()
         {
             if (s_disableDepth > 0) s_disableDepth--;
+            if (s_disableDepth == 0 && s_pending != 0) TakeDeferred();
+        }
+
+        // A tick that came while switching was suppressed (step196): it is
+        // taken when the suppression ends, not lost. Without it a thread that
+        // suppresses for most of every quantum — a collector running back to
+        // back — kept the CPU: every tick landed inside a critical section.
+        private static byte s_pending;
+        private static ulong s_deferred;
+
+        /// <summary>Ticks taken late, at the end of a suppression.</summary>
+        public static ulong Deferred => s_deferred;
+
+        /// <summary>Where the flag lives, for apps: their critical sections end with a look at it.</summary>
+        public static byte* PendingAddress
+            => (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_pending);
+
+        /// <summary>
+        /// The switch a tick asked for, if one is pending and it can be taken
+        /// here: not inside an interrupt handler, not mid-switch, interrupts on.
+        /// Otherwise it stays pending for the next chance.
+        /// </summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        public static void TakeDeferred()
+        {
+            if (s_pending == 0 || !s_enabled || s_disableDepth != 0 || Scheduler.SwitchInProgress) return;
+            Thread? curr = Scheduler.Current;
+            if (curr == null || curr.InterruptDepth != 0 || curr.InPreemptiveSwitch) return;
+            if (!X64Asm.InterruptsEnabled()) return;
+            s_pending = 0;
+            s_deferred++;
+            curr.ParkedAtDeferredTick = true;
+            Scheduler.Yield();
+            curr.ParkedAtDeferredTick = false;
         }
 
         /// <summary>
@@ -102,9 +136,15 @@ namespace OS.Kernel.Threading
         /// </param>
         public static void OnTick(void* frame)
         {
-            if (!s_enabled || s_disableDepth != 0 || Scheduler.SwitchInProgress)
+            if (!s_enabled || Scheduler.SwitchInProgress)
             {
                 s_declined++;
+                return;
+            }
+            if (s_disableDepth != 0)
+            {
+                s_declined++;
+                s_pending = 1;
                 return;
             }
 

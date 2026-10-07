@@ -13,5 +13,10 @@ namespace SharpOS.Std.NoRuntime
                 return null;
             return OS.Kernel.Memory.KernelHeap.Alloc(size);
         }
+
+        /// <summary>The kernel's heap keeps its segments (it grows by collecting first, GcHeap.CollectBeforeGrowing).</summary>
+        public static bool CanRelease => false;
+
+        public static void ReleaseBlock(void* block, uint size) { }
     }
 }

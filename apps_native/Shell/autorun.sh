@@ -74,6 +74,6 @@ expect 0 /apps/AOTTESTS.EXE --gc-stress 1 1 --pipe-stress 1
 expect 22 /apps/AOTTESTS.EXE --gc-stress 1 1 --dynamic
 PIPEGEN 5
 PIPEGEN 1000 | PIPEFILT 3 | PIPECNT
-expect 49 /apps/PROCTEST.EXE
-expect 37 /apps/PROCTEST.EXE --gc-stress 16
-expect 14 /apps/PIPEPERF.EXE
+expect 59 /apps/PROCTEST.EXE
+expect 54 /apps/PROCTEST.EXE --gc-stress 16
+expect 15 /apps/PIPEPERF.EXE

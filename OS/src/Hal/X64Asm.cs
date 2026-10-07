@@ -70,6 +70,13 @@
         private const uint CpuidMinBuffer     = 0x4C0;
         private const uint CatchReturnOffset    = 0x4C0;
         private const uint CatchReturnMinBuffer = 0x4E0;
+        private const uint ReadFlagsOffset      = 0x4E0;
+        private const uint ReadFlagsMinBuffer   = 0x4F0;
+        // Descriptor tables (step196, Tss): sgdt, lgdt, ltr — 4 bytes each.
+        private const uint StoreGdtOffset       = 0x4F0;
+        private const uint LoadGdtOffset        = 0x500;
+        private const uint LoadTrOffset         = 0x510;
+        private const uint DescriptorMinBuffer  = 0x520;
 
         private const uint CmpXchg64Offset       = 0x1A0;
         private const uint Xchg64Offset          = 0x1C0;
@@ -544,6 +551,59 @@
         /// masked and no timer armed this would sleep forever. Callers check
         /// LocalApic.IsEnabled.
         /// </remarks>
+        private static delegate* unmanaged<ulong> s_readFlags;
+
+        /// <summary>
+        /// Whether interrupts are enabled (RFLAGS.IF): a deferred switch must
+        /// not happen with them off (step196). False when the stub is not there.
+        /// </summary>
+        public static bool InterruptsEnabled()
+        {
+            if (s_readFlags == null)
+            {
+                if (s_execBuffer == null || s_execBufferSize < ReadFlagsMinBuffer)
+                    return false;
+                byte* p = (byte*)s_execBuffer + ReadFlagsOffset;
+                p[0] = 0x9C;                     // pushfq
+                p[1] = 0x58;                     // pop rax
+                p[2] = 0xC3;                     // ret
+                s_readFlags = (delegate* unmanaged<ulong>)p;
+            }
+            return (s_readFlags() & 0x200) != 0;
+        }
+
+        // A few bytes of code in the exec buffer, written on first use.
+        private static void* Stub(uint offset, byte b0, byte b1, byte b2, byte b3)
+        {
+            byte* p = (byte*)s_execBuffer + offset;
+            p[0] = b0; p[1] = b1; p[2] = b2; p[3] = b3;
+            return p;
+        }
+
+        /// <summary>sgdt [rcx]: the 10-byte GDTR (limit, base) into <paramref name="gdtr"/>.</summary>
+        public static bool StoreGdt(byte* gdtr)
+        {
+            if (s_execBuffer == null || s_execBufferSize < DescriptorMinBuffer) return false;
+            ((delegate* unmanaged<byte*, void>)Stub(StoreGdtOffset, 0x0F, 0x01, 0x01, 0xC3))(gdtr);
+            return true;
+        }
+
+        /// <summary>lgdt [rcx].</summary>
+        public static bool LoadGdt(byte* gdtr)
+        {
+            if (s_execBuffer == null || s_execBufferSize < DescriptorMinBuffer) return false;
+            ((delegate* unmanaged<byte*, void>)Stub(LoadGdtOffset, 0x0F, 0x01, 0x11, 0xC3))(gdtr);
+            return true;
+        }
+
+        /// <summary>ltr cx: the task register to the TSS descriptor at <paramref name="selector"/>.</summary>
+        public static bool LoadTaskRegister(ushort selector)
+        {
+            if (s_execBuffer == null || s_execBufferSize < DescriptorMinBuffer) return false;
+            ((delegate* unmanaged<ushort, void>)Stub(LoadTrOffset, 0x0F, 0x00, 0xD9, 0xC3))(selector);
+            return true;
+        }
+
         public static void StiHlt()
         {
             if (s_execBuffer == null || s_execBufferSize < CoopSwitchMinBuffer)

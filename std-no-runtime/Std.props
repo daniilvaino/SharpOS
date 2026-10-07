@@ -75,6 +75,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionShapes.cs" Link="std\Exchange\RegionShapes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\Pipe.cs" Link="std\Pipes\Pipe.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeEnds.cs" Link="std\Pipes\PipeEnds.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\TypeCheck.cs" Link="std\Pipes\TypeCheck.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeProbeMessages.cs" Link="std\Pipes\PipeProbeMessages.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStatus.cs" Link="std\Pipes\PipeStatus.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\ObjectLayout.cs" Link="std\Exchange\ObjectLayout.cs" />
@@ -182,6 +183,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ExceptionServices.cs" Link="std\Runtime\ExceptionServices.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\FunctionPointerOps.cs" Link="std\Runtime\FunctionPointerOps.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\GC.cs" Link="std\Runtime\GC.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\BoolBox.cs" Link="std\Runtime\BoolBox.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector128.cs" Link="std\Runtime\Intrinsics\Vector128.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector128_1.cs" Link="std\Runtime\Intrinsics\Vector128_1.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector256.cs" Link="std\Runtime\Intrinsics\Vector256.cs" />

@@ -41,6 +41,23 @@ namespace OS.Kernel.Process
         public const int ProcessOpCurrentId = 6;
         public const int ProcessOpStats = 7;
         public const int ProcessOpStartTimes = 8;
+        public const int ProcessOpMemory = 9;
+        public const int ProcessOpMark = 10;
+        public const int ProcessOpLifeTimes = 11;
+
+        // Where a start-and-exit goes after the start (step196), HPET ticks
+        // summed over every process that ended: runnable → its first
+        // instruction, → its runtime set up, → past its banner, → its code
+        // done, → its ending done, → its waiter running again.
+        // The ending's parts, summed the same way: other threads, resources,
+        // heap pages, image and stack mappings, the log line.
+        private static ulong s_eThreads, s_eResources, s_eHeap, s_eMappings, s_eLog;
+        // The start service whole, and StartFromPath whole.
+        private static ulong s_sService, s_sPath;
+        // Between the phases: the start lock, the arguments, StartProcess
+        // whole, the slot reserve, the tail (lock release, file back).
+        private static ulong s_gLock, s_gArgs, s_gProcess, s_gReserve, s_gTail, s_gManifest;
+        private static ulong s_lives, s_lToEntry, s_lInit, s_lBanner, s_lCode, s_lEnd, s_woken, s_lWake;
 
         // Where a start's time goes (HPET ticks, all starts so far): reading
         // the file, loading and relocating the image, building the startup
@@ -62,15 +79,29 @@ namespace OS.Kernel.Process
         //   Kill:      [0] id. Ends it with 137; returns at once.
         //   Release:   [0] id. The caller is done with the record.
         //   CurrentId: out [1] the caller's own id.
-        //   Stats:     out [1] physical pages in use outside the kernel heap
-        //              and the page tables (both keep what they grew to: the
-        //              heap's garbage is the collector's business, and the
-        //              tables of a process slot are made once and used by
-        //              every process in it), [2] processes running,
+        //   Stats:     out [1] physical pages in use outside the kernel heap,
+        //              the program cache, the page tables and the heaps of
+        //              running processes
+        //              (they keep what they grew to: a heap's garbage is its
+        //              collector's business, and the tables of a process slot
+        //              are made once and used by every process in it; a
+        //              process's heap is given back when it ends),
+        //              [2] processes running,
         //              [3] process records, [4] exchange blocks live, [5] pipes
         //              live, [6] names waiting, [7] threads live, [8] objects
         //              the kernel's heap ever allocated. For tests that check
         //              what a run gives back, and what a message costs.
+        //   Memory:    out [1] pages the heaps of running processes hold, [2]
+        //              pages that can still be handed out, [3] pages of the
+        //              program cache. How many processes fit (step196).
+        //   Mark:      [0] 0 or 1: the caller's runtime is set up (before and
+        //              after its banner). Once each.
+        //   LifeTimes: out [1] processes ended, HPET ticks summed in [2] to the
+        //              first instruction, [3] runtime setup, [4] banner, [5]
+        //              the code, [6] the ending; [7] waits woken, [8] ticks
+        //              from the wake to the waiter running; [9] HPET Hz; all
+        //              endings: [10] other threads, [11] resources, [12] heap
+        //              pages, [13] image and stack mappings, [14] the log line.
         //   StartTimes: out [1] starts, HPET ticks spent in [2] reading files,
         //              [3] loading images, [4] building, [5] syncing the
         //              kernel's low mappings, [6] the rest; [7] HPET Hz.
@@ -85,6 +116,52 @@ namespace OS.Kernel.Process
             if (op == ProcessOpCurrentId)
             {
                 request[1] = caller;
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpMark)
+            {
+                if (self != null)
+                {
+                    if (request[0] == 0 && self.TMark0 == 0) self.TMark0 = Ticks();
+                    else if (request[0] == 1 && self.TMark1 == 0) self.TMark1 = Ticks();
+                }
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpLifeTimes)
+            {
+                request[1] = s_lives;
+                request[2] = s_lToEntry;
+                request[3] = s_lInit;
+                request[4] = s_lBanner;
+                request[5] = s_lCode;
+                request[6] = s_lEnd;
+                request[7] = s_woken;
+                request[8] = s_lWake;
+                request[9] = OS.Hal.Timer.Hpet.FrequencyHz;
+                request[10] = s_eThreads;
+                request[11] = s_eResources;
+                request[12] = s_eHeap;
+                request[13] = s_eMappings;
+                request[14] = s_eLog;
+                request[15] = s_sService;
+                request[16] = s_sPath;
+                request[17] = s_gLock;
+                request[18] = s_gArgs;
+                request[19] = s_gProcess;
+                request[20] = s_gReserve;
+                request[21] = s_gTail;
+                request[22] = s_gManifest;
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpMemory)
+            {
+                Scheduler.ReapDead();
+                request[1] = AppProcesses.RunningHeapPages();
+                request[2] = PhysicalMemory.AvailablePages();
+                request[3] = ProgramCache.Pages;
                 return (int)AppServiceStatus.Ok;
             }
 
@@ -106,7 +183,9 @@ namespace OS.Kernel.Process
                 Pager.GetSummary(out global::OS.Kernel.Paging.PagingSummary paging);
                 request[1] = PhysicalMemory.HandedOutPages - PhysicalMemory.FreedPages
                              - global::OS.Kernel.Memory.KernelHeap.HeapPages
-                             - paging.TablePages - paging.SpareTablePages;
+                             - ProgramCache.Pages
+                             - paging.TablePages - paging.SpareTablePages
+                             - AppProcesses.RunningHeapPages();
                 request[2] = (ulong)AppProcesses.Running;
                 request[3] = (ulong)AppProcesses.Records;
                 request[4] = global::OS.Kernel.Memory.ExchangeHeap.LiveBlocks;
@@ -119,6 +198,7 @@ namespace OS.Kernel.Process
 
             if (op == ProcessOpStart)
             {
+                ulong serviceStarted = Ticks();
                 request[5] = 0;
                 char* path = stackalloc char[(int)MaxPathChars];
                 if (!TryReadAsciiPath(request[0], path, MaxPathChars))
@@ -128,6 +208,7 @@ namespace OS.Kernel.Process
                 AppServiceStatus started = StartFromPath(path, abi, serviceAbi, source == AbiResolveSource.Request,
                     request[2] != 0 ? (byte*)request[1] : null, (uint)request[2],
                     (int)request[3], (int)request[4], out AppProcess child);
+                s_sService += Ticks() - serviceStarted;
                 if (started == AppServiceStatus.Ok) request[5] = child.Id;
                 return (int)started;
             }
@@ -166,6 +247,21 @@ namespace OS.Kernel.Process
             char* path, uint appAbiVersion, AppServiceAbi serviceAbi, bool abiFromRequest,
             byte* arguments, uint argumentsLength, int inputEnd, int outputEnd, out AppProcess process)
         {
+            ulong pathStarted = Ticks();
+            try
+            {
+                return StartFromPathCore(path, appAbiVersion, serviceAbi, abiFromRequest, arguments, argumentsLength, inputEnd, outputEnd, out process);
+            }
+            finally
+            {
+                s_sPath += Ticks() - pathStarted;
+            }
+        }
+
+        private static AppServiceStatus StartFromPathCore(
+            char* path, uint appAbiVersion, AppServiceAbi serviceAbi, bool abiFromRequest,
+            byte* arguments, uint argumentsLength, int inputEnd, int outputEnd, out AppProcess process)
+        {
             process = null;
             BootInfo bootInfo = Platform.GetBootInfo();
             if (bootInfo.FileReadAll == null)
@@ -174,7 +270,9 @@ namespace OS.Kernel.Process
             void* file = null;
             uint fileSize = 0;
             ulong t0 = Ticks();
-            AppServiceStatus read = MapBootFileStatus(bootInfo.FileReadAll(path, &file, &fileSize));
+            bool cached = ProgramCache.TryTake(string.FromUtf16Z(path, (int)MaxPathChars), out file, out fileSize, out AppServiceStatus read);
+            if (!cached)
+                read = MapBootFileStatus(bootInfo.FileReadAll(path, &file, &fileSize));
             s_tRead += Ticks() - t0;
             if (read != AppServiceStatus.Ok)
                 return read;
@@ -185,12 +283,14 @@ namespace OS.Kernel.Process
             if ((inputEnd > 0 && !global::OS.Kernel.Pipes.KernelPipes.IsEnd(holder, inputEnd, SharpOS.Std.Pipes.PipeRole.Reader)) ||
                 (outputEnd > 0 && !global::OS.Kernel.Pipes.KernelPipes.IsEnd(holder, outputEnd, SharpOS.Std.Pipes.PipeRole.Writer)))
             {
-                global::OS.Kernel.Memory.NativeArena.FreeLarge(file, fileSize);
+                GiveBackFile(cached, file, fileSize);
                 return AppServiceStatus.InvalidParameter;
             }
 
             AppServiceStatus result;
+            ulong g0 = Ticks();
             EnterStart();
+            ulong g1 = Ticks();
             try
             {
                 StartupData.Clear();
@@ -202,18 +302,31 @@ namespace OS.Kernel.Process
                 }
                 else
                 {
-                    result = StartProcess(new MemoryBlock(file, fileSize), FileNameOf(path),
+                    string name = FileNameOf(path);
+                    ulong g2 = Ticks();
+                    s_gArgs += g2 - g1;
+                    result = StartProcess(new MemoryBlock(file, fileSize), name,
                         appAbiVersion, serviceAbi, abiFromRequest,
                         AppProcesses.Current?.Id ?? 0, out process, holder, inputEnd, outputEnd);
+                    s_gProcess += Ticks() - g2;
                 }
                 StartupData.Clear();   // a start that failed before its build took it
             }
             finally
             {
+                ulong g3 = Ticks();
                 LeaveStart();
-                global::OS.Kernel.Memory.NativeArena.FreeLarge(file, fileSize);
+                GiveBackFile(cached, file, fileSize);
+                s_gTail += Ticks() - g3;
             }
+            s_gLock += g1 - g0;
             return result;
+        }
+
+        private static void GiveBackFile(bool cached, void* file, uint fileSize)
+        {
+            if (cached) ProgramCache.Return(file);
+            else global::OS.Kernel.Memory.NativeArena.FreeLarge(file, fileSize);
         }
 
         private static string FileNameOf(char* path)
@@ -266,7 +379,9 @@ namespace OS.Kernel.Process
                 LauncherHolds = true,
                 State = AppProcessState.Running,
             };
+            ulong r0 = Ticks();
             int slot = AppProcesses.TryReserve(proc);
+            s_gReserve += Ticks() - r0;
             if (slot < 0)
             {
                 DebugLog.Begin(LogLevel.Warn);
@@ -310,7 +425,12 @@ namespace OS.Kernel.Process
                     appAbiVersion = NormalizeAbiVersion(proc.Image.ManifestAbi);
                     if (TryParseServiceAbi(proc.Image.ManifestServiceAbi, out AppServiceAbi imageServiceAbi))
                         serviceAbi = imageServiceAbi;
-                    LogImageManifest(ref proc.Image, appAbiVersion, serviceAbi);
+                    // Said for what the kernel or the launcher starts, and for an
+                    // ABI that is not the current one (step196): on the laptop
+                    // this line cost ≈7.8 ms of an 11 ms start-and-exit, on
+                    // every start an app made.
+                    if (launcherId == 0 || appAbiVersion != AppServiceTable.CurrentAbiVersion)
+                        LogImageManifest(ref proc.Image, appAbiVersion, serviceAbi);
                 }
                 else if (!proc.Image.ManifestFound && !abiFromRequest)
                 {
@@ -320,7 +440,9 @@ namespace OS.Kernel.Process
                     DebugLog.EndLine();
                 }
 
-                t1 = Ticks();
+                ulong tManifest = Ticks();
+                s_gManifest += tManifest - t1;
+                t1 = tManifest;
                 bool built = ProcessImageBuilder.TryBuild(ref proc.Image, 0, serviceAbi, appAbiVersion,
                         AppProcesses.StackTopForSlot(slot), out proc.Built);
                 ulong t2 = Ticks();
@@ -333,6 +455,14 @@ namespace OS.Kernel.Process
                 processBuilt = true;
 
                 if (!TryValidateProcess(ref proc.Built, appAbiVersion)) { result = FailedAtStep(5); break; }
+
+                // The heap's range and budget go in this process's table.
+                AppServiceTable* table = (AppServiceTable*)proc.Built.ServiceTableVirtual;
+                table->HeapBase = AppProcesses.ImageBaseForSlot(slot) + AppProcesses.HeapRegionOffset;
+                table->HeapBytes = AppProcesses.HeapRegionBytes;
+                table->HeapBudget = AppProcesses.HeapBudgetBytes;
+                table->HeapCommitAddress = (ulong)(nint)(delegate* unmanaged<ulong, ulong, int>)&HeapCommit;
+                table->HeapReleaseAddress = (ulong)(nint)(delegate* unmanaged<ulong, ulong, int>)&HeapRelease;
                 if (!JumpStub.EnsureInitialized()) { result = FailedAtStep(6); break; }
                 ulong t3 = Ticks();
                 bool synced = TrySyncKernelLowMappings(ref proc.Built);
@@ -374,6 +504,7 @@ namespace OS.Kernel.Process
                 if (OS.Kernel.Diagnostics.Probes.ExchangeHeap)
                     OS.Kernel.Memory.ExchangeHeap.Allocate(64, proc.Id);
 
+                proc.TRunnable = Ticks();
                 Scheduler.MakeRunnable(main);
                 s_tRest += Ticks() - t4;
                 s_starts++;
@@ -412,8 +543,10 @@ namespace OS.Kernel.Process
         {
             AppProcess proc = Scheduler.Current.App;
             int returned = 0;
+            proc.TEntry = Ticks();
             bool jumped = JumpStub.Run(proc.Built.EntryPoint, proc.Built.StackTop,
                                        proc.Built.StartupBlockVirtual, proc.PagerCr3, out returned);
+            proc.TCodeDone = Ticks();
             int code = proc.KillRequested ? proc.KillCode
                      : proc.ExitRequested ? proc.RequestedExitCode
                      : jumped ? returned : JumpStub.UnhandledExitCode;
@@ -433,30 +566,55 @@ namespace OS.Kernel.Process
             if (code != 0) proc.Failed = true;
             if (proc.Failed) ProcessResources.MarkFailed(proc.Id);
 
+            ulong e0 = Ticks();
             uint threads = Scheduler.EndProcessThreads(proc);
+            ulong e1 = Ticks();
 
             // Its threads are gone; now what it held outside them.
-            ProcessResources.OnAppEnded(proc.Id, proc.Failed);
+            // A child of another app that ended cleanly is not logged (step196):
+            // its launcher has the code, and on the laptop each line cost ≈5 ms
+            // (screen, serial over USB, disk) — two lines were two thirds of a
+            // start-and-exit. Failures, and what the kernel or the launcher
+            // started, still are.
+            bool quiet = proc.LauncherId != 0 && code == 0;
+            ProcessResources.OnAppEnded(proc.Id, proc.Failed, quiet);
+            ulong e2 = Ticks();
+            ReleaseHeap(proc);
+            ulong e3 = Ticks();
 
             if (!CleanupProcessMappings(ref proc.Built, ref proc.Image))
                 DebugLog.Write(LogLevel.Warn, "process cleanup mappings failed");
             AppProcesses.FreeSlot(proc);
+            ulong e4 = Ticks();
 
             proc.ExitCode = code;
             proc.State = AppProcessState.Exited;
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write("---- ");
-            UiText.Write(proc.Name);
-            UiText.Write(" end: exit=");
-            UiText.WriteInt(code);
-            if (threads != 0)
+            if (!quiet || threads != 0)
             {
-                UiText.Write(", threads ended with it: ");
-                UiText.WriteInt((int)threads);
+                DebugLog.Begin(LogLevel.Info);
+                UiText.Write("---- ");
+                UiText.Write(proc.Name);
+                UiText.Write(" end: exit=");
+                UiText.WriteInt(code);
+                if (threads != 0)
+                {
+                    UiText.Write(", threads ended with it: ");
+                    UiText.WriteInt((int)threads);
+                }
+                UiText.Write(" ----");
+                DebugLog.EndLine();
             }
-            UiText.Write(" ----");
-            DebugLog.EndLine();
+            ulong e5 = Ticks();
+            Preemption.Suppress();
+            s_eThreads += e1 - e0;
+            s_eResources += e2 - e1;
+            s_eHeap += e3 - e2;
+            s_eMappings += e4 - e3;
+            s_eLog += e5 - e4;
+            Preemption.Allow();
 
+            proc.TEnded = Ticks();
+            NoteLife(proc);
             Preemption.Suppress();
             proc.ExitedWord = 1;
             bool forget = !proc.LauncherHolds;
@@ -470,13 +628,113 @@ namespace OS.Kernel.Process
             AppProcesses.OnLauncherEnded(proc.Id);
         }
 
+        // A complete life only (it reached its code and set up its runtime);
+        // a process killed or failed early is left out.
+        private static void NoteLife(AppProcess p)
+        {
+            if (p.TRunnable == 0 || p.TEntry == 0 || p.TMark0 == 0 || p.TMark1 == 0 || p.TCodeDone == 0) return;
+            Preemption.Suppress();
+            s_lives++;
+            s_lToEntry += p.TEntry - p.TRunnable;
+            s_lInit += p.TMark0 - p.TEntry;
+            s_lBanner += p.TMark1 - p.TMark0;
+            s_lCode += p.TCodeDone - p.TMark1;
+            s_lEnd += p.TEnded - p.TCodeDone;
+            Preemption.Allow();
+        }
+
+        // ---- the app's heap (step196) ----
+
+        /// <summary>
+        /// Pages under [address, address + bytes) of the caller's heap range,
+        /// zeroed. 0 done; LimitReached past the budget; InvalidParameter for a
+        /// range not page-aligned or outside; DeviceError without memory.
+        /// </summary>
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int HeapCommit(ulong address, ulong bytes)
+        {
+            AppProcess p = AppProcesses.Current;
+            if (p == null || !InHeap(p, address, bytes)) return (int)AppServiceStatus.InvalidParameter;
+            if (p.HeapCommitted + bytes > AppProcesses.HeapBudgetBytes) return (int)AppServiceStatus.LimitReached;
+            for (ulong va = address; va < address + bytes; va += 4096)
+            {
+                ulong pa = PhysicalMemory.AllocPage();
+                if (pa == 0 || !Pager.Map(va, pa, PageFlags.Writable | PageFlags.NoExecute))
+                {
+                    if (pa != 0) PhysicalMemory.FreePage(pa);
+                    UnmapMappedRange(address, va, returnPhysicalPages: true);
+                    return (int)AppServiceStatus.DeviceError;
+                }
+                OS.Kernel.Util.Memory.Zero((void*)va, 4096);
+            }
+            Preemption.Suppress();
+            p.HeapCommitted += bytes;
+            (p.HeapRanges ??= new System.Collections.Generic.List<ulong>()).Add(address);
+            p.HeapRanges.Add(bytes);
+            Preemption.Allow();
+            return 0;
+        }
+
+        /// <summary>Gives back a range HeapCommit gave, whole.</summary>
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int HeapRelease(ulong address, ulong bytes)
+        {
+            AppProcess p = AppProcesses.Current;
+            if (p == null || !InHeap(p, address, bytes)) return (int)AppServiceStatus.InvalidParameter;
+            Preemption.Suppress();
+            int found = -1;
+            if (p.HeapRanges != null)
+                for (int i = 0; i < p.HeapRanges.Count; i += 2)
+                    if (p.HeapRanges[i] == address && p.HeapRanges[i + 1] == bytes) { found = i; break; }
+            if (found >= 0)
+            {
+                p.HeapRanges.RemoveAt(found);
+                p.HeapRanges.RemoveAt(found);
+                p.HeapCommitted -= bytes;
+            }
+            Preemption.Allow();
+            if (found < 0) return (int)AppServiceStatus.InvalidParameter;
+            UnmapMappedRange(address, address + bytes, returnPhysicalPages: true);
+            return 0;
+        }
+
+        private static bool InHeap(AppProcess p, ulong address, ulong bytes)
+        {
+            ulong low = AppProcesses.ImageBaseForSlot(p.Slot) + AppProcesses.HeapRegionOffset;
+            return bytes != 0 && (address & 4095) == 0 && (bytes & 4095) == 0
+                   && address >= low && address + bytes <= low + AppProcesses.HeapRegionBytes;
+        }
+
+        // The process's end: every page its heap still held.
+        private static void ReleaseHeap(AppProcess p)
+        {
+            System.Collections.Generic.List<ulong> ranges = p.HeapRanges;
+            if (ranges == null) return;
+            for (int i = 0; i < ranges.Count; i += 2)
+                UnmapMappedRange(ranges[i], ranges[i] + ranges[i + 1], returnPhysicalPages: true);
+            ranges.Clear();
+            p.HeapCommitted = 0;
+        }
+
         /// <summary>Blocks until the process has ended. False when the waiting thread is itself being ended.</summary>
         internal static bool WaitForExit(AppProcess proc)
         {
             uint running = 0;
+            bool waited = false;
             while (true)
             {
-                if (proc.ExitedWord != 0) return true;
+                if (proc.ExitedWord != 0)
+                {
+                    if (waited && proc.TEnded != 0)
+                    {
+                        Preemption.Suppress();
+                        s_woken++;
+                        s_lWake += Ticks() - proc.TEnded;
+                        Preemption.Allow();
+                    }
+                    return true;
+                }
+                waited = true;
                 Thread self = Scheduler.Current;
                 if (self != null && self.KillRequested) return false;
                 fixed (uint* word = &proc.ExitedWord)

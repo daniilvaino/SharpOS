@@ -43,6 +43,27 @@ namespace SharpOS.Std.Pipes
         {
         }
 
+        // Room for this many entries (a copy out of a region: ViewCopy).
+        internal Expando(int capacity)
+        {
+            if (capacity > 0)
+            {
+                _names = new string[capacity];
+                _values = new object[capacity];
+            }
+        }
+
+        // An entry whose name is new and whose value is known to travel: a
+        // copy out of a region (ViewCopy) — names of a type's fields are
+        // distinct, and every value came out of a pipe.
+        internal void AppendFresh(string name, object value)
+        {
+            if (_names == null || _count == _names.Length) Grow();
+            _names[_count] = name;
+            _values[_count] = value;
+            _count++;
+        }
+
         /// <summary>Fields in the set.</summary>
         public int Count => _count;
 
@@ -182,22 +203,24 @@ namespace SharpOS.Std.Pipes
                 _values[i] = value;
                 return;
             }
-            if (_names == null || _count == _names.Length)
-            {
-                int capacity = _names == null ? 4 : _names.Length * 2;
-                var names = new string[capacity];
-                var values = new object[capacity];
-                for (int j = 0; j < _count; j++)
-                {
-                    names[j] = _names[j];
-                    values[j] = _values[j];
-                }
-                _names = names;
-                _values = values;
-            }
+            if (_names == null || _count == _names.Length) Grow();
             _names[_count] = name;
             _values[_count] = value;
             _count++;
+        }
+
+        private void Grow()
+        {
+            int capacity = _names == null || _names.Length == 0 ? 4 : _names.Length * 2;
+            var names = new string[capacity];
+            var values = new object[capacity];
+            for (int j = 0; j < _count; j++)
+            {
+                names[j] = _names[j];
+                values[j] = _values[j];
+            }
+            _names = names;
+            _values = values;
         }
 
         private static unsafe void CheckTravels(object value)

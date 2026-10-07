@@ -153,7 +153,7 @@ namespace SharpOS.Std.Pipes
         {
             ulong key = MessageCatalog.KeyOf(typeof(T));
             if (key == 0) throw Refused(handle, PipeStatus.Refused, what, "the type is not in the catalog");
-            PipeStatus status = PipeTransport.OpenEnd(handle, MessageCatalog.Schema, key, out string error);
+            PipeStatus status = PipeTransport.OpenEnd(handle, MessageCatalog.WriterSchema(key), key, out string error);
             if (status != PipeStatus.Ok) throw Refused(handle, status, what, error);
             return new PipeWriter<T>(handle, key) { Throws = true };
         }

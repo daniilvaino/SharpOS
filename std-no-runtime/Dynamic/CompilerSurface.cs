@@ -25,6 +25,11 @@ namespace System.Runtime.CompilerServices
     {
         internal readonly CallSiteBinder _binder;
         internal object _rules;   // SharpOS.Std.Dynamic.Rule: the bindings kept for this site
+        // An argument array for a kept binding with no body of its own for
+        // 1-3 operands (step196); _spareBusy is its lock (an atomic int: the
+        // reference forms of Interlocked are not atomic here).
+        internal object[] _spare;
+        internal int _spareBusy;
 
         internal CallSite(CallSiteBinder binder) => _binder = binder;
 

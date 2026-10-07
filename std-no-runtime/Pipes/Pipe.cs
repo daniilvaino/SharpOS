@@ -32,7 +32,7 @@ namespace SharpOS.Std.Pipes
                 PipeTransport.Close(r);
                 return PipeStatus.Refused;
             }
-            PipeTransport.Declare(w, MessageCatalog.Schema, key);
+            PipeTransport.Declare(w, MessageCatalog.WriterSchema(key), key);
             writer = new PipeWriter<T>(w, key);
             reader = new PipeReader<T>(r, key);
             return PipeStatus.Ok;
@@ -280,7 +280,7 @@ namespace SharpOS.Std.Pipes
                 return PipeStatus.Refused;
             }
             PipeStatus status = PipeTransport.Connect(name, PipeRole.Writer, capacity, overflow,
-                                                      MessageCatalog.Schema, key, out int handle, out error);
+                                                      MessageCatalog.WriterSchema(key), key, out int handle, out error);
             if (status == PipeStatus.Ok)
                 writer = new PipeWriter<T>(handle, key);
             return status;
@@ -449,6 +449,15 @@ namespace SharpOS.Std.Pipes
             LastError = null;
             MessageCatalog.Ensure();
             PipeStatus status = PipeTransport.Receive(_handle, wait, out void* raw, out ulong length, out uint dropped);
+            if (status == PipeStatus.TypeMismatch)
+            {
+                // The writer came after this reader with another type: it was
+                // not refused (the type is the writer's); this reader is.
+                byte[] writerSchema = PipeTransport.Schema(_handle, out ulong writerKey);
+                LastError = TypeCheck.Compare(writerSchema, writerKey, MessageCatalog.SchemaOf(_key), _key)
+                            ?? "the writer's type is not the one this reader declared";
+                return status;
+            }
             if (status == PipeStatus.EndOfStream || status == PipeStatus.Broken)
             {
                 DroppedAtEnd = dropped;
@@ -507,6 +516,9 @@ namespace SharpOS.Std.Pipes
         private int _handle;
 
         internal RawPipeReader(int handle) => _handle = handle;
+
+        /// <summary>The transport handle; zero once closed.</summary>
+        internal int Handle => _handle;
 
         public PipeStatus Status { get; private set; }
 

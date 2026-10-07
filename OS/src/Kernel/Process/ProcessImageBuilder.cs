@@ -14,7 +14,10 @@ namespace OS.Kernel.Process
         // overflowing it faults on an exhausted stack, which is a double
         // fault and then a reset — the one failure that destroys the log it
         // would have to be diagnosed from.
-        private const uint DefaultStackPages = 16;
+        // 1 MiB (AppProcesses.MainStackBytes, step196): 64 KiB held a frame of
+        // 700 live references but not one of 4400, and with nothing below it
+        // to fault on, an overrun ran on into whatever was mapped there.
+        private const uint DefaultStackPages = (uint)(AppProcesses.MainStackBytes / 4096);
 
         // One stack region per nesting level, because a parent's stack stays
         // mapped the whole time its child runs — it is what the kernel is

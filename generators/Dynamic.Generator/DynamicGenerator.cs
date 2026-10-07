@@ -133,8 +133,11 @@ internal sealed class Emitter
         if (sig.Result != null) NoteType(sig.Result);
         bodies.Append("        private static global::System.Type[] ").Append(types).Append(";\n");
         bodies.Append("        private static ").Append(ret).Append(' ').Append(name).Append('(').Append(string.Join(", ", parameters)).Append(")\n        {\n");
-        string call = Rt + "DynamicRuntime.Run(__s, new object[] { " + string.Join(", ", boxes) + " }, "
-                      + types + " ??= new global::System.Type[] { " + string.Join(", ", typeofs) + " })";
+        // One to three operands go without an argument array (step196).
+        string typeArray = types + " ??= new global::System.Type[] { " + string.Join(", ", typeofs) + " }";
+        string call = boxes.Count >= 1 && boxes.Count <= 3
+            ? Rt + "DynamicRuntime.Run" + boxes.Count.ToString(CultureInfo.InvariantCulture) + "(__s, " + string.Join(", ", boxes) + ", " + typeArray + ")"
+            : Rt + "DynamicRuntime.Run(__s, new object[] { " + string.Join(", ", boxes) + " }, " + typeArray + ")";
         if (sig.Result == null) bodies.Append("            ").Append(call).Append(";\n");
         else bodies.Append("            object __r = ").Append(call).Append(";\n            return ").Append(Unbox(sig.Result, "__r")).Append(";\n");
         bodies.Append("        }\n\n");

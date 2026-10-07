@@ -54,6 +54,44 @@ namespace SharpOS.AppSdk
             return stats;
         }
 
+        /// <summary>Tells the kernel this process's runtime is set up: 0 before its banner, 1 after (step196).</summary>
+        internal static void Mark(int which)
+        {
+            ulong* request = stackalloc ulong[9];
+            request[0] = (ulong)which;
+            Call(10, request);
+        }
+
+        /// <summary>
+        /// Milliseconds summed over ended processes: [0] count, [1] runnable to
+        /// first instruction, [2] runtime setup, [3] banner, [4] the code, [5]
+        /// the ending; [6] waits woken, [7] wake to waiter running; the ending's
+        /// parts over all endings: [8] other threads, [9] resources, [10] heap
+        /// pages, [11] image and stack mappings, [12] the log line.
+        /// </summary>
+        public static double[] LifeTimes()
+        {
+            ulong* request = stackalloc ulong[23];
+            var times = new double[21];
+            if (Call(11, request) != AppServiceStatus.Ok || request[9] == 0) return times;
+            times[0] = request[1];
+            for (int i = 1; i < 6; i++) times[i] = request[i + 1] * 1000.0 / request[9];
+            times[6] = request[7];
+            times[7] = request[8] * 1000.0 / request[9];
+            for (int i = 8; i < 21; i++) times[i] = request[i + 2] * 1000.0 / request[9];
+            return times;
+        }
+
+        /// <summary>Pages: [0] held by the heaps of running processes, [1] still free, [2] in the kernel's program cache.</summary>
+        public static ulong[] MemoryPages()
+        {
+            ulong* request = stackalloc ulong[9];
+            var pages = new ulong[3];
+            if (Call(9, request) == AppServiceStatus.Ok)
+                for (int i = 0; i < 3; i++) pages[i] = request[i + 1];
+            return pages;
+        }
+
         /// <summary>Objects the kernel's heap ever allocated, read into a caller's buffer: no allocation of its own.</summary>
         public static ulong KernelAllocations()
         {

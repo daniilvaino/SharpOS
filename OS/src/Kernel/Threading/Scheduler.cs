@@ -572,9 +572,22 @@ namespace OS.Kernel.Threading
             s_switchCount++;
             OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.SchedSwitches);
             SwapExceptionChain(curr, next);
+            SwapPreemptionDepth(curr, next);
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
             s_switching = false;
             // CoopSwitch returns here when SOMEBODY switches back to curr.
+        }
+
+        // The suppression depth belongs to the thread (step196). A thread that
+        // yields inside a critical section — a SpinYieldLock waiting for its
+        // owner — used to hand the next thread a CPU with switching off: a
+        // worker spinning in its app's code was then never preempted again,
+        // and the machine stood (PROCTEST 8 under --gc-stress). Now the depth
+        // goes with the thread that raised it and comes back when it runs.
+        private static void SwapPreemptionDepth(Thread curr, Thread next)
+        {
+            curr.SavedPreemptionDepth = Preemption.Depth;
+            Preemption.RestoreDepth(next.SavedPreemptionDepth);
         }
 
         // Phase E5 — block the current thread on the TimerQueue until
@@ -810,6 +823,7 @@ namespace OS.Kernel.Threading
             s_switchCount++;
             OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.SchedSwitches);
             SwapExceptionChain(curr, next);
+            SwapPreemptionDepth(curr, next);
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
             s_switching = false;
             // Unreachable — curr is Exited, no one re-enters its frame.

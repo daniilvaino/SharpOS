@@ -25,6 +25,9 @@ namespace SharpOS.Std.Dynamic
 
         internal static GcEETypeElementType Element(Type t) => Table(t)->ElementType;
 
+        /// <summary>A value's element type from its table: no Type made (step196).</summary>
+        internal static GcEETypeElementType ElementTypeOf(object o) => ((GcMethodTable*)TableOf(o))->ElementType;
+
         internal static bool IsValueType(Type t) => t != null && Table(t)->IsValueType;
 
         internal static bool IsInterface(Type t) => t != null && Table(t)->IsInterface;

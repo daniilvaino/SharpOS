@@ -35,6 +35,8 @@ namespace SharpOS.Std.Pipes
 
         public static PipeStatus Close(int handle) => KernelPipes.Close(Holder, handle);
 
+        public static PipeStatus WaitPeer(int handle) => KernelPipes.WaitPeer(Holder, handle);
+
         public static PipeStatus OpenEnd(int handle, byte[] schema, ulong rootKey, out string error)
             => KernelPipes.DeclareEnd(Holder, handle, schema, rootKey, out error);
 

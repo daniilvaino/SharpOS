@@ -193,7 +193,10 @@ namespace OS.Kernel.Memory
                         OS.Hal.Console.WriteUInt(t.AppGeneration);
                         OS.Hal.Console.WriteLine("");
                     }
-                    KernelGcPreciseWalk.RunFromParkedThread(t.ContextBlock, markRoot);
+                    // Parked at a deferred tick: maybe with a fresh object in
+                    // hand by address only — conservative, like a preemption.
+                    if (!t.ParkedAtDeferredTick || !KernelGcPreciseWalk.ScanParkedConservatively(t, markRoot))
+                        KernelGcPreciseWalk.RunFromParkedThread(t.ContextBlock, markRoot);
 
                     // A preempted thread is parked inside the interrupt
                     // handler, and the walk above stops at the entry stub.

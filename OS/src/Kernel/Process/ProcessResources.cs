@@ -66,7 +66,7 @@ namespace OS.Kernel.Process
         /// The run is over: everything it still holds goes back, and it is
         /// recorded as Exited unless it already failed.
         /// </summary>
-        public static void OnAppEnded(uint generation, bool failed)
+        public static void OnAppEnded(uint generation, bool failed, bool quiet = false)
         {
             if (generation == 0) return;
 
@@ -94,7 +94,7 @@ namespace OS.Kernel.Process
                 Threading.Preemption.Allow();
             }
 
-            if (released != 0 || ends != 0)
+            if ((released != 0 || ends != 0) && (failed || !quiet))
             {
                 DebugLog.Begin(LogLevel.Info);
                 UiText.Write("[proc] generation ");

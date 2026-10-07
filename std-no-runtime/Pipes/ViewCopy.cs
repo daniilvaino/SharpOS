@@ -15,7 +15,32 @@ namespace SharpOS.Std.Pipes
     {
         // ---- ToExpando ----
 
-        public static object ToHeapValue(View v) => new Copier().Value(v);
+        // One copier and one mapper kept for the next copy (step196): their
+        // tables are cleared, not made again. Taken under an atomic flag; a
+        // copy that finds it taken (another thread, or a copy inside a copy)
+        // makes its own.
+        private static Copier s_copier;
+        private static int s_copierBusy;
+        private static Mapper s_mapper;
+        private static int s_mapperBusy;
+
+        public static object ToHeapValue(View v)
+        {
+            bool mine = System.Threading.Interlocked.CompareExchange(ref s_copierBusy, 1, 0) == 0;
+            Copier c = mine ? (s_copier ??= new Copier()) : new Copier();
+            try
+            {
+                return c.Value(v);
+            }
+            finally
+            {
+                if (mine)
+                {
+                    c.Reset();
+                    s_copierBusy = 0;
+                }
+            }
+        }
 
         private sealed class Copier
         {
@@ -23,12 +48,17 @@ namespace SharpOS.Std.Pipes
             // reachable from here while its own fields are filled.
             private readonly Dictionary<ulong, object> _done = new Dictionary<ulong, object>();
 
+            public void Reset()
+            {
+                if (_done.Count > 0) _done.Clear();
+            }
+
             public object Value(View v)
             {
                 switch (v.Kind)
                 {
                     case ViewKind.Null: return null;
-                    case ViewKind.Bool: return (bool)v;
+                    case ViewKind.Bool: return BoolBox.Of((bool)v);
                     case ViewKind.Char: return (char)v;
                     case ViewKind.Float: return v.ValueKind == FieldKind.Single ? (object)(float)v : (double)v;
                     case ViewKind.Integer: return Boxed(v);
@@ -68,10 +98,21 @@ namespace SharpOS.Std.Pipes
                     && TypeKeys.TryTable(v.Shape.Key, out ulong table))
                     return BoxCopy(v, table);
 
-                var e = new Expando();
+                if (v.Shape.IsExpando)
+                {
+                    var bag = new Expando();
+                    _done[v.Address] = bag;
+                    foreach (ViewField f in v.Fields)
+                        bag[f.Name] = Value(f.Value);
+                    return bag;
+                }
+                // A type's fields: by their shapes, into an Expando of the
+                // right size, names shared with the description.
+                FieldShape[] fields = v.Shape.Fields;
+                var e = new Expando(fields.Length);
                 if (!v.IsInPlaceStruct) _done[v.Address] = e;
-                foreach (ViewField f in v.Fields)
-                    e[f.Name] = Value(f.Value);
+                for (int i = 0; i < fields.Length; i++)
+                    e.AppendFresh(fields[i].Name, Value(v.FieldAt(fields[i])));
                 return e;
             }
 
@@ -137,11 +178,59 @@ namespace SharpOS.Std.Pipes
 
         public static T Into<T>(View v) where T : class
         {
-            ulong key = MessageCatalog.KeyOf(typeof(T));
-            TypeKeys.Description target = key == 0 ? null : TypeKeys.DescriptionOf(key);
+            RefTarget target = IntoTarget<T>.Value;
             if (target == null)
-                throw new InvalidOperationException("Into: the target type is not in this image's catalog");
-            return Unsafe.As<T>(new Mapper().Reference(v, target.Name));
+            {
+                ulong key = MessageCatalog.KeyOf(typeof(T));
+                TypeKeys.Description d = key == 0 ? null : TypeKeys.DescriptionOf(key);
+                if (d == null)
+                    throw new InvalidOperationException("Into: the target type is not in this image's catalog");
+                IntoTarget<T>.Value = target = TargetOf(d.Name);
+            }
+            bool mine = System.Threading.Interlocked.CompareExchange(ref s_mapperBusy, 1, 0) == 0;
+            Mapper m = mine ? (s_mapper ??= new Mapper()) : new Mapper();
+            try
+            {
+                return Unsafe.As<T>(m.Reference(v, target));
+            }
+            finally
+            {
+                if (mine)
+                {
+                    m.Reset();
+                    s_mapperBusy = 0;
+                }
+            }
+        }
+
+        // Into<T>'s target, found once per T.
+        private static class IntoTarget<T>
+        {
+            public static RefTarget Value;
+        }
+
+        /// <summary>What a reference of a target type takes, resolved once (step196): not by its name per copy.</summary>
+        private enum RefKind : byte { Object, String, Array, Class }
+
+        private sealed class RefTarget
+        {
+            public RefKind Kind;
+            public string Name;
+            public TypeKeys.Description Own;   // a class or an array of this image; null when it has none
+            public RefTarget Element;          // an array's elements, when they are references: made at first use
+        }
+
+        private static RefTarget TargetOf(string type)
+        {
+            var t = new RefTarget { Name = type };
+            if (type == "System.Object") t.Kind = RefKind.Object;
+            else if (type == "System.String") t.Kind = RefKind.String;
+            else
+            {
+                t.Kind = type.EndsWith("[]") ? RefKind.Array : RefKind.Class;
+                t.Own = Own(type);
+            }
+            return t;
         }
 
         /// <summary>A step of a plan: one target field from one source field.</summary>
@@ -151,6 +240,7 @@ namespace SharpOS.Std.Pipes
             public int TargetOffset;
             public FieldKind TargetKind;
             public string TargetType;          // for a reference or a struct
+            public RefTarget Ref;              // for a reference
         }
 
         /// <summary>How a source type's fields become a target type's, built once per pair.</summary>
@@ -158,10 +248,10 @@ namespace SharpOS.Std.Pipes
         {
             public TypeKeys.Description Target;
             public ulong TargetTable;
-            public Step[] Steps;
+            public Step[] Steps;               // only the fields the source has
+            public Plan Next;                  // the source type's other plans
         }
 
-        private static readonly Dictionary<string, Plan> s_plans = new Dictionary<string, Plan>();
         private static Dictionary<string, TypeKeys.Description> s_ownByName;
         private static int s_ownCount;
 
@@ -221,11 +311,12 @@ namespace SharpOS.Std.Pipes
             }
         }
 
+        // A source type's plans hang on its shape (step196): found by reference,
+        // with no key to build. A list replaced whole: a race makes a plan twice.
         private static Plan PlanFor(TypeShape source, TypeKeys.Description target)
         {
-            string id = source.Name + "\u0001" + source.Key.ToString() + "\u0001" + target.Name;
-            lock (s_plans)
-                if (s_plans.TryGetValue(id, out Plan known)) return known;
+            for (Plan known = Unsafe.As<Plan>(source.IntoPlans); known != null; known = known.Next)
+                if (ReferenceEquals(known.Target, target)) return known;
 
             if (!TypeKeys.TryTable(target.Key, out ulong table))
                 throw new InvalidOperationException("Into: " + target.Name + " has no table here");
@@ -240,11 +331,14 @@ namespace SharpOS.Std.Pipes
                     TargetKind = OwnKind(tf.Type),
                     TargetType = tf.Type,
                 };
-                if (step.Source != null) Check(source, target, tf, step);
+                if (step.Source == null) continue;     // the target keeps its default
+                Check(source, target, tf, step);
+                if (step.TargetKind == FieldKind.Reference) step.Ref = TargetOf(tf.Type);
                 steps.Add(step);
             }
             var plan = new Plan { Target = target, TargetTable = table, Steps = steps.ToArray() };
-            lock (s_plans) s_plans[id] = plan;
+            plan.Next = Unsafe.As<Plan>(source.IntoPlans);
+            source.IntoPlans = plan;
             return plan;
         }
 
@@ -277,26 +371,38 @@ namespace SharpOS.Std.Pipes
             private readonly Dictionary<ulong, object> _done = new Dictionary<ulong, object>();
             private Copier _copier;
 
-            // A source value into a reference of the target's declared type.
-            public object Reference(View v, string targetType)
+            public void Reset()
             {
-                if (v.Kind == ViewKind.Null) return null;
-                if (targetType == "System.Object") return (_copier ??= new Copier()).Value(v);
-                if (targetType == "System.String")
+                if (_done.Count > 0) _done.Clear();
+                _copier?.Reset();
+            }
+
+            // A source value into a reference of the target's declared type.
+            public object Reference(View v, RefTarget target)
+            {
+                ViewKind kind = v.Kind;
+                if (kind == ViewKind.Null) return null;
+                string targetType = target.Name;
+                switch (target.Kind)
                 {
-                    if (v.Kind != ViewKind.String) throw Mismatch(targetType, v);
-                    if (_done.TryGetValue(v.Address, out object s)) return s;
-                    string text = (string)v;
-                    _done[v.Address] = text;
-                    return text;
+                    case RefKind.Object:
+                        return (_copier ??= new Copier()).Value(v);
+                    case RefKind.String:
+                    {
+                        if (kind != ViewKind.String) throw Mismatch(targetType, v);
+                        if (_done.TryGetValue(v.Address, out object s)) return s;
+                        string text = (string)v;
+                        _done[v.Address] = text;
+                        return text;
+                    }
+                    case RefKind.Array:
+                        return Array(v, target);
                 }
-                if (targetType.EndsWith("[]")) return Array(v, targetType);
-                if (v.Kind != ViewKind.Object || v.IsInPlaceStruct) throw Mismatch(targetType, v);
+                if (kind != ViewKind.Object || v.IsInPlaceStruct) throw Mismatch(targetType, v);
                 if (_done.TryGetValue(v.Address, out object seen)) return seen;
 
-                TypeKeys.Description target = Own(targetType);
-                if (target == null) throw new InvalidOperationException("Into: " + targetType + " is not in this image's catalog");
-                Plan plan = PlanFor(v.Shape, target);
+                if (target.Own == null) throw new InvalidOperationException("Into: " + targetType + " is not in this image's catalog");
+                Plan plan = PlanFor(v.Shape, target.Own);
                 object copy = Allocate(plan.TargetTable, 0, false);
                 _done[v.Address] = copy;
                 Fill(plan, v, Address(copy));
@@ -305,9 +411,10 @@ namespace SharpOS.Std.Pipes
 
             private void Fill(Plan plan, View source, ulong target)
             {
-                foreach (Step step in plan.Steps)
+                Step[] steps = plan.Steps;
+                for (int i = 0; i < steps.Length; i++)
                 {
-                    if (step.Source == null) continue;
+                    Step step = steps[i];
                     ulong to = target + (ulong)step.TargetOffset;
                     View value = source.FieldAt(step.Source);
                     if (step.TargetKind < FieldKind.Reference)
@@ -315,21 +422,23 @@ namespace SharpOS.Std.Pipes
                     else if (step.TargetKind == FieldKind.Struct)
                         StoreStruct(to, step.TargetType, value);
                     else
-                        Unsafe.AsRef<object>((void*)to) = Reference(value, step.TargetType);
+                        Unsafe.AsRef<object>((void*)to) = Reference(value, step.Ref);
                 }
             }
 
-            private object Array(View v, string targetType)
+            private object Array(View v, RefTarget target)
             {
+                string targetType = target.Name;
                 if (v.Kind != ViewKind.Array) throw Mismatch(targetType, v);
                 if (_done.TryGetValue(v.Address, out object seen)) return seen;
-                TypeKeys.Description arrayType = Own(targetType);
+                TypeKeys.Description arrayType = target.Own;
                 if (arrayType == null || arrayType.Fields.Length != 1 || !TypeKeys.TryTable(arrayType.Key, out ulong table))
                     throw new InvalidOperationException("Into: " + targetType + " is not in this image's catalog");
                 // The array's own description: where its elements start and what
                 // they are (an enum array's elements are its underlying numbers).
                 TypeKeys.Field elements = arrayType.Fields[0];
                 FieldKind kind = OwnKind(elements.Type);
+                RefTarget elementTarget = kind == FieldKind.Reference ? (target.Element ??= TargetOf(elements.Type)) : null;
                 if (kind < FieldKind.Reference && !(v.Shape.Elements.Kind < FieldKind.Reference && Widens(v.Shape.Elements.Kind, kind)))
                     throw Mismatch(targetType, v);
 
@@ -344,7 +453,7 @@ namespace SharpOS.Std.Pipes
                     View element = v[i];
                     if (kind < FieldKind.Reference) StoreValue(to, kind, element);
                     else if (kind == FieldKind.Struct) StoreStruct(to, elements.Type, element);
-                    else Unsafe.AsRef<object>((void*)to) = Reference(element, elements.Type);
+                    else Unsafe.AsRef<object>((void*)to) = Reference(element, elementTarget);
                 }
                 return copy;
             }
