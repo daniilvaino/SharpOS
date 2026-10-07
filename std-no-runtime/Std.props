@@ -74,10 +74,16 @@
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeLoops.cs" Link="std\Pipes\PipeLoops.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionShapes.cs" Link="std\Exchange\RegionShapes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\Pipe.cs" Link="std\Pipes\Pipe.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeEnds.cs" Link="std\Pipes\PipeEnds.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeProbeMessages.cs" Link="std\Pipes\PipeProbeMessages.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStatus.cs" Link="std\Pipes\PipeStatus.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\ObjectLayout.cs" Link="std\Exchange\ObjectLayout.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\Region.cs" Link="std\Exchange\Region.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\TypePlans.cs" Link="std\Exchange\TypePlans.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionWriter.cs" Link="std\Exchange\RegionWriter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionReader.cs" Link="std\Exchange\RegionReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\KeyIndex.cs" Link="std\Exchange\KeyIndex.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Exchange\Chunked.cs" Link="std\Exchange\Chunked.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionProbeGraph.cs" Link="std\Exchange\RegionProbeGraph.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionSchema.cs" Link="std\Exchange\RegionSchema.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\TypeKeys.cs" Link="std\Exchange\TypeKeys.cs" />
@@ -160,6 +166,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Array.cs" Link="std\Runtime\Array.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ArrayHelpers.cs" Link="std\Runtime\ArrayHelpers.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ArrayT.cs" Link="std\Runtime\ArrayT.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ExceptionNames.cs" Link="std\Runtime\ExceptionNames.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Buffer.cs" Link="std\Runtime\Buffer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ByReference.cs" Link="std\Runtime\ByReference.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ClassConstructorRunner.cs" Link="std\Runtime\ClassConstructorRunner.cs" />

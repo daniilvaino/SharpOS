@@ -25,17 +25,31 @@ namespace SharpOS.Std.Pipes
     /// </summary>
     public sealed unsafe class ViewScope
     {
-        internal readonly byte* Block;
-        internal readonly ulong Length;
+        internal byte* Block;
+        internal ulong Length;
         internal readonly RegionShapes Shapes;
         internal bool Alive = true;
         internal string GoneBecause;
+
+        // Bumped when a loop reuses the scope for its next message (step195):
+        // a view keeps the generation it was made in, and one of an earlier
+        // message refuses like a view of an ended scope.
+        internal int Generation;
 
         internal ViewScope(byte* block, ulong length, RegionShapes shapes)
         {
             Block = block;
             Length = length;
             Shapes = shapes;
+        }
+
+        internal void Reset(byte* block, ulong length)
+        {
+            Block = block;
+            Length = length;
+            Alive = true;
+            GoneBecause = null;
+            Generation++;
         }
 
         internal void End(string because)
@@ -78,6 +92,7 @@ namespace SharpOS.Std.Pipes
         private readonly TypeShape _enum;
         private readonly ulong _bits;      // a detached value
         private readonly string _text;     // a detached string (for comparisons and null writes)
+        private readonly int _generation;  // the scope's, when the view was made
 
         private const byte Null = 0, Value = 1, Obj = 2, InPlace = 3, Detached = 4;
 
@@ -92,6 +107,7 @@ namespace SharpOS.Std.Pipes
             _enum = enumType;
             _bits = bits;
             _text = text;
+            _generation = scope?.Generation ?? 0;
         }
 
         // ---- construction ----
@@ -124,8 +140,10 @@ namespace SharpOS.Std.Pipes
 
         private void Check()
         {
-            if (_scope != null && !_scope.Alive)
-                throw new ObjectDisposedException("View", _scope.GoneBecause ?? "the region is gone");
+            if (_scope != null && (!_scope.Alive || _scope.Generation != _generation))
+                throw new ObjectDisposedException("View", _scope.Generation != _generation
+                    ? "the region is gone: the loop moved past it"
+                    : _scope.GoneBecause ?? "the region is gone");
         }
 
         // ---- what it is ----
@@ -573,7 +591,7 @@ namespace SharpOS.Std.Pipes
             if (ka == ViewKind.Null || kb == ViewKind.Null) return ka == kb;
             if (ka == ViewKind.Bool && kb == ViewKind.Bool) return (a.Integer() != 0) == (b.Integer() != 0);
             if (ka == ViewKind.String && kb == ViewKind.String) return a.CopyText() == b.CopyText();
-            return a._scope == b._scope && a._at == b._at && a._shape == b._shape;
+            return a._scope == b._scope && a._generation == b._generation && a._at == b._at && a._shape == b._shape;
         }
 
         public static bool operator !=(View a, View b) => !(a == b);

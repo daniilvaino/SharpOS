@@ -40,39 +40,110 @@ namespace Shell
             }
 
             int last = 0;
-            foreach (Clause clause in parsed.Clauses)
+            var clauses = parsed.Clauses;
+            for (int i = 0; i < clauses.Count; i++)
             {
-                if (clause.Operator == CompoundOperator.AndIf && last != 0) continue;
-                if (clause.Operator == CompoundOperator.OrIf && last == 0) continue;
+                Clause clause = clauses[i];
 
-                if (clause.Operator == CompoundOperator.Pipe)
-                {
-                    // Saying so rather than running the left half and dropping
-                    // the right: a pipeline that silently loses its second
-                    // stage is worse than one that refuses.
-                    Write("sh: pipelines are not supported yet\n");
-                    return LastExitCode = 2;
-                }
+                // The stages of a pipeline are the clauses after this one that
+                // the parser joined to it with `|`.
+                int end = i + 1;
+                while (end < clauses.Count && clauses[end].Operator == CompoundOperator.Pipe) end++;
 
-                last = RunClause(clause);
+                bool skip = (clause.Operator == CompoundOperator.AndIf && last != 0)
+                         || (clause.Operator == CompoundOperator.OrIf && last == 0);
+                if (!skip)
+                    last = end - i > 1 ? RunPipeline(clauses, i, end) : RunClause(clause);
+                i = end - 1;
                 if (ExitRequested) break;
             }
 
             return LastExitCode = last;
         }
 
-        private int RunClause(Clause clause)
+        /// <summary>
+        /// <c>a | b | c</c>: a pipe between each two stages, every stage started
+        /// with its ends, all of them waited for; the code is the last stage's.
+        /// The first stage gets no input and the last no output.
+        /// </summary>
+        /// <remarks>
+        /// A stage that cannot start stops the rest: the ends not handed to
+        /// anyone are closed here — a started stage then sees its input end, or
+        /// its output broken — and the stages already started are waited for.
+        /// </remarks>
+        private int RunPipeline(IReadOnlyList<Clause> clauses, int first, int end)
         {
-            if (clause.Redirects.Count > 0)
+            int count = end - first;
+            var verbs = new string[count];
+            var arguments = new List<string>[count];
+            for (int k = 0; k < count; k++)
             {
-                Write("sh: redirection is not supported yet\n");
-                return 2;
+                Clause stage = clauses[first + k];
+                if (stage.Redirects.Count > 0)
+                {
+                    Write("sh: redirection is not supported yet\n");
+                    return 2;
+                }
+                arguments[k] = new List<string>();
+                verbs[k] = Split(stage, arguments[k]);
+                if (verbs[k].Length == 0)
+                {
+                    Write("sh: an empty stage in a pipeline\n");
+                    return 2;
+                }
             }
 
-            string verb = "";
-            var args = new List<string>();
+            var pairs = new SharpOS.Std.Pipes.PipePair[count - 1];
+            for (int k = 0; k < pairs.Length; k++) pairs[k] = SharpOS.Std.Pipes.Pipe.Create();
 
-            // Elements carry the decoded value; Raw still has its quotes.
+            var started = new List<Process>();
+            int code = 0;
+            bool failed = false;
+            for (int k = 0; k < count && !failed; k++)
+            {
+                string path = ProgramPath(verbs[k], out int missing);
+                if (path == null)
+                {
+                    code = missing;
+                    failed = true;
+                    break;
+                }
+                try
+                {
+                    started.Add(Process.Start(path, arguments[k].ToArray(),
+                        k > 0 ? pairs[k - 1].ReadEnd : null,
+                        k < count - 1 ? pairs[k].WriteEnd : null));
+                }
+                catch (System.InvalidOperationException e)
+                {
+                    Write("sh: ");
+                    Write(e.Message);
+                    Write("\n");
+                    code = 126;
+                    failed = true;
+                }
+            }
+
+            // Whatever was not handed over: the stages that did start see the end.
+            for (int k = 0; k < pairs.Length; k++)
+            {
+                pairs[k].WriteEnd.Dispose();
+                pairs[k].ReadEnd.Dispose();
+            }
+
+            for (int k = 0; k < started.Count; k++)
+            {
+                started[k].WaitForExit();
+                if (!failed && k == count - 1) code = started[k].ExitCode;
+                started[k].Dispose();
+            }
+            return code;
+        }
+
+        // The verb and the arguments of a clause.
+        private static string Split(Clause clause, List<string> args)
+        {
+            string verb = "";
             foreach (ClauseElement element in clause.Elements)
             {
                 if (element.Role == ClauseElementRole.Verb)
@@ -84,6 +155,20 @@ namespace Shell
                     args.Add(element.Value);
                 }
             }
+            return verb;
+        }
+
+        private int RunClause(Clause clause)
+        {
+            if (clause.Redirects.Count > 0)
+            {
+                Write("sh: redirection is not supported yet\n");
+                return 2;
+            }
+
+            // Elements carry the decoded value; Raw still has its quotes.
+            var args = new List<string>();
+            string verb = Split(clause, args);
 
             if (verb.Length == 0) return 0;
 
@@ -246,7 +331,7 @@ namespace Shell
             Write("builtins: cd pwd ls cat echo expect exit help\n");
             Write("expect CODE COMMAND — run it, succeed only on that exit code\n");
             Write("anything else is a path to run: .EXE as a program, .DLL on the hosted runtime\n");
-            Write("operators: && || ;   (pipes and redirection are not implemented)\n");
+            Write("operators: && || ; and a | b | c   (redirection is not implemented)\n");
             // Worth saying out loud: this is bash syntax, so a backslash
             // escapes the next character and eats itself. /apps/X.EXE works,
             // \apps\X.EXE arrives as appsX.EXE.
@@ -254,33 +339,47 @@ namespace Shell
             return 0;
         }
 
+        // The file a verb runs: a path as given, a bare word from pps, with
+        // .EXE added when it has no extension of its own. Null, with the code
+        // to return, when there is none.
+        private string ProgramPath(string verb, out int missing)
+        {
+            missing = 0;
+            string path = LooksLikePath(verb) ? Resolve(verb) : AppDirectory + "\\" + verb;
+            if (AppHost.FileExistsEx(path) == AppServiceStatus.Ok) return path;
+            if (!LooksLikePath(verb) && AppHost.FileExistsEx(path + ".EXE") == AppServiceStatus.Ok) return path + ".EXE";
+            missing = 127;
+            ReportMissing(verb, path);
+            return null;
+        }
+
+        private void ReportMissing(string verb, string path)
+        {
+            // A bare word that resolves to nothing is almost never a
+            // mistyped path — it is a builtin this shell does not have,
+            // which on a rig means the image carries an older SHELL.EXE
+            // than the script was written for. Say that, rather than
+            // printing a path nobody meant to type.
+            if (!LooksLikePath(verb))
+            {
+                Write("sh: unknown command: ");
+                Write(verb);
+                Write(" (no builtin, and no ");
+                Write(path);
+                Write(")\n");
+            }
+            else
+            {
+                Write("sh: not found: ");
+                Write(path);
+                Write("\n");
+            }
+        }
+
         private int RunProgram(string verb, List<string> args, bool reportNonZero = true)
         {
-            string path = LooksLikePath(verb) ? Resolve(verb) : AppDirectory + "\\" + verb;
-
-            if (AppHost.FileExistsEx(path) != AppServiceStatus.Ok)
-            {
-                // A bare word that resolves to nothing is almost never a
-                // mistyped path — it is a builtin this shell does not have,
-                // which on a rig means the image carries an older SHELL.EXE
-                // than the script was written for. Say that, rather than
-                // printing a path nobody meant to type.
-                if (!LooksLikePath(verb))
-                {
-                    Write("sh: unknown command: ");
-                    Write(verb);
-                    Write(" (no builtin, and no ");
-                    Write(path);
-                    Write(")\n");
-                }
-                else
-                {
-                    Write("sh: not found: ");
-                    Write(path);
-                    Write("\n");
-                }
-                return 127;
-            }
+            string path = ProgramPath(verb, out int missing);
+            if (path == null) return missing;
 
             bool managed = EndsWith(path, ".dll");
 

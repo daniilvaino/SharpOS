@@ -12,14 +12,20 @@ namespace OS.Kernel.Process
     //   header  uint Magic, uint Count, uint Length (whole block), uint Reserved
     //   record  uint Kind, uint Length, Length bytes, padded to 8
     //
-    // Launches are nested and synchronous — the parent waits inside RunApp
-    // while the child is built and runs — so one pending block suffices:
-    // RunApp fills it from the parent's memory while the parent is still
-    // mapped, and the child's startup build takes it.
+    //   kind 1  an argument, UTF-8
+    //   kind 2  a pipe end handed over: uint Role, int Handle (step194 §5);
+    //           Role 0 is the standard input, 1 the standard output, the
+    //           rest kept for other roles
+    //
+    // Starts are serialized (AppServiceBuilder.EnterStart), so one pending
+    // block suffices: the start fills it, the new process's build takes it.
     internal static unsafe class StartupData
     {
         public const uint Magic = 0x54445353;           // "SSDT"
         public const uint KindArgument = 1;
+        public const uint KindPipeEnd = 2;
+        public const uint RoleInput = 0;
+        public const uint RoleOutput = 1;
         public const int HeaderSize = 16;
         public const int Capacity = 4096;
 
@@ -42,33 +48,49 @@ namespace OS.Kernel.Process
             s_pendingLength = 0;
             if (list == null || length == 0) return true;
 
+            uint start = 0;
+            for (uint i = 0; i < length; i++)
+            {
+                if (list[i] != 0) continue;
+                if (!Append(KindArgument, list + start, i - start)) { s_pendingLength = 0; return false; }
+                start = i + 1;
+            }
+            if (start != length) { s_pendingLength = 0; return false; }   // last argument not terminated
+            return true;
+        }
+
+        /// <summary>A pipe end the new process gets in <paramref name="role"/>.</summary>
+        public static bool AddPipeEnd(uint role, int handle)
+        {
+            uint* record = stackalloc uint[2];
+            record[0] = role;
+            record[1] = (uint)handle;
+            return Append(KindPipeEnd, (byte*)record, 8);
+        }
+
+        private static bool Append(uint kind, byte* data, uint len)
+        {
             fixed (Buffer* b = &s_pending)
             {
                 byte* block = (byte*)b;
-                uint at = HeaderSize;
-                uint count = 0;
-                uint start = 0;
-                for (uint i = 0; i < length; i++)
+                if (s_pendingLength == 0)
                 {
-                    if (list[i] != 0) continue;
-                    uint len = i - start;
-                    uint padded = (len + 7) & ~7u;
-                    if (at + 8 + padded > Capacity) return false;
-                    *(uint*)(block + at) = KindArgument;
-                    *(uint*)(block + at + 4) = len;
-                    for (uint k = 0; k < padded; k++)
-                        block[at + 8 + k] = k < len ? list[start + k] : (byte)0;
-                    at += 8 + padded;
-                    count++;
-                    start = i + 1;
+                    *(uint*)(block + 0) = Magic;
+                    *(uint*)(block + 4) = 0;
+                    *(uint*)(block + 8) = HeaderSize;
+                    *(uint*)(block + 12) = 0;
                 }
-                if (start != length) return false;      // last argument not terminated
-
-                *(uint*)(block + 0) = Magic;
-                *(uint*)(block + 4) = count;
+                uint at = *(uint*)(block + 8);
+                uint padded = (len + 7) & ~7u;
+                if (at + 8 + padded > Capacity) return false;
+                *(uint*)(block + at) = kind;
+                *(uint*)(block + at + 4) = len;
+                for (uint k = 0; k < padded; k++)
+                    block[at + 8 + k] = k < len ? data[k] : (byte)0;
+                at += 8 + padded;
+                *(uint*)(block + 4) += 1;
                 *(uint*)(block + 8) = at;
-                *(uint*)(block + 12) = 0;
-                s_pendingLength = count == 0 ? 0 : at;
+                s_pendingLength = at;
             }
             return true;
         }

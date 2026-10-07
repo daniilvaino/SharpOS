@@ -13,9 +13,9 @@ namespace OS.Kernel.Memory
     //
     // Pages come from PhysicalMemory and are identity-mapped (as DmaMemory
     // does): one address for the kernel and for every app, since all of them
-    // run on the same page tables. Only pages below 4 GiB are taken: an app's
-    // image is mapped at 0x1_0000_0000, and an identity page there would be
-    // unmapped from under us by the next launch.
+    // run on the same page tables. Only pages below 4 GiB are taken (from
+    // when app images were mapped at 0x1_0000_0000; since step194 they live
+    // at 32 TiB, and the limit stays as the safe side).
     //
     // Every block has an owner. A process's blocks go back to the pool when it
     // ends (ProcessResources), whether or not it freed them.

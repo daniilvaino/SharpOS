@@ -94,6 +94,62 @@ namespace SharpOS.Std.Pipes
             return status;
         }
 
+        /// <summary>The type an end of a pair is opened with, checked against the other end's.</summary>
+        public static PipeStatus OpenEnd(int handle, byte[] schema, ulong rootKey, out string error)
+        {
+            error = null;
+            if (!Available) return PipeStatus.Unsupported;
+            if (Services->PipeOpenEndAddress == 0)
+                return schema == null ? PipeStatus.Ok : Declare(handle, schema, rootKey);   // an older kernel: no check
+            byte[] errorBytes = new byte[512];
+            ulong* request = stackalloc ulong[7];
+            PipeStatus status;
+            fixed (byte* schemaPtr = schema)
+            fixed (byte* errorPtr = errorBytes)
+            {
+                request[0] = (ulong)handle;
+                request[1] = (ulong)schemaPtr;
+                request[2] = schema == null ? 0UL : (ulong)schema.Length;
+                request[3] = rootKey;
+                request[4] = (ulong)errorPtr;
+                request[5] = (ulong)errorBytes.Length;
+                request[6] = 0;
+                status = (PipeStatus)((delegate* unmanaged<ulong*, int>)Services->PipeOpenEndAddress)(request);
+            }
+            if (request[6] != 0)
+                error = System.Text.Encoding.UTF8.GetString(errorBytes, 0, (int)request[6]);
+            return status;
+        }
+
+        /// <summary>
+        /// The end this program was handed at start in <paramref name="role"/>
+        /// (0 input, 1 output): a pipe-end record of the startup data. Zero
+        /// when none was.
+        /// </summary>
+        public static int StandardEnd(uint role)
+        {
+            AppServiceTable* services = Services;
+            if (services == null || services->StartupDataAddress == 0 || services->StartupDataLength < 16)
+                return 0;
+            byte* block = (byte*)services->StartupDataAddress;
+            uint length = services->StartupDataLength;
+            if (*(uint*)block != 0x54445353) return 0;      // "SSDT"
+            uint count = *(uint*)(block + 4);
+            for (uint at = 16, n = 0; n < count && at + 8 <= length; n++)
+            {
+                uint kind = *(uint*)(block + at);
+                uint len = *(uint*)(block + at + 4);
+                if (at + 8 + len > length) break;
+                if (kind == 2 && len >= 8 && *(uint*)(block + at + 8) == role)
+                    return *(int*)(block + at + 12);
+                at += 8 + ((len + 7) & ~7u);
+            }
+            return 0;
+        }
+
+        /// <summary>A line on the screen: where a message goes when there is no output to send it to.</summary>
+        public static void Print(string line) => System.Console.WriteLine(line);
+
         public static PipeStatus Close(int handle)
         {
             if (!Available) return PipeStatus.Unsupported;

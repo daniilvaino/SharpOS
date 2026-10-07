@@ -16,6 +16,9 @@ namespace OS.Kernel.Memory
         private static bool s_initialized;
 
         private static uint s_heapPages;
+
+        /// <summary>Pages the heap holds, free blocks included: it never gives any back.</summary>
+        public static uint HeapPages => s_heapPages;
         private static uint s_allocCount;
         private static uint s_freeCount;
         private static uint s_growCount;

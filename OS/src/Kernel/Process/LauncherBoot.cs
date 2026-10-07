@@ -23,8 +23,6 @@ namespace OS.Kernel.Process
         // Where applications live. \EFI\BOOT holds the firmware entry point and
         // nothing else worth listing.
         private const string AppDirectoryPath = "\\apps";
-        private const ulong KernelLowSyncStart = 0x00100000UL;
-        private const ulong KernelLowSyncEndExclusive = 0x20000000UL;
 
         // The launcher the kernel starts after boot: a Terminal.Gui
         // application (step163). Being started BY the kernel rather than by
@@ -172,321 +170,49 @@ namespace OS.Kernel.Process
             UiText.WriteUInt(fileBuffer.Length);
             DebugLog.EndLine();
 
-            // Apps are freestanding win-x64 PEs (see build.ps1).
-            // PeLoader flattens + maps the image at its ImageBase and yields
-            // the LoadedImage the ProcessImageBuilder pipeline below consumes.
-            if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out LoadedImage loadedImage, out int peStage))
-            {
-                DebugLog.Begin(LogLevel.Warn);
-                UiText.Write("pe load failed at stage = ");
-                UiText.WriteInt(peStage);
-                DebugLog.EndLine();
-                return AppRunResult.ImageLoadFailed;
-            }
-
-            DebugLog.Write(LogLevel.Info, "process build start");
-            if (!ProcessImageBuilder.TryBuild(
-                ref loadedImage,
-                0,
-                app.ServiceAbi,
-                app.AppAbiVersion,
-                ProcessImageBuilder.DefaultStackMappedTop,
-                out ProcessImage processImage))
-            {
-                CleanupLoadedImageMappings(ref loadedImage);
-                return AppRunResult.ProcessBuildFailed;
-            }
-
-            if (!TryValidateProcess(ref processImage, app.AppAbiVersion))
-            {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
-                return AppRunResult.ProcessValidationFailed;
-            }
-
-            ProcessDiagnostics.DumpSummary(ref processImage);
-
-            if (!JumpStub.EnsureInitialized())
-            {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
-                return AppRunResult.JumpFailed;
-            }
-
-            if (!TrySyncKernelLowMappings(ref processImage))
-            {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
-                return AppRunResult.JumpFailed;
-            }
-
-            if (!TryValidateJumpContext(ref processImage))
-            {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
-                return AppRunResult.JumpFailed;
-            }
-
-            if (!Pager.TryGetPagerCr3(out ulong pagerCr3))
-            {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
-                return AppRunResult.JumpFailed;
-            }
-
-            pagerCr3 &= 0x000FFFFFFFFFF000UL;
-            if (pagerCr3 == 0)
-            {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
-                return AppRunResult.JumpFailed;
-            }
-
-            DebugLog.Write(LogLevel.Info, "jump start");
+            // The boot app is a process like any other (step194): started at
+            // its slot's range, on a main thread of its own, and waited for.
             OS.Kernel.Diagnostics.Sampler.ReportScreenState();
-            ProcessManager.SetCurrent(ref processImage, ref loadedImage);
-            bool jumpOk = false;
-            int returnExitCode = 0;
-            uint previousGeneration = OS.Kernel.Threading.Scheduler.EnterApp(out uint appGeneration);
-            ProcessResources.OnAppStarted(appGeneration);
+            AppServiceBuilder.EnterStart();
+            AppServiceStatus started;
+            AppProcess proc;
             try
             {
-                jumpOk = JumpStub.Run(
-                    processImage.EntryPoint,
-                    processImage.StackTop,
-                    processImage.StartupBlockVirtual,
-                    pagerCr3,
-                    out returnExitCode);
+                StartupData.Clear();
+                started = AppServiceBuilder.StartProcess(image, FileNameOf(app.Path),
+                    app.AppAbiVersion, app.ServiceAbi, abiFromRequest: true, launcherId: 0, out proc);
             }
             finally
             {
-                AppServiceBuilder.EndAppRun(appGeneration, previousGeneration);
-                ProcessManager.ClearCurrent();
+                AppServiceBuilder.LeaveStart();
             }
-
-            if (!jumpOk)
+            if (started != AppServiceStatus.Ok)
             {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
+                DebugLog.Begin(LogLevel.Warn);
+                UiText.Write("app start failed: status=");
+                UiText.WriteUInt((uint)started);
+                DebugLog.EndLine();
                 return AppRunResult.JumpFailed;
             }
 
-            bool exitByService = AppServiceBuilder.TryConsumeExit(out int serviceExitCode);
-            processImage.ExitCode = exitByService ? serviceExitCode : returnExitCode;
+            AppServiceBuilder.WaitForExit(proc);
+            int exitCode = proc.ExitCode;
+            AppServiceBuilder.ReleaseProcess(proc);
 
-            if (!exitByService)
-                DebugLog.Write(LogLevel.Warn, "process returned without Exit");
-
-            DebugLog.Write(LogLevel.Info, "process returned");
             DebugLog.Begin(LogLevel.Info);
             UiText.Write("process exit code = ");
-            UiText.WriteInt(processImage.ExitCode);
+            UiText.WriteInt(exitCode);
             DebugLog.EndLine();
 
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write("exit source = ");
-            UiText.Write(exitByService ? "service" : "return");
-            DebugLog.EndLine();
-
-            if (processImage.ExitCode != app.ExpectedExitCode)
-            {
-                CleanupProcessMappings(ref processImage, ref loadedImage);
-                return AppRunResult.ExitCodeMismatch;
-            }
-
-            if (!CleanupProcessMappings(ref processImage, ref loadedImage))
-                return AppRunResult.MappingCleanupFailed;
-
-            return AppRunResult.Success;
+            return exitCode == app.ExpectedExitCode ? AppRunResult.Success : AppRunResult.ExitCodeMismatch;
         }
 
-        private static bool TryValidateProcess(ref ProcessImage processImage, uint expectedAbiVersion)
+        private static string FileNameOf(string path)
         {
-            if (processImage.AbiVersion != expectedAbiVersion)
-                return false;
-
-            if (processImage.EntryPoint == 0 ||
-                processImage.StackTop == 0 ||
-                processImage.StartupBlockVirtual == 0)
-            {
-                return false;
-            }
-
-            if (!Pager.TryQuery(processImage.EntryPoint, out _, out PageFlags entryFlags))
-                return false;
-
-            if ((entryFlags & PageFlags.NoExecute) == PageFlags.NoExecute)
-                return false;
-
-            if (!Pager.TryQuery(processImage.StackTop - 1, out _, out PageFlags stackFlags))
-                return false;
-
-            if ((stackFlags & PageFlags.Writable) != PageFlags.Writable)
-                return false;
-
-            return true;
-        }
-
-        private static bool TrySyncKernelLowMappings(ref ProcessImage processImage)
-        {
-            uint importedCount = 0;
-
-            for (ulong current = KernelLowSyncStart; current < KernelLowSyncEndExclusive; current += PageSize)
-            {
-                if (IsInRange(current, processImage.ImageStart, processImage.ImageEnd))
-                    continue;
-
-                if (IsInRange(current, processImage.StackBase, processImage.StackMappedTop))
-                    continue;
-
-                if (!Pager.TryQueryKernel(current, out ulong kernelPhysical, out PageFlags kernelFlags))
-                    continue;
-
-                ulong kernelPagePhysical = kernelPhysical & ~(PageSize - 1);
-
-                // Skip pages already mapped in pager — they were set up intentionally
-                // (e.g. JumpStub maps its shellcode page executable; overwriting with kernel
-                // CR3 flags would re-add NX on real hardware where firmware uses NX for data).
-                if (Pager.TryQuery(current, out _, out _))
-                    continue;
-
-                if (!Pager.Map(current, kernelPagePhysical, kernelFlags))
-                {
-                    DebugLog.Write(LogLevel.Warn, "kernel mapping sync: map failed");
-                    return false;
-                }
-
-                importedCount++;
-            }
-
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write("kernel low sync imported: ");
-            UiText.WriteUInt(importedCount);
-            DebugLog.EndLine();
-            return true;
-        }
-
-        private static bool TryValidateJumpContext(ref ProcessImage processImage)
-        {
-            if (!TryLogMappedAddress("entry map", processImage.EntryPoint, false))
-                return false;
-
-            if (!TryLogMappedAddress("stack top map", processImage.StackTop - 1, false))
-                return false;
-
-            if (!TryLogMappedAddress("startup block map", processImage.StartupBlockVirtual, false))
-                return false;
-
-            if (!TryLogMappedAddress("service table map", processImage.ServiceTableVirtual, false))
-                return false;
-
-            if (!JumpStub.TryGetAddress(out ulong jumpStubAddress))
-            {
-                DebugLog.Write(LogLevel.Warn, "jump context: stub address unavailable");
-                return false;
-            }
-
-            if (!TryLogMappedAddress("jump stub map", jumpStubAddress, true))
-                return false;
-
-            return true;
-        }
-
-        private static bool TryLogMappedAddress(string label, ulong virtualAddress, bool requireExecutable)
-        {
-            if (!Pager.TryQuery(virtualAddress, out ulong physicalAddress, out PageFlags flags))
-            {
-                DebugLog.Begin(LogLevel.Warn);
-                UiText.Write(label);
-                UiText.Write(": unmapped vaddr=0x");
-                UiText.WriteHex(virtualAddress, 16);
-                DebugLog.EndLine();
-                return false;
-            }
-
-            if (requireExecutable && (flags & PageFlags.NoExecute) == PageFlags.NoExecute)
-            {
-                DebugLog.Begin(LogLevel.Warn);
-                UiText.Write(label);
-                UiText.Write(": NX vaddr=0x");
-                UiText.WriteHex(virtualAddress, 16);
-                UiText.Write(" paddr=0x");
-                UiText.WriteHex(physicalAddress, 16);
-                DebugLog.EndLine();
-                return false;
-            }
-
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write(label);
-            UiText.Write(": vaddr=0x");
-            UiText.WriteHex(virtualAddress, 16);
-            UiText.Write(" paddr=0x");
-            UiText.WriteHex(physicalAddress, 16);
-            UiText.Write(" flags=0x");
-            UiText.WriteHex((ulong)flags, 16);
-            DebugLog.EndLine();
-            return true;
-        }
-
-        private static bool IsInRange(ulong address, ulong startInclusive, ulong endExclusive)
-        {
-            return address >= startInclusive && address < endExclusive;
-        }
-
-        private static void CleanupLoadedImageMappings(ref LoadedImage loadedImage)
-        {
-            UnmapMappedRange(loadedImage.LowestVirtualAddress, loadedImage.HighestVirtualAddressExclusive);
-        }
-
-        private static bool CleanupProcessMappings(ref ProcessImage processImage, ref LoadedImage loadedImage)
-        {
-            bool imageCleanupOk = UnmapMappedRange(loadedImage.LowestVirtualAddress, loadedImage.HighestVirtualAddressExclusive);
-            bool stackCleanupOk = UnmapMappedRange(processImage.StackBase, processImage.StackMappedTop);
-            if (!imageCleanupOk || !stackCleanupOk)
-                return false;
-
-            DebugLog.Write(LogLevel.Info, "app mappings released");
-            return true;
-        }
-
-        private static bool UnmapMappedRange(ulong startInclusive, ulong endExclusive)
-        {
-            if (endExclusive <= startInclusive)
-                return true;
-
-            // Drop any managed-EH .pdata registration for this base (step140).
-            // No-op unless startInclusive is a registered app image base (i.e.
-            // not for stack ranges).
-            global::OS.Boot.EH.CoffRuntimeFunctionTable.UnregisterImage((byte*)startInclusive);
-
-            ulong current = AlignDown(startInclusive);
-            ulong limit = AlignUp(endExclusive);
-            while (current < limit)
-            {
-                if (Pager.TryQuery(current, out _, out _) && !Pager.Unmap(current))
-                    return false;
-
-                if (!TryAdvancePage(ref current))
-                    return false;
-            }
-
-            return true;
-        }
-
-        private static ulong AlignDown(ulong value)
-        {
-            return value & ~(PageSize - 1);
-        }
-
-        private static ulong AlignUp(ulong value)
-        {
-            ulong mask = PageSize - 1;
-            if ((value & mask) == 0)
-                return value;
-
-            return (value + mask) & ~mask;
-        }
-
-        private static bool TryAdvancePage(ref ulong address)
-        {
-            if (address > 0xFFFFFFFFFFFFFFFFUL - PageSize)
-                return false;
-
-            address += PageSize;
-            return true;
+            int cut = path.LastIndexOf('/');
+            int other = path.LastIndexOf((char)92);
+            if (other > cut) cut = other;
+            return cut >= 0 ? path.Substring(cut + 1) : path;
         }
 
         private static string ResultName(AppRunResult result)

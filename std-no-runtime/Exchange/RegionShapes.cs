@@ -77,6 +77,17 @@ namespace SharpOS.Std.Exchange
         private readonly Dictionary<ulong, TypeShape> _byKey = new Dictionary<ulong, TypeShape>();
         private readonly Dictionary<string, TypeShape> _byName = new Dictionary<string, TypeShape>();
 
+        // Key → shape without a dictionary (step195): every record of every
+        // message is looked up here, by the check and by the views.
+        private KeyIndex<TypeShape> _index;
+
+        // The check's buffers, reused message after message: where records
+        // start (a bit per 8 bytes of the block), and each record and its shape.
+        private Chunked<ulong> _starts = new Chunked<ulong>(16);
+        private Chunked<ulong> _records = new Chunked<ulong>(64);
+        // Shapes by address (held by _byKey for good): see RegionWriter.
+        private Chunked<ulong> _types = new Chunked<ulong>(64);
+
         public byte[] Schema { get; }
 
         private RegionShapes(byte[] schema) => Schema = schema;
@@ -136,10 +147,20 @@ namespace SharpOS.Std.Exchange
                 if (!Plausible(t, out complaint))
                     return null;
             }
+
+            var keys = new ulong[shapes._byKey.Count];
+            var values = new TypeShape[keys.Length];
+            int n = 0;
+            foreach (TypeShape t in shapes._byKey.Values)
+            {
+                keys[n] = t.Key;
+                values[n++] = t;
+            }
+            shapes._index = KeyIndex<TypeShape>.Build(keys, values);
             return shapes;
         }
 
-        public TypeShape this[ulong key] => _byKey.TryGetValue(key, out TypeShape t) ? t : null;
+        public TypeShape this[ulong key] => _index.Find(key);
 
         public TypeShape ByName(string name) => _byName.TryGetValue(name, out TypeShape t) ? t : null;
 
@@ -226,8 +247,11 @@ namespace SharpOS.Std.Exchange
                 return false;
             }
 
-            var starts = new HashSet<ulong>();
-            var records = new List<ulong>();
+            int words = (int)((size / 8 + 63) / 64);
+            _starts.Ensure(words);
+            _starts.Clear(words);
+
+            int count = 0;
             for (ulong cursor = 0; cursor < size;)
             {
                 if (size - cursor < Region.HeaderSize + 16)
@@ -251,15 +275,25 @@ namespace SharpOS.Std.Exchange
                     complaint = $"record at {cursor} ({t.Name}) runs past the block";
                     return false;
                 }
-                starts.Add(cursor + Region.HeaderSize);
-                records.Add(objectAt);
+                ulong start = (cursor + Region.HeaderSize) >> 3;
+                _starts[(int)(start >> 6)] |= 1UL << (int)(start & 63);
+                if (count == _records.Capacity)
+                {
+                    _records.Ensure(count * 2);
+                    _types.Ensure(count * 2);
+                }
+                _records[count] = objectAt;
+                object shape = t;
+                _types[count++] = System.Runtime.CompilerServices.Unsafe.As<object, ulong>(ref shape);
                 cursor = next;
             }
 
-            foreach (ulong objectAt in records)
+            for (int r = 0; r < count; r++)
             {
-                TypeShape t = this[*(ulong*)objectAt];
-                if (!CheckFields(t.Fields, objectAt, starts, out complaint))
+                ulong objectAt = _records[r];
+                ulong shapeAt = _types[r];
+                TypeShape t = System.Runtime.CompilerServices.Unsafe.As<ulong, TypeShape>(ref shapeAt);
+                if (!CheckFields(t.Fields, objectAt, size, out complaint))
                     return false;
                 if (t.IsArray && (t.Elements.Kind == FieldKind.Reference || t.Elements.Kind == FieldKind.Struct))
                 {
@@ -268,8 +302,8 @@ namespace SharpOS.Std.Exchange
                     {
                         ulong element = objectAt + (ulong)t.Elements.Offset + (ulong)i * t.ComponentSize;
                         if (t.Elements.Kind == FieldKind.Reference
-                            ? !CheckReference(element, starts, out complaint)
-                            : !CheckFields(t.Elements.Struct.Fields, element - 8, starts, out complaint))
+                            ? !CheckReference(element, size, out complaint)
+                            : !CheckFields(t.Elements.Struct.Fields, element - 8, size, out complaint))
                             return false;
                     }
                 }
@@ -277,25 +311,31 @@ namespace SharpOS.Std.Exchange
             return true;
         }
 
-        private bool CheckFields(FieldShape[] fields, ulong objectAt, HashSet<ulong> starts, out string complaint)
+        private bool CheckFields(FieldShape[] fields, ulong objectAt, ulong size, out string complaint)
         {
             complaint = null;
-            foreach (FieldShape f in fields)
+            for (int i = 0; i < fields.Length; i++)
             {
-                if (f.Kind == FieldKind.Reference && !CheckReference(objectAt + (ulong)f.Offset, starts, out complaint))
+                FieldShape f = fields[i];
+                if (f.Kind == FieldKind.Reference && !CheckReference(objectAt + (ulong)f.Offset, size, out complaint))
                     return false;
                 // A struct's offsets were measured in its box: its fields start 8 past the value.
-                if (f.Kind == FieldKind.Struct && !CheckFields(f.Struct.Fields, objectAt + (ulong)f.Offset - 8, starts, out complaint))
+                if (f.Kind == FieldKind.Struct && !CheckFields(f.Struct.Fields, objectAt + (ulong)f.Offset - 8, size, out complaint))
                     return false;
             }
             return true;
         }
 
-        private static bool CheckReference(ulong slot, HashSet<ulong> starts, out string complaint)
+        private bool CheckReference(ulong slot, ulong size, out string complaint)
         {
             complaint = null;
             ulong target = *(ulong*)slot;
-            if (target == 0 || starts.Contains(target)) return true;
+            if (target == 0) return true;
+            if (target < size && (target & 7) == 0)
+            {
+                ulong bit = target >> 3;
+                if ((_starts[(int)(bit >> 6)] & (1UL << (int)(bit & 63))) != 0) return true;
+            }
             complaint = $"reference 0x{target:x} is not a record of the block";
             return false;
         }

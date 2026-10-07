@@ -125,6 +125,7 @@ namespace SharpOS.Std.Exchange
 
             s_tableToKey[table] = key;
             s_keyToTable[key] = table;
+            TypePlans.Add(table, key);
             Declared.Add(new Description
             {
                 Key = key,

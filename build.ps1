@@ -15,13 +15,13 @@
 # лаунчер рядом со свежим ядром, и оба выглядели сегодняшними. Одна точка входа
 # делает вопрос «а пересобрал ли я» отвечаемым.
 #
-# Рецепт линковки (/ENTRY:SharpAppBootstrap, /SUBSYSTEM, /BASE, /FIXED,
+# Рецепт линковки (/ENTRY:SharpAppBootstrap, /SUBSYSTEM, /BASE,
 # /NODEFAULTLIB) и поверхность std/sdk лежат в apps_native/sdk/
 # FreestandingPe.props; __security_cookie даёт CoffStub.Generator через
 # @(NativeLibrary). Поэтому `dotnet publish -r win-x64` выдаёт PE сразу — без
 # cl.exe и без ручной линковки. Линкер — lld-link на любом хосте
-# (SharpOsNativeLink.props), MSVC и Windows SDK приложениям не нужны. PeLoader
-# кладёт образ по ImageBase 0x100000000.
+# (SharpOsNativeLink.props), MSVC и Windows SDK приложениям не нужны. Образ
+# перемещаемый: PeLoader кладёт каждый процесс в свой диапазон (step194).
 #
 # Версии инструментов сверяются с toolchain.json (tools/Toolchain.ps1); ничего
 # не устанавливается.

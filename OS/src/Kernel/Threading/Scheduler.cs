@@ -141,6 +141,7 @@ namespace OS.Kernel.Threading
         {
             if (entry == null) return null;
             if (stackBytes == 0) stackBytes = DefaultStackBytes;
+            ReapDead();
             ulong spawnStarted = OS.Kernel.Diagnostics.PerfCounters.Now();
 
             byte* ctx = AllocateContextBlock();
@@ -247,62 +248,122 @@ namespace OS.Kernel.Threading
 
         // ─── app thread lifetime ─────────────────────────────────────────
 
-        private static uint s_nextAppGeneration;
+        // 1 while the running thread is being ended (Thread.KillRequested).
+        // The service thunks read it after every service returns, by address:
+        // a thread of an ending process leaves at the first return to its
+        // app's code (step194).
+        private static byte s_currentKilled;
+
+        public static byte* CurrentKilledAddress => (byte*)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_currentKilled);
 
         /// <summary>
-        /// Gives the current thread a new app generation for the app it is
-        /// about to run; returns the generation it replaces, for LeaveApp.
+        /// Marks a thread for ending and cuts short a wait it is in: a wait
+        /// on an address (a pipe, WaitOnAddress, WaitForExit) or a sleep. It
+        /// runs on to the end of the service it is in, and leaves on the way
+        /// back to its app's code. Waits on kernel locks are not cut: the lock
+        /// is the kernel's, and it is released by whoever holds it.
         /// </summary>
-        public static uint EnterApp(out uint generation)
+        public static void RequestKill(Thread t)
         {
-            generation = ++s_nextAppGeneration;
-            Thread? curr = s_current;
-            if (curr == null) return 0;
-            uint previous = curr.AppGeneration;
-            curr.AppGeneration = generation;
-            return previous;
+            Preemption.Suppress();
+            try
+            {
+                if (t.State == ThreadState.Exited) return;
+                t.KillRequested = true;
+                if (t == s_current) s_currentKilled = 1;
+                if (t.State == ThreadState.Waiting &&
+                    (t.Wait.Kind == WaitKind.Address || t.Wait.Kind == WaitKind.Timer))
+                {
+                    AddressWait.Forget(t);
+                    TimerQueue.Cancel(t);
+                    t.Wait.Kind = WaitKind.None;
+                    t.State = ThreadState.Runnable;
+                    EnqueueRunnable(t);
+                }
+            }
+            finally { Preemption.Allow(); }
         }
 
         /// <summary>
-        /// Ends an app's run: restores the current thread's generation and
-        /// takes every other thread of that run off the machine. Returns how
-        /// many there were.
+        /// Marks every started thread of a process for ending (RequestEnd): the
+        /// main thread leaves the app and ends the process, the rest leave on
+        /// their own. Threads never started are left to EndProcessThreads.
+        /// </summary>
+        public static void RequestKillAll(OS.Kernel.Process.AppProcess process)
+        {
+            while (true)
+            {
+                Thread? found = null;
+                Preemption.Suppress();
+                for (Thread? t = s_allHead; t != null; t = t.AllNext)
+                {
+                    if (t.App == process && !t.KillRequested &&
+                        t.State != ThreadState.Exited && t.State != ThreadState.New)
+                    {
+                        found = t;
+                        break;
+                    }
+                }
+                Preemption.Allow();
+                if (found == null) return;
+                RequestKill(found);
+            }
+        }
+
+        /// <summary>
+        /// The threads of a process other than the caller (its main thread,
+        /// which is ending it): each is marked for ending and the caller waits
+        /// until every one has left. Returns how many there were.
         /// </summary>
         /// <remarks>
-        /// Nothing else would stop them. A thread still running the app's code
-        /// runs it after the image is unmapped; one parked in the kernel —
-        /// a sleep, a wait on an address — is woken later into code that is
-        /// gone, or into the next app, which loads at the same address and can
-        /// wake the very same word. App threads only block in those two
-        /// places, so leaving the run queue, the timer queue and the address
-        /// buckets is leaving everything. Their stacks leak, as every exited
-        /// thread's does today.
+        /// A thread never started is taken off at once. A thread preempted in
+        /// the app's code leaves when it next runs (Preemption.OnTick turns it
+        /// round); one inside a service finishes the service and leaves on the
+        /// way back (the thunk), a wait it is in cut short. Nothing a thread
+        /// holds in the kernel is abandoned this way.
         /// </remarks>
-        public static uint LeaveApp(uint generation, uint previous)
+        public static uint EndProcessThreads(OS.Kernel.Process.AppProcess process)
         {
             Thread? curr = s_current;
-            if (curr != null) curr.AppGeneration = previous;
-            if (generation == 0) return 0;
-
-            uint discarded = 0;
+            uint ended = 0;
             Preemption.Suppress();
+            // The caller is out of the app for good and must be able to wait.
+            if (curr != null) curr.KillRequested = false;
+            s_currentKilled = 0;
             Thread? t = s_allHead;
             while (t != null)
             {
                 Thread? next = t.AllNext;
-                if (t.AppGeneration == generation && t != curr && t.State != ThreadState.Exited)
+                if (t.App == process && t != curr && t.State != ThreadState.Exited)
                 {
-                    RemoveRunnable(t);
-                    TimerQueue.Cancel(t);
-                    AddressWait.Forget(t);
-                    t.State = ThreadState.Exited;
-                    UnregisterThread(t);
-                    discarded++;
+                    ended++;
+                    if (t.State == ThreadState.New)
+                    {
+                        t.State = ThreadState.Exited;
+                        UnregisterThread(t);
+                        process.LiveThreads--;
+                        ReleaseStack(t);
+                    }
+                    else
+                    {
+                        Preemption.Allow();
+                        RequestKill(t);
+                        Preemption.Suppress();
+                    }
                 }
                 t = next;
             }
             Preemption.Allow();
-            return discarded;
+
+            // The rest leave on their own; their leaving wakes this.
+            while (true)
+            {
+                int live = process.LiveThreads;
+                if (live <= 1) break;
+                AddressWait.WaitOnAddress(
+                    System.Runtime.CompilerServices.Unsafe.AsPointer(ref process.LiveThreads), &live, 4, 0xFFFFFFFFu);
+            }
+            return ended;
         }
 
         // The CPU has nothing to run: sleep until the next interrupt, which
@@ -507,6 +568,7 @@ namespace OS.Kernel.Threading
 
             next.State = ThreadState.Running;
             s_current = next;
+            s_currentKilled = next.KillRequested ? (byte)1 : (byte)0;
             s_switchCount++;
             OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.SchedSwitches);
             SwapExceptionChain(curr, next);
@@ -555,6 +617,7 @@ namespace OS.Kernel.Threading
             // step. A tick between them switches away a Waiting thread that
             // is on no queue yet — nothing would ever make it runnable again.
             Preemption.Suppress();
+            if (curr.KillRequested) { Preemption.Allow(); return; }   // being ended: no more sleeping
             curr.State = ThreadState.Waiting;
             TimerQueue.Schedule(curr, deadline);
             Preemption.Allow();
@@ -712,6 +775,7 @@ namespace OS.Kernel.Threading
             s_switching = true;
             curr.State = ThreadState.Exited;
             UnregisterThread(curr);
+            NoteDead(curr);
 
             Thread? next = DequeueRunnable();
             while (next == null)
@@ -742,6 +806,7 @@ namespace OS.Kernel.Threading
 
             next.State = ThreadState.Running;
             s_current = next;
+            s_currentKilled = next.KillRequested ? (byte)1 : (byte)0;
             s_switchCount++;
             OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.SchedSwitches);
             SwapExceptionChain(curr, next);
@@ -791,6 +856,59 @@ namespace OS.Kernel.Threading
             }
             Preemption.Allow();
             return t;
+        }
+
+        // Exited app threads whose stacks are not freed yet: a thread cannot
+        // free the stack it exits on, so the next spawn (or an ending
+        // process) does. Kernel threads keep theirs, as before — only app
+        // threads come and go by the hundred (step194).
+        private static Thread? s_deadHead;
+
+        private static void NoteDead(Thread t)
+        {
+            if (t.App == null || t.StackBase == null) return;
+            t.Next = s_deadHead;
+            s_deadHead = t;
+        }
+
+        /// <summary>Frees the stacks of app threads that have exited, the current one excepted.</summary>
+        public static void ReapDead()
+        {
+            Preemption.Suppress();
+            Thread? list = s_deadHead;
+            s_deadHead = null;
+            Thread? keep = null;
+            while (list != null)
+            {
+                Thread t = list;
+                list = t.Next;
+                if (t == s_current) { t.Next = keep; keep = t; continue; }
+                t.Next = null;
+                ReleaseStack(t);
+            }
+            s_deadHead = keep;
+            Preemption.Allow();
+        }
+
+        // Gives a thread's stack (with its guard page) and context block back.
+        private static void ReleaseStack(Thread t)
+        {
+            if (t.StackBase == null) return;
+            uint pages = (t.StackBytes + 4095) / 4096;
+            if (t.GuardPage != null)
+            {
+                OS.Kernel.Paging.Pager.Map((ulong)t.GuardPage, (ulong)t.GuardPage,
+                    OS.Kernel.Paging.PageFlags.Present | OS.Kernel.Paging.PageFlags.Writable);
+                PhysicalMemory.FreePage((ulong)t.GuardPage);
+            }
+            for (uint i = 0; i < pages; i++)
+                PhysicalMemory.FreePage((ulong)t.StackBase + (ulong)i * 4096);
+            if (t.ContextBlock != null)
+                PhysicalMemory.FreePage((ulong)t.ContextBlock);
+            t.StackBase = null;
+            t.StackTop = null;
+            t.GuardPage = null;
+            t.ContextBlock = null;
         }
 
         private static byte* AllocateContextBlock()

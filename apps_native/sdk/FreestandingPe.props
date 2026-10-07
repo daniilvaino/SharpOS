@@ -82,6 +82,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)SystemConsole.cs"        Link="sdk\SystemConsole.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ProcessStub.cs"          Link="sdk\ProcessStub.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Process.cs"              Link="sdk\Process.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Stopwatch.AppStub.cs"    Link="sdk\Stopwatch.AppStub.cs" />
 
     <!-- Internal.Runtime.CompilerHelpers.ThrowHelpers is the copy inside
@@ -118,15 +119,15 @@
     <Compile Include="$(MSBuildThisFileDirectory)WinCrtStubs.cs" Link="sdk\WinCrtStubs.cs" />
     <LinkerArg Include="/ENTRY:SharpAppBootstrap" />
     <LinkerArg Include="/SUBSYSTEM:NATIVE" />
-    <!-- 0x100000000 (4 GiB): above physical RAM (QEMU 2 GiB), below the app
-         stack window (0x40_0000_0000). Kernel and apps share one address
-         space post-EBS; the loader's map-over of [base, base+SizeOfImage)
-         must never intersect the kernel's identity-mapped working RAM — at
-         the old 0x400000 base a bss-fattened image (64 MB GcAppPool,
-         step142) swallowed phys 4..72 MB where the kernel heap and page
-         tables live. -->
-    <LinkerArg Include="/BASE:0x100000000" />
-    <LinkerArg Include="/FIXED" />
+    <!-- The preferred base is the first process slot, 0x2000_0000_0000
+         (32 TiB, AppProcesses.ImageRegionBase): beyond any RAM the kernel maps
+         one to one. Not /FIXED (step194): the loader gives every process a
+         range of its own in the one address space and relocates the image
+         there. The map-over of [base, base+SizeOfImage) must never meet the
+         kernel's identity-mapped RAM: at 0x400000 a bss-fattened image
+         swallowed the kernel heap (step142); at 0x100000000 a 7 GiB laptop
+         had the kernel image itself at 0x1_4000_0000 (step194). -->
+    <LinkerArg Include="/BASE:0x200000000000" />
     <LinkerArg Include="/DYNAMICBASE:NO" />
     <LinkerArg Include="/NODEFAULTLIB" />
   </ItemGroup>

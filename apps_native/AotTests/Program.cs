@@ -80,6 +80,12 @@ namespace AotTests
         private static bool s_kernelStressed;
         private static bool SlowRun => s_gcStress || s_kernelStressed;
 
+        // `--concurrent`: another battery runs at the same time (step194 §7,
+        // test 1). What talks to the kernel's probes — pipes by fixed names,
+        // regions to and from the kernel — is left out, and the exit code is
+        // the number of checks that failed: 0 is green.
+        private static bool s_concurrent;
+
         private static int Run(string[] arguments)
         {
             s_pass = 0;
@@ -127,6 +133,8 @@ namespace AotTests
 
             if (arguments.Length > 0 && arguments[0].Length == 25 && arguments[0].StartsWith("--untranslated-interface"))
                 return RunUntranslatedInterface(arguments[0][24] - '0');
+
+            s_concurrent = arguments.Length > 0 && arguments[0] == "--concurrent";
 
             AppHost.WriteString("==== AOT app test battery ====\n");
 
@@ -333,9 +341,12 @@ namespace AotTests
             CheckClockAdvances();
             CheckStackTraceText();
             CheckStackTraceOwnership();
-            CheckRegion();
-            CheckRegionFromKernel();
-            CheckPipes();
+            if (!s_concurrent)
+            {
+                CheckRegion();
+                CheckRegionFromKernel();
+                CheckPipes();
+            }
             CheckDynamic();
 
             // The error stream (step 167). The check can only see that the
@@ -355,8 +366,9 @@ namespace AotTests
             if (HwFaultProbe != 0)
                 RunHwFaultProbe();
 
-            // Exit code = pass count (all-green => equals total).
-            return (int)s_pass;
+            // Exit code = pass count (all-green => equals total); under
+            // --concurrent the count of failures.
+            return s_concurrent ? (int)(s_total - s_pass) : (int)s_pass;
         }
 
         // Preemption (pipe_plan.md, item 9). Each check fails rather than hangs
@@ -706,11 +718,12 @@ namespace AotTests
             var watch = System.Diagnostics.Stopwatch.StartNew();
             int reads = 0;
             int readFailures = 0;
-            // Under --gc-stress the workers can take longer than the second to
-            // start at all: read on until they have.
+            // The workers can take longer than the second to start at all —
+            // under --gc-stress, and whenever the kernel collects meanwhile (it
+            // collects before growing since step194): read on until they have.
             while (watch.ElapsedMilliseconds < 1000
-                   || (SlowRun && (s_regionAllocations == 0 || s_regionCollections == 0)
-                       && watch.ElapsedMilliseconds < 60000))
+                   || ((s_regionAllocations == 0 || s_regionCollections == 0)
+                       && watch.ElapsedMilliseconds < (SlowRun ? 60000 : 10000)))
             {
                 readFailures += RegionProbeGraph.Check(root, RegionProbeGraph.Numbers, null);
                 reads++;

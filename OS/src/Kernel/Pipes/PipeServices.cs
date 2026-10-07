@@ -49,6 +49,26 @@ namespace OS.Kernel.Pipes
             return (int)status;
         }
 
+        // request: [0] handle, [1] schema, [2] schema bytes, [3] root key (0:
+        // a reader without a type), [4] error buffer, [5] its capacity; out
+        // [6] error bytes written. The type an end of a pair is opened with.
+        [UnmanagedCallersOnly]
+        public static int OpenEnd(ulong* request)
+        {
+            if (request == null || request[2] > 64 * 1024) return (int)PipeStatus.BadHandle;
+            request[6] = 0;
+            PipeStatus status = KernelPipes.DeclareEnd(KernelPipes.CallerHolder(), (int)request[0],
+                Bytes((byte*)request[1], request[2]), request[3], out string error);
+            if (error != null && request[4] != 0)
+            {
+                byte[] text = System.Text.Encoding.UTF8.GetBytes(error);
+                ulong n = (ulong)text.Length < request[5] ? (ulong)text.Length : request[5];
+                for (ulong i = 0; i < n; i++) ((byte*)request[4])[i] = text[i];
+                request[6] = n;
+            }
+            return (int)status;
+        }
+
         [UnmanagedCallersOnly]
         public static int Declare(int handle, byte* schema, ulong length, ulong rootKey)
         {

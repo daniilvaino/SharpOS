@@ -4,11 +4,13 @@
     {
         private const ulong PageSize = 4096;
         private const ulong MinAllocAddress = 0x00100000;
-        // Freelist capacity = 256K entries × 8 bytes = 2 MB. Covers 1 GB
-        // of freed pages — more than any realistic single-session churn.
+        // Freelist capacity = 1M entries × 8 bytes = 8 MB. Covers 4 GB of
+        // freed pages. It was 1 GB until step194: processes with a 64 MiB
+        // heap pool each, a dozen of them ending together, gave back more
+        // than that, and a full list loses every page past it.
         // Lazily allocated on first FreePage call (skip cost if nothing
         // ever frees, e.g. minimal kernel-only smoke tests).
-        private const int FreeListCapacity = 256 * 1024;
+        private const int FreeListCapacity = 1024 * 1024;
 
         private static MemoryRegion* s_regions;
         private static uint s_regionCount;

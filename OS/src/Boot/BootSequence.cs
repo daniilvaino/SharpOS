@@ -244,6 +244,7 @@ namespace OS.Boot
             // boot thread's top, so a collection on any other thread or inside
             // an app's service call saw no stack roots at all.
             SharpOS.Std.NoRuntime.GC.s_collectHook = &global::OS.Kernel.Memory.KernelGC.Collect;
+            SharpOS.Std.NoRuntime.GcHeap.CollectBeforeGrowing = true;
 
 
             // Who allocates, sampled by allocation. The heap census says what

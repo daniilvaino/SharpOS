@@ -84,6 +84,9 @@ namespace OS.Kernel.Pipes
 
         public static uint LivePipes => s_livePipes;
 
+        /// <summary>Pipes waiting by name for their second end.</summary>
+        public static int NamedWaiting => s_named?.Count ?? 0;
+
         /// <summary>The run calling a service, or the kernel when no app is running on this thread.</summary>
         public static uint CallerHolder()
         {
@@ -184,14 +187,70 @@ namespace OS.Kernel.Pipes
 
         /// <summary>The writer's declaration on a pipe made by Create: the description is copied into the pipe.</summary>
         public static PipeStatus Declare(uint holder, int handle, byte[] schema, ulong rootKey)
+            => DeclareEnd(holder, handle, schema, rootKey, out _);
+
+        /// <summary>
+        /// The type an end of a pair (Create) is opened with (step194 §5): the
+        /// first end opened with a type declares it, the other is checked
+        /// against it, as when two ends meet by name. A writer's description
+        /// becomes the pipe's; a reader with none (root key 0) reads by it.
+        /// </summary>
+        public static PipeStatus DeclareEnd(uint holder, int handle, byte[] schema, ulong rootKey, out string error)
+        {
+            error = null;
+            Preemption.Suppress();
+            try
+            {
+                if (!TryEnd(holder, handle, (PipeRole)0, out Pipe p)) return PipeStatus.BadHandle;
+                if (s_ends[handle - 1].Role == PipeRole.Writer)
+                {
+                    if (p.ReaderSchema != null)
+                    {
+                        error = TypeCheck.Compare(schema, rootKey, p.ReaderSchema, p.ReaderKey);
+                        if (error != null) return PipeStatus.TypeMismatch;
+                    }
+                    p.Schema = Copy(schema);
+                    p.RootKey = rootKey;
+                }
+                else if (rootKey != 0)
+                {
+                    if (p.Schema != null)
+                    {
+                        error = TypeCheck.Compare(p.Schema, p.RootKey, schema, rootKey);
+                        if (error != null) return PipeStatus.TypeMismatch;
+                    }
+                    p.ReaderSchema = Copy(schema);
+                    p.ReaderKey = rootKey;
+                }
+                Bump(p);
+                return PipeStatus.Ok;
+            }
+            finally
+            {
+                Preemption.Allow();
+            }
+        }
+
+        /// <summary>Whether <paramref name="handle"/> is an open end of <paramref name="role"/> held by <paramref name="holder"/>.</summary>
+        public static bool IsEnd(uint holder, int handle, PipeRole role)
+        {
+            Preemption.Suppress();
+            try { return TryEnd(holder, handle, role, out _); }
+            finally { Preemption.Allow(); }
+        }
+
+        /// <summary>
+        /// Hands an end to another holder (a process being started, step194
+        /// §5): the handle stays the same number and is the new holder's now;
+        /// the old one's calls on it fail as on a closed end.
+        /// </summary>
+        public static PipeStatus Transfer(uint from, int handle, uint to)
         {
             Preemption.Suppress();
             try
             {
-                if (!TryEnd(holder, handle, PipeRole.Writer, out Pipe p)) return PipeStatus.BadHandle;
-                p.Schema = Copy(schema);
-                p.RootKey = rootKey;
-                Bump(p);
+                if (!TryEnd(from, handle, (PipeRole)0, out _)) return PipeStatus.BadHandle;
+                s_ends[handle - 1].Holder = to;
                 return PipeStatus.Ok;
             }
             finally
@@ -253,6 +312,8 @@ namespace OS.Kernel.Pipes
                     }
 
                     // An app writer waits for room, the reader leaving, or its own end closing.
+                    // A thread being ended stops waiting: it leaves on the way back.
+                    if (Scheduler.Current?.KillRequested ?? false) return PipeStatus.Broken;
                     int seen = p.Version;
                     Preemption.Allow();
                     fixed (int* version = &p.Version)
@@ -304,6 +365,8 @@ namespace OS.Kernel.Pipes
                     }
                     if (!wait) return PipeStatus.Empty;
 
+                    // A thread being ended stops waiting: it leaves on the way back.
+                    if (Scheduler.Current?.KillRequested ?? false) return PipeStatus.Broken;
                     int seen = p.Version;
                     Preemption.Allow();
                     fixed (int* version = &p.Version)

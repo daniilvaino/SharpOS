@@ -94,6 +94,15 @@
                 return true;
             }
 
+            // A thread being ended does not go to sleep again (step194): a
+            // kernel loop around this wait must see it and give up, and the
+            // thread leaves on the way back to its app.
+            if (curr.KillRequested)
+            {
+                Preemption.Allow();
+                return false;
+            }
+
             int b = BucketOf(addr);
             curr.Wait.Address = addr;
             curr.Wait.Kind = WaitKind.Address;
@@ -128,7 +137,7 @@
             return signalled;
         }
 
-        /// <summary>Takes a thread out of whatever bucket it is parked in (Scheduler.LeaveApp).</summary>
+        /// <summary>Takes a thread out of whatever bucket it is parked in (Scheduler.RequestKill).</summary>
         public static void Forget(Thread t)
         {
             if (s_buckets == null || t.Wait.Address == null) return;

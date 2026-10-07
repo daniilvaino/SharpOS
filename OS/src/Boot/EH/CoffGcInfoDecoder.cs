@@ -474,13 +474,34 @@ namespace OS.Boot.EH
 
             int bitOffset = SkipSafePointOffsets(gcInfo, in hdr, hdr.BitOffsetAfterHeader);
 
-            // As many ranges as the header says. A fixed buffer of 16 halted
-            // the machine on the first method with more.
-            int rangeCount = (int)hdr.NumInterruptibleRanges;
-            if (rangeCount > MaxBuffered)
-                return false;
-            Span<CoffInterruptibleRange> ranges = stackalloc CoffInterruptibleRange[rangeCount > 0 ? rangeCount : 1];
-            int numRanges = DecodeInterruptibleRanges(gcInfo, in hdr, bitOffset, ranges, out bitOffset);
+            // The ranges in one pass, without a buffer: where the PC falls in
+            // the interruptible code laid end to end, and how long that is.
+            // (A fixed buffer of 16 once halted the machine on the first
+            // method with more; a bounded one answered "not interruptible"
+            // past its bound.)
+            bool inInterruptible = false;
+            uint normalizedPc = 0;
+            uint numInterruptibleLength = 0;
+            {
+                BitReader rr = new BitReader(gcInfo);
+                rr.SetBitOffset(bitOffset);
+                uint normLastStop = 0;
+                for (uint i = 0; i < hdr.NumInterruptibleRanges; i++)
+                {
+                    uint normStart = normLastStop + rr.DecodeVarLengthUnsigned(CoffGcInfoTypes.InterruptibleRangeDelta1EncBase);
+                    uint normStop = normStart + rr.DecodeVarLengthUnsigned(CoffGcInfoTypes.InterruptibleRangeDelta2EncBase) + 1;
+                    uint start = CoffGcInfoTypes.DenormalizeCodeOffset(normStart);
+                    uint stop = CoffGcInfoTypes.DenormalizeCodeOffset(normStop);
+                    if (!inInterruptible && pcCodeOffset >= start && pcCodeOffset < stop)
+                    {
+                        inInterruptible = true;
+                        normalizedPc = numInterruptibleLength + (pcCodeOffset - start);
+                    }
+                    numInterruptibleLength += stop - start;
+                    normLastStop = normStop;
+                }
+                bitOffset = rr.BitOffset;
+            }
 
             // Slot table is right after ranges.
             DecodeSlotTable(gcInfo, bitOffset, out CoffGcSlotTable slots);
@@ -523,27 +544,8 @@ namespace OS.Boot.EH
             if (hdr.NumInterruptibleRanges == 0)
                 return false;
 
-            // Find which range PC lives in, and normalize.
-            int targetRange = -1;
-            uint normalizedPc = 0;
-            uint cumLen = 0;
-            for (int i = 0; i < numRanges; i++)
-            {
-                uint rangeLen = ranges[i].StopOffset - ranges[i].StartOffset;
-                if (pcCodeOffset >= ranges[i].StartOffset && pcCodeOffset < ranges[i].StopOffset)
-                {
-                    targetRange = i;
-                    normalizedPc = cumLen + (pcCodeOffset - ranges[i].StartOffset);
-                    break;
-                }
-                cumLen += rangeLen;
-            }
-            if (targetRange < 0)
+            if (!inInterruptible)
                 return false;   // PC not in interruptible code
-
-            uint totalInterruptibleLength = cumLen;
-            for (int i = targetRange; i < numRanges; i++)
-                totalInterruptibleLength += ranges[i].StopOffset - ranges[i].StartOffset;
 
             // Ported from GcInfoDecoder::EnumerateLiveSlots (dotnet/runtime
             // release/8.0, vm/gcinfodecoder.cpp), fully-interruptible half.
@@ -565,10 +567,6 @@ namespace OS.Boot.EH
             // task its own pool thread was still running.
             const int ChunkSizeLog2 = 6;                         // NUM_NORM_CODE_OFFSETS_PER_CHUNK_LOG2
             const int ChunkSize = 1 << ChunkSizeLog2;            // 64
-            uint numInterruptibleLength = cumLen;
-            for (int i = targetRange; i < numRanges; i++)
-                numInterruptibleLength += ranges[i].StopOffset - ranges[i].StartOffset;
-
             int numChunks = (int)((numInterruptibleLength + ChunkSize - 1) / ChunkSize);
             int breakChunk = (int)(normalizedPc / ChunkSize);
 
@@ -724,8 +722,8 @@ namespace OS.Boot.EH
             slots.BitOffsetAfterTable = r.BitOffset;
         }
 
-        /// <summary>Largest slot or range count the walk will stack-allocate for; past it a frame is reported, not decoded.</summary>
-        public const int MaxBuffered = 4096;
+        /// <summary>Largest slot count the walk takes on its own stack; past it, a scratch buffer.</summary>
+        public const int MaxStackBuffered = 512;
 
         // Variant of DecodeSlotTable that fills caller's CoffGcSlot buffer
         // with per-slot detail (register number / stack base+offset / flags).

@@ -4,13 +4,22 @@ using SharpOS.Std.Dynamic;
 
 namespace SharpOS.Std.Pipes
 {
-    // `dynamic` over an Expando: a name reads and writes the entry, as with
-    // ExpandoObject; setting a new name adds it. A name with no entry falls
-    // through to the Expando's own members (Count, ContainsKey, …), then fails
-    // as a missing member. Nothing is cached: entries change.
+    // `dynamic` over an Expando: a name is an entry, as with ExpandoObject —
+    // reading one there is not is a RuntimeBinderException, setting a new one
+    // adds it. The Expando's own members (Count, ContainsKey, …) are not
+    // reached through `dynamic`: cast to Expando for them. Nothing is cached:
+    // entries change.
     public sealed partial class Expando : IDynamicObject
     {
-        bool IDynamicObject.TryGetMember(string name, out object value) => TryGetValue(name, out value);
+        private static Microsoft.CSharp.RuntimeBinder.RuntimeBinderException NoEntry(string name)
+            => new Microsoft.CSharp.RuntimeBinder.RuntimeBinderException(
+                "'SharpOS.Std.Pipes.Expando' does not contain a definition for '" + name + "'");
+
+        bool IDynamicObject.TryGetMember(string name, out object value)
+        {
+            if (!TryGetValue(name, out value)) throw NoEntry(name);
+            return true;
+        }
 
         bool IDynamicObject.TrySetMember(string name, object value)
         {
@@ -33,10 +42,12 @@ namespace SharpOS.Std.Pipes
             return true;
         }
 
+        // An entry holds only what travels through a pipe, never a delegate: there is nothing to call.
         bool IDynamicObject.TryInvokeMember(string name, object[] args, out object result)
         {
             result = null;
-            return false;
+            if (!ContainsKey(name)) throw NoEntry(name);
+            throw new Microsoft.CSharp.RuntimeBinder.RuntimeBinderException("Cannot invoke a non-delegate type");
         }
 
         bool IDynamicObject.TryConvert(Type type, bool isExplicit, out object result)

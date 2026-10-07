@@ -106,6 +106,28 @@ namespace OS.Kernel.Memory
             fixed (SkipTable* t = &s_skipped) return t->From[index];
         }
 
+        // Room for the slot table and live set of a frame too big for the
+        // walk's stack: grown from the kernel's native heap, never shrunk.
+        // The live set takes the buffer's last bytes, the slots its start.
+        private static byte* s_scratch;
+        private static int s_scratchBytes;
+
+        private static byte* Scratch(int bytes)
+        {
+            if (bytes > s_scratchBytes)
+            {
+                int size = 64 * 1024;
+                while (size < bytes) size *= 2;
+                byte* grown = (byte*)KernelHeap.Alloc((uint)size);
+                if (grown == null)
+                    OS.Kernel.Panic.Fail("GC walk: no memory for a frame's slot table");
+                if (s_scratch != null) KernelHeap.Free(s_scratch);
+                s_scratch = grown;
+                s_scratchBytes = size;
+            }
+            return s_scratch;
+        }
+
         // The frame being marked while the walk's context moves on to its caller.
         private static Context s_frameSnapshot;
 
@@ -205,7 +227,7 @@ namespace OS.Kernel.Memory
             s_markRoot = null;
 
             if (markRoot == null)
-                ContinueBelowApps(OS.Kernel.Threading.Scheduler.Current?.Id ?? 0);
+                ContinueBelowApps(OS.Kernel.Threading.Scheduler.Current);
 
             MarkExceptionChain((OS.Boot.EH.ExInfo*)OS.Boot.EH.ExInfoHead.s_head,
                                OS.Kernel.Threading.Scheduler.Current, markRoot);
@@ -291,11 +313,12 @@ namespace OS.Kernel.Memory
         /// a context to resume the walk from. Runs nest; each one crossed in
         /// turn, innermost first, as the stack has them.
         /// </remarks>
-        internal static void ContinueBelowApps(int threadId)
+        internal static void ContinueBelowApps(OS.Kernel.Threading.Thread? thread)
         {
-            for (OS.Kernel.Exec.JumpContext* run = OS.Kernel.Exec.JumpStub.Innermost; run != null; run = run->Previous)
+            if (thread == null) return;
+            for (OS.Kernel.Exec.JumpContext* run = thread.Jump; run != null; run = run->Previous)
             {
-                if (run->OwnerThreadId != threadId || run->KernelRsp == 0)
+                if (run->KernelRsp == 0)
                     continue;
 
                 Context ctx = default;
@@ -342,9 +365,9 @@ namespace OS.Kernel.Memory
             if (low == 0 || rsp < low || rsp >= high)
             {
                 low = high = 0;
-                for (OS.Kernel.Exec.JumpContext* run = OS.Kernel.Exec.JumpStub.Innermost; run != null; run = run->Previous)
+                for (OS.Kernel.Exec.JumpContext* run = thread.Jump; run != null; run = run->Previous)
                 {
-                    if (run->OwnerThreadId == thread.Id && run->AppStackBase != 0 &&
+                    if (run->AppStackBase != 0 &&
                         rsp >= run->AppStackBase && rsp < run->StackTop)
                     {
                         low = run->AppStackBase;
@@ -706,22 +729,23 @@ namespace OS.Kernel.Memory
             if ((int)counts.NumSlots > slots.Length)
             {
                 // Bigger frames are common enough (a test method with dozens
-                // of locals): decode again with room for all of them.
-                if ((int)counts.NumSlots > CoffGcInfoDecoder.MaxBuffered)
-                {
-                    LastFramesSlotOverflow++;
-                    OS.Hal.Console.Write("[gc] frame with ");
-                    OS.Hal.Console.WriteUInt(counts.NumSlots);
-                    OS.Hal.Console.WriteLine(" GC slots not walked: its roots are lost");
-                    return;
-                }
-                slots = stackalloc CoffGcSlot[(int)counts.NumSlots];
+                // of locals): decode again with room for all of them — on the
+                // stack while that is modest, past it in a scratch buffer the
+                // walk keeps (one walk at a time, the world stopped). Until
+                // step194 a frame past 4096 slots was skipped and its roots
+                // were lost.
+                int n = (int)counts.NumSlots;
+                slots = n <= CoffGcInfoDecoder.MaxStackBuffered
+                    ? stackalloc CoffGcSlot[n]
+                    : new System.Span<CoffGcSlot>(Scratch(n * sizeof(CoffGcSlot) + n), n);
                 CoffGcInfoDecoder.DecodeFullSlotTable(r.GcInfo, afterIr, slots, out counts);
             }
 
             int trackedCount = (int)counts.NumTracked;
             // stackalloc cannot be 0-sized — use 1 as floor; we just won't read it.
-            System.Span<bool> live = stackalloc bool[trackedCount > 0 ? trackedCount : 1];
+            System.Span<bool> live = trackedCount <= CoffGcInfoDecoder.MaxStackBuffered
+                ? stackalloc bool[trackedCount > 0 ? trackedCount : 1]
+                : new System.Span<bool>(s_scratch + (s_scratchBytes - trackedCount), trackedCount);
             // Every frame but the innermost is stopped at a return address,
             // and a return address is not where the call site was recorded:
             // the encoder indexes call sites by an offset INSIDE the call

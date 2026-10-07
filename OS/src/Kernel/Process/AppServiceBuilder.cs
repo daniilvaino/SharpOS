@@ -40,22 +40,8 @@ namespace OS.Kernel.Process
             Fallback = 2,
         }
 
-        private static int s_exitRequested;
-        private static int s_exitCode;
-
-        // Nested app-launch depth. RunExternalApp is the single choke
-        // point for service-driven app launches (a running guest
-        // calling RunApp). Max 1: the launcher may launch an app, but
-        // that app may not launch another (recursive HELLOCS) — capped
-        // before load so it returns `unsupported`, never the faulting
-        // nested build.
-        private static int s_runExternalDepth;
-
-        // Levels of app-starts-app allowed below the one the kernel started.
-        // Each costs a stack region (ProcessImageBuilder.StackRegionStride)
-        // and a live frame per level on the kernel stack.
-        private const int MaxNestedLaunchDepth = 4;
-
+        // The ABI the table being built publishes: read right after TryBuild,
+        // under the start lock, into the process record (AppProcess.AbiVersion).
         private static uint s_publishedAbiVersion = AppServiceTable.AbiVersionV1;
 
         private static bool s_serviceThunksInitialized;
@@ -332,7 +318,10 @@ namespace OS.Kernel.Process
 
             // One argument in rcx: Win64 only, like the waits above.
             if (serviceAbi != AppServiceAbi.SystemV)
+            {
                 table.SetHwExceptionFactoryAddress = (ulong)(nint)(delegate* unmanaged<void*, void>)&AppSetHwExceptionFactory;
+                table.SetExceptionNamerAddress = (ulong)(nint)(delegate* unmanaged<void*, void>)&AppSetExceptionNamer;
+            }
 
             table.PreemptionDepthAddress = (ulong)OS.Kernel.Threading.Preemption.DepthAddress;
 
@@ -355,6 +344,8 @@ namespace OS.Kernel.Process
                 table.PipeReceiveAddress = (ulong)(nint)(delegate* unmanaged<int, uint, ulong*, int>)&OS.Kernel.Pipes.PipeServices.Receive;
                 table.PipeCloseAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.Close;
                 table.PipeSchemaAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, ulong, ulong*, int>)&OS.Kernel.Pipes.PipeServices.Schema;
+                table.PipeOpenEndAddress = (ulong)(nint)(delegate* unmanaged<ulong*, int>)&OS.Kernel.Pipes.PipeServices.OpenEnd;
+                table.ProcessAddress = (ulong)(nint)(delegate* unmanaged<int, ulong*, int>)&ProcessService;
                 if (OS.Kernel.Diagnostics.Probes.PipeProbe)
                     table.PipeProbeAddress = (ulong)(nint)(delegate* unmanaged<int, ulong, ulong*, int>)&OS.Kernel.Diagnostics.PipeProbe.Service;
                 if (OS.Kernel.Diagnostics.Probes.RegionIntake)
@@ -369,8 +360,6 @@ namespace OS.Kernel.Process
                 : (AppServiceTable*)servicePhysical;
 
             *serviceTablePointer = table;
-            s_exitRequested = 0;
-            s_exitCode = 0;
             s_publishedAbiVersion = publishedAbiVersion;
             return true;
         }
@@ -689,19 +678,8 @@ namespace OS.Kernel.Process
             if (destination == null || target == 0)
                 return false;
 
-            byte* scratch = stackalloc byte[64];
-            int icedLen = EmitWin64OneArgThunkIced(destination, 64, target);
-            int legacyLen = EmitWin64OneArgThunkLegacy(scratch, target);
-            CompareOrPanic("Win64OneArgThunk", destination, scratch, icedLen, legacyLen);
-
-            if (!s_win64GateLogged)
-            {
-                s_win64GateLogged = true;
-                Console.Write("[thunk] win64-onearg iced=legacy OK len=0x");
-                Console.WriteHex((ulong)icedLen);
-                Console.WriteLine("");
-            }
-            return true;
+            int length = EmitWin64OneArgThunkIced(destination, (int)ServiceThunkSlotSize, target);
+            return length > 0 && length <= (int)ServiceThunkSlotSize;
         }
 
         private static bool TryWriteWin64NoArgThunk(byte* destination, ulong target)
@@ -714,23 +692,10 @@ namespace OS.Kernel.Process
             if (destination == null || target == 0)
                 return false;
 
-            byte* scratch = stackalloc byte[64];
-            int icedLen = EmitSystemVOneArgThunkIced(destination, 64, target);
-            int legacyLen = EmitSystemVOneArgThunkLegacy(scratch, target);
-            CompareOrPanic("SystemVOneArgThunk", destination, scratch, icedLen, legacyLen);
-
-            if (!s_sysVGateLogged)
-            {
-                s_sysVGateLogged = true;
-                Console.Write("[thunk] sysv-onearg iced=legacy OK len=0x");
-                Console.WriteHex((ulong)icedLen);
-                Console.WriteLine("");
-            }
-            return true;
+            int length = EmitSystemVOneArgThunkIced(destination, (int)ServiceThunkSlotSize, target);
+            return length > 0 && length <= (int)ServiceThunkSlotSize;
         }
 
-        private static bool s_win64GateLogged;
-        private static bool s_sysVGateLogged;
 
         /// <summary>
         /// Steps a stack walk over a service thunk: true, with the caller's
@@ -762,69 +727,15 @@ namespace OS.Kernel.Process
             bool systemV = slot[0] == 0x48 && slot[1] == 0x89 && slot[2] == 0xF9;   // mov rcx, rdi
 
             // "sub rsp,28h" starts here; the frame exists from its end up to
-            // the start of "add rsp,28h" — which is also where "call rax"
-            // returns to.
+            // the start of "add rsp,28h", and again on the leave path after
+            // the "ret" (EmitServiceThunk).
             uint sub = systemV ? 13u : 10u;
-            if (offset >= sub + 4 && offset <= sub + 6)
+            if ((offset >= sub + 4 && offset < sub + ThunkFrameEndAfterSub) || offset >= sub + ThunkLeaveAfterSub)
                 rsp += 0x28;
 
             rip = *(ulong*)rsp;
             rsp += 8;
             return true;
-        }
-
-        // ---- Legacy byte-stream emitters (return length for compare). ----
-
-        private static int EmitWin64OneArgThunkLegacy(byte* destination, ulong target)
-        {
-            // mov rax, target
-            destination[0] = 0x48;
-            destination[1] = 0xB8;
-            WriteU64(destination + 2, target);
-            // sub rsp, 0x28
-            destination[10] = 0x48;
-            destination[11] = 0x83;
-            destination[12] = 0xEC;
-            destination[13] = 0x28;
-            // call rax
-            destination[14] = 0xFF;
-            destination[15] = 0xD0;
-            // add rsp, 0x28
-            destination[16] = 0x48;
-            destination[17] = 0x83;
-            destination[18] = 0xC4;
-            destination[19] = 0x28;
-            // ret
-            destination[20] = 0xC3;
-            return 21;
-        }
-
-        private static int EmitSystemVOneArgThunkLegacy(byte* destination, ulong target)
-        {
-            // mov rcx, rdi
-            destination[0] = 0x48;
-            destination[1] = 0x89;
-            destination[2] = 0xF9;
-            // mov rax, target
-            destination[3] = 0x48;
-            destination[4] = 0xB8;
-            WriteU64(destination + 5, target);
-            // sub rsp, 0x28
-            destination[13] = 0x48;
-            destination[14] = 0x83;
-            destination[15] = 0xEC;
-            destination[16] = 0x28;
-            // call rax
-            destination[17] = 0xFF;
-            destination[18] = 0xD0;
-            // add rsp, 0x28
-            destination[19] = 0x48;
-            destination[20] = 0x83;
-            destination[21] = 0xC4;
-            destination[22] = 0x28;
-            // ret
-            destination[23] = 0xC3;
-            return 24;
         }
 
         private static bool TryWriteSystemVNoArgThunk(byte* destination, ulong target)
@@ -842,17 +753,6 @@ namespace OS.Kernel.Process
             destination[5] = (byte)((value >> 40) & 0xFF);
             destination[6] = (byte)((value >> 48) & 0xFF);
             destination[7] = (byte)((value >> 56) & 0xFF);
-        }
-
-        public static bool TryConsumeExit(out int exitCode)
-        {
-            exitCode = 0;
-            if (s_exitRequested == 0)
-                return false;
-
-            exitCode = s_exitCode;
-            s_exitRequested = 0;
-            return true;
         }
 
         private static void WriteString(ulong textAddress)
@@ -1003,7 +903,7 @@ namespace OS.Kernel.Process
         /// reached the display and no log at all.
         /// </remarks>
         private static OS.Hal.OutputChannel AppOutputChannel()
-            => OS.Hal.TerminalConsole.IsAlternateScreen && s_alternateScreenOwner == s_runExternalDepth
+            => OS.Hal.TerminalConsole.IsAlternateScreen && s_alternateScreenOwner == (int)(AppProcesses.Current?.Id ?? 0)
                 ? OS.Hal.OutputChannel.Ui
                 : OS.Hal.OutputChannel.AppOut;
 
@@ -1028,7 +928,7 @@ namespace OS.Kernel.Process
             if (!OS.Hal.TerminalConsole.IsAlternateScreen)
                 s_alternateScreenOwner = -1;
             else if (s_alternateScreenOwner < 0)
-                s_alternateScreenOwner = s_runExternalDepth;
+                s_alternateScreenOwner = (int)(AppProcesses.Current?.Id ?? 0);
         }
 
         // The number services are an application's output like WriteString, and
@@ -1078,13 +978,20 @@ namespace OS.Kernel.Process
 
         private static uint GetAbiVersion()
         {
-            return s_publishedAbiVersion;
+            return AppProcesses.Current?.AbiVersion ?? s_publishedAbiVersion;
         }
 
+        // The code the app ends with once its entry returns (AppHost.Exit).
+        // The process ends here, as exit() ends one (step194 §3): every
+        // thread of it is marked, and the caller leaves on the way back from
+        // this service. ProcessMainEntry takes the code.
         private static void Exit(int exitCode)
         {
-            s_exitCode = exitCode;
-            s_exitRequested = 1;
+            AppProcess p = AppProcesses.Current;
+            if (p == null) return;
+            p.RequestedExitCode = exitCode;
+            p.ExitRequested = true;
+            RequestEnd(p, exitCode, failed: false);
         }
 
         private static uint FileExists(ulong requestAddress)
@@ -1240,27 +1147,14 @@ namespace OS.Kernel.Process
             t.AppEntry = entryAddress;
             global::OS.Kernel.Threading.Thread? spawner = global::OS.Kernel.Threading.Scheduler.Current;
             t.AppGeneration = spawner == null ? 0u : spawner.AppGeneration;
+            t.App = spawner?.App;
+            if (t.App != null) t.App.LiveThreads++;
+            // A process already ending takes no new threads: this one leaves
+            // as soon as it reaches the app's code.
+            if (t.App != null && t.App.KillRequested) t.KillRequested = true;
             global::OS.Kernel.Threading.Scheduler.MakeRunnable(t);
             global::OS.Kernel.Threading.Preemption.Allow();
             return (uint)AppServiceStatus.Ok;
-        }
-
-        /// <summary>
-        /// After an app returns and before its pages go: its threads go
-        /// (Scheduler.LeaveApp), and the log says how many were still there.
-        /// </summary>
-        internal static void EndAppRun(uint generation, uint previousGeneration)
-        {
-            uint ended = global::OS.Kernel.Threading.Scheduler.LeaveApp(generation, previousGeneration);
-
-            // Its threads are gone; now what it held outside them.
-            ProcessResources.OnAppEnded(generation);
-
-            if (ended == 0) return;
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write("app threads ended with the app: ");
-            UiText.WriteInt((int)ended);
-            DebugLog.EndLine();
         }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
@@ -1269,9 +1163,10 @@ namespace OS.Kernel.Process
             global::OS.Kernel.Threading.Thread? self = global::OS.Kernel.Threading.Scheduler.Current;
             ulong entryAddress = self == null ? 0 : self.AppEntry;
 
-            if (entryAddress != 0)
+            if (entryAddress != 0 && !(self?.KillRequested ?? false))
                 ((delegate* unmanaged<void>)entryAddress)();
 
+            OnAppThreadGone(self?.App);
             global::OS.Kernel.Threading.Scheduler.Exit();
         }
 
@@ -1319,6 +1214,13 @@ namespace OS.Kernel.Process
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void AppSetHwExceptionFactory(void* factory)
             => global::OS.Kernel.Exec.JumpStub.SetHwExceptionFactory((nint)factory);
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void AppSetExceptionNamer(void* namer)
+        {
+            AppProcess p = AppProcesses.Current;
+            if (p != null) p.ExceptionNamer = (nint)namer;
+        }
 
         // Owned by the calling run: its generation is on the calling thread,
         // and every thread of the run carries the same one.
@@ -1471,37 +1373,31 @@ namespace OS.Kernel.Process
 
             LogRunAppAbiSelection(abiSource, appAbiVersion, serviceAbi);
 
-            // Arguments are read now, while the caller's memory is still
-            // mapped: the launch below unmaps its image before the child's
-            // stack is built. The block waits in StartupData for that build.
-            StartupData.Clear();
-            if ((request->Reserved & AppRunAppRequest.FlagHasArguments) != 0 &&
-                !StartupData.SetArguments((byte*)request->ArgumentsAddress, request->ArgumentsLength))
-                return (uint)AppServiceStatus.InvalidParameter;
-
-            int savedExitRequested = s_exitRequested;
-            int savedExitCode = s_exitCode;
-            uint savedPublishedAbi = s_publishedAbiVersion;
-
-            s_exitRequested = 0;
-            s_exitCode = 0;
+            // A start, then a wait: the child is a process of its own, and the
+            // caller merely waits for it (step194). Arguments are read now,
+            // from the caller's memory, into the startup data the build takes.
+            AppServiceStatus status = StartFromPath(pathBuffer, appAbiVersion, serviceAbi,
+                abiSource == AbiResolveSource.Request,
+                (request->Reserved & AppRunAppRequest.FlagHasArguments) != 0 ? (byte*)request->ArgumentsAddress : null,
+                request->ArgumentsLength, -1, -1, out AppProcess child);
+            if (status != AppServiceStatus.Ok)
+            {
+                DebugLog.Begin(LogLevel.Warn);
+                UiText.Write("---- child failed: status=");
+                UiText.WriteUInt((uint)status);
+                DebugLog.EndLine();
+                return (uint)status;
+            }
 
             // The same [perf] scope a managed run gets: the NativeAOT benchmark
             // (BENCHAOT.EXE) is a PE child, and its output and clock costs are
             // the kernel's to count.
             OS.Kernel.Diagnostics.PerfCounters.Mark();
-            AppServiceStatus runStatus = RunExternalApp(pathBuffer, appAbiVersion, serviceAbi,
-                abiFromRequest: abiSource == AbiResolveSource.Request,
-                out int childExitCode);
-            request->ExitCode = childExitCode;
-            StartupData.Clear();     // a launch that failed before its build took it
-            OS.Kernel.Diagnostics.PerfCounters.Report(RunScope(string.FromUtf16Z(pathBuffer, (int)MaxPathChars)));
-
-            s_exitRequested = savedExitRequested;
-            s_exitCode = savedExitCode;
-            s_publishedAbiVersion = savedPublishedAbi;
-
-            return (uint)runStatus;
+            bool ended = WaitForExit(child);
+            request->ExitCode = ended ? child.ExitCode : 0;
+            OS.Kernel.Diagnostics.PerfCounters.Report(RunScope(child.Name));
+            if (ended) ReleaseProcess(child);
+            return (uint)AppServiceStatus.Ok;
         }
 
         private static bool TryReadAsciiPath(ulong pathAddress, char* destination, uint destinationChars)
@@ -1559,7 +1455,7 @@ namespace OS.Kernel.Process
 
             // Nothing to read from here any more: the record lives inside the
             // image, and the image is not loaded yet. What is chosen here is a
-            // starting point, refined in RunExternalApp once the manifest
+            // starting point, refined in StartProcess once the manifest
             // resource is addressable.
             appAbiVersion = autoAppAbi ? AppServiceTable.AbiVersionV1 : resolvedFromRequestAbi;
             serviceAbi = autoServiceAbi ? AppServiceAbi.WindowsX64 : resolvedFromRequestService;
@@ -1677,266 +1573,6 @@ namespace OS.Kernel.Process
             Console.Write(" serviceAbi=");
             Console.WriteUInt((uint)serviceAbi);
             DebugLog.EndLine();
-        }
-
-        private static AppServiceStatus RunExternalApp(
-            char* path,
-            uint appAbiVersion,
-            AppServiceAbi serviceAbi,
-            bool abiFromRequest,
-            out int exitCode)
-        {
-            exitCode = 0;
-
-            // A chain has to end somewhere, and nothing here grows a stack to
-            // meet it: every level keeps a frame of RunExternalApp plus the
-            // whole load-and-build path alive on the kernel stack. Four is
-            // past anything asked for — a shell starting a program that starts
-            // another — and far short of what the stack would notice.
-            if (s_runExternalDepth >= MaxNestedLaunchDepth)
-            {
-                DebugLog.Begin(LogLevel.Info);
-                Console.Write("nested app launch rejected (depth limit ");
-                Console.WriteUInt(MaxNestedLaunchDepth);
-                Console.Write(")");
-                DebugLog.EndLine();
-                return AppServiceStatus.Unsupported;
-            }
-            s_runExternalDepth++;
-            try
-            {
-
-            BootInfo bootInfo = Platform.GetBootInfo();
-            if (bootInfo.FileReadAll == null)
-                return AppServiceStatus.Unsupported;
-
-            if (!ProcessManager.TrySuspendCurrentForNested(out MappingContext parentMappingContext, out bool parentSuspended))
-                return AppServiceStatus.Unsupported;
-
-            if (parentSuspended)
-                DebugLog.Write(LogLevel.Info, "---- child start ----");
-
-            AppServiceStatus result = AppServiceStatus.DeviceError;
-            LoadedImage loadedImage = default;
-            ProcessImage processImage = default;
-            bool imageLoaded = false;
-            bool processBuilt = false;
-
-            try
-            {
-                do
-                {
-                    void* imagePointer = null;
-                    uint imageSize = 0;
-                    uint readStatus = bootInfo.FileReadAll(path, &imagePointer, &imageSize);
-                    AppServiceStatus mappedReadStatus = MapBootFileStatus(readStatus);
-                    if (mappedReadStatus != AppServiceStatus.Ok)
-                    {
-                        result = mappedReadStatus;
-                        break;
-                    }
-
-                    MemoryBlock image = new MemoryBlock(imagePointer, imageSize);
-                    if (!image.IsValid)
-                    {
-                        result = FailedAtStep(1);
-                        break;
-                    }
-
-                    // PE only (step137): anything without the "MZ" magic is
-                    // not an application this kernel can run.
-                    image.TryReadUInt16(0, out ushort imageMagic);
-                    if (imageMagic != global::OS.Kernel.Pe.PeLoader.DosMagicMZ)
-                    {
-                        result = AppServiceStatus.Unsupported;
-                        break;
-                    }
-
-                    if (!global::OS.Kernel.Pe.PeLoader.TryLoad(image, out loadedImage, out _))
-                    {
-                        result = FailedAtStep(2);
-                        break;
-                    }
-
-                    imageLoaded = true;
-
-                    // The image's own manifest outranks the sidecar and the
-                    // fallback, but not a caller who named the ABI outright.
-                    // Read here rather than before the load because this is
-                    // where the resource directory is addressable — see
-                    // PeLoader.TryReadManifest.
-                    if (loadedImage.ManifestFound && !abiFromRequest)
-                    {
-                        appAbiVersion = NormalizeAbiVersion(loadedImage.ManifestAbi);
-
-                        if (TryParseServiceAbi(loadedImage.ManifestServiceAbi, out AppServiceAbi imageServiceAbi))
-                            serviceAbi = imageServiceAbi;
-
-                        LogImageManifest(ref loadedImage, appAbiVersion, serviceAbi);
-                    }
-                    else if (!loadedImage.ManifestFound && !abiFromRequest)
-                    {
-                        // Said out loud, because the fallback is V1 and an app
-                        // built against a later table would find its services
-                        // simply missing — which reads as the app misbehaving.
-                        // Every app built from this tree carries a manifest, so
-                        // this means a stale image or a build that skipped
-                        // SharpAppManifest.props.
-                        DebugLog.Begin(LogLevel.Warn);
-                        Console.Write("[abi] image carries no manifest — falling back to V");
-                        Console.WriteUInt(appAbiVersion);
-                        DebugLog.EndLine();
-                    }
-
-                    // One stack region per level: the parent's stack stays
-                    // mapped while the child runs, so they must not share one.
-                    ulong childStackTop =
-                        ProcessImageBuilder.StackMappedTopForDepth((uint)s_runExternalDepth);
-
-                    if (!ProcessImageBuilder.TryBuild(ref loadedImage, 0, serviceAbi, appAbiVersion, childStackTop, out processImage))
-                    {
-                        result = FailedAtStep(4);
-                        break;
-                    }
-
-                    processBuilt = true;
-
-                    if (!TryValidateProcess(ref processImage, appAbiVersion))
-                    {
-                        result = FailedAtStep(5);
-                        break;
-                    }
-
-                    if (!JumpStub.EnsureInitialized())
-                    {
-                        result = FailedAtStep(6);
-                        break;
-                    }
-
-                    if (!TrySyncKernelLowMappings(ref processImage))
-                    {
-                        result = FailedAtStep(7);
-                        break;
-                    }
-
-                    if (!Pager.TryGetPagerCr3(out ulong pagerCr3))
-                    {
-                        result = FailedAtStep(8);
-                        break;
-                    }
-
-                    pagerCr3 &= 0x000FFFFFFFFFF000UL;
-                    if (pagerCr3 == 0)
-                    {
-                        result = FailedAtStep(9);
-                        break;
-                    }
-
-                    int returnExitCode = 0;
-                    bool jumped;
-                    uint previousGeneration = OS.Kernel.Threading.Scheduler.EnterApp(out uint appGeneration);
-                    ProcessResources.OnAppStarted(appGeneration);
-
-                    // A block the child owns and never frees: its end must
-                    // return it (OnAppEnded logs the count).
-                    if (OS.Kernel.Diagnostics.Probes.ExchangeHeap)
-                        OS.Kernel.Memory.ExchangeHeap.Allocate(64, appGeneration);
-
-                    // The child is the current process while it runs, so that
-                    // a launch of its own suspends ITS image rather than the
-                    // one at the top of the chain. The displaced context goes
-                    // on this frame and comes back below — the kernel stack is
-                    // the stack of process contexts.
-                    ProcessContext parentContext = ProcessManager.ExchangeCurrent(
-                        ref processImage, ref loadedImage, out bool hadParentContext);
-
-                    // Held only by this frame, which the child's jump stub
-                    // sits on top of (pipe_plan.md item 2, condition (c)).
-                    object kernelGcSentinel = OS.Kernel.Diagnostics.Probes.KernelGcAcrossApp
-                        ? OS.Kernel.Diagnostics.KernelGcAcrossAppProbe.Arm()
-                        : null;
-                    try
-                    {
-                        jumped = JumpStub.Run(
-                            processImage.EntryPoint,
-                            processImage.StackTop,
-                            processImage.StartupBlockVirtual,
-                            pagerCr3,
-                            out returnExitCode);
-                    }
-                    finally
-                    {
-                        ProcessManager.RestoreCurrent(ref parentContext, hadParentContext);
-                        EndAppRun(appGeneration, previousGeneration);
-                    }
-
-                    if (kernelGcSentinel != null)
-                        OS.Kernel.Diagnostics.KernelGcAcrossAppProbe.Check(kernelGcSentinel);
-
-                    if (!jumped)
-                    {
-                        result = FailedAtStep(10);
-                        break;
-                    }
-
-                    bool exitByService = TryConsumeExit(out int serviceExitCode);
-                    exitCode = exitByService ? serviceExitCode : returnExitCode;
-                    if (parentSuspended)
-                    {
-                        DebugLog.Begin(LogLevel.Info);
-                        UiText.Write("---- child end: exit=");
-                        UiText.WriteInt(exitCode);
-                        UiText.Write(" ----");
-                        DebugLog.EndLine();
-                    }
-
-                    result = AppServiceStatus.Ok;
-                }
-                while (false);
-
-                if (processBuilt)
-                {
-                    if (!CleanupProcessMappings(ref processImage, ref loadedImage))
-                    {
-                        DebugLog.Write(LogLevel.Warn, "child cleanup mappings failed");
-                        result = FailedAtStep(11);
-                    }
-                }
-                else if (imageLoaded)
-                {
-                    CleanupLoadedImageMappings(ref loadedImage);
-                }
-            }
-            finally
-            {
-                if (parentSuspended)
-                {
-                    if (!ProcessManager.TryRestoreAfterNested(ref parentMappingContext))
-                    {
-                        DebugLog.Write(LogLevel.Warn, "parent context restore failed");
-                        result = AppServiceStatus.DeviceError;
-                    }
-                    // else: success path silenced — the kernel's
-                    // "---- child end ----" line is the authoritative
-                    // end-of-child marker; this was redundant noise.
-                    // else { DebugLog.Write(LogLevel.Info, "parent context restored"); }
-                }
-            }
-
-            // A child that never started said nothing at all: the launcher just
-            // redrew its menu, and "the app is broken" and "the loader refused"
-            // looked identical. Name the status on the way out.
-            if (result != AppServiceStatus.Ok)
-            {
-                DebugLog.Begin(LogLevel.Warn);
-                UiText.Write("---- child failed: status=");
-                UiText.WriteUInt((uint)result);
-                DebugLog.EndLine();
-            }
-
-            return result;
-            }
-            finally { s_runExternalDepth--; }
         }
 
         private static bool TryValidateProcess(ref ProcessImage processImage, uint expectedAbiVersion)

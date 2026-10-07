@@ -28,87 +28,63 @@ namespace OS.Kernel.Process
             }
         }
 
-        // Windows x64 ABI: arg0 already in rcx; just call the target.
-        //   mov  rax, target          ; 48 B8 + imm64    (10)
-        //   sub  rsp, 0x28            ; 48 83 EC 28      (4)
-        //   call rax                  ; FF D0            (2)
-        //   add  rsp, 0x28            ; 48 83 C4 28      (4)
-        //   ret                       ; C3               (1)
-        // 21 bytes. mov(rax, ulong) in Iced binds to Mov_r64_imm64
-        // verbatim (no imm32 fold), so the immediate slot is byte-stable
-        // regardless of target value.
+        // Windows x64 ABI: arg0 already in rcx; call the target, then leave
+        // instead of returning if the calling thread is being ended (step194:
+        // a thread of an ending process finishes its service and goes on the
+        // way back to its app's code).
+        //   mov  rax, target              ; 10   frame: from 14 ...
+        //   sub  rsp, 0x28                ;  4
+        //   call rax                      ;  2   returns to 16
+        //   mov  rcx, &killFlag           ; 10
+        //   cmp  byte [rcx], 0            ;  3
+        //   jne  leave                    ;  2
+        //   add  rsp, 0x28                ;  4   ... to 31
+        //   ret                           ;  1
+        // leave:                              (36, frame again)
+        //   mov  rcx, leaveTarget         ; 10
+        //   call rcx                      ;  2   never returns
+        // rax (the service's result) is left alone on the normal path.
         private static int EmitWin64OneArgThunkIced(byte* p, int cap, ulong target)
-        {
-            var a = new Iced.Intel.Assembler(64);
-            a.mov(rax, target);
-            a.sub(rsp, 0x28);
-            a.call(rax);
-            a.add(rsp, 0x28);
-            a.ret();
+            => EmitServiceThunk(p, cap, target, systemV: false);
 
-            var w = new ThunkBufWriter(p, cap);
-            a.Assemble(w, 0);
-            return w.Count;
-        }
-
-        // System V AMD64 ABI: arg0 comes in rdi; translate to rcx before
-        // calling the (Win64-shaped) target.
-        //   mov  rcx, rdi             ; 48 89 F9         (3)
-        //   mov  rax, target          ; 48 B8 + imm64    (10)
-        //   sub  rsp, 0x28            ; 48 83 EC 28      (4)
-        //   call rax                  ; FF D0            (2)
-        //   add  rsp, 0x28            ; 48 83 C4 28      (4)
-        //   ret                       ; C3               (1)
-        // 24 bytes.
+        // System V AMD64 ABI: arg0 comes in rdi; translate to rcx first
+        // (`mov rcx, rdi`, 3 bytes), then the same as above.
         private static int EmitSystemVOneArgThunkIced(byte* p, int cap, ulong target)
+            => EmitServiceThunk(p, cap, target, systemV: true);
+
+        // Where, past the sub, the frame of a thunk ends (the add) and resumes
+        // (the leave path): TryUnwindServiceThunk reads these.
+        private const uint ThunkFrameEndAfterSub = 21;
+        private const uint ThunkLeaveAfterSub = 26;
+
+        private static int EmitServiceThunk(byte* p, int cap, ulong target, bool systemV)
         {
             var a = new Iced.Intel.Assembler(64);
-            a.mov(rcx, rdi);
+            var leave = a.CreateLabel();
+            if (systemV) a.mov(rcx, rdi);
             a.mov(rax, target);
             a.sub(rsp, 0x28);
             a.call(rax);
+            a.mov(rcx, (ulong)OS.Kernel.Threading.Scheduler.CurrentKilledAddress);
+            a.cmp(__byte_ptr[rcx], 0);
+            a.jne(leave);
             a.add(rsp, 0x28);
             a.ret();
+            a.Label(ref leave);
+            delegate* unmanaged<void> leaveTarget = &LeaveFromService;
+            a.mov(rcx, (ulong)leaveTarget);
+            a.call(rcx);
 
             var w = new ThunkBufWriter(p, cap);
             a.Assemble(w, 0);
             return w.Count;
         }
 
-        // Same shape as SehDispatch / JumpStub compare helpers. Length and
-        // per-byte mismatches both panic with full diagnostics on the
-        // serial console — any drift in a thunk that wraps a managed fn
-        // ptr would jump into garbage at the first guest call, so loud
-        // failure at boot is the right tradeoff.
-        private static void CompareOrPanic(string name, byte* iced, byte* legacy, int icedLen, int legacyLen)
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void LeaveFromService()
         {
-            if (icedLen != legacyLen)
-            {
-                Console.Write("[thunk] ");
-                Console.Write(name);
-                Console.Write(" length mismatch: iced=0x");
-                Console.WriteHex((ulong)icedLen);
-                Console.Write(" legacy=0x");
-                Console.WriteHex((ulong)legacyLen);
-                Console.WriteLine("");
-                OS.Kernel.Panic.Fail("thunk iced/legacy length mismatch");
-            }
-            for (int i = 0; i < icedLen; i++)
-            {
-                if (iced[i] != legacy[i])
-                {
-                    Console.Write("[thunk] ");
-                    Console.Write(name);
-                    Console.Write(" byte mismatch at offset 0x");
-                    Console.WriteHex((ulong)i);
-                    Console.Write(": iced=0x");
-                    Console.WriteHex(iced[i]);
-                    Console.Write(" legacy=0x");
-                    Console.WriteHex(legacy[i]);
-                    Console.WriteLine("");
-                    OS.Kernel.Panic.Fail("thunk iced/legacy byte mismatch");
-                }
-            }
+            OS.Kernel.Threading.Thread self = OS.Kernel.Threading.Scheduler.Current;
+            OS.Kernel.Exec.JumpStub.LeaveApp(self, self.App?.KillCode ?? OS.Kernel.Exec.JumpStub.UnhandledExitCode);
         }
     }
 }

@@ -173,9 +173,14 @@ namespace OS.Kernel.Memory
             OS.Kernel.Threading.Thread? current = OS.Kernel.Threading.Scheduler.Current;
             OS.Kernel.Threading.Thread? t = OS.Kernel.Threading.Scheduler.AllThreads;
 
+            // An app's collection looks at its own process's threads only: no
+            // other stack can hold a reference into its heap (step194).
+            OS.Kernel.Process.AppProcess? only = markRoot != null ? current?.App : null;
+
             while (t != null)
             {
                 if (t != current &&
+                    (markRoot == null || t.App == only) &&
                     t.State != OS.Kernel.Threading.ThreadState.Exited &&
                     t.ContextBlock != null)
                 {
@@ -202,7 +207,7 @@ namespace OS.Kernel.Memory
 
                     // And the kernel frames under any app this thread runs.
                     if (markRoot == null)
-                        KernelGcPreciseWalk.ContinueBelowApps(t.Id);
+                        KernelGcPreciseWalk.ContinueBelowApps(t);
 
                     // And the exceptions it is in the middle of dispatching.
                     KernelGcPreciseWalk.MarkExceptionChain((OS.Boot.EH.ExInfo*)t.SavedExInfoHead, t, markRoot);

@@ -35,6 +35,15 @@ namespace SharpOS.Std.Pipes
 
         public static PipeStatus Close(int handle) => KernelPipes.Close(Holder, handle);
 
+        public static PipeStatus OpenEnd(int handle, byte[] schema, ulong rootKey, out string error)
+            => KernelPipes.DeclareEnd(Holder, handle, schema, rootKey, out error);
+
+        /// <summary>The kernel is started by nobody: it has no standard ends.</summary>
+        public static int StandardEnd(uint role) => 0;
+
+        /// <summary>A line on the screen: where a message goes when there is no output to send it to.</summary>
+        public static void Print(string line) => OS.Hal.Console.WriteLine(line);
+
         public static byte[] Schema(int handle, out ulong rootKey) => KernelPipes.SchemaOf(Holder, handle, out rootKey);
     }
 }

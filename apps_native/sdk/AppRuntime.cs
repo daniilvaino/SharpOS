@@ -41,6 +41,7 @@
             // MT -> TM -> DispatchMapTable on the shared-generic/variant
             // fallback path; with the slots left null the first generic
             // instantiation dispatch dies (see AppTypeManagerInit).
+            SharpOS.Std.NoRuntime.GcStaticsInit.ImageBase = startup->ImageBase;
             SharpOS.Std.NoRuntime.AppTypeManagerInit.Initialize();
 
             // Wire interface dispatch (needs no GC): trampoline our
@@ -185,6 +186,11 @@
                 ((delegate* unmanaged<void*, void>)(nint)s_services->SetHwExceptionFactoryAddress)(
                     (void*)(delegate* unmanaged<int, nint>)&CreateHardwareException);
 
+            // And names them for the kernel's unhandled-exception report.
+            if (s_services->SetExceptionNamerAddress != 0)
+                ((delegate* unmanaged<void*, void>)(nint)s_services->SetExceptionNamerAddress)(
+                    (void*)(delegate* unmanaged<nint, nint>)&NameException);
+
             // Who this actually is. Every app goes through here, so no app has
             // to remember to say it, and it is said before the app can take
             // over the screen. The kernel prints its own id in the banner; an
@@ -243,6 +249,18 @@
                              : kind == 3 ? new SharpOS.Std.Pipes.RegionReferenceException()
                              : new System.AccessViolationException();
             return System.Runtime.CompilerServices.Unsafe.As<object, nint>(ref exception);
+        }
+
+        /// <summary>
+        /// The name of an exception's type, for the kernel's report of an
+        /// unhandled one: a literal of this image's, nothing allocated.
+        /// </summary>
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static nint NameException(nint exception)
+        {
+            string name = SharpOS.Std.Runtime.ExceptionNames.NameOf(
+                System.Runtime.CompilerServices.Unsafe.As<nint, System.Exception>(ref exception));
+            return System.Runtime.CompilerServices.Unsafe.As<string, nint>(ref name);
         }
 
         // Exit code of an app stopped by a failure it cannot survive, the

@@ -136,6 +136,23 @@ namespace OS.Kernel.Memory
             return 16UL;
         }
 
+        /// <summary>
+        /// Gives back an allocation of <see cref="ChunkBytes"/> or more (it has
+        /// its own page run): a program's file, read for a start, is not
+        /// forever (step194). Smaller ones share chunks and stay.
+        /// </summary>
+        public static void FreeLarge(void* pointer, ulong size)
+        {
+            if (pointer == null || size < (ulong)ChunkBytes) return;
+            ulong bytes = (size + PageSize - 1UL) & ~(PageSize - 1UL);
+            for (ulong at = 0; at < bytes; at += PageSize)
+                PhysicalMemory.FreePage((ulong)pointer + at);
+            OS.Kernel.Threading.Preemption.Suppress();
+            s_totalBytes -= bytes;
+            s_directCount--;
+            OS.Kernel.Threading.Preemption.Allow();
+        }
+
         private static void* AllocateDedicated(ulong size)
         {
             ulong bytes = (size + PageSize - 1UL) & ~(PageSize - 1UL);

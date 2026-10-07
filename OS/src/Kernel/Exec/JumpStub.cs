@@ -17,9 +17,6 @@ namespace OS.Kernel.Exec
         private static delegate* unmanaged<JumpContext*, int> s_jump;
         private static delegate* unmanaged<JumpContext*, int, void> s_abort;
 
-        // Innermost app run in progress. Runs nest (an app launching an app),
-        // and each context lives on the frame of the Run that owns it.
-        private static JumpContext* s_active;
         private static ulong s_stubVirtualAddress;
         private static ulong s_stubPhysicalAddress;
 
@@ -106,27 +103,26 @@ namespace OS.Kernel.Exec
                 context.ImageEnd = startup->ImageEnd;
                 context.AppStackBase = startup->StackBase;
             }
-            context.OwnerThreadId = OS.Kernel.Threading.Scheduler.Current?.Id ?? 0;
+            OS.Kernel.Threading.Thread? self = OS.Kernel.Threading.Scheduler.Current;
+            context.OwnerThreadId = self?.Id ?? 0;
             context.PreemptionDepth = OS.Kernel.Threading.Preemption.Depth;
             context.ExInfoHead = OS.Boot.EH.ExInfoHead.s_head;
-            context.Previous = s_active;
-            s_active = &context;
+            // Per thread (step194): each process's main thread is in a run of
+            // its own, and they interleave.
+            if (self != null)
+            {
+                context.Previous = self.Jump;
+                self.Jump = &context;
+            }
 
             exitCode = s_jump(&context);
 
-            s_active = context.Previous;
+            if (self != null) self.Jump = context.Previous;
             return true;
         }
 
-        /// <summary>True when the address is code of the app now running.</summary>
-        public static bool IsAppCode(ulong rip)
-        {
-            JumpContext* context = s_active;
-            return context != null && rip >= context->ImageBase && rip < context->ImageEnd;
-        }
-
-        /// <summary>The innermost app run in progress; older ones through <see cref="JumpContext.Previous"/>.</summary>
-        internal static JumpContext* Innermost => s_active;
+        /// <summary>True when the address is code of a running app — any of them.</summary>
+        public static bool IsAppCode(ulong rip) => OS.Kernel.Process.AppProcesses.FindByAddress(rip) != null;
 
         // Kinds of hardware-fault exception an app's factory makes.
         public const int HwExceptionNullReference = 0;
@@ -134,45 +130,48 @@ namespace OS.Kernel.Exec
         public const int HwExceptionDivideByZero = 2;
         public const int HwExceptionRegionReference = 3;
 
-        /// <summary>The innermost app registers its factory (service SetHwExceptionFactory).</summary>
+        /// <summary>The calling app registers its factory (service SetHwExceptionFactory).</summary>
         public static void SetHwExceptionFactory(nint factory)
         {
-            if (s_active != null)
-                s_active->HwExceptionFactory = factory;
+            OS.Kernel.Process.AppProcess? p = OS.Kernel.Process.AppProcesses.Current;
+            if (p != null) p.HwExceptionFactory = factory;
         }
 
         /// <summary>
         /// An exception of the app's own type for a fault at <paramref name="rip"/>,
-        /// when that address is in the image of the app now running.
+        /// when that address is in the image of a running app.
         /// </summary>
         /// <remarks>
         /// Only for faults in the app's code. A fault in kernel code — a service
         /// the app called included — keeps the kernel's type, which is what the
-        /// kernel's own catch clauses match. Any thread qualifies, not just the
-        /// one that launched the app: the address alone says whose code it was,
-        /// because only the innermost app's image is mapped while it runs.
+        /// kernel's own catch clauses match. The address says whose code it was:
+        /// every process has its own range.
         /// </remarks>
         public static bool TryCreateAppHwException(int kind, ulong rip, out object exception)
         {
             exception = null;
-            JumpContext* context = s_active;
-            if (context == null || rip < context->ImageBase || rip >= context->ImageEnd)
-                return false;
-            return TryCreateAppException(kind, out exception);
+            OS.Kernel.Process.AppProcess? p = OS.Kernel.Process.AppProcesses.FindByAddress(rip);
+            return p != null && TryCreateException(p, kind, out exception);
         }
 
         /// <summary>
-        /// An exception of the running app's own type, for a failure the
+        /// An exception of the calling app's own type, for a failure the
         /// caller already attributed to the app.
         /// </summary>
         public static bool TryCreateAppException(int kind, out object exception)
         {
             exception = null;
-            JumpContext* context = s_active;
-            if (context == null || context->HwExceptionFactory == 0)
+            OS.Kernel.Process.AppProcess? p = OS.Kernel.Process.AppProcesses.Current;
+            return p != null && TryCreateException(p, kind, out exception);
+        }
+
+        private static bool TryCreateException(OS.Kernel.Process.AppProcess p, int kind, out object exception)
+        {
+            exception = null;
+            if (p.HwExceptionFactory == 0)
                 return false;
 
-            nint created = ((delegate* unmanaged<int, nint>)context->HwExceptionFactory)(kind);
+            nint created = ((delegate* unmanaged<int, nint>)p.HwExceptionFactory)(kind);
             if (created == 0)
                 return false;
             exception = System.Runtime.CompilerServices.Unsafe.As<nint, object>(ref created);
@@ -184,54 +183,72 @@ namespace OS.Kernel.Exec
         public const int UnhandledExitCode = 134;
 
         /// <summary>
-        /// Ends the app this thread is running and resumes the kernel in the
-        /// <see cref="Run"/> that started it, as if the app had returned
-        /// <see cref="UnhandledExitCode"/>. Does not return when it succeeds.
+        /// Ends the process of the thread that raised an unhandled exception,
+        /// with <see cref="UnhandledExitCode"/>. Does not return when it succeeds.
         /// </summary>
         /// <remarks>
-        /// Called from the unhandled-exception path. The exception was reported
-        /// already; what is left is to put back what the dead app was holding
-        /// and leave its stack. False when this thread is not running an app:
-        /// a kernel thread, or an app's worker thread, whose death the kernel
-        /// cannot yet turn into the end of its process. The caller then panics
-        /// as before.
+        /// The main thread leaves its run at once and ends the process in the
+        /// <see cref="Run"/> that started it. Any other thread of the process
+        /// asks for the process to end and leaves the machine; the main thread
+        /// follows when it is next in the app's code or out of a wait (step194:
+        /// a worker's exception no longer stops the machine). False for a
+        /// kernel thread, or inside an interrupt handler: the caller panics.
         ///
         /// Restored here, not in the stub: the exception-info chain (it points
         /// into the app's stack, which is being abandoned) and the preemption
         /// depth (the app may have died inside a service that suppressed it).
-        /// Locks a service held at that moment are not released; nothing
-        /// records them.
         /// </remarks>
         public static bool TryAbortCurrentApp()
         {
-            JumpContext* context = s_active;
-            if (context == null || s_abort == null)
+            OS.Kernel.Threading.Thread? self = OS.Kernel.Threading.Scheduler.Current;
+            OS.Kernel.Process.AppProcess? p = self?.App;
+            if (p == null || s_abort == null)
                 return false;
 
             // Thrown inside an interrupt handler: a kernel fault, not the app's,
             // and the interrupt may not be acknowledged yet — ending the app
             // here would leave the timer silent (seen 2026-10-02: the sampler's
             // thread dump faulted and took the launcher down with 134).
-            if ((OS.Kernel.Threading.Scheduler.Current?.InterruptDepth ?? 0) != 0)
+            if (self.InterruptDepth != 0)
                 return false;
 
-            int thread = OS.Kernel.Threading.Scheduler.Current?.Id ?? 0;
-            if (thread != context->OwnerThreadId)
-            {
-                Console.WriteLine("[app] unhandled exception on an app worker thread: only the main thread can end the app yet");
-                return false;
-            }
+            // Being ended already (Kill, an exit, another thread's failure):
+            // the exception is what its cut-short wait made of it. It leaves
+            // with the code the process ends with.
+            if (self.KillRequested)
+                LeaveApp(self, p.KillCode);
 
-            OS.Boot.EH.ExInfoHead.s_head = context->ExInfoHead;
-            OS.Kernel.Threading.Preemption.RestoreDepth(context->PreemptionDepth);
-            OS.Kernel.Process.ProcessResources.MarkFailed(OS.Kernel.Threading.Scheduler.Current?.AppGeneration ?? 0);
-
-            Console.Write("[app] unhandled exception: app ended, exit code ");
+            Console.Write("[app] ");
+            Console.Write(p.Name);
+            Console.Write(": unhandled exception");
+            Console.Write(self == p.MainThread ? "" : " on a worker thread");
+            Console.Write(": process ended, exit code ");
             Console.WriteUInt(UnhandledExitCode);
             Console.WriteLine("");
 
-            s_abort(context, UnhandledExitCode);
+            OS.Kernel.Process.AppServiceBuilder.RequestEnd(p, UnhandledExitCode, failed: true);
+            LeaveApp(self, UnhandledExitCode);
             return false;   // not reached
+        }
+
+        /// <summary>
+        /// The current thread of an app leaves the machine: the main thread
+        /// through its run's abort entry (the kernel resumes after
+        /// <see cref="Run"/>), any other thread by exiting. Does not return.
+        /// </summary>
+        internal static void LeaveApp(OS.Kernel.Threading.Thread self, int exitCode)
+        {
+            JumpContext* context = self.Jump;
+            if (self == self.App?.MainThread && context != null)
+            {
+                OS.Boot.EH.ExInfoHead.s_head = context->ExInfoHead;
+                OS.Kernel.Threading.Preemption.RestoreDepth(context->PreemptionDepth);
+                s_abort(context, exitCode);
+            }
+            OS.Boot.EH.ExInfoHead.s_head = System.IntPtr.Zero;
+            OS.Kernel.Threading.Preemption.RestoreDepth(0);
+            OS.Kernel.Process.AppServiceBuilder.OnAppThreadGone(self.App);
+            OS.Kernel.Threading.Scheduler.Exit();
         }
 
         private static bool TryInitialize()

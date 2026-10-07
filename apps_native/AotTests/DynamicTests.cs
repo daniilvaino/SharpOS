@@ -57,12 +57,16 @@ namespace AotTests
             int pass = DynamicCases.Run(line => AppHost.WriteString(line + "\n"), out int total);
             Check("dynamic: " + pass.ToString() + "/" + total.ToString() + " cases as on desktop .NET", pass == total);
 
-            DynamicTarget();
-            DynamicViews();
+            // The kernel's probe pipes have fixed names: one battery at a time.
+            if (!s_concurrent)
+            {
+                DynamicTarget();
+                DynamicViews();
+            }
             DynamicCache();
             DynamicInference();
             DynamicExpando();
-            if (!s_gcStress && !s_kernelStressed) BenchDynamic();
+            if (!s_gcStress && !s_kernelStressed && !s_concurrent) BenchDynamic();
         }
 
         private static int RunDynamicOnly()
@@ -204,6 +208,7 @@ namespace AotTests
             string chunk = CheckBigChunk();
             Report("a method of 24 registrations", chunk);
             Check("GC: a method of 24 registrations (an RBP frame, a slim GcInfo header) keeps its roots", chunk == null);
+            Check("GC: a frame of 700 live references (past the walk's own stack buffer) keeps them all", BigFrameSurvives() == 0);
         }
 
         // The task's example as written: the kernel's log lines, a class the app lacks.
@@ -356,8 +361,13 @@ namespace AotTests
             x.A = "changed";                     // an entry changes type: not cached
             bool changed = x.A == "changed";
             // Check takes a bool: a dynamic argument would make the call itself dynamic.
-            bool ok = sum == 3 && (bool)(x.B == "b") && changed && (int)x.Count == 2 && (bool)x.ContainsKey("A");
-            Check("dynamic: Expando — members and the indexer, an entry that changes type, its own members", ok);
+            bool ok = sum == 3 && (bool)(x.B == "b") && changed && ((Expando)x).Count == 2 && ((Expando)x).ContainsKey("A");
+            Check("dynamic: Expando — entries and the indexer, an entry that changes type; own members through a cast", ok);
+            string own;
+            try { object c = x.Count; own = "read Count"; }
+            catch (RuntimeBinderException e) { own = e.Message; }
+            Check("dynamic: Expando — a name with no entry is RuntimeBinderException, even an own member's",
+                  own == "'SharpOS.Std.Pipes.Expando' does not contain a definition for 'Count'");
             Check("dynamic: Expando is asked every time (nothing cached)", DynamicRuntime.Lookups - before >= 4);
         }
 

@@ -15,5 +15,6 @@
     <Compile Include="CollectorTests.cs" />
     <Compile Include="DynamicTests.cs" />
     <Compile Include="DynamicCases.cs" />
+    <Compile Include="GcBigFrame.cs" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>PipeFilt</IlcSystemModule>
+  </PropertyGroup>
+
+  <!-- The freestanding win-x64 PE recipe every AOT app uses. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\PipeGen\StressArgs.cs" />
+    <Compile Include="..\PipeGen\LogEntry.cs" />
+  </ItemGroup>
+</Project>

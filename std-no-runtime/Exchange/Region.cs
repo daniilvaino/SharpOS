@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 
 namespace SharpOS.Std.Exchange
 {
@@ -31,338 +30,122 @@ namespace SharpOS.Std.Exchange
         public const int HeaderSize = 8;
 
         /// <summary>Where each object of a graph goes, before any byte is written.</summary>
+        /// <remarks>
+        /// A RegionWriter of its own: the static API is for probes and one-off
+        /// copies. A pipe writer keeps one writer for all its messages
+        /// (step195), and allocates nothing per message.
+        /// </remarks>
         public sealed class Plan
         {
-            // The graph is held below by address only, which no collector
-            // follows; this reference keeps it alive for as long as the plan
-            // is — through Lay and Write. Without it a collection inside Lay
-            // (its lists grow) freed a message nobody else held, the
-            // temporary in `writer.Copy(Build())`, and Write copied freed
-            // memory (found by GC stress).
-            internal object Root;
-            internal List<ulong> Objects = new List<ulong>();
-            internal List<ulong> Offsets = new List<ulong>();
-            internal Dictionary<ulong, int> Index = new Dictionary<ulong, int>();
-            internal int MaxReferences;
+            internal RegionWriter Writer;
 
             /// <summary>Bytes the region takes.</summary>
-            public ulong Size;
+            public ulong Size => Writer.Size;
 
             /// <summary>Objects in it.</summary>
-            public int Count => Objects.Count;
+            public int Count => Writer.Count;
         }
 
         /// <summary>
         /// Lays out the graph under <paramref name="root"/>. Null and a complaint
         /// when a type in it has no key.
         /// </summary>
-        /// <remarks>
-        /// Identity by dictionary, not by a mark in the object: there is no
-        /// header word to put one in. The collectors here do not move objects,
-        /// so the addresses in the dictionary stay valid while the graph is alive.
-        /// </remarks>
         public static Plan Lay(object root, out string complaint)
         {
-            complaint = null;
-            if (root == null)
+            var writer = new RegionWriter();
+            if (!writer.Lay(root))
             {
-                complaint = "no root";
+                complaint = writer.Complaint;
                 return null;
             }
-
-            var plan = new Plan();
-            plan.Root = root;
-            var buffer = new ulong[64];
-            var frontier = new Stack<ulong>();
-            frontier.Push(AddressOf(root));
-            ulong cursor = 0;
-
-            while (frontier.Count > 0)
-            {
-                ulong obj = frontier.Pop();
-                if (plan.Index.ContainsKey(obj))
-                    continue;
-
-                ulong table = ObjectLayout.TableOf(obj);
-                if (!TypeKeys.TryKey(table, out _))
-                {
-                    complaint = IsDelegate(table)
-                        ? $"a delegate in the graph: table 0x{table:x}"
-                        : $"type outside the catalog: table 0x{table:x}, base {ObjectLayout.BaseSizeOf(table)}";
-                    return null;
-                }
-
-                int max = ObjectLayout.MaxReferences(obj, table);
-                if (max > plan.MaxReferences) plan.MaxReferences = max;
-                if (buffer.Length < max) buffer = new ulong[max];
-
-                plan.Index[obj] = plan.Objects.Count;
-                plan.Objects.Add(obj);
-                plan.Offsets.Add(cursor);
-                cursor += HeaderSize + PayloadSize(obj, table);
-
-                int found = ObjectLayout.References(obj, buffer);
-                for (int i = 0; i < found; i++)
-                    frontier.Push(buffer[i]);
-            }
-
-            plan.Size = cursor;
-            return plan;
+            complaint = null;
+            return new Plan { Writer = writer };
         }
 
         /// <summary>
         /// Writes a laid-out graph to <paramref name="at"/> (at least plan.Size
-        /// bytes, zeroed): keys in table words, offsets in reference slots.
+        /// bytes): keys in table words, offsets in reference slots.
         /// </summary>
-        public static void Write(Plan plan, byte* at)
-        {
-            var slots = new ulong[plan.MaxReferences > 0 ? plan.MaxReferences : 1];
-            for (int n = 0; n < plan.Objects.Count; n++)
-            {
-                ulong obj = plan.Objects[n];
-                ulong table = ObjectLayout.TableOf(obj);
-                ulong size = PayloadSize(obj, table);
-                byte* record = at + plan.Offsets[n];
-                *(ulong*)record = 0;
-
-                byte* payload = record + HeaderSize;
-                SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy(payload, (void*)obj, size);
-
-                TypeKeys.TryKey(table, out ulong key);
-                *(ulong*)payload = key;
-
-                // Slots are found on the source, rewritten in the copy.
-                int found = ObjectLayout.ReferenceSlots(obj, table, slots);
-                for (int i = 0; i < found; i++)
-                {
-                    ulong fieldOffset = slots[i] - obj;
-                    ulong* slot = (ulong*)(payload + fieldOffset);
-                    ulong target = *(ulong*)slots[i];
-                    *slot = plan.Offsets[plan.Index[target]] + HeaderSize;
-                }
-            }
-        }
+        public static void Write(Plan plan, byte* at) => plan.Writer.Write(at);
 
         /// <summary>
         /// Translates a region in place: keys to this image's tables, offsets to
-        /// addresses. All or nothing.
+        /// addresses. All or nothing (RegionReader).
         /// </summary>
-        /// <remarks>
-        /// Two passes. The first checks every key and every bound and writes
-        /// nothing, so a refusal leaves the region exactly as it came — a half
-        /// translated region, where some objects answer `is` and some do not, is
-        /// impossible by construction. The second writes.
-        /// </remarks>
         public static bool Resolve(byte* at, ulong size, out object root, out string complaint)
             => Resolve(at, size, out root, out complaint, out _);
 
         /// <summary>The same; <paramref name="missingKey"/> is the key this image has no type for, when that was the refusal.</summary>
         public static bool Resolve(byte* at, ulong size, out object root, out string complaint, out ulong missingKey)
         {
-            root = null;
-            complaint = null;
-            missingKey = 0;
-            if (size < HeaderSize + 8)
-            {
-                complaint = "region too small";
-                return false;
-            }
-
-            var keys = new ulong[16];
-            var tables = new ulong[16];
-            int distinct = 0;
-            int maxReferences = 1;
-            for (ulong cursor = 0; cursor < size;)
-            {
-                if (size - cursor < HeaderSize + 16)
-                {
-                    complaint = $"truncated record at {cursor}";
-                    return false;
-                }
-                ulong objectAt = (ulong)at + cursor + HeaderSize;
-                ulong key = *(ulong*)objectAt;
-                ulong table = Lookup(keys, tables, ref distinct, key);
-                if (table == 0)
-                {
-                    complaint = $"key 0x{key:x} not declared here (record at {cursor})";
-                    missingKey = key;
-                    return false;
-                }
-                ulong next = cursor + HeaderSize + PayloadSize(objectAt, table);
-                if (next > size || next <= cursor)
-                {
-                    complaint = $"record at {cursor} runs past the region ({next} > {size})";
-                    return false;
-                }
-                int max = ObjectLayout.MaxReferences(objectAt, table);
-                if (max > maxReferences) maxReferences = max;
-                cursor = next;
-            }
-
-            // References are checked before any write too: each must be the table
-            // word of a record. A forged offset would otherwise become a pointer
-            // into the middle of an object, or out of the region.
-            var starts = new HashSet<ulong>();
-            for (ulong cursor = 0; cursor < size;)
-            {
-                ulong objectAt = (ulong)at + cursor + HeaderSize;
-                starts.Add(cursor + HeaderSize);
-                cursor += HeaderSize + PayloadSize(objectAt, Lookup(keys, tables, ref distinct, *(ulong*)objectAt));
-            }
-            var slots = new ulong[maxReferences];
-            for (ulong cursor = 0; cursor < size;)
-            {
-                ulong objectAt = (ulong)at + cursor + HeaderSize;
-                ulong table = Lookup(keys, tables, ref distinct, *(ulong*)objectAt);
-                int found = ObjectLayout.ReferenceSlots(objectAt, table, slots);
-                for (int i = 0; i < found; i++)
-                {
-                    ulong target = *(ulong*)slots[i];
-                    if (!starts.Contains(target))
-                    {
-                        complaint = $"reference {target} in record at {cursor} is not a record";
-                        return false;
-                    }
-                }
-                cursor += HeaderSize + PayloadSize(objectAt, table);
-            }
-
-            for (ulong cursor = 0; cursor < size;)
-            {
-                ulong objectAt = (ulong)at + cursor + HeaderSize;
-                ulong table = Lookup(keys, tables, ref distinct, *(ulong*)objectAt);
-                ulong objectSize = PayloadSize(objectAt, table);
-
-                // Slots are found by the table, so they are found before the table
-                // word is overwritten — the order does not matter here, the table
-                // is passed in.
-                int found = ObjectLayout.ReferenceSlots(objectAt, table, slots);
-                for (int i = 0; i < found; i++)
-                {
-                    ulong* slot = (ulong*)slots[i];
-                    *slot = (ulong)at + *slot;
-                }
-                *(ulong*)objectAt = table;
-                cursor += HeaderSize + objectSize;
-            }
-
-            ulong rootAt = (ulong)at + HeaderSize;
-            root = System.Runtime.CompilerServices.Unsafe.As<ulong, object>(ref rootAt);
-            return true;
+            var reader = new RegionReader();
+            bool ok = reader.Resolve(at, size, out root);
+            complaint = reader.Complaint;
+            missingKey = reader.MissingKey;
+            return ok;
         }
 
         /// <summary>
         /// The reverse of Resolve, for sending a received region on (pipe spec
         /// Р10, Р12): tables back to keys, addresses back to offsets. All or
-        /// nothing: every table must be in the catalog and every reference
-        /// inside the block before the first write.
+        /// nothing.
         /// </summary>
         public static bool Release(byte* at, ulong size, out string complaint)
         {
-            complaint = null;
-            ulong low = (ulong)at;
-            ulong high = low + size;
-            int maxReferences = 1;
-            for (ulong cursor = 0; cursor < size;)
-            {
-                ulong objectAt = low + cursor + HeaderSize;
-                ulong table = *(ulong*)objectAt & ~1UL;
-                if (!TypeKeys.TryKey(table, out _))
-                {
-                    complaint = $"record at {cursor} has a type outside the catalog (table 0x{table:x})";
-                    return false;
-                }
-                int max = ObjectLayout.MaxReferences(objectAt, table);
-                if (max > maxReferences) maxReferences = max;
-                cursor += HeaderSize + PayloadSize(objectAt, table);
-            }
-
-            var slots = new ulong[maxReferences];
-            for (ulong cursor = 0; cursor < size;)
-            {
-                ulong objectAt = low + cursor + HeaderSize;
-                ulong table = *(ulong*)objectAt & ~1UL;
-                int found = ObjectLayout.ReferenceSlots(objectAt, table, slots);
-                for (int i = 0; i < found; i++)
-                {
-                    ulong target = *(ulong*)slots[i];
-                    if (target < low + HeaderSize || target >= high)
-                    {
-                        complaint = $"record at {cursor} refers outside the block (0x{target:x})";
-                        return false;
-                    }
-                }
-                cursor += HeaderSize + PayloadSize(objectAt, table);
-            }
-
-            for (ulong cursor = 0; cursor < size;)
-            {
-                ulong objectAt = low + cursor + HeaderSize;
-                ulong table = *(ulong*)objectAt & ~1UL;
-                ulong objectSize = PayloadSize(objectAt, table);
-                int found = ObjectLayout.ReferenceSlots(objectAt, table, slots);
-                for (int i = 0; i < found; i++)
-                    *(ulong*)slots[i] -= low;
-                TypeKeys.TryKey(table, out ulong key);
-                *(ulong*)objectAt = key;
-                cursor += HeaderSize + objectSize;
-            }
-            return true;
+            var reader = new RegionReader();
+            bool ok = reader.Release(at, size);
+            complaint = reader.Complaint;
+            return ok;
         }
 
         /// <summary>
         /// A copy of a translated region in this image's heap: ordinary objects,
         /// free to change, alive after the region is gone (pipe spec Р9).
         /// </summary>
+        /// <remarks>
+        /// Each record's header word (zero in a region) holds its copy's address
+        /// while the copies are made, so a reference finds its copy without a
+        /// dictionary (step195); the words are zero again afterwards. The copies
+        /// are held by an array meanwhile: the header words are outside every
+        /// collector's view.
+        /// </remarks>
         public static object ToHeap(byte* at, ulong size)
         {
             ulong low = (ulong)at;
-            var sources = new List<ulong>();
+            int count = 0;
+            for (ulong cursor = 0; cursor < size; count++)
+            {
+                ulong objectAt = low + cursor + HeaderSize;
+                cursor += HeaderSize + PlanOf(objectAt).PayloadSize(objectAt);
+            }
+
+            var copies = new Chunked<object>(count);
+            int n = 0;
+            for (ulong cursor = 0; cursor < size; n++)
+            {
+                ulong objectAt = low + cursor + HeaderSize;
+                TypePlan plan = PlanOf(objectAt);
+                copies[n] = Allocate(objectAt, plan);
+                *(ulong*)(objectAt - HeaderSize) = AddressOf(copies[n]);
+                cursor += HeaderSize + plan.PayloadSize(objectAt);
+            }
+
             for (ulong cursor = 0; cursor < size;)
             {
                 ulong objectAt = low + cursor + HeaderSize;
-                sources.Add(objectAt);
-                cursor += HeaderSize + PayloadSize(objectAt, *(ulong*)objectAt & ~1UL);
+                TypePlan plan = PlanOf(objectAt);
+                ulong payload = plan.PayloadSize(objectAt);
+                CopyInto(*(ulong*)(objectAt - HeaderSize), objectAt, plan, payload, low, low + size);
+                cursor += HeaderSize + payload;
             }
 
-            // The copies are held by this array while their references still
-            // point into the region: the collector passes those by.
-            var copies = new object[sources.Count];
-            var index = new Dictionary<ulong, int>();
-            int maxReferences = 1;
-            for (int n = 0; n < sources.Count; n++)
+            for (ulong cursor = 0; cursor < size;)
             {
-                ulong objectAt = sources[n];
-                ulong table = *(ulong*)objectAt & ~1UL;
-                var mt = (SharpOS.Std.NoRuntime.GcMethodTable*)table;
-                uint full = (uint)(PayloadSize(objectAt, table) + 8);
-                void* raw = mt->HasComponentSize
-                    ? SharpOS.Std.NoRuntime.GcHeap.AllocateArray(full, mt, *(int*)(objectAt + 8))
-                    : SharpOS.Std.NoRuntime.GcHeap.AllocateObject(full, mt);
-                if (raw == null) throw new OutOfMemoryException();
-                nint address = (nint)raw;
-                copies[n] = System.Runtime.CompilerServices.Unsafe.As<nint, object>(ref address);
-                index[objectAt] = n;
-                int max = ObjectLayout.MaxReferences(objectAt, table);
-                if (max > maxReferences) maxReferences = max;
+                ulong objectAt = low + cursor + HeaderSize;
+                *(ulong*)(objectAt - HeaderSize) = 0;
+                cursor += HeaderSize + PlanOf(objectAt).PayloadSize(objectAt);
             }
-
-            var slots = new ulong[maxReferences];
-            for (int n = 0; n < sources.Count; n++)
-            {
-                ulong objectAt = sources[n];
-                ulong table = *(ulong*)objectAt & ~1UL;
-                ulong copy = AddressOf(copies[n]);
-                ulong bytes = PayloadSize(objectAt, table) - 8;
-                SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy((void*)(copy + 8), (void*)(objectAt + 8), bytes);
-                int found = ObjectLayout.ReferenceSlots(copy, table, slots);
-                for (int i = 0; i < found; i++)
-                {
-                    ulong* slot = (ulong*)slots[i];
-                    *slot = index.TryGetValue(*slot, out int target) ? AddressOf(copies[target]) : 0;
-                }
-            }
-            return copies.Length == 0 ? null : copies[0];
+            return count == 0 ? null : copies[0];
         }
 
         /// <summary>
@@ -370,67 +153,134 @@ namespace SharpOS.Std.Exchange
         /// translated region: that object and everything it reaches inside the
         /// region; references leaving the region are kept as they are.
         /// </summary>
+        /// <remarks>
+        /// The same header words: first the index + 1 of each object reached
+        /// (a mark that it was), then its copy's address.
+        /// </remarks>
         public static object ToHeapFrom(ulong start)
         {
             if (!ExchangeArena.TryBlock(start, out ulong low, out ulong high))
                 return null;
 
-            var sources = new List<ulong>();
-            var index = new Dictionary<ulong, int>();
-            int maxReferences = 1;
+            var sources = new Reached();
             sources.Add(start);
-            index[start] = 0;
-            var scan = new ulong[64];
-            for (int n = 0; n < sources.Count; n++)
+            *(ulong*)(start - HeaderSize) = 1;
+            for (int i = 0; i < sources.Count; i++)
             {
-                ulong objectAt = sources[n];
-                ulong table = *(ulong*)objectAt & ~1UL;
-                int max = ObjectLayout.MaxReferences(objectAt, table);
-                if (max > maxReferences) maxReferences = max;
-                if (scan.Length < max) scan = new ulong[max];
-                int found = ObjectLayout.ReferenceSlots(objectAt, table, scan);
-                for (int i = 0; i < found; i++)
-                {
-                    ulong target = *(ulong*)scan[i];
-                    if (target >= low && target < high && !index.ContainsKey(target))
-                    {
-                        index[target] = sources.Count;
-                        sources.Add(target);
-                    }
-                }
+                ulong objectAt = sources.At[i];
+                VisitTargets(objectAt, PlanOf(objectAt), low, high, sources);
             }
 
-            var copies = new object[sources.Count];
-            for (int n = 0; n < sources.Count; n++)
+            var copies = new Chunked<object>(sources.Count);
+            for (int i = 0; i < sources.Count; i++)
             {
-                ulong objectAt = sources[n];
-                ulong table = *(ulong*)objectAt & ~1UL;
-                var mt = (SharpOS.Std.NoRuntime.GcMethodTable*)table;
-                uint full = (uint)(PayloadSize(objectAt, table) + 8);
-                void* raw = mt->HasComponentSize
-                    ? SharpOS.Std.NoRuntime.GcHeap.AllocateArray(full, mt, *(int*)(objectAt + 8))
-                    : SharpOS.Std.NoRuntime.GcHeap.AllocateObject(full, mt);
-                if (raw == null) throw new OutOfMemoryException();
-                nint address = (nint)raw;
-                copies[n] = System.Runtime.CompilerServices.Unsafe.As<nint, object>(ref address);
+                ulong objectAt = sources.At[i];
+                copies[i] = Allocate(objectAt, PlanOf(objectAt));
+                *(ulong*)(objectAt - HeaderSize) = AddressOf(copies[i]);
             }
-
-            var slots = new ulong[maxReferences];
-            for (int n = 0; n < sources.Count; n++)
+            for (int i = 0; i < sources.Count; i++)
             {
-                ulong objectAt = sources[n];
-                ulong table = *(ulong*)objectAt & ~1UL;
-                ulong copy = AddressOf(copies[n]);
-                SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy((void*)(copy + 8), (void*)(objectAt + 8), PayloadSize(objectAt, table) - 8);
-                int found = ObjectLayout.ReferenceSlots(copy, table, slots);
-                for (int i = 0; i < found; i++)
-                {
-                    ulong* slot = (ulong*)slots[i];
-                    if (index.TryGetValue(*slot, out int target))
-                        *slot = AddressOf(copies[target]);
-                }
+                ulong objectAt = sources.At[i];
+                TypePlan plan = PlanOf(objectAt);
+                CopyInto(AddressOf(copies[i]), objectAt, plan, plan.PayloadSize(objectAt), low, high);
             }
+            for (int i = 0; i < sources.Count; i++)
+                *(ulong*)(sources.At[i] - HeaderSize) = 0;
             return copies[0];
+        }
+
+        // A translated record's plan: its table word is this image's table.
+        private static TypePlan PlanOf(ulong objectAt)
+        {
+            TypePlan plan = TypePlans.ByTable(*(ulong*)objectAt & ~1UL);
+            if (plan == null) throw new InvalidOperationException("a record of a type outside the catalog");
+            return plan;
+        }
+
+        private static object Allocate(ulong objectAt, TypePlan plan)
+        {
+            var mt = (SharpOS.Std.NoRuntime.GcMethodTable*)plan.Table;
+            uint full = (uint)(plan.PayloadSize(objectAt) + 8);
+            void* raw = plan.HasComponents
+                ? SharpOS.Std.NoRuntime.GcHeap.AllocateArray(full, mt, *(int*)(objectAt + 8))
+                : SharpOS.Std.NoRuntime.GcHeap.AllocateObject(full, mt);
+            if (raw == null) throw new OutOfMemoryException();
+            nint address = (nint)raw;
+            return System.Runtime.CompilerServices.Unsafe.As<nint, object>(ref address);
+        }
+
+        // The bytes after the table word, then every reference into the region
+        // turned to its target's copy (the address in the target's header word).
+        private static void CopyInto(ulong copy, ulong objectAt, TypePlan plan, ulong payload, ulong low, ulong high)
+        {
+            SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy((void*)(copy + 8), (void*)(objectAt + 8), payload - 8);
+            int[] slots = plan.Slots;
+            for (int s = 0; s < slots.Length; s++)
+                Forward((ulong*)(copy + (ulong)slots[s]), low, high);
+            if (plan.Elements == TypePlan.ReferenceElements)
+            {
+                ulong* element = (ulong*)(copy + (ulong)plan.FirstElement);
+                uint length = *(uint*)(objectAt + 8);
+                for (uint k = 0; k < length; k++) Forward(element + k, low, high);
+            }
+            else if (plan.Elements == TypePlan.StructElements)
+            {
+                int[] inner = plan.ElementSlots;
+                ulong element = copy + (ulong)plan.FirstElement;
+                uint length = *(uint*)(objectAt + 8);
+                for (uint k = 0; k < length; k++, element += plan.ComponentSize)
+                    for (int s = 0; s < inner.Length; s++) Forward((ulong*)(element + (ulong)inner[s]), low, high);
+            }
+        }
+
+        private static void Forward(ulong* slot, ulong low, ulong high)
+        {
+            ulong target = *slot;
+            if (target >= low && target < high && target != 0)
+                *slot = *(ulong*)(target - HeaderSize);
+        }
+
+        // The region objects a translated object reaches, each noted once.
+        // The objects ToHeapFrom reached, in the order it reached them.
+        private sealed class Reached
+        {
+            public readonly Chunked<ulong> At = new Chunked<ulong>(64);
+            public int Count;
+
+            public void Add(ulong objectAt)
+            {
+                At.Ensure(Count + 1);
+                At[Count++] = objectAt;
+            }
+        }
+
+        private static void VisitTargets(ulong objectAt, TypePlan plan, ulong low, ulong high, Reached sources)
+        {
+            int[] slots = plan.Slots;
+            for (int s = 0; s < slots.Length; s++)
+                Reach(*(ulong*)(objectAt + (ulong)slots[s]), low, high, sources);
+            if (plan.Elements == TypePlan.ReferenceElements)
+            {
+                ulong* element = (ulong*)(objectAt + (ulong)plan.FirstElement);
+                uint length = *(uint*)(objectAt + 8);
+                for (uint k = 0; k < length; k++) Reach(element[k], low, high, sources);
+            }
+            else if (plan.Elements == TypePlan.StructElements)
+            {
+                int[] inner = plan.ElementSlots;
+                ulong element = objectAt + (ulong)plan.FirstElement;
+                uint length = *(uint*)(objectAt + 8);
+                for (uint k = 0; k < length; k++, element += plan.ComponentSize)
+                    for (int s = 0; s < inner.Length; s++) Reach(*(ulong*)(element + (ulong)inner[s]), low, high, sources);
+            }
+        }
+
+        private static void Reach(ulong target, ulong low, ulong high, Reached sources)
+        {
+            if (target == 0 || target < low || target >= high) return;
+            if (*(ulong*)(target - HeaderSize) != 0) return;
+            sources.Add(target);
+            *(ulong*)(target - HeaderSize) = (ulong)sources.Count;
         }
 
         /// <summary>
@@ -444,12 +294,10 @@ namespace SharpOS.Std.Exchange
             {
                 ulong objectAt = (ulong)at + cursor + HeaderSize;
                 ulong word = *(ulong*)objectAt;
-                ulong table = word & ~1UL;
-                if (TypeKeys.IsKeyWord(word) && !TypeKeys.TryTable(word, out table))
+                TypePlan plan = TypeKeys.IsKeyWord(word) ? TypePlans.ByKey(word) : TypePlans.ByTable(word & ~1UL);
+                if (plan == null)
                     return;
-                if (table == 0)
-                    return;
-                ulong next = cursor + HeaderSize + PayloadSize(objectAt, table);
+                ulong next = cursor + HeaderSize + plan.PayloadSize(objectAt);
                 *(ulong*)objectAt = ScrubWord;
                 if (next <= cursor) return;
                 cursor = next;
@@ -458,18 +306,6 @@ namespace SharpOS.Std.Exchange
 
         /// <summary>What Scrub leaves in a table word: odd, non-canonical, never a declared key.</summary>
         public const ulong ScrubWord = 0x8BAD_F00D_DEAD_0001UL;
-
-        private static bool IsDelegate(ulong table)
-        {
-            ulong delegateTable = (ulong)typeof(System.Delegate)._handle;
-            var mt = (SharpOS.Std.NoRuntime.GcMethodTable*)table;
-            for (int depth = 0; mt != null && depth < 32; depth++)
-            {
-                if ((ulong)mt == delegateTable) return true;
-                mt = mt->GetBaseType();
-            }
-            return false;
-        }
 
         /// <summary>Bytes of an object from its table word, by the given table and the object's length.</summary>
         public static ulong PayloadSize(ulong objectAt, ulong table)
@@ -480,21 +316,6 @@ namespace SharpOS.Std.Exchange
             // BaseSize counts the header word before the object; the copy starts
             // at the table word.
             return ((total + 7) & ~7UL) - 8;
-        }
-
-        private static ulong Lookup(ulong[] keys, ulong[] tables, ref int distinct, ulong key)
-        {
-            for (int i = 0; i < distinct; i++)
-                if (keys[i] == key)
-                    return tables[i];
-            if ((key & 1) == 0 || !TypeKeys.TryTable(key, out ulong table))
-                return 0;
-            if (distinct < keys.Length)
-            {
-                keys[distinct] = key;
-                tables[distinct++] = table;
-            }
-            return table;
         }
 
         private static ulong AddressOf(object o)

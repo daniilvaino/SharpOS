@@ -10,6 +10,8 @@
         InvalidParameter = 5,
         Unsupported = 6,
         DeviceError = 7,
+        // AppProcesses.MaxRunning processes are running (step194).
+        LimitReached = 8,
     }
 
     internal unsafe struct AppServiceTable
@@ -277,6 +279,22 @@
         // the app points its own stub there with `mov rax, imm64; jmp rax`.
         // Zero: an older kernel, and the app keeps its plain copy.
         public ulong RegionByRefBarrierAddress;
+
+        // The type an end of a pair (PipeCreate) is opened with, checked
+        // against the other end's (step194 §5): int (ulong* request), see
+        // OS.Kernel.Pipes.PipeServices.OpenEnd. Zero: an older kernel.
+        public ulong PipeOpenEndAddress;
+
+        // Processes (step194): int (int op, ulong* request) — start with pipe
+        // ends, wait, has-exited, kill, release, own id; see
+        // AppServiceBuilder.ProcessService. Zero: an older kernel.
+        public ulong ProcessAddress;
+
+        // Registers this image's namer for its exceptions: nint (nint
+        // exception) answering a string of the image's, the type's name
+        // (SharpOS.Std.Runtime.ExceptionNames). The unhandled-exception report
+        // prints it (step194 §3). Zero: an older kernel.
+        public ulong SetExceptionNamerAddress;
     }
 
     /// <summary>

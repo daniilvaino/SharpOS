@@ -31,6 +31,7 @@ namespace SharpOS.Std.Pipes
         {
             PipeStatus status = PipeWriter<T>.Connect(name, out PipeWriter<T> writer, out string error);
             if (status != PipeStatus.Ok) throw Failed(name, status, error);
+            writer.Throws = true;
             return writer;
         }
 
@@ -58,9 +59,9 @@ namespace SharpOS.Std.Pipes
         /// The next region for a loop: null at the end of the stream; the break
         /// of the writer and a refused message throw.
         /// </summary>
-        internal Region<T> Next()
+        internal Region<T> Next(Region<T> reuse = null)
         {
-            Region<T> region = Receive();
+            Region<T> region = Receive(reuse);
             if (region != null || Status == PipeStatus.EndOfStream) return region;
             throw new PipeException(Status, Status == PipeStatus.Refused ? "a message could not be taken: " + LastError
                                                                          : Pipe.Explain(Status));
@@ -81,6 +82,9 @@ namespace SharpOS.Std.Pipes
         /// <summary>Every message on to the pipe called <paramref name="name"/>, each block as it is.</summary>
         public void WriteTo(string name) => new PipeQuery<T>(this, null).WriteTo(name);
 
+        /// <summary>Every message on to the standard output (the screen when there is none).</summary>
+        public void WriteTo() => new PipeQuery<T>(this, null).WriteTo();
+
         public struct Enumerator : IDisposable
         {
             private readonly PipeReader<T> _reader;
@@ -96,13 +100,18 @@ namespace SharpOS.Std.Pipes
 
             public T Current => _region.Root;
 
+            // One wrapper for the whole loop: outside it only the root is
+            // seen, so nothing can hold the wrapper past its step (step195).
+            private Region<T> _spare;
+
             public bool MoveNext()
             {
                 _region?.Dispose();
+                Region<T> reuse = _region ?? _spare;
                 _region = null;
                 while (true)
                 {
-                    Region<T> next = _reader.Next();
+                    Region<T> next = _reader.Next(reuse);
                     if (next == null) return false;
                     if (_filter == null || _filter(next.Root))
                     {
@@ -110,6 +119,8 @@ namespace SharpOS.Std.Pipes
                         return true;
                     }
                     next.Dispose();
+                    reuse = next;
+                    _spare = next;
                 }
             }
 
@@ -191,21 +202,7 @@ namespace SharpOS.Std.Pipes
             try
             {
                 output = Pipe.Write<T>(name);
-                Region<T> region;
-                while ((region = _reader.Next()) != null)
-                {
-                    if (_filter != null && !_filter(region.Root))
-                    {
-                        region.Dispose();
-                        continue;
-                    }
-                    PipeStatus sent = output.Move(region);
-                    if (sent != PipeStatus.Ok)
-                    {
-                        region.Dispose();
-                        throw new PipeException(sent, "pipe '" + name + "': " + (output.LastError ?? Pipe.Explain(sent)));
-                    }
-                }
+                Pump(output, "pipe '" + name + "'");
             }
             finally
             {
@@ -213,14 +210,53 @@ namespace SharpOS.Std.Pipes
                 _reader.Dispose();
             }
         }
+
+        /// <summary>What passes goes on to the standard output — the screen when there is none.</summary>
+        public void WriteTo()
+        {
+            PipeWriter<T> output = null;
+            try
+            {
+                output = Pipe.Write<T>();
+                Pump(output, "the standard output");
+            }
+            finally
+            {
+                output?.Dispose();
+                _reader.Dispose();
+            }
+        }
+
+        private void Pump(PipeWriter<T> output, string what)
+        {
+            // One wrapper, reused: each region is moved on or let go before the next.
+            Region<T> region = null;
+            while ((region = _reader.Next(region)) != null)
+            {
+                if (_filter != null && !_filter(region.Root))
+                {
+                    region.Dispose();
+                    continue;
+                }
+                try
+                {
+                    output.Move(region);
+                }
+                catch (PipeException e)
+                {
+                    region.Dispose();
+                    throw new PipeException(e.Status, what + ": " + e.Message);
+                }
+            }
+        }
     }
 
     public sealed unsafe partial class RawPipeReader
     {
         /// <summary>The next region for a loop: null at the end; a broken writer and a refused message throw.</summary>
-        internal RawRegion Next()
+        internal RawRegion Next(RawRegion reuse = null)
         {
-            RawRegion region = Receive();
+            RawRegion region = Receive(reuse);
             if (region != null || Status == PipeStatus.EndOfStream) return region;
             throw new PipeException(Status, Status == PipeStatus.Refused ? LastError : Pipe.Explain(Status));
         }
@@ -235,6 +271,9 @@ namespace SharpOS.Std.Pipes
 
         /// <summary>Every message on to the pipe called <paramref name="name"/>, untranslated: no copy, no translation.</summary>
         public void WriteTo(string name) => new RawQuery(this, null).WriteTo(name);
+
+        /// <summary>Every message on to the standard output, untranslated (the screen when there is none).</summary>
+        public void WriteTo() => new RawQuery(this, null).WriteTo();
 
         public struct Enumerator : IDisposable
         {
@@ -251,13 +290,18 @@ namespace SharpOS.Std.Pipes
 
             public View Current => _region.Root;
 
+            // One wrapper and one scope for the whole loop; a view of an
+            // earlier step refuses by the scope's generation (step195).
+            private RawRegion _spare;
+
             public bool MoveNext()
             {
                 _region?.Dispose();
+                RawRegion reuse = _region ?? _spare;
                 _region = null;
                 while (true)
                 {
-                    RawRegion next = _reader.Next();
+                    RawRegion next = _reader.Next(reuse);
                     if (next == null) return false;
                     if (_filter == null || _filter(next.Root))
                     {
@@ -265,6 +309,8 @@ namespace SharpOS.Std.Pipes
                         return true;
                     }
                     next.Dispose();
+                    reuse = next;
+                    _spare = next;
                 }
             }
 
@@ -298,10 +344,13 @@ namespace SharpOS.Std.Pipes
 
             public T Current => _current;
 
+            private RawRegion _spare;
+
             // The copy is made and the region let go at once: the objects are this image's own.
             public bool MoveNext()
             {
-                RawRegion region = _reader.Next();
+                RawRegion region = _reader.Next(_spare);
+                _spare = region;
                 if (region == null) return false;
                 try
                 {
@@ -344,41 +393,79 @@ namespace SharpOS.Std.Pipes
         /// description and root type. The output closes when the input ends;
         /// a broken input throws.
         /// </summary>
-        public void WriteTo(string name)
+        public void WriteTo(string name) => Pump(name, 0, false);
+
+        /// <summary>
+        /// What passes goes on to the standard output untranslated, under the
+        /// input's description; with no output handed over, each message is
+        /// printed on the screen instead.
+        /// </summary>
+        public void WriteTo()
         {
+            int handle = Pipe.TakeOutput();
+            Pump(null, handle, handle == 0);
+        }
+
+        // To the pipe called name (connected at the first message, when the
+        // input's description is known), to an end already held, or to the screen.
+        private void Pump(string name, int held, bool screen)
+        {
+            string what = name != null ? "pipe '" + name + "'" : "the standard output";
+            string movedOn = "the region went on to " + what;
             int output = 0;
+            bool declared = false;
             try
             {
-                RawRegion region;
-                while ((region = _reader.Next()) != null)
+                RawRegion region = null;
+                while ((region = _reader.Next(region)) != null)
                 {
                     if (_filter != null && !_filter(region.Root))
                     {
                         region.Dispose();
                         continue;
                     }
-                    if (output == 0)
+                    if (screen)
                     {
-                        PipeStatus connected = PipeTransport.Connect(name, PipeRole.Writer, 16, PipeOverflow.DropOldest,
-                                                                     _reader.Schema, _reader.RootKey, out output, out string error);
-                        if (connected != PipeStatus.Ok)
+                        string line = region.Root.ToString();
+                        region.Dispose();
+                        PipeTransport.Print(line);
+                        continue;
+                    }
+                    if (!declared)
+                    {
+                        PipeStatus opened;
+                        string error;
+                        if (name != null)
+                        {
+                            opened = PipeTransport.Connect(name, PipeRole.Writer, 16, PipeOverflow.DropOldest,
+                                                           _reader.Schema, _reader.RootKey, out output, out error);
+                        }
+                        else
+                        {
+                            output = held;
+                            held = 0;
+                            opened = PipeTransport.OpenEnd(output, _reader.Schema, _reader.RootKey, out error);
+                        }
+                        if (opened != PipeStatus.Ok)
                         {
                             region.Dispose();
-                            throw Pipe.Failed(name, connected, error);
+                            throw new PipeException(opened, what + ": " + (error ?? Pipe.Explain(opened)));
                         }
+                        declared = true;
                     }
                     PipeStatus sent = PipeTransport.Send(output, region.Block, region.Length);
                     if (sent != PipeStatus.Ok)
                     {
                         region.Dispose();
-                        throw new PipeException(sent, "pipe '" + name + "': " + Pipe.Explain(sent));
+                        throw new PipeException(sent, what + ": " + Pipe.Explain(sent));
                     }
-                    region.End("the region went on to pipe '" + name + "'");
+                    region.End(movedOn);
                 }
             }
             finally
             {
                 if (output != 0) PipeTransport.Close(output);
+                if (held != 0) PipeTransport.Close(held);
                 _reader.Dispose();
             }
         }

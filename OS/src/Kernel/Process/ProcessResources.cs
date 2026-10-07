@@ -6,15 +6,13 @@ namespace OS.Kernel.Process
     // the one place it is given back (pipe_plan.md "Подготовить под трубы",
     // item 2).
     //
-    // A program is known here by its app generation — the number its threads
-    // carry and its run ends with (Scheduler.EnterApp / LeaveApp); it is the
-    // only per-run identity there is. Today the resources are exchange-heap
+    // A program is known here by its process id (AppProcess.Id, which its
+    // threads carry as AppGeneration). Today the resources are exchange-heap
     // blocks; pipe ends and regions in pipe queues come next and are released
     // from the same OnAppEnded.
     //
     // The record keeps the state a process ends in, Exited or Failed, for a
-    // while after: ProcessContext is overwritten the moment the parent takes
-    // its slot back, so ProcessState used to stop at Running forever.
+    // while after it has gone.
     internal static class ProcessResources
     {
         private const int Capacity = 16;
@@ -68,26 +66,25 @@ namespace OS.Kernel.Process
         /// The run is over: everything it still holds goes back, and it is
         /// recorded as Exited unless it already failed.
         /// </summary>
-        public static void OnAppEnded(uint generation)
+        public static void OnAppEnded(uint generation, bool failed)
         {
             if (generation == 0) return;
 
             // Pipe ends first: an end still open closes — broken when the run
             // failed — and the messages it queued stay with the pipe for the
-            // reader to drain.
-            int recorded = Find(generation);
-            bool failed = recorded >= 0 && s_records[recorded].State == ProcessState.Failed;
+            // reader to drain. The caller says whether it failed: the record
+            // here may be gone from the ring by now.
             int ends = OS.Kernel.Pipes.KernelPipes.OnHolderEnded(generation, failed);
             int released = OS.Kernel.Memory.ExchangeHeap.ReleaseOwner(generation);
 
-            ProcessState state = ProcessState.Exited;
+            ProcessState state = failed ? ProcessState.Failed : ProcessState.Exited;
             Threading.Preemption.Suppress();
             try
             {
                 int i = Find(generation);
                 if (i >= 0)
                 {
-                    if (s_records[i].State == ProcessState.Failed) state = ProcessState.Failed;
+                    if (failed || s_records[i].State == ProcessState.Failed) state = ProcessState.Failed;
                     s_records[i].State = state;
                     s_records[i].ExchangeBlocksReleased = released;
                 }

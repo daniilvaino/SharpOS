@@ -12,7 +12,7 @@
 #
 # `expect CODE COMMAND` runs the command and counts it as a failure unless it
 # exits with exactly CODE. Needed because "non-zero means broken" is not true
-# here: AOTTESTS.EXE returns the number of tests it passed, so 256 is a clean
+# here: AOTTESTS.EXE returns the number of tests it passed, so 258 is a clean
 # run and 0 would be a catastrophe.
 #
 # The two --pipe-writer-dies runs end a pipe writer with its queue full —
@@ -42,6 +42,16 @@
 # kernel started it. A shell reached from the launcher is one level down
 # already.
 #
+# Processes (step 194): PIPEGEN 5 prints its five records (its output was
+# handed to nobody), the pipeline prints 400, and PROCTEST.EXE runs the
+# process and pipe tests — exit code = checks passed; under --gc-stress the
+# measurements are left out, and every program it starts runs stressed too.
+#
+# PIPEPERF.EXE (step 195): the lower layer's speed and its checks — no
+# allocation per message on any path, 100 000-object graphs, the reverse
+# pass's bytes, a refusal that changes nothing, fifty types in one stream;
+# exit code = checks passed. Its [perf195] lines are the measurements.
+#
 # Paths use FORWARD slashes. This is bash syntax — the parser is a bash parser
 # — and in bash a backslash escapes the next character, so \apps\AOTTESTS.EXE
 # arrives as appsAOTTESTS.EXE with the separators eaten. The shell converts
@@ -51,14 +61,19 @@
 expect 0 /apps/AOTTESTS.EXE --pipe-writer-dies normal
 expect 134 /apps/AOTTESTS.EXE --pipe-writer-dies crash
 expect 0 /apps/AOTTESTS.EXE --pipe-stress 2
-expect 256 /apps/AOTTESTS.EXE
-expect 256 /apps/AOTTESTS.EXE
+expect 258 /apps/AOTTESTS.EXE
+expect 258 /apps/AOTTESTS.EXE
 expect 0  /apps/BENCHAOT.EXE
 expect 3 /apps/AOTTESTS.EXE --echo-args 'two words' третий
 expect 2 /apps/AOTTESTS.EXE --untranslated-interface1
 expect 2 /apps/AOTTESTS.EXE --untranslated-interface2
 expect 2 /apps/AOTTESTS.EXE --untranslated-interface3
 expect 1 /apps/AOTTESTS.EXE --untranslated-interface4
-expect 256 /apps/AOTTESTS.EXE --gc-stress 16 4
+expect 258 /apps/AOTTESTS.EXE --gc-stress 16 4
 expect 0 /apps/AOTTESTS.EXE --gc-stress 1 1 --pipe-stress 1
-expect 20 /apps/AOTTESTS.EXE --gc-stress 1 1 --dynamic
+expect 22 /apps/AOTTESTS.EXE --gc-stress 1 1 --dynamic
+PIPEGEN 5
+PIPEGEN 1000 | PIPEFILT 3 | PIPECNT
+expect 49 /apps/PROCTEST.EXE
+expect 37 /apps/PROCTEST.EXE --gc-stress 16
+expect 14 /apps/PIPEPERF.EXE

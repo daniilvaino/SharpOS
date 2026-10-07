@@ -215,14 +215,25 @@
         public delegate* unmanaged<void> Entry;
 
         // Threads a NativeAOT app starts (the SpawnThread service): where the
-        // thread enters the app, and which run of which app it belongs to.
-        // The generation is the one of the thread that asked for it — the
-        // app's main thread is given one when the app starts (see
-        // Scheduler.EnterApp) — and when that run ends, every thread still
-        // carrying it is taken off the machine (Scheduler.LeaveApp): its code
-        // and data are about to be unmapped. Zero for everything else.
+        // thread enters the app, and the id of the process it belongs to
+        // (AppProcess.Id; the process ends its threads before its pages go).
+        // Zero for everything else.
         public ulong AppEntry;
         public uint AppGeneration;
+
+        // The app process this thread belongs to (step194): its main thread
+        // and the threads it started. Null for the kernel's own threads.
+        public OS.Kernel.Process.AppProcess? App;
+
+        // The app run this thread is in, on its own kernel stack (JumpStub.Run);
+        // null when it is not inside one. Per thread, not a global chain: the
+        // main threads of several processes are in their runs at once.
+        public OS.Kernel.Exec.JumpContext* Jump;
+
+        // The process is ending: this thread leaves the machine the next time
+        // it is in its app's code (a service returns, or it is preempted
+        // there), and a wait it is in inside the kernel is cut short.
+        public bool KillRequested;
 
         // Phase E5 / E9.c step 102 -- wait state grouped under WaitBlock
         // per docs/threading-architecture.md §3. Currently inline by

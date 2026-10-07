@@ -62,8 +62,22 @@ namespace SharpOS.Std.Pipes
             DroppedBefore = droppedBefore;
         }
 
+        /// <summary>The same wrapper for the next message of a loop: the previous one is gone (disposed or moved).</summary>
+        internal Region<T> Reset(byte* block, ulong length, object root, uint droppedBefore)
+        {
+            Block = block;
+            Length = length;
+            _root = root;
+            DroppedBefore = droppedBefore;
+            _state = Live;
+            return this;
+        }
+
+        /// <summary>Whether it is still this reader's: not disposed, not moved on.</summary>
+        internal bool IsLive => _state == Live;
+
         /// <summary>Messages the pipe dropped right before this one (a writer that never waits).</summary>
-        public uint DroppedBefore { get; }
+        public uint DroppedBefore { get; private set; }
 
         /// <summary>The root object, read in place.</summary>
         public T Root
@@ -113,7 +127,7 @@ namespace SharpOS.Std.Pipes
     public sealed unsafe class RawRegion : IDisposable
     {
         private bool _gone;
-        private readonly ViewScope _scope;
+        private ViewScope _scope;
 
         internal RawRegion(byte* block, ulong length, byte[] schema, uint droppedBefore, RegionShapes shapes)
         {
@@ -122,6 +136,24 @@ namespace SharpOS.Std.Pipes
             Schema = schema;
             DroppedBefore = droppedBefore;
             if (shapes != null) _scope = new ViewScope(block, length, shapes);
+        }
+
+        /// <summary>
+        /// The same wrapper for a loop's next message (step195): the scope is
+        /// reused under a new generation, so a view of the previous message
+        /// still refuses.
+        /// </summary>
+        internal RawRegion Reset(byte* block, ulong length, byte[] schema, uint droppedBefore, RegionShapes shapes)
+        {
+            Block = block;
+            Length = length;
+            Schema = schema;
+            DroppedBefore = droppedBefore;
+            _gone = false;
+            if (shapes == null) _scope = null;
+            else if (_scope != null && _scope.Shapes == shapes) _scope.Reset(block, length);
+            else _scope = new ViewScope(block, length, shapes);
+            return this;
         }
 
         /// <summary>The root object, as a view: read and written in place, never translated.</summary>
@@ -142,10 +174,10 @@ namespace SharpOS.Std.Pipes
             _scope?.End(because);
         }
 
-        public byte* Block { get; }
-        public ulong Length { get; }
-        public byte[] Schema { get; }
-        public uint DroppedBefore { get; }
+        public byte* Block { get; private set; }
+        public ulong Length { get; private set; }
+        public byte[] Schema { get; private set; }
+        public uint DroppedBefore { get; private set; }
 
         /// <summary>One line per object, by the description. The number printed; -1 on a malformed region.</summary>
         public int Print(Action<string> say, out string complaint)
@@ -169,11 +201,62 @@ namespace SharpOS.Std.Pipes
     {
         private int _handle;
         private readonly ulong _key;
+        private bool _screen;
+
+        // Reused for every message (step195): a writer allocates nothing per
+        // Copy or Move once these have grown to its graphs.
+        private RegionWriter _layout;
+        private RegionReader _reverse;
 
         internal PipeWriter(int handle, ulong key)
         {
             _handle = handle;
             _key = key;
+        }
+
+        /// <summary>
+        /// Made by the convenient layer (Pipe.Write, an end's Write): a failed
+        /// Copy or Move throws PipeException instead of answering a status —
+        /// a reader gone is "broken" on the next write (step194 §4).
+        /// </summary>
+        internal bool Throws;
+
+        private PipeStatus Answer(PipeStatus status)
+        {
+            if (status == PipeStatus.Ok || !Throws) return status;
+            throw new PipeException(status, LastError != null ? "a message could not be sent: " + LastError : Pipe.Explain(status));
+        }
+
+        /// <summary>
+        /// A writer with no pipe behind it: the standard output of a program
+        /// that was handed none (step194 §5). Each message is printed, one line
+        /// by the description, as a view of it prints.
+        /// </summary>
+        internal static PipeWriter<T> ToScreen()
+        {
+            ulong key = MessageCatalog.KeyOf(typeof(T));
+            if (key == 0) throw new PipeException(PipeStatus.Refused, "the standard output: the type is not in the catalog");
+            return new PipeWriter<T>(0, key) { _screen = true, Throws = true };
+        }
+
+        /// <summary>Whether messages go to the screen rather than a pipe.</summary>
+        public bool IsScreen => _screen;
+
+        /// <summary>The exchange block of the last message sent: where a reader down the line finds it.</summary>
+        public ulong LastBlock { get; private set; }
+
+        private static RegionShapes s_shapes;
+
+        // Prints a region in a block of this writer's, untranslated, and gives the block back.
+        internal static void PrintAndFree(byte* block, ulong length)
+        {
+            byte[] schema = MessageCatalog.Schema;
+            s_shapes ??= RegionShapes.Parse(schema, out _);
+            var raw = new RawRegion(block, length, schema, 0, s_shapes);
+            string line;
+            try { line = raw.Root.ToString(); }
+            finally { raw.Dispose(); }
+            PipeTransport.Print(line);
         }
 
         /// <summary>The transport handle; zero once closed.</summary>
@@ -213,19 +296,30 @@ namespace SharpOS.Std.Pipes
             ThrowIfClosed();
             LastError = null;
             MessageCatalog.Ensure();
-            Region.Plan plan = Region.Lay(message, out string complaint);
-            if (plan == null)
+            RegionWriter layout = _layout ??= new RegionWriter();
+            if (!layout.Lay(message))
             {
-                LastError = complaint;
-                return PipeStatus.Refused;
+                LastError = layout.Complaint;
+                return Answer(PipeStatus.Refused);
             }
-            byte* block = (byte*)PipeTransport.Allocate(plan.Size);
-            if (block == null) return PipeStatus.NoMemory;
-            Region.Write(plan, block);
-            PipeStatus status = PipeTransport.Send(_handle, block, plan.Size);
+            ulong size = layout.Size;
+            byte* block = (byte*)PipeTransport.Allocate(size);
+            if (block == null)
+            {
+                layout.Forget();
+                return Answer(PipeStatus.NoMemory);
+            }
+            layout.Write(block);
+            if (_screen)
+            {
+                PrintAndFree(block, size);
+                return PipeStatus.Ok;
+            }
+            LastBlock = (ulong)block;
+            PipeStatus status = PipeTransport.Send(_handle, block, size);
             if (status != PipeStatus.Ok)
                 PipeTransport.Free(block);
-            return status;
+            return Answer(status);
         }
 
         /// <summary>
@@ -239,10 +333,17 @@ namespace SharpOS.Std.Pipes
             ThrowIfClosed();
             region.ThrowIfGone();
             LastError = null;
-            if (!Region.Release(region.Block, region.Length, out string complaint))
+            RegionReader reverse = _reverse ??= new RegionReader();
+            if (!reverse.Release(region.Block, region.Length))
             {
-                LastError = complaint;
-                return PipeStatus.Refused;
+                LastError = reverse.Complaint;
+                return Answer(PipeStatus.Refused);
+            }
+            if (_screen)
+            {
+                region.MarkMoved();
+                PrintAndFree(region.Block, region.Length);
+                return PipeStatus.Ok;
             }
             PipeStatus status = PipeTransport.Send(_handle, region.Block, region.Length);
             if (status == PipeStatus.Ok)
@@ -250,13 +351,14 @@ namespace SharpOS.Std.Pipes
                 region.MarkMoved();
                 return status;
             }
-            Region.Resolve(region.Block, region.Length, out _, out _);
-            return status;
+            reverse.Resolve(region.Block, region.Length, out _);
+            return Answer(status);
         }
 
         /// <summary>Closes the end: the reader sees the end of the stream after the queue.</summary>
         public void Dispose()
         {
+            _screen = false;
             if (_handle == 0) return;
             PipeTransport.Close(_handle);
             _handle = 0;
@@ -264,7 +366,7 @@ namespace SharpOS.Std.Pipes
 
         private void ThrowIfClosed()
         {
-            if (_handle == 0) throw new ObjectDisposedException("PipeWriter", "the pipe end is closed");
+            if (_handle == 0 && !_screen) throw new ObjectDisposedException("PipeWriter", "the pipe end is closed");
         }
     }
 
@@ -273,6 +375,9 @@ namespace SharpOS.Std.Pipes
     {
         private int _handle;
         private readonly ulong _key;
+
+        // Reused for every message (step195).
+        private RegionReader _translate;
 
         internal PipeReader(int handle, ulong key)
         {
@@ -316,18 +421,28 @@ namespace SharpOS.Std.Pipes
         /// <summary>The next region, waiting for it; null when the stream ended (see Status).</summary>
         public Region<T> Receive()
         {
-            Status = TryReceive(true, out Region<T> region);
+            Status = TryReceive(true, null, out Region<T> region);
             return region;
         }
 
         /// <summary>The next region if one is queued: Empty when none is.</summary>
         public PipeStatus TryReceive(out Region<T> region)
         {
-            Status = TryReceive(false, out region);
+            Status = TryReceive(false, null, out region);
             return Status;
         }
 
-        private PipeStatus TryReceive(bool wait, out Region<T> region)
+        /// <summary>
+        /// The next region in <paramref name="reuse"/>, a region of this reader
+        /// that is gone already (a loop's previous step): nothing allocated.
+        /// </summary>
+        internal Region<T> Receive(Region<T> reuse)
+        {
+            Status = TryReceive(true, reuse, out Region<T> region);
+            return region;
+        }
+
+        private PipeStatus TryReceive(bool wait, Region<T> reuse, out Region<T> region)
         {
             region = null;
             ThrowIfClosed();
@@ -349,14 +464,16 @@ namespace SharpOS.Std.Pipes
                 PipeTransport.Free(block);
                 return PipeStatus.Refused;
             }
-            if (!Region.Resolve(block, length, out object root, out string complaint, out ulong missing))
+            RegionReader translate = _translate ??= new RegionReader();
+            if (!translate.Resolve(block, length, out object root))
             {
+                ulong missing = translate.MissingKey;
                 LastError = missing != 0 ? "type " + WriterTypeName(missing) + " in the message is not this image's: "
-                                           + "it is not in the catalog here, or its layout differs" : complaint;
+                                           + "it is not in the catalog here, or its layout differs" : translate.Complaint;
                 PipeTransport.Free(block);
                 return PipeStatus.Refused;
             }
-            region = new Region<T>(block, length, root, dropped);
+            region = reuse != null ? reuse.Reset(block, length, root, dropped) : new Region<T>(block, length, root, dropped);
             return PipeStatus.Ok;
         }
 
@@ -389,7 +506,7 @@ namespace SharpOS.Std.Pipes
     {
         private int _handle;
 
-        private RawPipeReader(int handle) => _handle = handle;
+        internal RawPipeReader(int handle) => _handle = handle;
 
         public PipeStatus Status { get; private set; }
 
@@ -424,7 +541,10 @@ namespace SharpOS.Std.Pipes
         /// pipe's description first: a record without a description, a size or
         /// a reference outside the block refuses it, and it goes back.
         /// </summary>
-        public RawRegion Receive()
+        public RawRegion Receive() => Receive(null);
+
+        /// <summary>The next region in <paramref name="reuse"/>, one of this reader's that is gone already (a loop's previous step).</summary>
+        internal RawRegion Receive(RawRegion reuse)
         {
             if (_handle == 0) throw new ObjectDisposedException("RawPipeReader", "the pipe end is closed");
             LastError = null;
@@ -443,7 +563,8 @@ namespace SharpOS.Std.Pipes
             }
             if (!_shapes.Validate((byte*)raw, length, out string complaint))
                 return Refuse(raw, "a malformed message: " + complaint);
-            return new RawRegion((byte*)raw, length, Schema, dropped, _shapes);
+            return reuse != null ? reuse.Reset((byte*)raw, length, Schema, dropped, _shapes)
+                                 : new RawRegion((byte*)raw, length, Schema, dropped, _shapes);
         }
 
         private RawRegion Refuse(void* block, string why)

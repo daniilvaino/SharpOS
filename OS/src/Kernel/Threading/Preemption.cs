@@ -111,6 +111,10 @@ namespace OS.Kernel.Threading
             Thread? curr = Scheduler.Current;
             if (curr == null) return;
 
+            // A thread of an ending process caught in its app's code: it
+            // leaves rather than goes on (step194).
+            if (curr.KillRequested && TurnToLeave(curr, frame)) return;
+
             // The narrow mode: only code of the app now running is switched.
             if (OS.Kernel.Diagnostics.Probes.PreemptAppCodeOnly &&
                 !OS.Kernel.Exec.JumpStub.IsAppCode(((OS.Hal.Idt.InterruptFrame*)frame)->Rip))
@@ -150,6 +154,31 @@ namespace OS.Kernel.Threading
 
             curr.PreemptedFrame = null;
             curr.InPreemptiveSwitch = false;
+
+            // Ended while it was switched out: same, on the way back.
+            if (curr.KillRequested) TurnToLeave(curr, frame);
+        }
+
+        // Points the interrupted app code's return at the exit path: the
+        // interrupt returns into LeaveFromPreemption instead of the app. Only
+        // app code is turned this way — a thread inside the kernel leaves on
+        // the way out of its service, holding nothing.
+        private static bool TurnToLeave(Thread curr, void* frame)
+        {
+            var f = (OS.Hal.Idt.InterruptFrame*)frame;
+            if (curr.App == null || !OS.Kernel.Exec.JumpStub.IsAppCode(f->Rip))
+                return false;
+            delegate* unmanaged<void> leave = &LeaveFromPreemption;
+            f->Rip = (ulong)leave;
+            f->Rsp = (f->Rsp & ~0xFUL) - 8;      // as after a call: entry alignment
+            return true;
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void LeaveFromPreemption()
+        {
+            Thread self = Scheduler.Current;
+            OS.Kernel.Exec.JumpStub.LeaveApp(self, self.App.KillCode);
         }
     }
 }

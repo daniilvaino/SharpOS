@@ -43,6 +43,11 @@ namespace OS.Boot.EH
         {
             if (ex == null) return;
 
+            // A thread of a process being ended: its wait was cut short and
+            // the app threw on the way out. Not a failure of its own — it
+            // leaves (JumpStub.TryAbortCurrentApp) without a word.
+            if (OS.Kernel.Threading.Scheduler.Current?.KillRequested ?? false) return;
+
             OS.Hal.Console.Write("\r\n[unhandled] ");
 
             // The type, as the address of its MethodTable. There is no
@@ -54,15 +59,38 @@ namespace OS.Boot.EH
             // "(no message)" and nothing else, and each time the first
             // question was "an access violation or an argument error?".
             ulong mt = *(ulong*)*(ulong**)System.Runtime.CompilerServices.Unsafe.AsPointer(ref ex);
-            OS.Hal.Console.Write("type mt=0x");
-            OS.Hal.Console.WriteHex(mt);
-            OS.Hal.Console.Write(" ");
 
-            string message = ex.Message;
-            OS.Hal.Console.Write(message != null && message.Length != 0
-                ? message
-                : "(no message)");
-            OS.Hal.Console.WriteLine("");
+            // And by name (step194 §3): an app's exception is named by the
+            // app (its namer answers one of its literals), the kernel's here.
+            // Which app — by where the type lives, not by the thread.
+            OS.Kernel.Process.AppProcess app = OS.Kernel.Process.AppProcesses.FindByAddress(mt);
+            string typeName = null;
+            if (app == null)
+            {
+                typeName = SharpOS.Std.Runtime.ExceptionNames.NameOf(ex);
+            }
+            else if (app.ExceptionNamer != 0)
+            {
+                nint exPtr = System.Runtime.CompilerServices.Unsafe.As<System.Exception, nint>(ref ex);
+                nint named = ((delegate* unmanaged<nint, nint>)app.ExceptionNamer)(exPtr);
+                if (named != 0) typeName = System.Runtime.CompilerServices.Unsafe.As<nint, string>(ref named);
+            }
+
+            // The message by its field, not the virtual property: on an app's
+            // object a kernel call through the vtable may land elsewhere.
+            string message = ex._message;
+            if (app != null)
+            {
+                OS.Hal.Console.Write("[app] ");
+                OS.Hal.Console.Write(app.Name);
+                OS.Hal.Console.Write(": unhandled ");
+            }
+            OS.Hal.Console.Write(typeName ?? "exception");
+            OS.Hal.Console.Write(": ");
+            OS.Hal.Console.Write(message != null && message.Length != 0 ? message : "(no message)");
+            OS.Hal.Console.Write(" (type mt=0x");
+            OS.Hal.Console.WriteHex(mt);
+            OS.Hal.Console.WriteLine(")");
 
             System.IntPtr[] frames = ex.GetStackIPs();
             if (frames == null || frames.Length == 0)

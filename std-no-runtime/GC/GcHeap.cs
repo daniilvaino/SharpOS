@@ -34,6 +34,20 @@ namespace SharpOS.Std.NoRuntime
         private static GcSegmentHeader* s_firstSegment;
         private static GcSegmentHeader* s_currentSegment;
         private static uint s_segmentCount;
+
+        /// <summary>
+        /// Collect before growing once the heap has grown by half since the
+        /// last collection (step194). Off by default — an app's heap is a
+        /// fixed pool, and running out of it collects anyway; the kernel turns
+        /// it on: its heap takes pages from the same machine processes are
+        /// loaded into, never gives them back, and otherwise grew by every
+        /// launch's garbage until a start found no memory, with no collection
+        /// asked for on that path.
+        /// </summary>
+        public static bool CollectBeforeGrowing;
+
+        private static uint s_grownSinceCollect;
+        private static bool s_growAfterCollect;
         private static ulong s_allocCount;
         private static ulong s_allocBytes;
         private static bool s_initialized;
@@ -620,9 +634,12 @@ namespace SharpOS.Std.NoRuntime
             if (GC.s_collectHook != null)
             {
                 GC.s_collectHook();
+                s_grownSinceCollect = 0;
 
                 if (s_enterCritical != null) s_enterCritical();
+                s_growAfterCollect = true;
                 allocated = AllocateRawCore(size);
+                s_growAfterCollect = false;
                 WriteHeader(allocated, methodTable, length, hasLength);
                 if (s_leaveCritical != null) s_leaveCritical();
             }
@@ -677,6 +694,12 @@ namespace SharpOS.Std.NoRuntime
                 else
                 {
                     // 3. Grow: need a new segment.
+                    // Grown by half since the last collection: collect first (the
+                    // caller does, on a null), and grow only if that was not enough.
+                    if (CollectBeforeGrowing && !s_growAfterCollect && GC.s_collectHook != null
+                        && s_grownSinceCollect >= 4 && s_grownSinceCollect * 2 >= s_segmentCount)
+                        return null;
+
                     uint segSize = DefaultSegmentSize;
                     // Header, the object-start bitmap (one byte per 128 bytes)
                     // and alignment slack come out of the same block.
@@ -691,6 +714,7 @@ namespace SharpOS.Std.NoRuntime
                     s_currentSegment = fresh;
                     s_segmentCount++;
                     s_segmentGrew = true;
+                    s_grownSinceCollect++;
 
                     result = (void*)fresh->Current;
                     fresh->Current += (nint)aligned;

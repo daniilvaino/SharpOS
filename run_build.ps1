@@ -47,6 +47,10 @@
     [string]$Cpu = "qemu64,+nx",
     # ESP staged as a real FAT32 image; 253 MB of payload today, so 512 leaves headroom.
     [int]$EspImageSizeMb = 512,
+    # Guest RAM. Past 4 GiB the firmware may load the kernel above 4 GiB, as
+    # the 7 GiB laptop's did (0x1_4000_0000) — the layout that step194's
+    # process slots first collided with. -MemoryMb 8192 reproduces it.
+    [int]$MemoryMb = 2048,
     [string]$QemuExe,
     [string]$OvmfCode,
     [string]$OvmfVars
@@ -973,7 +977,7 @@ try {
             "-device", "usb-storage,drive=usbstick")
     }
 
-    $qemuArgs = $machineArgs + $cpuArgs + @("-m", "2048") + $displayArgs + @(
+    $qemuArgs = $machineArgs + $cpuArgs + @("-m", "$MemoryMb") + $displayArgs + @(
         "-net", "none",
         "-no-reboot",
         "-qmp", "tcp:127.0.0.1:$QmpPort,server,nowait",

@@ -77,14 +77,20 @@ namespace OS.Boot.EH
         // The primary image (index 0) is the kernel — s_imageBase/s_records/
         // s_recordCount above, kept EXACTLY as-is so every kernel-only consumer
         // (SEH engine, GC precise walk, diagnostics) that reads ImageBase/Count/
-        // GetRecord is untouched. This registry holds ADDITIONAL images (loaded
-        // PE apps at 0x400000) whose `.pdata` PeLoader registers after mapping,
-        // so the managed EH walk (CoffMethodLookup/CoffEhDecoder/StackFrameIterator)
-        // can resolve app frames. Apps nest LIFO and unregister on exit.
+        // GetRecord is untouched. This registry holds ADDITIONAL images (the
+        // apps' PEs) whose `.pdata` PeLoader registers after mapping, so the
+        // managed EH walk (CoffMethodLookup/CoffEhDecoder/StackFrameIterator)
+        // can resolve app frames. One per running process (step194: each at a
+        // range of its own, in any order), unregistered when it ends.
         //
         // Storage is a fixed-capacity value struct (no static reference field →
         // no ClassConstructorRunner trap); pointers/ints only, zero-initialized.
-        private const int MaxExtraImages = 4;
+        //
+        // It held 4 until step194. With processes running side by side the
+        // fifth image was refused without a word: its frames did not unwind,
+        // its collector found no roots below them, and the first sign was a
+        // string decoded from memory already swept (PIPECNT under --gc-stress).
+        private const int MaxExtraImages = 32;
 
         private unsafe struct ExtraImageTable
         {
@@ -118,6 +124,15 @@ namespace OS.Boot.EH
         public static int RegisterImage(byte* imageBase, RuntimeFunction* records, int count)
         {
             if (imageBase == null || records == null || count <= 0) return -1;
+            OS.Kernel.Threading.Preemption.Suppress();
+            try { return RegisterImageCore(imageBase, records, count); }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
+
+        // The entry is filled before the count takes it in: a walk on this
+        // CPU (an interrupt) sees either no entry or a whole one.
+        private static int RegisterImageCore(byte* imageBase, RuntimeFunction* records, int count)
+        {
             if (s_extraCount >= MaxExtraImages) return -1;
             int i = s_extraCount;
             s_extra.Bases[i] = (ulong)imageBase;
@@ -159,18 +174,31 @@ namespace OS.Boot.EH
         /// </remarks>
         public static void UnregisterImage(byte* imageBase)
         {
-            for (int i = s_extraCount - 1; i >= 0; i--)
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
             {
-                if (s_extra.Bases[i] != (ulong)imageBase) continue;
-                for (int j = i; j < s_extraCount - 1; j++)
+                for (int i = s_extraCount - 1; i >= 0; i--)
                 {
-                    s_extra.Bases[j] = s_extra.Bases[j + 1];
-                    s_extra.Records[j] = s_extra.Records[j + 1];
-                    s_extra.Counts[j] = s_extra.Counts[j + 1];
-                    s_extra.Mapped[j] = s_extra.Mapped[j + 1];
+                    if (s_extra.Bases[i] != (ulong)imageBase) continue;
+                    // The managed range moves with its image: it was left
+                    // behind before step194, so after one image went the next
+                    // ones answered "managed?" with their neighbour's range.
+                    for (int j = i; j < s_extraCount - 1; j++)
+                    {
+                        s_extra.Bases[j] = s_extra.Bases[j + 1];
+                        s_extra.Records[j] = s_extra.Records[j + 1];
+                        s_extra.Counts[j] = s_extra.Counts[j + 1];
+                        s_extra.Mapped[j] = s_extra.Mapped[j + 1];
+                        s_extra.ManagedStart[j] = s_extra.ManagedStart[j + 1];
+                        s_extra.ManagedEnd[j] = s_extra.ManagedEnd[j + 1];
+                    }
+                    s_extraCount--;
+                    return;
                 }
-                s_extraCount--;
-                return;
+            }
+            finally
+            {
+                OS.Kernel.Threading.Preemption.Allow();
             }
         }
 

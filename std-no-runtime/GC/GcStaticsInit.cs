@@ -11,8 +11,8 @@
 // The kernel runs its own diagnostic-rich copy at boot
 // (OS/src/Kernel/Memory/GcStaticsMaterializer.cs, step 40-41); this is the
 // same walk cut down for the app tier: the app finds the ReadyToRun header
-// in its OWN image (base 0x100000000 fixed — FreestandingPe.props /BASE +
-// /FIXED, honored by the kernel PeLoader) and allocates from its own
+// in its OWN image (base from the startup block: images are relocated per
+// process since step194) and allocates from its own
 // GcHeap. Called from AppRuntime.Initialize right after GcHeap.Init.
 // Interim duplication rule per donext.md UNWIND-style debt: a fix to the
 // walk here must answer whether the kernel copy needs it too.
@@ -100,10 +100,11 @@ namespace SharpOS.Std.NoRuntime
         private const nint HasPreInitializedData = 0x2;
         private const nint Mask = 0x3;
 
-        // Fixed app image base — contract with FreestandingPe.props
-        // (/BASE:0x100000000 /FIXED) and the kernel PeLoader (honors
-        // ImageBase). 4 GiB: above identity-mapped RAM, below the app stack.
-        private const ulong ImageBase = 0x100000000;
+        // Where this image was loaded. Images are relocatable (step194): the
+        // loader places each process in a range of its own, so the base is
+        // not a constant — AppRuntime sets it from the startup block before
+        // anything here runs.
+        public static ulong ImageBase;
 
         private static bool s_initialized;
 
