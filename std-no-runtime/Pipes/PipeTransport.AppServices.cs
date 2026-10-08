@@ -157,6 +157,9 @@ namespace SharpOS.Std.Pipes
         /// <summary>A line on the screen: where a message goes when there is no output to send it to.</summary>
         public static void Print(string line) => System.Console.WriteLine(line);
 
+        /// <summary>Text on the screen as it is, no line added (step197: a file's bytes arrive in pieces).</summary>
+        public static void PrintText(string text) => System.Console.Write(text);
+
         public static PipeStatus Close(int handle)
         {
             if (!Available) return PipeStatus.Unsupported;

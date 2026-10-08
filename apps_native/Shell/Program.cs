@@ -38,9 +38,21 @@ namespace Shell
         private static int Main() => Run();
 
         private static int Run()
-            => AppHost.FileExistsEx(ScriptPath) == AppServiceStatus.Ok
+        {
+            // sh -c LINE [--report NAME] (step197): the line runs with this
+            // shell's own standard ends — what Pipe.From and Pipe.To start.
+            string[] args = AppHost.Arguments;
+            if (args.Length >= 2 && args[0] == "-c")
+            {
+                string report = args.Length >= 4 && args[2] == "--report" ? args[3] : null;
+                var executor = new Executor(SharpOS.Std.Pipes.Pipe.InputEnd(), SharpOS.Std.Pipes.Pipe.OutputEnd(), report);
+                return executor.RunLine(args[1]);
+            }
+
+            return AppHost.FileExistsEx(ScriptPath) == AppServiceStatus.Ok
                 ? RunScript()
                 : Interactive();
+        }
 
         private static int RunScript()
         {
@@ -106,20 +118,34 @@ namespace Shell
         // of starting the session again from the root.
         private static int Interactive(Executor executor)
         {
-            AppHost.WriteString("SharpOS shell. Type 'help' for what exists, 'exit' to leave.\n");
+            AppHost.WriteString("\u001b[1;36mSharpOS shell\u001b[0m\u001b[90m — 'help' for what exists, Tab completes, Up/Down for history, 'exit' to leave\u001b[0m\n");
+
+            var reader = new LineReader(new Completion(executor));
+            executor.History = reader.History;
 
             while (!executor.ExitRequested)
             {
-                AppHost.WriteString(executor.WorkingDirectory);
-                AppHost.WriteString(" $ ");
-
-                string line = LineReader.Read();
-                if (line.Length == 0) continue;
+                string prompt = Prompt(executor, out int width);
+                string line = reader.Read(prompt, width);
+                if (line == null) break;                 // Ctrl+D
+                if (line.Trim().Length == 0) continue;
 
                 executor.RunLine(line);
             }
 
             return 0;
+        }
+
+        // The directory in green, the last exit code in red when it was not 0,
+        // then "$". Its visible width (no escapes) is where the line starts.
+        private static string Prompt(Executor executor, out int width)
+        {
+            string directory = executor.WorkingDirectory;
+            string code = executor.LastExitCode != 0 ? " [" + executor.LastExitCode.ToString() + "]" : "";
+            width = directory.Length + code.Length + 3;
+            return "\u001b[32m" + directory + "\u001b[0m"
+                 + (code.Length != 0 ? "\u001b[31m" + code + "\u001b[0m" : "")
+                 + " $ ";
         }
 
         // A script line is UTF-8. It used to be read a byte per char — Latin-1 —

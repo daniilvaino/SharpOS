@@ -107,10 +107,82 @@ namespace System
 
             string sign = _ticks < 0 ? "-" : "";
             string body = Pad(t.Hours, 2) + ":" + Pad(t.Minutes, 2) + ":" + Pad(t.Seconds, 2);
+            // The fraction, seven digits, when there is one — the "c" form (step197).
+            long fraction = ticks % TicksPerSecond;
+            if (fraction != 0) body += "." + PadLong(fraction, 7);
             return t.Days != 0 ? sign + t.Days.ToString() + "." + body : sign + body;
         }
 
         public string ToString(string? format) => ToString();
+
+        private static string PadLong(long value, int width)
+        {
+            string s = value.ToString();
+            while (s.Length < width) s = "0" + s;
+            return s;
+        }
+
+        /// <summary>
+        /// The "c" form back (step197): [-][d.]hh:mm[:ss[.fffffff]], what
+        /// ToString writes.
+        /// </summary>
+        public static bool TryParseConstant(string? input, out TimeSpan result)
+        {
+            result = Zero;
+            if (string.IsNullOrEmpty(input)) return false;
+            string s = input!.Trim();
+            int at = 0;
+            bool negative = false;
+            if (at < s.Length && s[at] == '-') { negative = true; at++; }
+            long days = 0;
+            int colon = s.IndexOf(':');
+            int dot = s.IndexOf('.');
+            if (dot >= 0 && colon > dot)
+            {
+                if (!TakeLong(s, ref at, dot, out days)) return false;
+                at = dot + 1;
+            }
+            if (!Take(s, ref at, 2, out int hours)) return false;
+            if (at >= s.Length || s[at] != ':') return false;
+            at++;
+            if (!Take(s, ref at, 2, out int minutes)) return false;
+            int seconds = 0;
+            long fraction = 0;
+            if (at < s.Length && s[at] == ':')
+            {
+                at++;
+                if (!Take(s, ref at, 2, out seconds)) return false;
+                if (at < s.Length && s[at] == '.')
+                {
+                    at++;
+                    int digits = 0;
+                    while (at < s.Length && s[at] >= '0' && s[at] <= '9' && digits < 7)
+                    {
+                        fraction = fraction * 10 + (s[at] - '0');
+                        at++;
+                        digits++;
+                    }
+                    if (digits == 0) return false;
+                    for (; digits < 7; digits++) fraction *= 10;
+                }
+            }
+            if (at != s.Length || hours > 23 || minutes > 59 || seconds > 59) return false;
+            long ticks = days * TicksPerDay + hours * TicksPerHour + minutes * TicksPerMinute + seconds * TicksPerSecond + fraction;
+            result = new TimeSpan(negative ? -ticks : ticks);
+            return true;
+        }
+
+        private static bool TakeLong(string s, ref int at, int end, out long value)
+        {
+            value = 0;
+            if (at >= end) return false;
+            for (; at < end; at++)
+            {
+                if (s[at] < '0' || s[at] > '9') return false;
+                value = value * 10 + (s[at] - '0');
+            }
+            return true;
+        }
 
         public string ToString(string? format, IFormatProvider? provider) => ToString();
 

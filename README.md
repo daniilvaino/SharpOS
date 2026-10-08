@@ -184,6 +184,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `Math.Sin` / `Cos` / `Exp` / `Log` / `Pow` | 🟡 | 🟡 | 🟡 | приближения: ~1e-9 в AOT, грубее в hosted; в AOT нет `Tan`, `Atan`, `Asin`, `Acos` и гиперболических |
 | `Vector128<T>` (SSE) | ✅ | ✅ | ✅ | `Vector256` объявлен, но не ускорен |
 | Разбор XML | ✅ | ⏳ | ✅ | TurboXml; ядро читает им манифесты приложений |
+| JSON: `Utf8JsonReader` / `Utf8JsonWriter` | ⏳ | 🟡 | ✅ | из System.Text.Json (.NET 10): чтение кусками, запись в `IBufferWriter<byte>`. Сериализатора, `JsonDocument`, `JsonNode` и `JavaScriptEncoder` нет |
 | Коллекции `Concurrent.*` и `Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`, `Regex`, `ValueTuple`, `DateTimeOffset` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple<T1,T2>` есть |
 | CBOR (`System.Formats.Cbor`) | 🔴 | ✅ | ✅ | порт из dotnet/runtime; без `Half`, `BigInteger`, `decimal` и `DateTimeOffset` — теги при этом читаются. Разбор проверен на ответе аппаратного ключа, запись пока нет |
 | SHA-256 | ✅ | ✅ | ✅ | `System.Security.Cryptography.SHA256.HashData`, своя реализация в std. Других алгоритмов нет: ни P-256, ни AES, ни HMAC |
@@ -213,7 +214,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | AVX / AVX-512 | 🔴 | 🔴 | 🔴 | в XCR0 включены только x87 и SSE |
 | USB (xHCI) | 🟡 | 🟡 | 🚫 | свой стек, проверен на железе: составные устройства, несколько HID-интерфейсов на одном, клавиатура, флешки (BOT + SCSI), CDC-ACM, аппаратный ключ по CTAPHID (регистрация U2F с подтверждением присутствия). Приложениям шина видна двумя службами (`UsbEnumerate`, `UsbCtap`) — дерево и обмен с ключом. Без прерываний, хабов, мыши и **горячего подключения**: шина перечисляется один раз при загрузке |
 | Чтение файлов | ✅ | ✅ | ✅ | свой FAT, работает и после ExitBootServices |
-| Запись файлов | 🟡 | 🔴 | 🔴 | FAT32: перезапись на месте и создание файлов (8.3). Нет удаления, роста файлов и каталогов, LFN. Приложению службы записи нет: `FileStream` на запись бросает `IOException` |
+| Запись файлов | 🟡 | 🟡 | 🔴 | FAT32: создание (длинные имена с псевдонимом 8.3), обрезка, дописывание с ростом файла. Приложениям — `FileStream`, `File.WriteAll*`/`AppendAllText`, `StreamWriter`, относительные пути от рабочей папки процесса. Нет удаления, переименования и создания каталогов |
 | Сеть | 🔴 | 🔴 | 🔴 | нет драйвера сетевой карты |
 | Ввод с клавиатуры в консоли | ✅ | ✅ | ✅ | |
 
@@ -223,9 +224,10 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 |---|:-:|:-:|:-:|---|
 | Код возврата процесса | ✅ | ✅ | ⏳ | |
 | Несколько приложений сразу (процессы) | 🟡 | 🟡 | 🚫 | `Process.Start`/`WaitForExit`/`Kill`, до 16, каждое в своём диапазоне адресов; куча растёт по мере надобности, переполнение стека — выход 134; один процессор, старт + выход ≈10 мс на ноутбуке |
-| Родные трубы: объекты между ядром и приложениями | 🟡 | 🟡 | 🚫 | `PipeWriter<T>`/`PipeReader<T>`/`Region<T>`, типы `[Message]`; копия, `Move`, чтение на месте, чтение по описанию; между приложениями по имени и концами при старте (стандартные вход и выход); без выделений на сообщение, на графе из 100 объектов в 6 раз быстрее `BinaryWriter`+`BinaryReader`; проверено только под QEMU |
+| Родные трубы: объекты между ядром и приложениями | 🟡 | 🟡 | 🚫 | `PipeWriter<T>`/`PipeReader<T>`/`Region<T>`, типы `[Message]`; копия, `Move`, чтение на месте, чтение по описанию; между приложениями по имени и концами при старте (стандартные вход и выход); без выделений на сообщение, на графе из 100 объектов в 6 раз быстрее `BinaryWriter`+`BinaryReader`; байты и текст (`Pipe.ReadBytes`/`WriteBytes`/`ReadText`/`WriteText`); конвейер из кода — `Pipe.From`/`Pipe.To`; проверено только под QEMU |
+| Внешние данные: `READ`, `WRITE`, `CONVERT` | 🚫 | 🟡 | 🚫 | файл в трубу и обратно, JSON и строки в объекты (`Expando`) и объекты в JSON / JSON Lines, `Into<T>` из `Expando`; потоково, память — один элемент; проверено только под QEMU |
 | Terminal.Gui | 🚫 | ✅ | ⏳ | на нашей std, свой драйвер поверх терминала ядра; мыши нет |
-| Оболочка с синтаксисом bash | 🚫 | 🟡 | 🚫 | `&&` `\|\|` `;`, конвейер `a \| b \| c`, встроенные `cd` `pwd` `ls` `cat` `echo` `expect` `exit`, запуск `.EXE` (с аргументами) и `.DLL` (без); без перенаправлений |
+| Оболочка с синтаксисом bash | 🚫 | 🟡 | 🚫 | `&&` `\|\|` `;`, конвейер `a \| b \| c`, встроенные `cd` `pwd` `ls` `cat` `echo` `expect` `exit`, запуск `.EXE` (с аргументами) и `.DLL` (без); `> файл` и `>> файл` в конце конвейера, код конвейера — первой упавшей стадии; `<` нет. Редактор строки (ReadLine): история между сеансами, Tab, Ctrl-клавиши, `clear`. Ctrl+C прерывает только набор строки, не запущенную программу |
 | Изоляция процессов через MMU | 🚫 | 🚫 | 🚫 | это unikernel |
 | Параллельное исполнение по одному виртуальному адресу | 🚫 | 🚫 | 🟡 | потоки в одном ALC работают, несколько ALC в планах |
 
@@ -268,11 +270,12 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 
 Чужой код, который лежит в дереве и попадает в образ. Лицензии этих проектов нас обязывают. Копии живут в `vendor/<имя>/`, рядом `LICENSE` и `PROVENANCE.md`: что взято и что вырезано.
 
-- **[dotnet/runtime](https://github.com/dotnet/runtime) + [runtimelab](https://github.com/dotnet/runtimelab)** (Microsoft, MIT) - toolchain NativeAOT, форк CoreCLR в `dotnet-runtime-sharpos/` и сотни портов BCL в нашу std.
+- **[dotnet/runtime](https://github.com/dotnet/runtime) + [runtimelab](https://github.com/dotnet/runtimelab)** (Microsoft, MIT) - toolchain NativeAOT, форк CoreCLR в `dotnet-runtime-sharpos/`, сотни портов BCL в нашу std и `Utf8JsonReader`/`Utf8JsonWriter` из System.Text.Json в `vendor/SystemTextJson/`.
 - **[Iced](https://github.com/icedland/iced)** (icedland, MIT) - кодировщик x86-64. Им пишется весь ассемблер проекта: и при сборке, и на лету.
 - **[PeNet](https://github.com/secana/PeNet)** (Stefan Hausotte, Apache-2.0) - разбор PE в загрузчике приложений.
 - **[Terminal.Gui](https://github.com/gui-cs/Terminal.Gui)** (Miguel de Icaza и участники, MIT) - библиотека текстового интерфейса. На ней написан лаунчер.
 - **[XtermSharp](https://github.com/migueldeicaza/XtermSharp)** (Miguel de Icaza, MIT) - движок эмулятора терминала: ANSI/VT, сетка ячеек, прокрутка.
+- **[ReadLine](https://github.com/tonerdo/readline)** (Toni Solarin-Sodara, MIT) - редактор строки оболочки: курсор, история, Ctrl-клавиши, дополнение по Tab.
 - **[TurboXml](https://github.com/xoofx/TurboXml)** (Alexandre Mutel, BSD-2-Clause) - разбор XML без аллокаций. Читает манифест приложения из ресурсов PE.
 - **[ShellSyntaxTree](https://github.com/Aaronontheweb/ShellSyntaxTree)** (Aaron Stannard, Apache-2.0) - разбор командной строки bash в дерево. На нём стоит оболочка; половина для PowerShell не компилируется.
 - **[MOOS](https://github.com/nifanfa/MOOS)** (nifanfa, Unlicense) - драйверы `AHCI`, `Disk`, `PCI(Express)` и глифы CP437. Адаптированы под наш HAL, лежат в `OS/src/`.

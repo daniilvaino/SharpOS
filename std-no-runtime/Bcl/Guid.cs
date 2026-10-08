@@ -85,5 +85,93 @@ namespace System
             }
             return g;
         }
+    
+        // ---- text (step197: JSON writes a Guid as a string, Into<T> reads it back) ----
+
+        /// <summary>The "D" form: 32 hex digits in groups 8-4-4-4-12, lowercase.</summary>
+        public override string ToString() => ToString("D");
+
+        /// <summary>"D" (default), "N" (no hyphens), "B" (braces), "P" (parentheses); BCL forms.</summary>
+        public string ToString(string? format)
+        {
+            char f = string.IsNullOrEmpty(format) ? 'D' : format![0];
+            var chars = new char[38];
+            int n = 0;
+            bool hyphens = f != 'N' && f != 'n';
+            if (f == 'B' || f == 'b') chars[n++] = '{';
+            if (f == 'P' || f == 'p') chars[n++] = '(';
+            n = Hex(chars, n, (uint)_a, 8);
+            if (hyphens) chars[n++] = '-';
+            n = Hex(chars, n, (ushort)_b, 4);
+            if (hyphens) chars[n++] = '-';
+            n = Hex(chars, n, (ushort)_c, 4);
+            if (hyphens) chars[n++] = '-';
+            n = Hex(chars, n, _d, 2);
+            n = Hex(chars, n, _e, 2);
+            if (hyphens) chars[n++] = '-';
+            n = Hex(chars, n, _f, 2);
+            n = Hex(chars, n, _g, 2);
+            n = Hex(chars, n, _h, 2);
+            n = Hex(chars, n, _i, 2);
+            n = Hex(chars, n, _j, 2);
+            n = Hex(chars, n, _k, 2);
+            if (f == 'B' || f == 'b') chars[n++] = '}';
+            if (f == 'P' || f == 'p') chars[n++] = ')';
+            return new string(chars, 0, n);
+        }
+
+        public string ToString(string? format, IFormatProvider? provider) => ToString(format);
+
+        private static int Hex(char[] into, int at, uint value, int digits)
+        {
+            for (int i = digits - 1; i >= 0; i--)
+            {
+                uint nibble = (value >> (i * 4)) & 0xF;
+                into[at++] = (char)(nibble < 10 ? '0' + nibble : 'a' + nibble - 10);
+            }
+            return at;
+        }
+
+        public static Guid Parse(string input)
+        {
+            if (input == null) throw new ArgumentNullException(nameof(input));
+            if (!TryParse(input, out Guid result)) throw new FormatException("Unrecognized Guid format.");
+            return result;
+        }
+
+        /// <summary>The "D", "N", "B" and "P" forms, any case.</summary>
+        public static bool TryParse(string? input, out Guid result)
+        {
+            result = default;
+            if (input == null) return false;
+            string s = input.Trim();
+            if (s.Length == 38 && ((s[0] == '{' && s[37] == '}') || (s[0] == '(' && s[37] == ')')))
+                s = s.Substring(1, 36);
+            if (s.Length == 36)
+            {
+                if (s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-') return false;
+                s = s.Substring(0, 8) + s.Substring(9, 4) + s.Substring(14, 4) + s.Substring(19, 4) + s.Substring(24, 12);
+            }
+            if (s.Length != 32) return false;
+            var bytes = new byte[16];
+            for (int i = 0; i < 16; i++)
+            {
+                int hi = HexValue(s[2 * i]), lo = HexValue(s[2 * i + 1]);
+                if (hi < 0 || lo < 0) return false;
+                bytes[i] = (byte)((hi << 4) | lo);
+            }
+            result = new Guid(
+                (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3],
+                (short)((bytes[4] << 8) | bytes[5]),
+                (short)((bytes[6] << 8) | bytes[7]),
+                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
+            return true;
+        }
+
+        private static int HexValue(char c)
+            => c >= '0' && c <= '9' ? c - '0'
+             : c >= 'a' && c <= 'f' ? c - 'a' + 10
+             : c >= 'A' && c <= 'F' ? c - 'A' + 10
+             : -1;
     }
 }

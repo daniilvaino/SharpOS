@@ -110,8 +110,53 @@ namespace OS.Boot.EH
                 return false;
             }
 
-            byte* unwindInfo = info.ImageBase
-                             + info.RootRuntimeFunction->UnwindInfoAddress;
+            // A funclet its own method called (a finally run at the end of its
+            // try, step197): unwound by its own codes, it returns into the
+            // method's body — the caller frame is the method's real frame, its
+            // SP and saved registers right. A funclet the dispatcher ran keeps
+            // the walk below: the root's codes, which reach the method's
+            // caller through the parent frame pointer the funclet holds.
+            if (TryUnwindCalledFunclet(iter, info))
+                return true;
+
+            return Unwind(iter, info.ImageBase + info.RootRuntimeFunction->UnwindInfoAddress);
+        }
+
+        /// <summary>
+        /// Whether the frame is a funclet its own method called on the normal
+        /// path (its own unwind returns into the method's body). The iterator
+        /// is not moved.
+        /// </summary>
+        public static bool IsCalledFunclet(StackFrameIterator* iter)
+        {
+            if (!CoffMethodLookup.TryFindMethod((byte*)iter->ControlPC, out CoffMethodLookup.MethodInfo info))
+                return false;
+            StackFrameIterator probe = *iter;
+            return TryUnwindCalledFunclet(&probe, info);
+        }
+
+        private static bool TryUnwindCalledFunclet(StackFrameIterator* iter, CoffMethodLookup.MethodInfo info)
+        {
+            if ((info.CurrentBlockFlags & CoffMethodLookup.UBF_FUNC_KIND_MASK) == CoffMethodLookup.UBF_FUNC_KIND_ROOT)
+                return false;
+            byte* own = info.ImageBase + info.CurrentRuntimeFunction->UnwindInfoAddress;
+            if ((own[0] >> 3) != 0) return false;   // chained or handler flags: not the plain funclet prolog
+            StackFrameIterator probe = *iter;
+            if (!Unwind(&probe, own)) return false;
+            if (!CoffMethodLookup.TryFindMethod((byte*)probe.ControlPC, out CoffMethodLookup.MethodInfo caller))
+                return false;
+            if ((caller.CurrentBlockFlags & CoffMethodLookup.UBF_FUNC_KIND_MASK) != CoffMethodLookup.UBF_FUNC_KIND_ROOT)
+                return false;
+            if (caller.ImageBase + caller.RootRuntimeFunction->BeginAddress != info.ImageBase + info.RootRuntimeFunction->BeginAddress)
+                return false;
+            *iter = probe;
+            return true;
+        }
+
+        // The frame's unwind codes applied forward (reversing its prolog);
+        // then the return address read: the caller's IP.
+        private static bool Unwind(StackFrameIterator* iter, byte* unwindInfo)
+        {
 
             byte countOfCodes = unwindInfo[2];
             byte frameRegInfo = unwindInfo[3];

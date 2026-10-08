@@ -31,6 +31,10 @@ namespace OS.Kernel.Process
         public uint Id;
         public int Slot;
         public string Name;
+
+        // Where its relative paths start (step197): its launcher's at the
+        // start, "\" for what the kernel starts; the shell's `cd` moves it.
+        public string WorkingDirectory = "\\";
         public AppProcessState State;
 
         public LoadedImage Image;
@@ -100,6 +104,10 @@ namespace OS.Kernel.Process
         // The app's namer for its exceptions (service SetExceptionNamer):
         // nint (nint exception) -> a string of the app's. Zero: none.
         public nint ExceptionNamer;
+
+        // int (nint exception): the exit code the app gives an unhandled
+        // exception (step197); 0 when it has no opinion.
+        public nint ExceptionExitCode;
 
         public int ExitCode;
 

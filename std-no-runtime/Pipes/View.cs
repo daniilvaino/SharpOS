@@ -628,62 +628,135 @@ namespace SharpOS.Std.Pipes
         {
             Check();
             var text = new StringBuilder();
-            Append(text, 2);
+            Append(text, 2, false);
             return text.ToString();
         }
 
-        private void Append(StringBuilder text, int depth)
+        /// <summary>
+        /// The same text in the terminal's colours, for the screen only
+        /// (ScreenText): the type in cyan with its namespace dim, numbers
+        /// yellow, strings green, true/false/null and enum members magenta,
+        /// the punctuation dim. Files and pipes get ToString.
+        /// </summary>
+        internal string ToScreenString()
+        {
+            Check();
+            var text = new StringBuilder();
+            Append(text, 2, true);
+            return text.ToString();
+        }
+
+        // SGR sequences of the palette; Plain ends each painted run.
+        private const string Plain = "\u001b[0m", Dim = "\u001b[90m", TypeColour = "\u001b[1;36m",
+                             NumberColour = "\u001b[33m", StringColour = "\u001b[32m", WordColour = "\u001b[35m";
+
+        private static void Paint(StringBuilder text, bool colour, string sgr, string value)
+        {
+            if (colour) text.Append(sgr).Append(value).Append(Plain);
+            else text.Append(value);
+        }
+
+        // A type's name: the namespace dim, the name itself bright.
+        private static void PaintType(StringBuilder text, bool colour, string name)
+        {
+            int dot = colour ? name.LastIndexOf('.') : -1;
+            if (dot > 0) Paint(text, true, Dim, name.Substring(0, dot + 1));
+            Paint(text, colour, TypeColour, dot > 0 ? name.Substring(dot + 1) : name);
+        }
+
+        private void Append(StringBuilder text, int depth, bool colour)
         {
             switch (Kind)
             {
-                case ViewKind.Null: text.Append("null"); return;
-                case ViewKind.Bool: text.Append(Integer() != 0 ? "true" : "false"); return;
+                case ViewKind.Null: Paint(text, colour, WordColour, "null"); return;
+                case ViewKind.Bool: Paint(text, colour, WordColour, Integer() != 0 ? "true" : "false"); return;
                 case ViewKind.Char: text.Append((char)Integer()); return;
-                case ViewKind.Float: text.Append(Float().ToString()); return;
+                case ViewKind.Float: Paint(text, colour, NumberColour, Float().ToString()); return;
                 case ViewKind.Integer:
                     string member = _enum?.EnumName(Integer());
-                    if (member != null) text.Append(member);
-                    else if (_value == FieldKind.UInt64) text.Append(((ulong)Integer()).ToString());
-                    else text.Append(Integer().ToString());
+                    if (member != null) Paint(text, colour, WordColour, member);
+                    else if (_value == FieldKind.UInt64) Paint(text, colour, NumberColour, ((ulong)Integer()).ToString());
+                    else Paint(text, colour, NumberColour, Integer().ToString());
                     return;
                 case ViewKind.String: text.Append(CopyText()); return;
                 case ViewKind.Array:
-                    text.Append(_type.Name.Substring(0, _type.Name.Length - 2)).Append('[').Append(Length.ToString()).Append(']');
+                    PaintType(text, colour, _type.Name.Substring(0, _type.Name.Length - 2));
+                    Paint(text, colour, Dim, "[" + Length.ToString() + "]");
                     if (depth <= 0) return;
-                    text.Append(" { ");
+                    Paint(text, colour, Dim, " { ");
                     for (int i = 0; i < Length && i < 8; i++)
                     {
-                        if (i > 0) text.Append(", ");
-                        this[i].AppendNested(text, depth - 1);
+                        if (i > 0) Paint(text, colour, Dim, ", ");
+                        this[i].AppendNested(text, depth - 1, colour);
                     }
-                    if (Length > 8) text.Append(", …");
-                    text.Append(" }");
+                    if (Length > 8) Paint(text, colour, Dim, ", …");
+                    Paint(text, colour, Dim, " }");
                     return;
                 default:
-                    text.Append(_type.IsExpando ? "Expando" : _type.Name);
-                    if (depth <= 0) { text.Append(" { … }"); return; }
-                    text.Append(" { ");
+                    PaintType(text, colour, _type.IsExpando ? "Expando" : _type.Name);
+                    if (depth <= 0) { Paint(text, colour, Dim, " { … }"); return; }
+                    Paint(text, colour, Dim, " { ");
                     bool first = true;
                     foreach (ViewField f in Fields)
                     {
-                        if (!first) text.Append(", ");
+                        if (!first) Paint(text, colour, Dim, ", ");
                         first = false;
-                        text.Append(f.Name).Append(" = ");
-                        f.Value.AppendNested(text, depth - 1);
+                        text.Append(f.Name);
+                        Paint(text, colour, Dim, " = ");
+                        f.Value.AppendNested(text, depth - 1, colour);
                     }
-                    text.Append(" }");
+                    Paint(text, colour, Dim, " }");
                     return;
             }
         }
 
-        private void AppendNested(StringBuilder text, int depth)
+        private void AppendNested(StringBuilder text, int depth, bool colour)
         {
             if (Kind == ViewKind.String)
             {
-                text.Append('"').Append(CopyText()).Append('"');
+                Paint(text, colour, StringColour, "\"" + CopyText() + "\"");
                 return;
             }
-            Append(text, depth);
+            Append(text, depth, colour);
+        }
+
+        /// <summary>An Expando's entry by name (step197: Into&lt;T&gt; from an Expando); false when there is none.</summary>
+        internal bool TryEntry(string name, out View value)
+        {
+            Check();
+            value = default;
+            if (_shape != Obj || !_type.IsExpando) return false;
+            int i = ExpandoIndex(name);
+            if (i < 0) return false;
+            value = ExpandoValue(i);
+            return true;
+        }
+
+        internal bool IsExpandoObject => _shape == Obj && _type.IsExpando;
+
+        /// <summary>The bytes of a byte[] of the region, in place (step197: byte streams over a pipe).</summary>
+        internal bool TryGetBytes(out byte* data, out int length)
+        {
+            Check();
+            data = null;
+            length = 0;
+            if (_shape != Obj || !_type.IsArray || _type.Elements == null || _type.Elements.Kind != FieldKind.Byte)
+                return false;
+            length = *(int*)(_at + 8);
+            data = (byte*)(_at + (ulong)_type.Elements.Offset);
+            return true;
+        }
+
+        /// <summary>The characters of a string of the region, in place.</summary>
+        internal bool TryGetChars(out char* chars, out int length)
+        {
+            Check();
+            chars = null;
+            length = 0;
+            if (_shape != Obj || !_type.IsString) return false;
+            length = *(int*)(_at + 8);
+            chars = (char*)(_at + 12);
+            return true;
         }
 
         /// <summary>A field by its shape, as a plan found it: no lookup by name.</summary>

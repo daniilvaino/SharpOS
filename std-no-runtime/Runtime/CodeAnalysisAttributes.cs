@@ -101,4 +101,39 @@ namespace System.Diagnostics.CodeAnalysis
         Interfaces = 0x2000,
         All = ~None,
     }
+
+    // dotnet/runtime src/libraries/System.Private.CoreLib/src/System/Diagnostics/CodeAnalysis/
+    // StringSyntaxAttribute.cs (MIT), verbatim minus doc comments. Ported code (StandardFormat,
+    // the Utf8Formatter/Parser family) annotates format parameters with it.
+    [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false, Inherited = false)]
+    internal sealed class StringSyntaxAttribute : Attribute
+    {
+        public StringSyntaxAttribute(string syntax)
+        {
+            Syntax = syntax;
+            Arguments = new object?[0];
+        }
+
+        public StringSyntaxAttribute(string syntax, params object?[] arguments)
+        {
+            Syntax = syntax;
+            Arguments = arguments;
+        }
+
+        public string Syntax { get; }
+        public object?[] Arguments { get; }
+
+        public const string CompositeFormat = nameof(CompositeFormat);
+        public const string DateOnlyFormat = nameof(DateOnlyFormat);
+        public const string DateTimeFormat = nameof(DateTimeFormat);
+        public const string EnumFormat = nameof(EnumFormat);
+        public const string GuidFormat = nameof(GuidFormat);
+        public const string Json = nameof(Json);
+        public const string NumericFormat = nameof(NumericFormat);
+        public const string Regex = nameof(Regex);
+        public const string TimeOnlyFormat = nameof(TimeOnlyFormat);
+        public const string TimeSpanFormat = nameof(TimeSpanFormat);
+        public const string Uri = nameof(Uri);
+        public const string Xml = nameof(Xml);
+    }
 }

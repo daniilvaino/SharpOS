@@ -49,6 +49,33 @@ namespace OS.Boot.EH
         // pass prev ExInfo's IdxCurClause so the FIRST frame's clauses
         // 0..startIdx (inclusive) are skipped — prevents the just-ran
         // catch from re-catching its own rethrow.
+        // A funclet its own method called on the normal path — a finally run
+        // at the end of its try, not by a dispatch (step197). Its caller is
+        // the method's body at the call; an exception leaving the funclet is
+        // looked for there, at the body's own frame, with the clauses up to
+        // the funclet's own skipped — what stock NativeAOT's iterator does
+        // when it unwinds out of a funclet (the start index Next returns).
+        //
+        // Before, such a frame was treated like a funclet the dispatcher ran
+        // (a collided unwind): the parent's clauses were matched at the
+        // FUNCLET's frame with a made-up offset, so a catch in the parent
+        // was entered with the funclet's stack pointer and registers. The
+        // parent then ran on the funclet's frame and returned through
+        // garbage — a jump into the stack, or a caller's rsi gone (a reader
+        // of Pipe.From whose Dispose waited for its pipeline and threw).
+        //
+        // Returns the funclet's clause index, or MaxTryRegionIdx when the
+        // frame is not such a funclet.
+        // The iterator's Next unwinds such a funclet by its own codes into the
+        // method's frame (StackFrameIteratorOps.IsCalledFunclet), so the next
+        // frame of the walk is the method's, with its SP and registers.
+        private static uint NormallyCalledFunclet(StackFrameIterator* iter)
+        {
+            if (!CoffEhDecoder.TryFindFuncletProtectedOffset((byte*)iter->ControlPC, out _, out _, out uint funcletIdx))
+                return ExInfo.MaxTryRegionIdx;
+            return StackFrameIteratorOps.IsCalledFunclet(iter) ? funcletIdx : ExInfo.MaxTryRegionIdx;
+        }
+
         public static FirstPassResult FindFirstPassHandler(
             byte* exceptionPtr,
             GcMethodTable* exceptionType,
@@ -59,9 +86,13 @@ namespace OS.Boot.EH
             FirstPassResult result = default;
             const int MaxFrames = 100;
             bool isFirstFrame = true;
+            // Clauses 0..skipUpTo of this frame are skipped: the frame is the
+            // body of a method whose funclet the exception just left.
+            uint skipUpTo = ExInfo.MaxTryRegionIdx;
 
             while (result.FramesWalked < MaxFrames)
             {
+                uint normalFunclet = NormallyCalledFunclet(iter);
                 // Append this frame's IP к exception's stack trace (multi-
                 // frame trace). Done before clause matching so each visited
                 // frame contributes one entry, even those without EH info.
@@ -94,7 +125,8 @@ namespace OS.Boot.EH
                 if (ehOk)
                 {
                     uint codeOffset;
-                    if (CoffEhDecoder.TryFindFuncletProtectedOffset(
+                    if (normalFunclet == ExInfo.MaxTryRegionIdx
+                        && CoffEhDecoder.TryFindFuncletProtectedOffset(
                         (byte*)iter->ControlPC, out uint synthOffset, out _, out uint funcIdx))
                     {
                         codeOffset = synthOffset;
@@ -140,6 +172,14 @@ namespace OS.Boot.EH
                         // — full search.
                         if (isFirstFrame && startIdx != ExInfo.MaxTryRegionIdx
                             && clauseIdx <= startIdx)
+                        {
+                            clauseIdx++;
+                            continue;
+                        }
+
+                        // The body of a method whose funclet the exception left:
+                        // the funclet's clause and the ones inside it are done.
+                        if (skipUpTo != ExInfo.MaxTryRegionIdx && clauseIdx <= skipUpTo)
                         {
                             clauseIdx++;
                             continue;
@@ -209,6 +249,7 @@ namespace OS.Boot.EH
                     break;
                 result.FramesWalked++;
                 isFirstFrame = false;
+                skipUpTo = normalFunclet;
             }
 
             return result;   // Found = false
@@ -318,7 +359,8 @@ namespace OS.Boot.EH
                 if (exInfo->PrevExInfo != null
                     && CoffEhDecoder.TryFindFuncletProtectedOffset(
                         (byte*)exInfo->ExContext->IP,
-                        out _, out _, out _))
+                        out _, out _, out _)
+                    && NormallyCalledFunclet(&exInfo->FrameIter) == ExInfo.MaxTryRegionIdx)
                 {
                     ulong funcletBodyPC = exInfo->ExContext->IP;
                     exInfo->FrameIter = exInfo->PrevExInfo->FrameIter;
@@ -423,7 +465,10 @@ namespace OS.Boot.EH
                     // is what cost a rig run to tell apart.
                     OS.Hal.Console.WriteLine("[unhandled] no exception object (exceptionPtr == null)");
 
-                OS.Hal.Console.Write("\r\n*** unhandled exception (no matching catch) ***\r\n");
+                // A quiet end (a broken standard end, a killed process) has no report.
+                OS.Kernel.Threading.Thread failing = OS.Kernel.Threading.Scheduler.Current;
+                if (failing == null || (!failing.KillRequested && failing.UnhandledExitCode != UnhandledExceptionReport.QuietExitCode))
+                    OS.Hal.Console.Write("\r\n*** unhandled exception (no matching catch) ***\r\n");
                 ExceptionHooks.FailFast();
             }
 
@@ -487,7 +532,8 @@ namespace OS.Boot.EH
             // Collided-unwind detection — mirror Dispatch entry logic.
             if (exInfo->PrevExInfo != null
                 && CoffEhDecoder.TryFindFuncletProtectedOffset(
-                    (byte*)exInfo->ExContext->IP, out _, out _, out _))
+                    (byte*)exInfo->ExContext->IP, out _, out _, out _)
+                && NormallyCalledFunclet(&exInfo->FrameIter) == ExInfo.MaxTryRegionIdx)
             {
                 ulong funcletBodyPC = exInfo->ExContext->IP;
                 exInfo->FrameIter = exInfo->PrevExInfo->FrameIter;
@@ -496,6 +542,7 @@ namespace OS.Boot.EH
 
             const int MaxFrames = 100;
             int framesWalked = 0;
+            uint skipUpTo = ExInfo.MaxTryRegionIdx;   // as in the first pass
             while (framesWalked < MaxFrames)
             {
                 ulong frameSp = exInfo->FrameIter.RegDisplay.SP;
@@ -505,9 +552,11 @@ namespace OS.Boot.EH
                 if (past)
                     break;
 
+                uint normalFunclet = NormallyCalledFunclet(&exInfo->FrameIter);
                 uint idxLimit = atCatchFrame ? catchIdx : ExInfo.MaxTryRegionIdx;
                 uint frameStartIdx = atCatchFrame ? startIdx : ExInfo.MaxTryRegionIdx;
-                InvokeFinalliesOnFrame(exInfo, frameStartIdx, idxLimit);
+                InvokeFinalliesOnFrame(exInfo, frameStartIdx, idxLimit, skipUpTo,
+                                       realOffset: normalFunclet != ExInfo.MaxTryRegionIdx);
 
                 if (atCatchFrame)
                     break;
@@ -515,6 +564,7 @@ namespace OS.Boot.EH
                 if (!StackFrameIteratorOps.Next(&exInfo->FrameIter))
                     break;
                 framesWalked++;
+                skipUpTo = normalFunclet;
             }
         }
 
@@ -527,7 +577,12 @@ namespace OS.Boot.EH
         // finally — он по семантике уже выполнился перед catch'ем).
         // idxLimit — partial-pass cap: clauses с curIdx >= idxLimit не run
         // (catch's own finally не должен fire перед самим catch'ем).
-        private static void InvokeFinalliesOnFrame(ExInfo* exInfo, uint startIdx, uint idxLimit)
+        // skipUpTo — clauses 0..skipUpTo skipped: the frame is the body of a
+        // method whose normally-called funclet the exception left (step197).
+        // realOffset — the frame is such a funclet: its own offset, not the
+        // made-up one of a funclet the dispatcher ran.
+        private static void InvokeFinalliesOnFrame(ExInfo* exInfo, uint startIdx, uint idxLimit,
+            uint skipUpTo = ExInfo.MaxTryRegionIdx, bool realOffset = false)
         {
             if (!CoffEhDecoder.EhEnumInit((byte*)exInfo->FrameIter.ControlPC,
                 out CoffEhDecoder.EHEnum enumState,
@@ -541,7 +596,7 @@ namespace OS.Boot.EH
             // recursive re-invocation → infinite recursion.
             uint codeOffset;
             uint funcletClauseIdx = 0xFFFFFFFFu;
-            if (CoffEhDecoder.TryFindFuncletProtectedOffset(
+            if (!realOffset && CoffEhDecoder.TryFindFuncletProtectedOffset(
                 (byte*)exInfo->FrameIter.ControlPC, out uint synthOffset, out _, out uint funcIdx))
             {
                 codeOffset = synthOffset;
@@ -567,6 +622,15 @@ namespace OS.Boot.EH
                 // Skip the clause whose handler IS the funclet we're inside —
                 // prevents finally re-invoking itself when its body throws.
                 if (clauseIdx == funcletClauseIdx)
+                {
+                    clauseIdx++;
+                    continue;
+                }
+
+                // The body of a method whose normally-called funclet the
+                // exception left: that funclet's clause (it is the finally
+                // running now) and the ones inside it are done.
+                if (skipUpTo != ExInfo.MaxTryRegionIdx && clauseIdx <= skipUpTo)
                 {
                     clauseIdx++;
                     continue;

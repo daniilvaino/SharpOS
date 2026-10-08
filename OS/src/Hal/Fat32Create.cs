@@ -133,6 +133,7 @@ namespace OS.Hal
             // and it looks like a hang rather than a slow loop.
             if (lba != s_fatCachedLba)
             {
+                if (!FlushFatCache()) return false;
                 if (!s_disk.Read(lba, 1, s_fatCache)) return false;
                 s_fatCachedLba = lba;
             }
@@ -161,9 +162,11 @@ namespace OS.Hal
                 if (!s_disk.Write(target, 1, s_fatCache))
                 {
                     s_fatCachedLba = ulong.MaxValue;
+                    s_fatDirty = false;
                     return false;
                 }
             }
+            s_fatDirty = false;
             return true;
         }
 
@@ -182,6 +185,7 @@ namespace OS.Hal
 
         private static bool TryAllocateChain(uint count, out uint firstCluster)
         {
+            FreeCountUnknown();
             if (TryAllocateContiguous(count, out firstCluster)) return true;
             return TryAllocateScattered(count, out firstCluster);
         }
@@ -292,7 +296,16 @@ namespace OS.Hal
 
         private static bool TryWriteDirectoryEntry(uint dirCluster, byte* name83,
                                                    uint firstCluster, uint size)
+            => TryWriteDirectoryEntry(dirCluster, name83, firstCluster, size, out _, out _);
+
+        // The same, saying where the entry went: a file being written updates
+        // its size there when it closes.
+        private static bool TryWriteDirectoryEntry(uint dirCluster, byte* name83,
+                                                   uint firstCluster, uint size,
+                                                   out ulong entryLba, out uint entryOffset)
         {
+            entryLba = 0;
+            entryOffset = 0;
             uint cluster = dirCluster == 0 ? s_rootClus : dirCluster;
             uint guard = 0;
 
@@ -309,6 +322,8 @@ namespace OS.Hal
                         if (first != 0x00 && first != 0xE5) continue;
 
                         FillEntry(s_sec + offset, name83, firstCluster, size);
+                        entryLba = lba + s;
+                        entryOffset = offset;
                         return s_disk.Write(lba + s, 1, s_sec);
                     }
                 }

@@ -76,6 +76,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\Pipe.cs" Link="std\Pipes\Pipe.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeEnds.cs" Link="std\Pipes\PipeEnds.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\TypeCheck.cs" Link="std\Pipes\TypeCheck.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStreams.cs" Link="std\Pipes\PipeStreams.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\ScreenText.cs" Link="std\Pipes\ScreenText.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeProbeMessages.cs" Link="std\Pipes\PipeProbeMessages.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStatus.cs" Link="std\Pipes\PipeStatus.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\ObjectLayout.cs" Link="std\Exchange\ObjectLayout.cs" />
@@ -131,8 +133,39 @@
     <Compile Include="$(MSBuildThisFileDirectory)IO\BinaryWriter.cs" Link="std\IO\BinaryWriter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\IOException.cs" Link="std\IO\IOException.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\MemoryStream.cs" Link="std\IO\MemoryStream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\ArrayBufferWriter.cs" Link="std\Buffers\ArrayBufferWriter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\IBufferWriter.cs" Link="std\Buffers\IBufferWriter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\OperationStatus.cs" Link="std\Buffers\OperationStatus.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\StandardFormat.cs" Link="std\Buffers\StandardFormat.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Base64Decoder.cs" Link="std\Buffers\Text\Base64Decoder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Base64Encoder.cs" Link="std\Buffers\Text\Base64Encoder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Constants.cs" Link="std\Buffers\Text\Utf8Constants.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\FormattingHelpers.cs" Link="std\Buffers\Text\Utf8Formatter\FormattingHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\Utf8Formatter.Boolean.cs" Link="std\Buffers\Text\Utf8Formatter\Utf8Formatter.Boolean.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\Utf8Formatter.Float.cs" Link="std\Buffers\Text\Utf8Formatter\Utf8Formatter.Float.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\Utf8Formatter.Integer.cs" Link="std\Buffers\Text\Utf8Formatter\Utf8Formatter.Integer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\ParserHelpers.cs" Link="std\Buffers\Text\Utf8Parser\ParserHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Boolean.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Boolean.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Float.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Float.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Integer.Signed.D.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Integer.Signed.D.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Integer.Signed.N.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Integer.Signed.N.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Integer.Signed.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Integer.Signed.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Integer.Unsigned.D.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Integer.Unsigned.D.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Integer.Unsigned.N.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Integer.Unsigned.N.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Integer.Unsigned.X.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Integer.Unsigned.X.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Integer.Unsigned.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Integer.Unsigned.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Number.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Number.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)HexConverter.cs" Link="std\HexConverter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Number.NumberToFloatingPointBits.cs" Link="std\Number\Number.NumberToFloatingPointBits.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Number.Parsing.cs" Link="std\Number\Number.Parsing.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Primitives.Parsing.cs" Link="std\Number\Primitives.Parsing.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemoryExtensions.Search.cs" Link="std\Runtime\MemoryExtensions.Search.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\Stream.cs" Link="std\IO\Stream.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\StreamReader.cs" Link="std\IO\StreamReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\StringReader.cs" Link="std\IO\StringReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\StringWriter.cs" Link="std\IO\StringWriter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\TextReader.cs" Link="std\IO\TextReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\TextWriter.cs" Link="std\IO\TextWriter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Linq\Enumerable.cs" Link="std\Linq\Enumerable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)MemoryPrimitives.cs" Link="std\MemoryPrimitives.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)NumberFormatting.cs" Link="std\NumberFormatting.cs" />

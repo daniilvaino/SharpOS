@@ -1,0 +1,19 @@
+<Project>
+
+  <!-- ReadLine (tonerdo/readline) as a compile-in module: the line editor of
+       the shell's prompt. Sources, not a package, for the same reason as
+       ShellSyntaxTree: apps are their own system module.
+
+       Abstractions\Console2.cs is not compiled: it is the library's adapter
+       to System.Console's cursor (CursorLeft, SetCursorPosition), which the
+       app tier does not have. The app supplies its own Console2 — the shell's
+       counts the cursor itself and moves it with relative escapes. -->
+
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)src\ReadLine.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)src\KeyHandler.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)src\IAutoCompleteHandler.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)src\Abstractions\IConsole.cs" />
+  </ItemGroup>
+
+</Project>

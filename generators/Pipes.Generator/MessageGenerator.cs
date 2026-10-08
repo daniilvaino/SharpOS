@@ -74,6 +74,9 @@ public sealed class MessageGenerator : IIncrementalGenerator
         var calls = new StringBuilder();
         var partials = new StringBuilder();
         var arrays = new SortedDictionary<string, string>();
+        // Enums met as field types without [Message] of their own: their
+        // member names go into the catalog too, so a view shows a field by name.
+        var fieldEnums = new SortedDictionary<string, INamedTypeSymbol>();
         int index = 0;
 
         foreach (INamedTypeSymbol type in symbols.Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default)
@@ -89,19 +92,7 @@ public sealed class MessageGenerator : IIncrementalGenerator
 
             if (type.TypeKind == TypeKind.Enum)
             {
-                var names = new StringBuilder();
-                var values = new StringBuilder();
-                foreach (IFieldSymbol member in type.GetMembers().OfType<IFieldSymbol>().Where(m => m.IsConst && m.HasConstantValue))
-                {
-                    names.Append('"').Append(member.Name).Append("\", ");
-                    values.Append(System.Convert.ToInt64(member.ConstantValue)).Append("L, ");
-                }
-                string boxed = "            global::SharpOS.Std.Pipes.MessageCatalog.RegisterEnum(\"" + FullName(type) + "\", (object)default("
-                               + Global(type) + "), \"" + TypeName(type) + "\", new string[] { " + names + "}, new long[] { " + values + "});\n";
-                string enumMethod = "Register_" + index++;
-                body.Append("        private static void ").Append(enumMethod).Append("()\n        {\n").Append(boxed).Append("        }\n\n");
-                calls.Append("            ").Append(enumMethod).Append("();\n");
-                arrays[ArrayElementName(type)] = ArrayRegistration(type);
+                EmitEnum(type, ref index, body, calls, arrays);
                 continue;
             }
 
@@ -109,7 +100,7 @@ public sealed class MessageGenerator : IIncrementalGenerator
             bool partial = IsPartial(type);
             bool ok = true;
             foreach (IFieldSymbol f in fields)
-                ok &= CheckField(ctx, type, f, partial, arrays);
+                ok &= CheckField(ctx, type, f, partial, arrays, fieldEnums);
             if (!ok)
                 continue;
 
@@ -129,6 +120,9 @@ public sealed class MessageGenerator : IIncrementalGenerator
             }
         }
 
+        foreach (INamedTypeSymbol e in fieldEnums.Values)
+            EmitEnum(e, ref index, body, calls, arrays);
+
         foreach (KeyValuePair<string, string> array in arrays)
             calls.Append("            RegisterArray(").Append(array.Value).Append(");\n");
 
@@ -144,8 +138,36 @@ public sealed class MessageGenerator : IIncrementalGenerator
         ctx.AddSource("MessageCatalog.g.cs", SourceText.From(source.ToString(), Encoding.UTF8));
     }
 
+    private static void EmitEnum(INamedTypeSymbol type, ref int index, StringBuilder body, StringBuilder calls,
+                                 SortedDictionary<string, string> arrays)
+    {
+        var names = new StringBuilder();
+        var values = new StringBuilder();
+        foreach (IFieldSymbol member in type.GetMembers().OfType<IFieldSymbol>().Where(m => m.IsConst && m.HasConstantValue))
+        {
+            names.Append('"').Append(member.Name).Append("\", ");
+            values.Append(System.Convert.ToInt64(member.ConstantValue)).Append("L, ");
+        }
+        string boxed = "            global::SharpOS.Std.Pipes.MessageCatalog.RegisterEnum(\"" + FullName(type) + "\", (object)default("
+                       + Global(type) + "), \"" + TypeName(type) + "\", new string[] { " + names + "}, new long[] { " + values + "});\n";
+        string enumMethod = "Register_" + index++;
+        body.Append("        private static void ").Append(enumMethod).Append("()\n        {\n").Append(boxed).Append("        }\n\n");
+        calls.Append("            ").Append(enumMethod).Append("();\n");
+        arrays[ArrayElementName(type)] = ArrayRegistration(type);
+    }
+
+    // An enum the catalog code can name: no private or protected type on the way to it.
+    private static bool Reachable(ITypeSymbol t)
+    {
+        for (ITypeSymbol s = t; s != null; s = s.ContainingType)
+            if (s.DeclaredAccessibility == Accessibility.Private || s.DeclaredAccessibility == Accessibility.Protected
+                || s.DeclaredAccessibility == Accessibility.ProtectedAndInternal)
+                return false;
+        return true;
+    }
+
     private static bool CheckField(SourceProductionContext ctx, INamedTypeSymbol owner, IFieldSymbol f, bool partial,
-                                   SortedDictionary<string, string> arrays)
+                                   SortedDictionary<string, string> arrays, SortedDictionary<string, INamedTypeSymbol> enums)
     {
         Location where = f.Locations.FirstOrDefault() ?? owner.Locations.FirstOrDefault();
         string fieldName = f.AssociatedSymbol?.Name ?? f.Name;
@@ -160,11 +182,12 @@ public sealed class MessageGenerator : IIncrementalGenerator
             ctx.ReportDiagnostic(Diagnostic.Create(Unreachable, where, fieldName, FullName(owner)));
             return false;
         }
-        return CheckType(ctx, owner, fieldName, f.Type, where, arrays);
+        return CheckType(ctx, owner, fieldName, f.Type, where, arrays, enums);
     }
 
     private static bool CheckType(SourceProductionContext ctx, INamedTypeSymbol owner, string fieldName, ITypeSymbol t,
-                                  Location where, SortedDictionary<string, string> arrays)
+                                  Location where, SortedDictionary<string, string> arrays,
+                                  SortedDictionary<string, INamedTypeSymbol> enums)
     {
         if (t.TypeKind == TypeKind.Pointer || t.TypeKind == TypeKind.FunctionPointer)
         {
@@ -178,7 +201,7 @@ public sealed class MessageGenerator : IIncrementalGenerator
         }
         if (t is IArrayTypeSymbol array)
         {
-            if (!CheckType(ctx, owner, fieldName, array.ElementType, where, arrays))
+            if (!CheckType(ctx, owner, fieldName, array.ElementType, where, arrays, enums))
                 return false;
             if (array.Rank == 1 && !IsBuiltinArray(array))
                 arrays[ArrayElementName(array.ElementType)] = ArrayRegistration(array.ElementType);
@@ -189,6 +212,8 @@ public sealed class MessageGenerator : IIncrementalGenerator
             ctx.ReportDiagnostic(Diagnostic.Create(Pointer, where, fieldName, FullName(owner)));
             return false;
         }
+        if (t.TypeKind == TypeKind.Enum && t is INamedTypeSymbol e && !HasMessage(e) && Reachable(e))
+            enums[FullName(e)] = e;
         if (IsPrimitive(t) || t.TypeKind == TypeKind.Enum || t.SpecialType == SpecialType.System_String
             || t.SpecialType == SpecialType.System_Object || t.TypeKind == TypeKind.Interface)
             return true;

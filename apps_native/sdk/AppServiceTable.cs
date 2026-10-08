@@ -11,6 +11,7 @@
         Unsupported = 6,
         DeviceError = 7,
         LimitReached = 8,
+        Busy = 9,
     }
 
     internal unsafe struct AppServiceTable
@@ -258,6 +259,29 @@
         public ulong HeapBudget;
         public ulong HeapCommitAddress;
         public ulong HeapReleaseAddress;
+
+        // Open files (step197): int FileOpen(byte* asciiPath, int mode, int*
+        // handle) — mode 0 read, 1 write (created or cut), 2 append; int
+        // FileRead(int handle, byte* dst, int cap, int* got); int
+        // FileWrite(int handle, byte* src, int length); int FileClose(int
+        // handle). Zero: an older kernel.
+        public ulong FileOpenAddress;
+        public ulong FileReadAddress;
+        public ulong FileWriteAddress;
+        public ulong FileCloseAddress;
+
+        // void SetExceptionExitCode(int (*code)(nint exception)) (step197):
+        // the exit code for an unhandled exception, asked of the app; 0 the
+        // default (134), 141 a broken standard end — the process ends without
+        // a report.
+        public ulong SetExceptionExitCodeAddress;
+
+        // Settings for the app's own start (step197), bits; 0 from an older
+        // kernel. SettingAnnounceBuild: print "[app] NAME build ID" — on for
+        // the autorun battery, whose log needs it; off at a prompt.
+        public ulong Settings;
+
+        public const ulong SettingAnnounceBuild = 1;
     }
 
     /// <summary>

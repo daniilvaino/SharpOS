@@ -272,6 +272,7 @@ namespace OS.Hal
                         case Ps2Keyboard.KeyKind.Down: scanCode = 0x02; break;
                         case Ps2Keyboard.KeyKind.Right: scanCode = 0x03; break;
                         case Ps2Keyboard.KeyKind.Left: scanCode = 0x04; break;
+                        default: scanCode = NavigationScanCode(kind); break;
                     }
                 }
 
@@ -279,6 +280,23 @@ namespace OS.Hal
             }
 
             return TryReadKey(out unicodeChar, out scanCode);
+        }
+
+        // The rest of the navigation cluster in UEFI scan codes, as the
+        // arrows above (EFI_SIMPLE_TEXT_INPUT: Home 5, End 6, Insert 7,
+        // Delete 8, PageUp 9, PageDown 0x0A); 0 for anything else.
+        private static ushort NavigationScanCode(Ps2Keyboard.KeyKind kind)
+        {
+            switch (kind)
+            {
+                case Ps2Keyboard.KeyKind.Home: return 0x05;
+                case Ps2Keyboard.KeyKind.End: return 0x06;
+                case Ps2Keyboard.KeyKind.Insert: return 0x07;
+                case Ps2Keyboard.KeyKind.Delete: return 0x08;
+                case Ps2Keyboard.KeyKind.PageUp: return 0x09;
+                case Ps2Keyboard.KeyKind.PageDown: return 0x0A;
+                default: return 0;
+            }
         }
 
         public static KeyboardReadStatus TryReadKey(out ushort unicodeChar, out ushort scanCode)
@@ -294,7 +312,8 @@ namespace OS.Hal
             {
                 if (!ScancodeSource.TryReadScancode(out byte psc))
                     return KeyboardReadStatus.NoKey;
-                switch (Ps2Keyboard.Decode(psc, out char pch, out _))
+                Ps2Keyboard.KeyKind kind = Ps2Keyboard.Decode(psc, out char pch, out _);
+                switch (kind)
                 {
                     case Ps2Keyboard.KeyKind.Char:
                         unicodeChar = pch; return KeyboardReadStatus.KeyAvailable;
@@ -313,7 +332,9 @@ namespace OS.Hal
                     case Ps2Keyboard.KeyKind.Left:
                         scanCode = 0x04; return KeyboardReadStatus.KeyAvailable;
                     default:
-                        return KeyboardReadStatus.NoKey;     // Control/None
+                        scanCode = NavigationScanCode(kind);
+                        return scanCode != 0 ? KeyboardReadStatus.KeyAvailable
+                                             : KeyboardReadStatus.NoKey;     // Control/None
                 }
             }
 

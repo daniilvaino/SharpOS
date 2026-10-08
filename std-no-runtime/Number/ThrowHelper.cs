@@ -22,6 +22,18 @@ namespace System
         }
 
         [DoesNotReturn]
+        internal static void ThrowArgumentOutOfRangeException_PrecisionTooLarge()
+        {
+            throw new ArgumentOutOfRangeException("precision", SR.Format(SR.Argument_PrecisionTooLarge, System.Buffers.StandardFormat.MaxPrecision));
+        }
+
+        [DoesNotReturn]
+        internal static void ThrowArgumentOutOfRangeException_SymbolDoesNotFit()
+        {
+            throw new ArgumentOutOfRangeException("symbol", SR.Argument_BadFormatSpecifier);
+        }
+
+        [DoesNotReturn]
         internal static void ThrowFormatException_BadFormatSpecifier()
         {
             throw new FormatException(SR.Argument_BadFormatSpecifier);

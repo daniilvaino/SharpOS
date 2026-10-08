@@ -188,6 +188,12 @@
                 ((delegate* unmanaged<void*, void>)(nint)s_services->SetHwExceptionFactoryAddress)(
                     (void*)(delegate* unmanaged<int, nint>)&CreateHardwareException);
 
+            // And gives an unhandled one its exit code (step197): a broken
+            // standard end ends the program quietly with 141.
+            if (s_services->SetExceptionExitCodeAddress != 0)
+                ((delegate* unmanaged<void*, void>)(nint)s_services->SetExceptionExitCodeAddress)(
+                    (void*)(delegate* unmanaged<nint, int>)&ExitCodeForException);
+
             // And names them for the kernel's unhandled-exception report.
             if (s_services->SetExceptionNamerAddress != 0)
                 ((delegate* unmanaged<void*, void>)(nint)s_services->SetExceptionNamerAddress)(
@@ -198,12 +204,18 @@
             // over the screen. The kernel prints its own id in the banner; an
             // app built from a different tree used to be indistinguishable
             // from one built with it, and on 2026-09-24 that cost an evening.
+            // Only when the kernel asks (step197): the autorun battery does, a
+            // prompt does not — `buildinfo on` in the shell turns it on. Dim:
+            // on the screen it should not compete with what the program prints.
             Process.Mark(0);
-            AppHost.WriteString("[app] ");
-            AppHost.WriteString(AppBuildInfo.Name);
-            AppHost.WriteString(" build ");
-            AppHost.WriteString(AppBuildInfo.Id);
-            AppHost.WriteChar('\n');
+            if ((s_services->Settings & AppServiceTable.SettingAnnounceBuild) != 0)
+            {
+                AppHost.WriteString("\u001b[90m[app] ");
+                AppHost.WriteString(AppBuildInfo.Name);
+                AppHost.WriteString(" build ");
+                AppHost.WriteString(AppBuildInfo.Id);
+                AppHost.WriteString("\u001b[0m\n");
+            }
             Process.Mark(1);
         }
 
@@ -253,6 +265,30 @@
                              : kind == 3 ? new SharpOS.Std.Pipes.RegionReferenceException()
                              : new System.AccessViolationException();
             return System.Runtime.CompilerServices.Unsafe.As<object, nint>(ref exception);
+        }
+
+        // Asked by the kernel when an exception ends this program. A broken
+        // standard end is 141 and nothing said; anything else is told on the
+        // error stream in one line — program, type, message — because the
+        // kernel's own report (frames, addresses) goes to its log, and the
+        // screen otherwise shows only "exited with 134". Nothing allocated:
+        // the pieces are written one by one.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int ExitCodeForException(nint exception)
+        {
+            object ex = System.Runtime.CompilerServices.Unsafe.As<nint, object>(ref exception);
+            if (ex is SharpOS.Std.Pipes.PipeException pipe && pipe.IsStandardEndBroken) return 141;
+            if (ex is System.Exception e)
+            {
+                AppHost.WriteError("\u001b[31m");
+                AppHost.WriteError(AppBuildInfo.Name);
+                AppHost.WriteError(": ");
+                AppHost.WriteError(SharpOS.Std.Runtime.ExceptionNames.NameOf(e));
+                AppHost.WriteError(": ");
+                AppHost.WriteError(e.Message);
+                AppHost.WriteError("\u001b[0m\n");
+            }
+            return 0;
         }
 
         /// <summary>

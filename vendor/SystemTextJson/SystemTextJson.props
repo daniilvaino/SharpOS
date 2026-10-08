@@ -1,0 +1,22 @@
+<Project>
+
+  <!-- System.Text.Json's Utf8JsonReader / Utf8JsonWriter as a compile-in module
+       for SharpOS apps. What is taken and what is cut, and why: PROVENANCE.md.
+
+       Sources, not a package: apps are their own system module (IlcSystemModule
+       = the app), so a compiled System.Text.Json.dll would have no CoreLib to
+       bind against. The list lives here so app csprojs cannot drift apart.
+
+       Needs from std (std-no-runtime/Std.props, every app has it): IBufferWriter,
+       ArrayBufferWriter, OperationStatus, StandardFormat, Utf8Parser,
+       Utf8Formatter, Base64, HexConverter, Number.NumberToFloatingPointBits. -->
+
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Common\*.cs" Link="vendor\SystemTextJson\Common\%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)src\System\Text\Json\*.cs" Link="vendor\SystemTextJson\%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)src\System\Text\Json\Document\*.cs" Link="vendor\SystemTextJson\Document\%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)src\System\Text\Json\Reader\*.cs" Link="vendor\SystemTextJson\Reader\%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)src\System\Text\Json\Writer\*.cs" Link="vendor\SystemTextJson\Writer\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

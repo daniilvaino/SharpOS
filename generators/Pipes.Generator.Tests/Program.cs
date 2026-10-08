@@ -332,6 +332,9 @@ class C { Region<Node> M(PipeReader<Node> p) { var r = p.Receive(); return r; } 
 [Message] public enum Shade { Pale, Deep }
 [Message] public struct Pair { public string Name; public int X; }
 [Message] public sealed partial class G { private int hidden; public Shade S; public Pair[] Pairs; public Sample.Node[] Nodes; public string[] Names; public int[,] Grid; public object Any; public int Hidden => hidden; }");
+        Generate("generator: enums of fields without [Message], a private nested one skipped", new string[0], @"
+public enum Tone { Low = 1, High = 40 }
+[Message] public sealed partial class G { public Tone T; public Tone[] Tones; private Secret s; private enum Secret { A } }");
 
         Console.WriteLine(s_failed == 0 ? "ALL PASSED" : s_failed + " FAILED");
         return s_failed == 0 ? 0 : 1;

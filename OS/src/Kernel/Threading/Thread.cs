@@ -239,6 +239,10 @@
         // the depth is the thread's, not the machine's.
         public uint SavedPreemptionDepth;
 
+        // The exit code its app gave the unhandled exception it is leaving
+        // with (step197); 0: the default.
+        public int UnhandledExitCode;
+
         // Switched out by a deferred tick (Preemption.TakeDeferred): the
         // collectors scan its stack conservatively, as for a preempted one.
         public bool ParkedAtDeferredTick;

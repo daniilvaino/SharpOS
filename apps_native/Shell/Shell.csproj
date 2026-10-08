@@ -16,9 +16,14 @@
        module, so a compiled assembly has no CoreLib to bind against. -->
   <Import Project="..\..\vendor\ShellSyntaxTree\ShellSyntaxTree.props" />
 
+  <!-- The prompt's line editor; the screen adapter is ReadLineConsole.cs. -->
+  <Import Project="..\..\vendor\ReadLine\ReadLine.props" />
+
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="Executor.cs" />
     <Compile Include="LineReader.cs" />
+    <Compile Include="ReadLineConsole.cs" />
+    <Compile Include="Completion.cs" />
   </ItemGroup>
 </Project>

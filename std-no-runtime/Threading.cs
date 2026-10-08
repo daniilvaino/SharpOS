@@ -170,6 +170,11 @@ namespace System
         // AppendLine() and similar paths read this.
         public static string NewLine => "\r\n";
 
+        // x64 only, kernel and apps alike.
+        public static bool Is64BitProcess => true;
+
+        public static bool Is64BitOperatingSystem => true;
+
         /// <summary>
         /// Always the root. There is no per-process current directory here:
         /// the file system has one namespace and nothing tracks a cursor into

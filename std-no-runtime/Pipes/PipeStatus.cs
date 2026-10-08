@@ -54,6 +54,25 @@ namespace SharpOS.Std.Pipes
         {
             Status = status;
         }
+
+        internal PipeException(PipeStatus status, string message, int handle)
+            : base(message)
+        {
+            Status = status;
+            Handle = handle;
+        }
+
+        /// <summary>The transport handle of the end that failed; 0 when not known.</summary>
+        internal int Handle { get; }
+
+        /// <summary>
+        /// The other end of the standard input or output went away without
+        /// closing (step197): a program that leaves this unhandled ends quietly
+        /// with 141, as a Unix program does on SIGPIPE.
+        /// </summary>
+        public bool IsStandardEndBroken
+            => Status == PipeStatus.Broken && Handle != 0
+               && (Handle == PipeTransport.StandardEnd(0) || Handle == PipeTransport.StandardEnd(1));
     }
 
     /// <summary>Which end of a pipe.</summary>

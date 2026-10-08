@@ -28,4 +28,14 @@ namespace System.IO
 
         public string FileName { get; }
     }
+
+    // Data in a stream that is not what the reader can take (step197: a byte
+    // stream over a pipe that received an object). Not an IOException, as in
+    // BCL; derives from Exception — std has no SystemException.
+    public sealed class InvalidDataException : Exception
+    {
+        public InvalidDataException() : base("Found invalid data while decoding.") { }
+        public InvalidDataException(string message) : base(message) { }
+        public InvalidDataException(string message, Exception innerException) : base(message, innerException) { }
+    }
 }

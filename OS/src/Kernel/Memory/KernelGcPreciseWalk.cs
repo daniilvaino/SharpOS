@@ -696,18 +696,21 @@ namespace OS.Kernel.Memory
                     // knows which image a record came from — it just was not being
                     // asked.
                     byte* imageBase = CoffRuntimeFunctionTable.ImageBaseForRecord(r.RuntimeFunction);
+                    bool calledFunclet = false;
                     if (imageBase != null)
                     {
-                        ulong establisher = 0;
-                        void* handlerData = null;
-                        SehUnwind.VirtualUnwind(
-                            0,
-                            (ulong)imageBase,
-                            ctx->Rip,
-                            (OS.PAL.SharpOSHost.RuntimeFunction*)r.RuntimeFunction,
-                            ctx,
-                            &handlerData,
-                            &establisher);
+                        // A funclet its own method called on the normal path
+                        // (a finally on leaving a try): the walk goes on from
+                        // its own unwind, into the parent's body, and the
+                        // parent is walked at its call. The root's codes,
+                        // applied to a funclet, step through the frame pointer
+                        // to the parent's caller — the parent frame and the
+                        // registers it held were never walked (step197: an
+                        // array two frames below a pipeline waited for in a
+                        // foreach's finally was swept under --gc-stress).
+                        fixed (Context* own = &s_funcletUnwound)
+                            calledFunclet = TryUnwindCalledFunclet(rip, imageBase, ctx, own);
+                        Unwind(imageBase, r.RuntimeFunction, ctx);
                     }
 
                     // A frame with no slot table is stepped, not marked. Its
@@ -732,8 +735,52 @@ namespace OS.Kernel.Memory
                               frame, LastRootsMarked - rootsBefore);
 
                     if (imageBase == null) return;
+
+                    // The frame is reported as before (its slots against the
+                    // parent's caller SP, which the root's unwind gives); the
+                    // walk itself continues below the funclet, not below its parent.
+                    if (calledFunclet)
+                        fixed (Context* own = &s_funcletUnwound)
+                            *ctx = *own;
                 }
             }
+        }
+
+        private static Context s_funcletUnwound;
+
+        private static void Unwind(byte* imageBase, void* runtimeFunction, Context* ctx)
+        {
+            ulong establisher = 0;
+            void* handlerData = null;
+            SehUnwind.VirtualUnwind(
+                0,
+                (ulong)imageBase,
+                ctx->Rip,
+                (OS.PAL.SharpOSHost.RuntimeFunction*)runtimeFunction,
+                ctx,
+                &handlerData,
+                &establisher);
+        }
+
+        // Whether the frame at ctx is a funclet whose own unwind returns into
+        // the body of the same method; if so, that unwound context is in `own`.
+        // Mirrors StackFrameIteratorOps.TryUnwindCalledFunclet (EH).
+        private static bool TryUnwindCalledFunclet(byte* rip, byte* imageBase, Context* ctx, Context* own)
+        {
+            if (!CoffMethodLookup.TryFindMethod(rip, out CoffMethodLookup.MethodInfo info))
+                return false;
+            if ((info.CurrentBlockFlags & CoffMethodLookup.UBF_FUNC_KIND_MASK) == CoffMethodLookup.UBF_FUNC_KIND_ROOT)
+                return false;
+            byte* unwindInfo = info.ImageBase + info.CurrentRuntimeFunction->UnwindInfoAddress;
+            if ((unwindInfo[0] >> 3) != 0) return false;   // chained or handler flags: not a plain funclet prolog
+            *own = *ctx;
+            Unwind(imageBase, info.CurrentRuntimeFunction, own);
+            if (!CoffMethodLookup.TryFindMethod((byte*)own->Rip, out CoffMethodLookup.MethodInfo caller))
+                return false;
+            if ((caller.CurrentBlockFlags & CoffMethodLookup.UBF_FUNC_KIND_MASK) != CoffMethodLookup.UBF_FUNC_KIND_ROOT)
+                return false;
+            return caller.ImageBase + caller.RootRuntimeFunction->BeginAddress
+                   == info.ImageBase + info.RootRuntimeFunction->BeginAddress;
         }
 
         // AMD64 volatile registers in GcInfo numbering: rax, rcx, rdx, r8-r11.

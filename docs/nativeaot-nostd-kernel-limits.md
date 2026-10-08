@@ -547,7 +547,7 @@ done/step141.md).
 | Zero-init on allocation | **Починили** в `GcHeap.AllocateRaw` (step 31). До этого был silent bug |
 | `new string(char[])` / `(char[], int, int)` | Работает (step 133). Были placeholder-ctor'ы без парного `Ctor`-метода → ILC codegen падал `Expected method 'Ctor' not found on type 'string'`. Добавлены `String.Ctor(char[])` / `Ctor(char[],int,int)` (FastAllocateString + fixed-fill), куда ILC редиректит `newobj`. Первый потребитель — `System.Text.Encoding` |
 | `String.Trim/TrimStart/TrimEnd(char)` + `params char[]` | Работает (step 133). Раньше был только parameterless overload |
-| `System.Text.Encoding` (`ASCII`/`Unicode`/`BigEndianUnicode`/`UTF8`/`Latin1`) | **Partial** (step 133, `std/.../Text/Encoding.cs`). Есть `GetString(ReadOnlySpan<byte>/byte[])` + `GetBytes(string)` + `GetByteCount`. Вырезано: Encoder/Decoder-fallback (invalid → `?`/U+FFFD, не throw), `EncodingProvider`/`GetEncoding(name)`/code-page registry, preamble/BOM, streaming `GetEncoder`/`GetDecoder`. Static-факторки (`Encoding.ASCII` и пр.) — factory property (свежий инстанс на вызов, stateless), НЕ кешированное static-поле (cctor-trap §1) |
+| `System.Text.Encoding` (`ASCII`/`Unicode`/`BigEndianUnicode`/`UTF8`/`Latin1`) | **Partial** (step 133, `std/.../Text/Encoding.cs`). Есть `GetString(ReadOnlySpan<byte>/byte[])` + `GetBytes(string)` + `GetByteCount`. Вырезано: Encoder/Decoder-fallback (invalid → `?`/U+FFFD, не throw; исключение — строгий `UTF8Encoding(…, throwOnInvalidBytes: true)`: бросает `DecoderFallbackException`/`EncoderFallbackException`, как BCL), `EncodingProvider`/`GetEncoding(name)`/code-page registry, preamble/BOM, streaming `GetEncoder`/`GetDecoder`. Static-факторки (`Encoding.ASCII` и пр.) — factory property (свежий инстанс на вызов, stateless), НЕ кешированное static-поле (cctor-trap §1) |
 | `Dictionary<K,V>` порядок перечисления | Порядок **вставки**, как в BCL (step 164). До этого хранилищем был `LowLevelDictionary` — цепочки в корзинах, перечисление в порядке хеша; `TreeView` из Terminal.Gui рисует корневые узлы в порядке перечислителя, и отсортированный список выходил перемешанным. Порт хранилища из dotnet/runtime v8.0: корзины индексов над плотным массивом записей, знаковое кодирование free-list, пересборка цепочек при росте (`Bcl/Dictionary.Storage.cs`) |
 | `System.Runtime.Intrinsics.Vector128/256` | **Работает** (step 165). Порт из dotnet/runtime v8.0 в наш std; ILC узнаёт интринсики **по пространству имён и имени типа**, поэтому это единственное место, где правило именования уступает — имя и есть механизм. Три условия, каждое стоило прогона: `[Intrinsic]` обязан висеть и на ТИПЕ (иначе структура раскладывается как два `ulong`), сигнатуры обязаны совпадать с оригиналом дословно (перегрузка под `ushort` там, где в CoreLib `Equals<T>`, никогда не станет инструкцией), и ILC подменяет каждый член отдельно (операторы `-`/`~` без атрибута остались managed). Запасные пути сравнений/вычитания ОТКАЗЫВАЮТ, а не считают: не зная знаковости элемента, они бы гадали. `Vector256.IsHardwareAccelerated` = false — AVX не в целевом наборе, состояние регистров через переключение контекста не сохраняется |
 | `ArrayPool<T>` | **Partial по скорости, полный по контракту** (step 165). Не хранит ничего: `Rent` выделяет новый массив, `Return` отпускает. Контракт это позволяет (`Rent` обязан вернуть массив НЕ МЕНЬШЕ запрошенного, тождество не обещано), поэтому имя каноническое. Потеряна ровно та скорость, ради которой тип существует |
@@ -559,6 +559,7 @@ done/step141.md).
 | `char.IsBetween` / `IsAscii*` (.NET 7 API) | Работает (step 165): `IsBetween`, `IsAsciiDigit`, `IsAsciiLetter`, `IsAsciiLetterOrDigit`, `IsAsciiHexDigit`, `IsAscii` |
 | `IsExternalInit`, `SkipLocalsInitAttribute` | Работают (step 165). Типы-маркеры, реализовывать нечего — под каноническими именами без оговорок |
 | Разбор XML | **Работает** (step 165, `vendor/TurboXml`, BSD-2-Clause). SAX: обработчик — структура, значения приходят спанами, аллокаций нет. Правок в библиотеку 176 строк, из них 145 — изъятия (потоковые перегрузки, тела методов по умолчанию); вырезов SIMD ноль. Потребитель — чтение манифеста приложения из `RT_MANIFEST` |
+| JSON: `Utf8JsonReader` / `Utf8JsonWriter` | 🟡 (`vendor/SystemTextJson`, MIT, из System.Text.Json форка .NET 10; проверка — `apps_native/JsonTest`, 42/42 под QEMU, step197). Чтение спана целиком и кусками (`isFinalBlock: false` + `JsonReaderState`), запись в `IBufferWriter<byte>`/`Stream`, `Indented`. Вырезано: `ReadOnlySequence`-вход, `JavaScriptEncoder` (экранирование всегда как у `JavaScriptEncoder.Default` — встроено), `decimal`/`DateTime(Offset)`/`Guid`, async-члены писателя, Raw/Segment/Comment-запись; сериализатора, `JsonDocument`, `JsonNode` нет. Подробно — `vendor/SystemTextJson/PROVENANCE.md` |
 | `List<T>.ToArray()` | Работает (step 135, instance-метод как в BCL). Раньше не было → `list.ToArray()` в vendored-коде без `using System.Linq` не резолвился. Instance-метод приоритетнее LINQ-extension |
 | `System.Linq` LINQ-to-objects | **Partial** (step 134, `std/.../Linq/Enumerable.cs`). Lazy yield-операторы (Where/Select/SelectMany/Skip/Take/Concat/Distinct/Reverse/Cast/OfType/OrderBy) + материализующие (ToArray/ToList/ToDictionary/Count/Any/All/First/Last/Single/ElementAt/Contains/Aggregate/Sum/Min/Max/Average). OrderBy — стабильный merge-sort. **Source ОБЯЗАН быть `List<T>`/`IEnumerable<T>`, НЕ голый массив** (§4 array-IEnumerable). Deferred: ThenBy/`IOrderedEnumerable`, GroupBy, Join, Zip, Union/Intersect/Except, nullable-numeric aggregates. Generic yield-итераторы (`Where<T>`/`Select<T,R>`) РАБОТАЮТ |
 
@@ -650,8 +651,8 @@ IST1); куча приложения не в образе — страницы �
 |---|---|---|
 | `new object/int[]/string(char[])`, string concat/eq/PadRight, `List<T>` add/index/count/ToArray, `Dictionary` add/count/missing-key | ✅ | Прямые вызовы + GC |
 | `List<T>.Contains`, `Dictionary.TryGetValue`, `EqualityComparer<int>.Default.Equals` | ✅ (step139) | `DefaultComparer.Equals` → `x is IEquatable<T>` (isinst) + `eq.Equals(y)` (dispatch) через shared kernel-мост |
-| `throw`/`catch`, `try/finally`, finally-on-unwind, catch-by-base, `e.Message`, multi-catch | ✅ (step140) | app `throw` → kernel `RhpThrowEx` (handoff) → `DispatchEx` идёт по кадрам аппы через её `.pdata` (multi-image function-table) → апп catch/finally funclet |
-| `GC.Collect` при нескольких потоках | 🟡 (step169) | `AppGC` берёт у ядра обход корней: стек собирающего потока, стеки остальных (`KernelGC.MarkOtherThreadStacks`) и сквозь переходники служб (`TryUnwindServiceThunk`) — спящий поток стоит внутри `Sleep`. До step169 объект, живой только у другого потока, освобождался. AotTests «other thread's stack roots survive collect». **step175:** обход читал только прерываемые диапазоны `GcInfo`, а таблицу точек безопасности пропускал не читая — кадр на адресе возврата (то есть почти любой кадр обхода) объявлялся неразметимым, и его локальные ссылки подметались живыми. Добавлены `FindSafePoint` + разбор набора живых слотов (косвенная таблица с RLE и простая битовая карта) и сдвиг смещения на −1 внутрь инструкции `call`. Касается обоих сборщиков — обходчик общий. **step189:** ещё четыре ошибки корней (стресс труб): консервативный внутренний указатель принимался за начало объекта (теперь карта начал объектов в сегменте); стековые слоты декодировались не по стоку (дельта знаковая, флаг Untracked до выбора); живость полностью прерываемых методов считалась неверно — задача пула подметалась на ходу; рабочие регистры неактивных кадров шли в корни. **step190:** исключения в диспетчеризации (объект и кадр аппаратного сбоя) — корни каждого потока (`MarkExceptionChain`). **Ограничение (почему 🟡):** один процессор — «остановка мира» есть подавление вытеснения на всю сборку (пауза для всех потоков; на SMP нужны точки безопасности или IPI); вытесненный поток сканируется консервативно (лишнее удерживается); обходятся потоки всех программ |
+| `throw`/`catch`, `try/finally`, finally-on-unwind, catch-by-base, `e.Message`, multi-catch | ✅ (step140) | app `throw` → kernel `RhpThrowEx` (handoff) → `DispatchEx` идёт по кадрам аппы через её `.pdata` (multi-image function-table) → апп catch/finally funclet. **step197:** throw из finally, вызванного на обычном пути (выход из `foreach`/`using`), возобновлял catch того же метода с кадром фанклета — итератор разматывал фанклет по unwind info корня; теперь по своей, клаузы родителя до фанклета пропускаются (DATATEST 12–15) |
+| `GC.Collect` при нескольких потоках | 🟡 (step169) | `AppGC` берёт у ядра обход корней: стек собирающего потока, стеки остальных (`KernelGC.MarkOtherThreadStacks`) и сквозь переходники служб (`TryUnwindServiceThunk`) — спящий поток стоит внутри `Sleep`. До step169 объект, живой только у другого потока, освобождался. AotTests «other thread's stack roots survive collect». **step175:** обход читал только прерываемые диапазоны `GcInfo`, а таблицу точек безопасности пропускал не читая — кадр на адресе возврата (то есть почти любой кадр обхода) объявлялся неразметимым, и его локальные ссылки подметались живыми. Добавлены `FindSafePoint` + разбор набора живых слотов (косвенная таблица с RLE и простая битовая карта) и сдвиг смещения на −1 внутрь инструкции `call`. Касается обоих сборщиков — обходчик общий. **step189:** ещё четыре ошибки корней (стресс труб): консервативный внутренний указатель принимался за начало объекта (теперь карта начал объектов в сегменте); стековые слоты декодировались не по стоку (дельта знаковая, флаг Untracked до выбора); живость полностью прерываемых методов считалась неверно — задача пула подметалась на ходу; рабочие регистры неактивных кадров шли в корни. **step190:** исключения в диспетчеризации (объект и кадр аппаратного сбоя) — корни каждого потока (`MarkExceptionChain`). **step197:** кадр finally, вызванного на обычном пути, разматывался кодами корня метода — обход перескакивал кадр родителя; теперь фанклет разматывается своей записью и родитель обходится в точке вызова (DATATEST 15 под `--gc-stress`). **Ограничение (почему 🟡):** один процессор — «остановка мира» есть подавление вытеснения на всю сборку (пауза для всех потоков; на SMP нужны точки безопасности или IPI); вытесненный поток сканируется консервативно (лишнее удерживается); обходятся потоки всех программ |
 | Большой объект в куче приложения | 🟡 (step195) | пул 64 МиБ режется на сегменты по 256 КиБ; когда он разрезан весь, объект больше ≈256 КиБ не выделяется — `OutOfMemoryException` и строка `[oom]`, хотя свободны десятки МиБ (найдено тестом графа из 100 000 объектов). Буферы регионов поэтому кусками (`Chunked<T>`) |
 | Вывод строками | ✅ (step169) | запись, кончающаяся `\n`, не рисует экран сама (перевод строки рисует не чаще 60/с, остальное — помпа или `TryReadKey`); прочие записи (кадры интерфейса) рисуют сразу. 0.43 мс на строку под QEMU, как у hosted |
 | Поток ошибок (stderr) | ✅ (step167) | `AppHost.WriteError(string)` → служба `WriteErrorAddress` → канал `AppErr` (COM4 / `last_err.log`); без службы — обычный вывод. `System.Console.Error` нет: в std нет `TextWriter` |
@@ -666,12 +667,16 @@ IST1); куча приложения не в образе — страницы �
 
 Батарея AotTests 20/20 (6 EH-кейсов). **Отложено:** `RhpRethrow` handoff (`throw;`), rich stack-trace (`AppendStackFrame` аллоцирует в kernel-heap → cross-heap ref, латентно), конкурентный throw kernel↔app (single `s_head`).
 
-**Запись файлов из приложения (pipe_plan.md, п. 7):** `FileStream` на запись,
-`File.WriteAllText/WriteAllBytes`, `StreamWriter(path)` бросают `IOException`:
-службы записи у ядра для программ нет. До этого данные молча выбрасывались, и
-сохранение игры в DOOM или состояния в Fami сообщало «сохранено». Теперь такое
-сохранение без `try` завершает программу с кодом 134 (настройки DOOM пишутся в
-`try` и переживают). **Версия ABI таблицы служб** сверяется при старте
+**Запись файлов из приложения (step197):** службы `FileOpen/Read/Write/Close`
+(FAT32: создание, обрезка, дописывание; длинные имена с псевдонимом 8.3;
+относительные пути — от рабочей папки процесса). `FileStream` на запись,
+`File.WriteAllText/WriteAllBytes/AppendAllText`, `StreamWriter(path, append)`,
+`AppFile` (SDK). Конец процесса закрывает его файлы с тем, что пришло. Писатель
+у файла один: второе открытие на запись — `IOException` (иначе цепочка одного
+из двух терялась). Жёлтое:
+удаления, переименования и папок на запись нет; имя, которое FAT не держит,
+— `IOException`. До step197 запись бросала `IOException` (служб не было).
+**Версия ABI таблицы служб** сверяется при старте
 приложения (`AppRuntime.Initialize`): несовпадение — сообщение и выход, а не
 чтение чужой формы таблицы; копия константы в SDK (`AppStartupBlock`) стояла на
 V2 и привязана к `AppServiceTable.CurrentAbiVersion` (п. 8).
@@ -748,7 +753,8 @@ V2 и привязана к `AppServiceTable.CurrentAbiVersion` (п. 8).
   catch. Путь проверен структурой с тремя ссылками (с двумя ILC копирует через
   регистры и `RhpCheckedAssignRef`).
 - **Обобщённые `[Message]`-типы не поддержаны** (SOSM006); поля-перечисления
-  описаны базовым целым типом.
+  описаны базовым целым типом, имена членов — в каталоге (с step197 и у
+  перечисления поля без своего `[Message]`; кроме private/protected вложенных).
 - **Вид и удобный слой (step192):** `View` — чтение чужого объекта по имени,
   запись значений на месте, `ToExpando`, `Into<T>` (по именам), `Pipe.Read/Write`,
   `foreach` с закрытием конца, `Regions`, `Where`, `WriteTo` (блоком, у вида —
@@ -773,6 +779,17 @@ V2 и привязана к `AppServiceTable.CurrentAbiVersion` (п. 8).
   нет выхода — печать на экран строкой вида). Писатели удобного слоя бросают
   `PipeException`. Оболочка: `a | b | c`. Только QEMU, один процессор;
   сообщение приложение → приложение ≈35 мкс под QEMU.
+- **Внешние данные (step197):** `Pipe.ReadBytes/WriteBytes` (`Stream`; `byte[]`
+  и `string` как UTF-8 + LF, куски до 64 КиБ), `ReadText/WriteText`; экран
+  печатает `byte[]` текстом, если это UTF-8 без управляющих, иначе размер и hex;
+  необработанный обрыв стандартного конца — тихий выход 141. Программы `READ`,
+  `WRITE`, `CONVERT` (`--from json|lines`, `--to json [--lines]`), оболочка
+  `> файл`/`>> файл`, код конвейера — первая слева стадия с кодом не 0 и не 141.
+  `Into<T>` из `Expando` (сужение с проверкой, строка → перечисление, `DateTime`/
+  `TimeSpan`/`Guid` разбором). `Pipe.From/To(строка)` — через `SHELL.EXE -c`,
+  `PipelineException` со стадией и кодом. Проверка — `DATATEST.EXE`. Жёлтое:
+  только QEMU; файл слева от `>` и `<` не поддержаны; JSON экранирует
+  не-ASCII (`\uXXXX`, как `JavaScriptEncoder.Default`).
 - **Порча кучи до барьера объяснена (step189)** — четыре ошибки поиска корней,
   см. §10 и `done/step189.md`; не труба.
 
@@ -1311,8 +1328,9 @@ post-EBS это развёртка. `bochs-display` + EDID.
   зовёт только `CastFrom`); `CultureData`; проверка `NativeDigits` по таблицам
   Unicode; `System.Text.Rune` в UTF-8-пути одиночного символа (кодируется
   руками, байты те же). `MemberwiseClone` / `Array.Clone` нет —
-  `NumberFormatInfo.Clone` копирует поля руками. Разбор чисел
-  (`Number.Parsing`) **не** портирован — `Parse` остался прежним, десятичным.
+  `NumberFormatInfo.Clone` копирует поля руками. Разбор целых
+  (`Number.Parsing`) **не** портирован — их `Parse` остался прежним, десятичным;
+  плавающая точка портирована (см. ниже, `double/float.Parse`).
 - **Поменялся вывод `double`/`float`:** по умолчанию кратчайшая строка,
   возвращающая то же число (`0.1+0.2` → `0.30000000000000004`, `1e20` →
   `1E+20`), а не прежние 6 знаков после точки. Неверный формат бросает
@@ -1338,6 +1356,15 @@ post-EBS это развёртка. `bochs-display` + EDID.
   `ChkstkPatcher` заменяет на `ret` вместе с `__chkstk`: защитных страниц нет.
 - Проверки: `std: format …` в `StdSurfaceProbe` (в том числе `B` и UTF-8),
   `string.Format` в `NativeAotProbe`, десять `format …` в AotTests.
+
+- **Разбор `double`/`float` — порт BCL** (для `System.Text.Json`): `Number.Parsing`
+  (половина с плавающей точкой: `NumberStyles`/`NumberFormatInfo`-сканер, NaN/Infinity)
+  и `Number.NumberToFloatingPointBits` взяты из **release/7.0** — в 8.0 они обобщены
+  по `IBinaryFloatParseAndFormatInfo<TFloat>` (generic math, его в std нет), результат
+  тот же. `double/float.Parse/TryParse` со всеми перегрузками BCL. Вокруг: `Utf8Parser`,
+  `Utf8Formatter` (поверх UTF-8-пути `Number.Formatting`), `Base64` (скалярно, без
+  Avx2/Ssse3), `StandardFormat`, `HexConverter`, `IBufferWriter<T>`/`ArrayBufferWriter<T>`,
+  `OperationStatus`, `Math.BigMul`. Целые `Parse` по-прежнему старые.
 
 ---
 

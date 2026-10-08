@@ -46,6 +46,8 @@ namespace SharpOS.Std.Pipes
         /// <summary>A line on the screen: where a message goes when there is no output to send it to.</summary>
         public static void Print(string line) => OS.Hal.Console.WriteLine(line);
 
+        public static void PrintText(string text) => OS.Hal.Console.Write(text);
+
         public static byte[] Schema(int handle, out ulong rootKey) => KernelPipes.SchemaOf(Holder, handle, out rootKey);
     }
 }

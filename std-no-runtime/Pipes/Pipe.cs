@@ -224,7 +224,10 @@ namespace SharpOS.Std.Pipes
         private PipeStatus Answer(PipeStatus status)
         {
             if (status == PipeStatus.Ok || !Throws) return status;
-            throw new PipeException(status, LastError != null ? "a message could not be sent: " + LastError : Pipe.Explain(status));
+            // The input of a pipeline started from code broke: its stage
+            // failed — the pipeline's own exception names it (step197).
+            if (status == PipeStatus.Broken) PipeClosing.Run(ref Closed);
+            throw new PipeException(status, LastError != null ? "a message could not be sent: " + LastError : Pipe.Explain(status), _handle);
         }
 
         /// <summary>
@@ -253,10 +256,8 @@ namespace SharpOS.Std.Pipes
             byte[] schema = MessageCatalog.Schema;
             s_shapes ??= RegionShapes.Parse(schema, out _);
             var raw = new RawRegion(block, length, schema, 0, s_shapes);
-            string line;
-            try { line = raw.Root.ToString(); }
+            try { ScreenText.Print(raw.Root); }
             finally { raw.Dispose(); }
-            PipeTransport.Print(line);
         }
 
         /// <summary>The transport handle; zero once closed.</summary>
@@ -362,7 +363,17 @@ namespace SharpOS.Std.Pipes
             if (_handle == 0) return;
             PipeTransport.Close(_handle);
             _handle = 0;
+            PipeClosing.Run(ref Closed);
         }
+
+        /// <summary>
+        /// Run once this end is closed (step197): the end of a pipeline
+        /// started from code (Pipe.To) waits for its stages here, and throws
+        /// when one failed.
+        /// </summary>
+        internal Action Closed;
+
+
 
         private void ThrowIfClosed()
         {
@@ -491,7 +502,11 @@ namespace SharpOS.Std.Pipes
             if (_handle == 0) return;
             PipeTransport.Close(_handle);
             _handle = 0;
+            PipeClosing.Run(ref Closed);
         }
+
+        /// <summary>Run once this end is closed (step197): a pipeline started from code (Pipe.From) is waited for here.</summary>
+        internal Action Closed;
 
         /// <summary>Messages the pipe lost: dropped before the ones received, and after the last.</summary>
         public long Dropped { get; private set; }
@@ -592,6 +607,27 @@ namespace SharpOS.Std.Pipes
             if (_handle == 0) return;
             PipeTransport.Close(_handle);
             _handle = 0;
+            PipeClosing.Run(ref Closed);
+        }
+
+        /// <summary>Run once this end is closed (step197): a pipeline started from code (Pipe.From) is waited for here.</summary>
+        internal Action Closed;
+    }
+
+    // What an end runs once it is closed (step197), at most once.
+    internal static class PipeClosing
+    {
+        // For a test: a reader at its end waits in Dispose instead of in
+        // Next, so a failed pipeline throws out of the finally of a foreach —
+        // the path that resumed a catch with the funclet's frame (step197).
+        // DataTest 15 keeps it under test; nothing else sets it.
+        internal static bool WaitInDispose;
+
+        internal static void Run(ref Action closed)
+        {
+            Action run = closed;
+            closed = null;
+            run?.Invoke();
         }
     }
 }

@@ -77,6 +77,32 @@ namespace System
         public static long   Clamp(long value, long min, long max)     => value < min ? min : (value > max ? max : value);
         public static ulong  Clamp(ulong value, ulong min, ulong max)  => value < min ? min : (value > max ? max : value);
 
+        // ---- BigMul ----
+        // BCL Math.BigMul(ulong, ulong, out ulong): the software path of dotnet/runtime
+        // Math.cs (MIT); the Bmi2.X64.MultiplyNoFlags branch is not ported (no X86 intrinsics).
+        public static ulong BigMul(ulong a, ulong b, out ulong low)
+        {
+            ulong al = (uint)a;
+            ulong ah = a >> 32;
+            ulong bl = (uint)b;
+            ulong bh = b >> 32;
+
+            ulong mull = al * bl;
+            ulong t = ah * bl + (mull >> 32);
+            ulong tl = al * bh + (uint)t;
+
+            low = tl << 32 | (uint)mull;
+
+            return ah * bh + (t >> 32) + (tl >> 32);
+        }
+
+        public static long BigMul(long a, long b, out long low)
+        {
+            ulong high = BigMul((ulong)a, (ulong)b, out ulong ulow);
+            low = (long)ulow;
+            return (long)high - ((a >> 63) & b) - ((b >> 63) & a);
+        }
+
         // ---- DivRem ----
         public static int DivRem(int a, int b, out int result)
         {

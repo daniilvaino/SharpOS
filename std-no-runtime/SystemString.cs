@@ -303,6 +303,11 @@ namespace System
             return SharpOS.Std.NoRuntime.StringQueries.StartsWith(this, value, comparisonType);
         }
 
+        // BCL (String.Comparison.cs): ordinal single-char tests.
+        public bool StartsWith(char value) => Length != 0 && this[0] == value;
+
+        public bool EndsWith(char value) => Length != 0 && this[Length - 1] == value;
+
         public bool EndsWith(string value)
         {
             return SharpOS.Std.NoRuntime.StringQueries.EndsWith(this, value);
@@ -316,6 +321,11 @@ namespace System
         public int IndexOfAny(char[] anyOf)
         {
             return SharpOS.Std.NoRuntime.StringQueries.IndexOfAny(this, anyOf);
+        }
+
+        public int LastIndexOfAny(char[] anyOf)
+        {
+            return SharpOS.Std.NoRuntime.StringQueries.LastIndexOfAny(this, anyOf);
         }
 
         public int LastIndexOf(char value, int startIndex)

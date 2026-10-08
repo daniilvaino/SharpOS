@@ -83,6 +83,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ProcessStub.cs"          Link="sdk\ProcessStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Process.cs"              Link="sdk\Process.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppFile.cs"              Link="sdk\AppFile.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PipeLines.cs"            Link="sdk\PipeLines.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Stopwatch.AppStub.cs"    Link="sdk\Stopwatch.AppStub.cs" />
 
     <!-- Internal.Runtime.CompilerHelpers.ThrowHelpers is the copy inside

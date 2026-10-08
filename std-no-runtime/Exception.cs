@@ -18,8 +18,8 @@
 //   - StackTrace formats the recorded addresses (step177); method names
 //     wait on the metadata reader, so a frame reads as an address and its
 //     offset in the image that owns it.
-//   - HelpLink / Source getters always return null (fields exist for
-//     layout / future use but ToString never reads them).
+//   - Source returns what was set, never the throwing module's name
+//     (that fallback needs reflection); ToString does not read it.
 //   - Data getter exposed as object-typed (placeholder for IDictionary
 //     once SortedList<,> can host an actual ListDictionary).
 
@@ -232,7 +232,12 @@ namespace System
             }
         }
 
-        public virtual string Source => _source;
+        // BCL: get; set; (the getter's fallback to the throwing module's name needs reflection).
+        public virtual string Source
+        {
+            get => _source;
+            set => _source = value;
+        }
 
         public virtual string HelpLink
         {

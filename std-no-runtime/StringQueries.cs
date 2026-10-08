@@ -180,6 +180,24 @@ namespace SharpOS.Std.NoRuntime
             return -1;
         }
 
+        /// <summary>Last position holding any of the given characters, or -1.</summary>
+        public static int LastIndexOfAny(string str, char[] anyOf)
+        {
+            if (str == null || anyOf == null)
+                return -1;
+
+            for (int i = str.Length - 1; i >= 0; i--)
+            {
+                char c = str[i];
+                for (int j = 0; j < anyOf.Length; j++)
+                {
+                    if (c == anyOf[j])
+                        return i;
+                }
+            }
+            return -1;
+        }
+
         /// <summary>
         /// Last position of <paramref name="value"/> at or before
         /// <paramref name="startIndex"/>, searching backwards, or -1.

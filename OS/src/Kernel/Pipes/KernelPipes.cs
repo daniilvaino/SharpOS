@@ -41,6 +41,12 @@ namespace OS.Kernel.Pipes
         private const int MaxEnds = 256;
         private const uint MaxCapacity = 4096;
 
+        // Bytes a queue may hold besides its message count (step197): the
+        // exchange arena is fixed and shared, and 4096 messages of 64 KiB —
+        // READ of a big file — outgrow all of it. A message alone in the queue
+        // always goes.
+        private const ulong MaxQueuedBytes = 4UL << 20;
+
         internal sealed class Pipe
         {
             public uint Id;
@@ -57,6 +63,7 @@ namespace OS.Kernel.Pipes
             public uint[] Dropped;
             public int Head;
             public int Count;
+            public ulong QueuedBytes;
             public uint DroppedPending;
             public ulong Sent;
             public ulong Lost;
@@ -307,7 +314,7 @@ namespace OS.Kernel.Pipes
                 while (true)
                 {
                     if (p.ReaderGone) return PipeStatus.Broken;
-                    if ((uint)p.Count < p.Capacity) break;
+                    if ((uint)p.Count < p.Capacity && (p.Count == 0 || p.QueuedBytes + length <= MaxQueuedBytes)) break;
 
                     if (holder == ExchangeHeap.OwnerKernel)
                     {
@@ -341,6 +348,7 @@ namespace OS.Kernel.Pipes
                 p.Dropped[tail] = p.DroppedPending;
                 p.DroppedPending = 0;
                 p.Count++;
+                p.QueuedBytes += length;
                 p.Sent++;
                 Bump(p);
                 return PipeStatus.Ok;
@@ -395,6 +403,7 @@ namespace OS.Kernel.Pipes
                 p.Blocks[p.Head] = 0;
                 p.Head = (p.Head + 1) % p.Blocks.Length;
                 p.Count--;
+                p.QueuedBytes -= length;
                 ExchangeHeap.SetOwner(block, holder);
                 Bump(p);
                 return PipeStatus.Ok;
@@ -550,6 +559,7 @@ namespace OS.Kernel.Pipes
                 p.ReaderEnd = -2;
                 ExchangeHeap.ReleaseOwner(p.BlockOwner);
                 p.Count = 0;
+                p.QueuedBytes = 0;
                 p.Head = 0;
             }
 
@@ -570,6 +580,7 @@ namespace OS.Kernel.Pipes
         {
             ExchangeHeap.ReleaseOwner(p.BlockOwner);
             p.Count = 0;
+            p.QueuedBytes = 0;
             if (s_livePipes > 0) s_livePipes--;
         }
 
@@ -640,6 +651,7 @@ namespace OS.Kernel.Pipes
             uint carried = p.Dropped[p.Head] + 1;
             ExchangeHeap.Free((void*)p.Blocks[p.Head]);
             p.Blocks[p.Head] = 0;
+            p.QueuedBytes -= p.Lengths[p.Head];
             p.Head = (p.Head + 1) % p.Blocks.Length;
             p.Count--;
             p.Lost++;

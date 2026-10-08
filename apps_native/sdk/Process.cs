@@ -54,6 +54,80 @@ namespace SharpOS.AppSdk
             return stats;
         }
 
+        /// <summary>
+        /// Whether programs started from now on print "[app] NAME build ID"
+        /// (step197). On for the autorun battery, off at a prompt; a kernel
+        /// setting, not this process's.
+        /// </summary>
+        public static bool AnnounceBuild
+        {
+            get => (Settings(0, 0) & AppServiceTable.SettingAnnounceBuild) != 0;
+            set => Settings(AppServiceTable.SettingAnnounceBuild, value ? AppServiceTable.SettingAnnounceBuild : 0);
+        }
+
+        // The kernel's settings for app starts: the bits in mask set to value; the settings after.
+        private static ulong Settings(ulong mask, ulong value)
+        {
+            ulong* request = stackalloc ulong[4];
+            request[0] = mask;
+            request[1] = value;
+            return Call(14, request) == AppServiceStatus.Ok ? request[2] : 0;
+        }
+
+        /// <summary>
+        /// The process's working directory (step197): where relative paths
+        /// start. Inherited from whoever started it; "\" for what the kernel
+        /// started. The shell's `cd` sets it.
+        /// </summary>
+        public static string WorkingDirectory
+        {
+            get
+            {
+                ulong* request = stackalloc ulong[4];
+                byte* buffer = stackalloc byte[260];
+                request[0] = (ulong)buffer;
+                request[1] = 260;
+                if (Call(12, request) != AppServiceStatus.Ok || request[2] > 260) return "\\";
+                var chars = new char[(int)request[2]];
+                for (int i = 0; i < chars.Length; i++) chars[i] = (char)buffer[i];
+                return chars.Length == 0 ? "\\" : new string(chars);
+            }
+            set
+            {
+                if (value == null) throw new ArgumentNullException(nameof(value));
+                byte* path = stackalloc byte[value.Length + 1];
+                for (int i = 0; i < value.Length; i++)
+                {
+                    if (value[i] > 0x7F) throw new ArgumentException("the path is not ASCII", nameof(value));
+                    path[i] = (byte)value[i];
+                }
+                path[value.Length] = 0;
+                ulong* request = stackalloc ulong[4];
+                request[0] = (ulong)path;
+                if (Call(13, request) != AppServiceStatus.Ok)
+                    throw new InvalidOperationException("the working directory cannot be set");
+            }
+        }
+
+        /// <summary>
+        /// A path as the kernel takes it: '/' turned into '\', and a relative
+        /// one joined to the working directory.
+        /// </summary>
+        public static string ResolvePath(string path)
+        {
+            if (path == null) throw new ArgumentNullException(nameof(path));
+            var built = new System.Text.StringBuilder();
+            bool absolute = path.Length > 0 && (path[0] == '\\' || path[0] == '/');
+            if (!absolute)
+            {
+                string cwd = WorkingDirectory;
+                built.Append(cwd);
+                if (cwd.Length == 0 || cwd[cwd.Length - 1] != '\\') built.Append('\\');
+            }
+            for (int i = 0; i < path.Length; i++) built.Append(path[i] == '/' ? '\\' : path[i]);
+            return built.ToString();
+        }
+
         /// <summary>Tells the kernel this process's runtime is set up: 0 before its banner, 1 after (step196).</summary>
         internal static void Mark(int which)
         {

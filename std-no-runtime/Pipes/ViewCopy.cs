@@ -402,6 +402,7 @@ namespace SharpOS.Std.Pipes
                 if (_done.TryGetValue(v.Address, out object seen)) return seen;
 
                 if (target.Own == null) throw new InvalidOperationException("Into: " + targetType + " is not in this image's catalog");
+                if (v.IsExpandoObject) return FromExpando(v, target.Own);
                 Plan plan = PlanFor(v.Shape, target.Own);
                 object copy = Allocate(plan.TargetTable, 0, false);
                 _done[v.Address] = copy;
@@ -439,6 +440,11 @@ namespace SharpOS.Std.Pipes
                 TypeKeys.Field elements = arrayType.Fields[0];
                 FieldKind kind = OwnKind(elements.Type);
                 RefTarget elementTarget = kind == FieldKind.Reference ? (target.Element ??= TargetOf(elements.Type)) : null;
+                // Elements that are objects (an object[] of boxed numbers and
+                // strings, as JSON makes) into numbers, enums or structs: each
+                // converted as a field of an Expando is (step197).
+                if (kind != FieldKind.Reference && v.Shape.Elements.Kind == FieldKind.Reference)
+                    return LooseArray(v, table, elements, targetType);
                 if (kind < FieldKind.Reference && !(v.Shape.Elements.Kind < FieldKind.Reference && Widens(v.Shape.Elements.Kind, kind)))
                     throw Mismatch(targetType, v);
 
@@ -456,6 +462,195 @@ namespace SharpOS.Std.Pipes
                     else Unsafe.AsRef<object>((void*)to) = Reference(element, elementTarget);
                 }
                 return copy;
+            }
+
+            // ---- from an Expando: by entry names, values converted (step197) ----
+
+            private object FromExpando(View v, TypeKeys.Description target)
+            {
+                if (!TypeKeys.TryTable(target.Key, out ulong table))
+                    throw new InvalidOperationException("Into: " + target.Name + " has no table here");
+                object copy = Allocate(table, 0, false);
+                _done[v.Address] = copy;
+                FillFromExpando(v, target, Address(copy));
+                return copy;
+            }
+
+            // A target's fields from the entries of the same names; an entry
+            // the target has no field for is left, a field without an entry
+            // keeps its default. `baseAddress` is where the field offsets count
+            // from (the object, or 8 before a struct's value).
+            private void FillFromExpando(View v, TypeKeys.Description target, ulong baseAddress)
+            {
+                foreach (TypeKeys.Field tf in target.Fields)
+                {
+                    if (tf.Name == "[]") continue;
+                    if (!v.TryEntry(tf.Name, out View value)) continue;
+                    Store(baseAddress + (ulong)tf.Offset, tf.Type, tf.Enum, value, target.Name, tf.Name);
+                }
+            }
+
+            private object LooseArray(View v, ulong table, TypeKeys.Field elements, string targetType)
+            {
+                int length = v.Length;
+                object copy = Allocate(table, length, true);
+                _done[v.Address] = copy;
+                ulong data = Address(copy) + (ulong)elements.Offset;
+                uint component = ObjectLayout.ComponentSizeOf(table);
+                for (int i = 0; i < length; i++)
+                    Store(data + (ulong)i * component, elements.Type, elements.Enum, v[i], targetType, "[" + i.ToString() + "]");
+                return copy;
+            }
+
+            // One value into a slot of the declared type, converted.
+            private void Store(ulong to, string type, string enumType, View value, string owner, string field)
+            {
+                FieldKind kind = OwnKind(type);
+                ViewKind has = value.Kind;
+                if (has == ViewKind.Null)
+                {
+                    if (kind == FieldKind.Reference)
+                    {
+                        Unsafe.AsRef<object>((void*)to) = null;
+                        return;
+                    }
+                    throw Cannot(owner, field, type, value, "null");
+                }
+                if (enumType != null && kind < FieldKind.Reference && has == ViewKind.String)
+                {
+                    if (!EnumMember(enumType, (string)value, out long member))
+                        throw Cannot(owner, field, enumType, value, "no member of that name");
+                    StoreInteger(to, kind, member, false, owner, field, type, value);
+                    return;
+                }
+                if (kind < FieldKind.Reference)
+                {
+                    StoreConverted(to, kind, value, owner, field, type);
+                    return;
+                }
+                if (kind == FieldKind.Struct)
+                {
+                    if (has == ViewKind.String)
+                    {
+                        string text = (string)value;
+                        if (type == "System.DateTime" && DateTime.TryParse(text, out DateTime date)) { Unsafe.AsRef<DateTime>((void*)to) = date; return; }
+                        if (type == "System.TimeSpan" && TimeSpan.TryParseConstant(text, out TimeSpan span)) { Unsafe.AsRef<TimeSpan>((void*)to) = span; return; }
+                        if (type == "System.Guid" && Guid.TryParse(text, out Guid guid)) { Unsafe.AsRef<Guid>((void*)to) = guid; return; }
+                        throw Cannot(owner, field, type, value, "not in a form it parses from");
+                    }
+                    if (value.IsExpandoObject)
+                    {
+                        TypeKeys.Description structType = Own(type);
+                        if (structType == null) throw Cannot(owner, field, type, value, "not in this image's catalog");
+                        FillFromExpando(value, structType, to - 8);
+                        return;
+                    }
+                    StoreStruct(to, type, value);
+                    return;
+                }
+                Unsafe.AsRef<object>((void*)to) = Reference(value, TargetFor(type));
+            }
+
+            // Made on first use: std is also the kernel's, where statics with
+            // initializers come late.
+            private static Dictionary<string, RefTarget> s_targets;
+
+            private static RefTarget TargetFor(string type)
+            {
+                Dictionary<string, RefTarget> map = s_targets ??= new Dictionary<string, RefTarget>();
+                lock (map)
+                {
+                    if (!map.TryGetValue(type, out RefTarget t)) map[type] = t = TargetOf(type);
+                    return t;
+                }
+            }
+
+            private static void StoreConverted(ulong to, FieldKind kind, View value, string owner, string field, string type)
+            {
+                ViewKind has = value.Kind;
+                if (kind == FieldKind.Bool)
+                {
+                    if (has != ViewKind.Bool) throw Cannot(owner, field, type, value, "not a bool");
+                    *(bool*)to = (bool)value;
+                    return;
+                }
+                if (kind == FieldKind.Char && has == ViewKind.String)
+                {
+                    string text = (string)value;
+                    if (text.Length != 1) throw Cannot(owner, field, type, value, "not one character");
+                    *(char*)to = text[0];
+                    return;
+                }
+                if (!value.IsValue || has == ViewKind.Bool) throw Cannot(owner, field, type, value, "not a number");
+                bool fromFloat = value.ValueKind == FieldKind.Single || value.ValueKind == FieldKind.Double;
+                if (kind == FieldKind.Single || kind == FieldKind.Double)
+                {
+                    double d = value.FloatValue;
+                    if (kind == FieldKind.Single) *(float*)to = (float)d;
+                    else *(double*)to = d;
+                    return;
+                }
+                if (fromFloat)
+                {
+                    // A fraction with an integral value goes into an integer field.
+                    double d = value.FloatValue;
+                    if (double.IsNaN(d) || double.IsInfinity(d) || d != Math.Floor(d))
+                        throw Cannot(owner, field, type, value, "not an integral value");
+                    if (d >= 9223372036854775808.0)
+                    {
+                        if (kind != FieldKind.UInt64 || d >= 18446744073709551616.0) throw Cannot(owner, field, type, value, "out of range");
+                        *(ulong*)to = (ulong)d;
+                        return;
+                    }
+                    if (d < -9223372036854775808.0) throw Cannot(owner, field, type, value, "out of range");
+                    StoreInteger(to, kind, (long)d, false, owner, field, type, value);
+                    return;
+                }
+                StoreInteger(to, kind, value.IntegerValue, value.ValueKind == FieldKind.UInt64, owner, field, type, value);
+            }
+
+            // An integer into a narrower slot, checked: what does not fit throws.
+            private static void StoreInteger(ulong to, FieldKind kind, long v, bool unsignedSource, string owner, string field, string type, View value)
+            {
+                bool big = unsignedSource && v < 0;     // a ulong past long.MaxValue
+                bool fits;
+                switch (kind)
+                {
+                    case FieldKind.SByte: fits = !big && v >= sbyte.MinValue && v <= sbyte.MaxValue; if (fits) *(sbyte*)to = (sbyte)v; break;
+                    case FieldKind.Byte: fits = !big && v >= 0 && v <= byte.MaxValue; if (fits) *(byte*)to = (byte)v; break;
+                    case FieldKind.Int16: fits = !big && v >= short.MinValue && v <= short.MaxValue; if (fits) *(short*)to = (short)v; break;
+                    case FieldKind.UInt16: fits = !big && v >= 0 && v <= ushort.MaxValue; if (fits) *(ushort*)to = (ushort)v; break;
+                    case FieldKind.Char: fits = !big && v >= 0 && v <= char.MaxValue; if (fits) *(char*)to = (char)v; break;
+                    case FieldKind.Int32: fits = !big && v >= int.MinValue && v <= int.MaxValue; if (fits) *(int*)to = (int)v; break;
+                    case FieldKind.UInt32: fits = !big && v >= 0 && v <= uint.MaxValue; if (fits) *(uint*)to = (uint)v; break;
+                    case FieldKind.Int64: fits = !big; if (fits) *(long*)to = v; break;
+                    case FieldKind.UInt64: fits = big || v >= 0; if (fits) *(ulong*)to = (ulong)v; break;
+                    default: fits = false; break;
+                }
+                if (!fits) throw Cannot(owner, field, type, value, "out of range");
+            }
+
+            private static bool EnumMember(string enumType, string name, out long member)
+            {
+                member = 0;
+                TypeKeys.Description d = Own(enumType);
+                if (d == null || d.EnumNames == null) return false;
+                for (int i = 0; i < d.EnumNames.Length; i++)
+                {
+                    if (d.EnumNames[i] != name) continue;
+                    member = d.EnumValues[i];
+                    return true;
+                }
+                return false;
+            }
+
+            private static Exception Cannot(string owner, string field, string type, View value, string why)
+            {
+                string shown;
+                try { shown = value.ToString(); }
+                catch (Exception) { shown = value.Kind.ToString(); }
+                return new InvalidCastException("Into<" + owner + ">: field '" + field + "' (" + type + ") cannot take "
+                                                + shown + ": " + why);
             }
 
             private void StoreStruct(ulong to, string targetType, View value)

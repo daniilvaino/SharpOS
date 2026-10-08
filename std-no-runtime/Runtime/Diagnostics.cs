@@ -26,6 +26,14 @@ namespace System.Diagnostics
         public string ConditionString { get; }
     }
 
+    // dotnet/runtime System.Private.CoreLib/src/System/Diagnostics/StackTraceHiddenAttribute.cs
+    // (MIT). A marker for stack-trace rendering; ported throw helpers carry it.
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method | AttributeTargets.Constructor | AttributeTargets.Struct, Inherited = false)]
+    public sealed class StackTraceHiddenAttribute : Attribute
+    {
+        public StackTraceHiddenAttribute() { }
+    }
+
     public static class Debug
     {
         private static int s_indentLevel;

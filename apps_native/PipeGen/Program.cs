@@ -30,7 +30,7 @@ namespace PipeApps
         {
             int n = args.Length > 0 ? int.Parse(args[0]) : 10;
             using var o = args.Length > 1 ? Pipe.Write<LogEntry>(args[1]) : Pipe.Write<LogEntry>();
-            for (int i = 0; i < n; i++) o.Copy(new LogEntry { Level = i % 5, Text = "запись " + i });
+            for (int i = 0; i < n; i++) o.Copy(new LogEntry { Level = i % 5, Text = "text " + i });
             return 0;
         }
     }

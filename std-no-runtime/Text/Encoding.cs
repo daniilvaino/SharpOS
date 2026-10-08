@@ -6,8 +6,10 @@
 // against our std without source edits. Cut relative to dotnet/runtime:
 //
 //   - EncoderFallback / DecoderFallback / *NLS state machines (invalid input
-//     is mapped to a replacement char '?' / U+FFFD, never throws / never
-//     surfaces a fallback buffer).
+//     is mapped to a replacement char '?' / U+FFFD and never surfaces a
+//     fallback buffer; the one exception is UTF8Encoding constructed with
+//     throwOnInvalidBytes: true, which throws DecoderFallbackException /
+//     EncoderFallbackException like the BCL's exception fallbacks).
 //   - EncodingProvider / EncodingInfo / code-page registry / GetEncoding(name).
 //   - Preamble/BOM handling, GetEncoder/GetDecoder streaming objects.
 //   - Clone / IsReadOnly / mutable fallback slots.
@@ -333,7 +335,10 @@ namespace System.Text
                 return true;
             }
 
-            string Throw() => throw new ArgumentException("Invalid UTF-8 byte sequence.", "bytes");
+            // BCL: the strict decoder's DecoderExceptionFallback throws DecoderFallbackException
+            // (an ArgumentException). Callers - System.Formats.Cbor, System.Text.Json - catch
+            // exactly that type to rewrap it.
+            string Throw() => throw new DecoderFallbackException("Unable to translate bytes to the target code page: invalid UTF-8 byte sequence.");
         }
 
         public override int GetByteCount(string s)
@@ -344,10 +349,24 @@ namespace System.Text
                 char c = s[i];
                 if (c < 0x80) count += 1;
                 else if (c < 0x800) count += 2;
-                else if (c >= 0xD800 && c <= 0xDBFF) { count += 4; i++; } // high surrogate + low
+                else if (IsPairAt(s, i)) { count += 4; i++; } // high surrogate + low
+                else if (c >= 0xD800 && c <= 0xDFFF) { ThrowIfStrict(c, i); count += 3; } // lone: U+FFFD
                 else count += 3;
             }
             return count;
+        }
+
+        // A high surrogate at i with a low surrogate right after it.
+        private static bool IsPairAt(string s, int i)
+            => s[i] >= 0xD800 && s[i] <= 0xDBFF && i + 1 < s.Length && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF;
+
+        // BCL: an unpaired surrogate is invalid UTF-16. The strict encoder
+        // (throwOnInvalidBytes: true -> EncoderExceptionFallback) throws
+        // EncoderFallbackException; the default one writes U+FFFD instead.
+        private void ThrowIfStrict(char c, int index)
+        {
+            if (_throwOnInvalidBytes)
+                throw new EncoderFallbackException("Unable to translate Unicode character \\u" + ((int)c).ToString("X4") + " at index " + index.ToString() + " to specified code page.");
         }
 
         public override byte[] GetBytes(string s)
@@ -366,7 +385,7 @@ namespace System.Text
                     bytes[bi++] = (byte)(0xC0 | (c >> 6));
                     bytes[bi++] = (byte)(0x80 | (c & 0x3F));
                 }
-                else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.Length)
+                else if (IsPairAt(s, i))
                 {
                     char lo = s[i + 1];
                     int cp = 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00);
@@ -378,6 +397,8 @@ namespace System.Text
                 }
                 else
                 {
+                    // An unpaired surrogate becomes U+FFFD (GetByteCount threw already in strict mode).
+                    if (c >= 0xD800 && c <= 0xDFFF) c = (char)0xFFFD;
                     bytes[bi++] = (byte)(0xE0 | (c >> 12));
                     bytes[bi++] = (byte)(0x80 | ((c >> 6) & 0x3F));
                     bytes[bi++] = (byte)(0x80 | (c & 0x3F));

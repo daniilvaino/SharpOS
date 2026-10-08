@@ -537,16 +537,24 @@ namespace AotTests
             Check("interpolation (format, alignment, span holes)",
                   $"{hexValue:X}|{negative,4}|[{holeSpan}]" == "FF|  -5|[yz]");
 
-            // File writes refuse instead of vanishing (pipe_plan.md, item 7).
-            bool textRefused = false;
-            try { System.IO.File.WriteAllText("\\aottests.txt", "x"); }
-            catch (System.IO.IOException) { textRefused = true; }
-            Check("File.WriteAllText refuses without a write service", textRefused);
+            // File writes (step197): what is written reads back; a name the
+            // FAT writer cannot store is refused, not dropped. A file of this
+            // process's own: PROCTEST runs two of these at once.
+            bool fileRoundTrip = false;
+            try
+            {
+                string mine = "\\aot" + SharpOS.AppSdk.Process.CurrentId.ToString() + ".txt";
+                System.IO.File.WriteAllText(mine, "x1");
+                System.IO.File.AppendAllText(mine, "y2");
+                fileRoundTrip = System.Text.Encoding.UTF8.GetString(System.IO.File.ReadAllBytes(mine)) == "x1y2";
+            }
+            catch (System.IO.IOException) { }
+            Check("File.WriteAllText + AppendAllText read back", fileRoundTrip);
 
             bool streamRefused = false;
-            try { new System.IO.FileStream("\\aottests.bin", System.IO.FileMode.Create, System.IO.FileAccess.Write); }
+            try { new System.IO.FileStream("\\aottests*bad.bin", System.IO.FileMode.Create, System.IO.FileAccess.Write); }
             catch (System.IO.IOException) { streamRefused = true; }
-            Check("FileStream for writing refuses without a write service", streamRefused);
+            Check("FileStream for writing refuses a name FAT cannot hold", streamRefused);
         }
 
         // Reference-array stores (pipe_plan.md, item 1). The exceptions here

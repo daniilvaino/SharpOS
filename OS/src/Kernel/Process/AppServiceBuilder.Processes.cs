@@ -44,6 +44,16 @@ namespace OS.Kernel.Process
         public const int ProcessOpMemory = 9;
         public const int ProcessOpMark = 10;
         public const int ProcessOpLifeTimes = 11;
+        public const int ProcessOpGetDirectory = 12;
+        public const int ProcessOpSetDirectory = 13;
+        // [0] bits to change, [1] their values; [2] answers the settings now.
+        public const int ProcessOpSettings = 14;
+
+        /// <summary>
+        /// AppServiceTable.Settings for every app started from now on (step197);
+        /// LauncherBoot turns the build line on for an autorun battery.
+        /// </summary>
+        internal static ulong Settings;
 
         // Where a start-and-exit goes after the start (step196), HPET ticks
         // summed over every process that ended: runnable → its first
@@ -94,6 +104,9 @@ namespace OS.Kernel.Process
         //   Memory:    out [1] pages the heaps of running processes hold, [2]
         //              pages that can still be handed out, [3] pages of the
         //              program cache. How many processes fit (step196).
+        //   GetDirectory: [0] buffer, [1] its bytes; out [2] the length of the
+        //              caller's working directory (ASCII, no NUL), written when
+        //              it fits. SetDirectory: [0] NUL-ended ASCII path (step197).
         //   Mark:      [0] 0 or 1: the caller's runtime is set up (before and
         //              after its banner). Once each.
         //   LifeTimes: out [1] processes ended, HPET ticks summed in [2] to the
@@ -116,6 +129,31 @@ namespace OS.Kernel.Process
             if (op == ProcessOpCurrentId)
             {
                 request[1] = caller;
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpGetDirectory)
+            {
+                string cwd = self?.WorkingDirectory ?? "\\";
+                request[2] = (ulong)cwd.Length;
+                if (request[0] != 0 && request[1] >= (ulong)cwd.Length)
+                    for (int i = 0; i < cwd.Length; i++) ((byte*)request[0])[i] = (byte)cwd[i];
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpSetDirectory)
+            {
+                if (self == null) return (int)AppServiceStatus.Unsupported;
+                char* path = stackalloc char[(int)MaxPathChars];
+                if (!TryReadAsciiPath(request[0], path, MaxPathChars)) return (int)AppServiceStatus.InvalidParameter;
+                self.WorkingDirectory = string.FromUtf16Z(path, (int)MaxPathChars);
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpSettings)
+            {
+                Settings = (Settings & ~request[0]) | (request[1] & request[0]);
+                request[2] = Settings;
                 return (int)AppServiceStatus.Ok;
             }
 
@@ -375,6 +413,7 @@ namespace OS.Kernel.Process
             var proc = new AppProcess
             {
                 Name = name,
+                WorkingDirectory = AppProcesses.Current?.WorkingDirectory ?? "\\",
                 LauncherId = launcherId,
                 LauncherHolds = true,
                 State = AppProcessState.Running,
@@ -580,6 +619,7 @@ namespace OS.Kernel.Process
             ProcessResources.OnAppEnded(proc.Id, proc.Failed, quiet);
             ulong e2 = Ticks();
             ReleaseHeap(proc);
+            CloseFilesOf(proc.Id);
             ulong e3 = Ticks();
 
             if (!CleanupProcessMappings(ref proc.Built, ref proc.Image))

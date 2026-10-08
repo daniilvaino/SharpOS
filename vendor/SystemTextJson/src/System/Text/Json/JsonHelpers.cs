@@ -1,0 +1,267 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
+using System.Buffers;
+using System.Buffers.Text;
+using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
+// SharpOS cut: using System.Text.Json.Nodes / System.Text.RegularExpressions (not ported).
+
+namespace System.Text.Json
+{
+    internal static partial class JsonHelpers
+    {
+        /// <summary>
+        /// Returns the unescaped span for the given reader.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ReadOnlySpan<byte> GetUnescapedSpan(this scoped ref Utf8JsonReader reader)
+        {
+            Debug.Assert(reader.TokenType is JsonTokenType.String or JsonTokenType.PropertyName);
+            ReadOnlySpan<byte> span = reader.ValueSpan; // SharpOS cut: reader.HasValueSequence ? reader.ValueSequence.ToArray() :
+            return reader.ValueIsEscaped ? JsonReaderHelper.GetUnescaped(span) : span;
+        }
+
+        /// <summary>
+        /// Attempts to perform a Read() operation and optionally checks that the full JSON value has been buffered.
+        /// The reader will be reset if the operation fails.
+        /// </summary>
+        /// <param name="reader">The reader to advance.</param>
+        /// <param name="requiresReadAhead">If reading a partial payload, read ahead to ensure that the full JSON value has been buffered.</param>
+        /// <returns>True if the reader has been buffered with all required data.</returns>
+        // AggressiveInlining used since this method is on a hot path and short. The AdvanceWithReadAhead method should not be inlined.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryAdvanceWithOptionalReadAhead(this scoped ref Utf8JsonReader reader, bool requiresReadAhead)
+        {
+            // No read-ahead necessary if we're at the final block of JSON data.
+            bool readAhead = requiresReadAhead && !reader.IsFinalBlock;
+            return readAhead ? TryAdvanceWithReadAhead(ref reader) : reader.Read();
+        }
+
+        /// <summary>
+        /// Attempts to read ahead to the next root-level JSON value, if it exists.
+        /// </summary>
+        public static bool TryAdvanceToNextRootLevelValueWithOptionalReadAhead(this scoped ref Utf8JsonReader reader, bool requiresReadAhead, out bool isAtEndOfStream)
+        {
+            Debug.Assert(reader.AllowMultipleValues, "only supported by readers that support multiple values.");
+            Debug.Assert(reader.CurrentDepth == 0, "should only invoked for top-level values.");
+
+            Utf8JsonReader checkpoint = reader;
+            if (!reader.Read())
+            {
+                // If the reader didn't return any tokens and it's the final block,
+                // then there are no other JSON values to be read.
+                isAtEndOfStream = reader.IsFinalBlock;
+                reader = checkpoint;
+                return false;
+            }
+
+            // We found another JSON value, read ahead accordingly.
+            isAtEndOfStream = false;
+            if (requiresReadAhead && !reader.IsFinalBlock)
+            {
+                // Perform full read-ahead to ensure the full JSON value has been buffered.
+                reader = checkpoint;
+                return TryAdvanceWithReadAhead(ref reader);
+            }
+
+            return true;
+        }
+
+        private static bool TryAdvanceWithReadAhead(scoped ref Utf8JsonReader reader)
+        {
+            // When we're reading ahead we always have to save the state
+            // as we don't know if the next token is a start object or array.
+            Utf8JsonReader restore = reader;
+
+            if (!reader.Read())
+            {
+                return false;
+            }
+
+            // Perform the actual read-ahead.
+            JsonTokenType tokenType = reader.TokenType;
+            if (tokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+            {
+                // Attempt to skip to make sure we have all the data we need.
+                bool complete = reader.TrySkipPartial();
+
+                // We need to restore the state in all cases as we need to be positioned back before
+                // the current token to either attempt to skip again or to actually read the value.
+                reader = restore;
+
+                if (!complete)
+                {
+                    // Couldn't read to the end of the object, exit out to get more data in the buffer.
+                    return false;
+                }
+
+                // Success, requeue the reader to the start token.
+                reader.ReadWithVerify();
+                Debug.Assert(tokenType == reader.TokenType);
+            }
+
+            return true;
+        }
+
+#if !NET
+        /// <summary>
+        /// Returns <see langword="true"/> if <paramref name="value"/> is a valid Unicode scalar
+        /// value, i.e., is in [ U+0000..U+D7FF ], inclusive; or [ U+E000..U+10FFFF ], inclusive.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsValidUnicodeScalar(uint value)
+        {
+            // By XORing the incoming value with 0xD800, surrogate code points
+            // are moved to the range [ U+0000..U+07FF ], and all valid scalar
+            // values are clustered into the single range [ U+0800..U+10FFFF ],
+            // which allows performing a single fast range check.
+
+            return IsInRangeInclusive(value ^ 0xD800U, 0x800U, 0x10FFFFU);
+        }
+#endif
+
+        /// <summary>
+        /// Returns <see langword="true"/> if <paramref name="value"/> is between
+        /// <paramref name="lowerBound"/> and <paramref name="upperBound"/>, inclusive.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsInRangeInclusive(uint value, uint lowerBound, uint upperBound)
+            => (value - lowerBound) <= (upperBound - lowerBound);
+
+        /// <summary>
+        /// Returns <see langword="true"/> if <paramref name="value"/> is between
+        /// <paramref name="lowerBound"/> and <paramref name="upperBound"/>, inclusive.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsInRangeInclusive(int value, int lowerBound, int upperBound)
+            => (uint)(value - lowerBound) <= (uint)(upperBound - lowerBound);
+
+        /// <summary>
+        /// Returns <see langword="true"/> if <paramref name="value"/> is between
+        /// <paramref name="lowerBound"/> and <paramref name="upperBound"/>, inclusive.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsInRangeInclusive(long value, long lowerBound, long upperBound)
+            => (ulong)(value - lowerBound) <= (ulong)(upperBound - lowerBound);
+
+        /// <summary>
+        /// Returns <see langword="true"/> if <paramref name="value"/> is between
+        /// <paramref name="lowerBound"/> and <paramref name="upperBound"/>, inclusive.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsInRangeInclusive(JsonTokenType value, JsonTokenType lowerBound, JsonTokenType upperBound)
+            => (value - lowerBound) <= (upperBound - lowerBound);
+
+        /// <summary>
+        /// Returns <see langword="true"/> if <paramref name="value"/> is in the range [0..9].
+        /// Otherwise, returns <see langword="false"/>.
+        /// </summary>
+        public static bool IsDigit(byte value) => (uint)(value - '0') <= '9' - '0';
+
+        /// <summary>
+        /// Perform a Read() with a Debug.Assert verifying the reader did not return false.
+        /// This should be called when the Read() return value is not used, such as non-Stream cases where there is only one buffer.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void ReadWithVerify(this ref Utf8JsonReader reader)
+        {
+            bool result = reader.Read();
+            Debug.Assert(result);
+        }
+
+        /// <summary>
+        /// Performs a TrySkip() with a Debug.Assert verifying the reader did not return false.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void SkipWithVerify(this ref Utf8JsonReader reader)
+        {
+            bool success = reader.TrySkipPartial(reader.CurrentDepth);
+            Debug.Assert(success, "The skipped value should have already been buffered.");
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TrySkipPartial(this ref Utf8JsonReader reader)
+        {
+            return reader.TrySkipPartial(reader.CurrentDepth);
+        }
+
+        /// <summary>
+        /// Calls Encoding.UTF8.GetString that supports netstandard.
+        /// </summary>
+        /// <param name="bytes">The utf8 bytes to convert.</param>
+        /// <returns></returns>
+        public static string Utf8GetString(ReadOnlySpan<byte> bytes)
+        {
+#if NET
+            return Encoding.UTF8.GetString(bytes);
+#else
+            if (bytes.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            unsafe
+            {
+                fixed (byte* bytesPtr = bytes)
+                {
+                    return Encoding.UTF8.GetString(bytesPtr, bytes.Length);
+                }
+            }
+#endif
+        }
+
+        // SharpOS cut: TryLookupUtf8Key (serializer metadata lookup).
+
+        // SharpOS cut: CreateDictionaryFromCollection (serializer).
+
+        public static bool IsFinite(double value)
+        {
+#if NET
+            return double.IsFinite(value);
+#else
+            return !(double.IsNaN(value) || double.IsInfinity(value));
+#endif
+        }
+
+        public static bool IsFinite(float value)
+        {
+#if NET
+            return float.IsFinite(value);
+#else
+            return !(float.IsNaN(value) || float.IsInfinity(value));
+#endif
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void ValidateInt32MaxArrayLength(uint length)
+        {
+            if (length > 0X7FEFFFFF) // prior to .NET 6, max array length for sizeof(T) != 1 (size == 1 is larger)
+            {
+                ThrowHelper.ThrowOutOfMemoryException(length);
+            }
+        }
+
+#if !NET
+        public static bool HasAllSet(this BitArray bitArray)
+        {
+            for (int i = 0; i < bitArray.Count; i++)
+            {
+                if (!bitArray[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+#endif
+
+        // SharpOS cut: IntegerRegex (serializer enum parsing; no System.Text.RegularExpressions in std).
+
+        // SharpOS cut: AreEqualJsonNumbers and its helpers (JsonElement.DeepEquals, not ported).
+    }
+}

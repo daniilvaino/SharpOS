@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>ReadApp</IlcSystemModule>
+  </PropertyGroup>
+
+  <!-- The freestanding win-x64 PE recipe every AOT app uses. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\PipeGen\StressArgs.cs" />
+  </ItemGroup>
+</Project>

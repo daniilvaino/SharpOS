@@ -33,6 +33,12 @@ namespace SharpOS.Std.Pipes
 
         private protected PipeEnd(int handle) => _handle = handle;
 
+        /// <summary>
+        /// Run when what this end becomes is closed (step197): an end of a
+        /// pipeline started from code waits for its stages there.
+        /// </summary>
+        internal Action Closed;
+
         /// <summary>Whether the end can still be opened or handed over.</summary>
         public bool IsAvailable => _handle != 0;
 
@@ -64,26 +70,42 @@ namespace SharpOS.Std.Pipes
     }
 
     /// <summary>The writing end of a pair: open it with <see cref="Write{T}"/>, or hand it to a process.</summary>
-    public sealed class PipeWriteEnd : PipeEnd
+    public sealed partial class PipeWriteEnd : PipeEnd
     {
         internal PipeWriteEnd(int handle) : base(handle) { }
 
         /// <summary>A writer of <typeparamref name="T"/> on this end; the type is checked against the reader's, if it declared one.</summary>
         public PipeWriter<T> Write<T>() where T : class
-            => Pipe.OpenWriter<T>(Take("the pipe end is already open"), "the pipe");
+        {
+            PipeWriter<T> writer = Pipe.OpenWriter<T>(Take("the pipe end is already open"), "the pipe");
+            writer.Closed = Closed;
+            Closed = null;
+            return writer;
+        }
     }
 
     /// <summary>The reading end of a pair: open it with <see cref="Read"/> or <see cref="Read{T}"/>, or hand it to a process.</summary>
-    public sealed class PipeReadEnd : PipeEnd
+    public sealed partial class PipeReadEnd : PipeEnd
     {
         internal PipeReadEnd(int handle) : base(handle) { }
 
         /// <summary>A reader of <typeparamref name="T"/> on this end; the type is checked against the writer's.</summary>
         public PipeReader<T> Read<T>() where T : class
-            => Pipe.OpenReader<T>(Take("the pipe end is already open"), "the pipe");
+        {
+            PipeReader<T> reader = Pipe.OpenReader<T>(Take("the pipe end is already open"), "the pipe");
+            reader.Closed = Closed;
+            Closed = null;
+            return reader;
+        }
 
         /// <summary>A reader of whatever the writer sends, read through views.</summary>
-        public RawPipeReader Read() => new RawPipeReader(Take("the pipe end is already open"));
+        public RawPipeReader Read()
+        {
+            var reader = new RawPipeReader(Take("the pipe end is already open"));
+            reader.Closed = Closed;
+            Closed = null;
+            return reader;
+        }
     }
 
     public static partial class Pipe
@@ -116,6 +138,26 @@ namespace SharpOS.Std.Pipes
         {
             int handle = TakeOutput();
             return handle != 0 ? OpenWriter<T>(handle, "the standard output") : PipeWriter<T>.ToScreen();
+        }
+
+        /// <summary>
+        /// The standard input as an end to hand to a process (a shell passing
+        /// its own input to a pipeline's first stage, step197); null when none
+        /// was handed over. Spends the standard input like Read does.
+        /// </summary>
+        public static PipeReadEnd InputEnd()
+        {
+            if (s_inputOpened) throw new InvalidOperationException("the standard input is already open");
+            s_inputOpened = true;
+            int handle = PipeTransport.StandardEnd(0);
+            return handle == 0 ? null : new PipeReadEnd(handle);
+        }
+
+        /// <summary>The standard output as an end to hand to a process; null when there is none (the screen).</summary>
+        public static PipeWriteEnd OutputEnd()
+        {
+            int handle = TakeOutput();
+            return handle == 0 ? null : new PipeWriteEnd(handle);
         }
 
         /// <summary>The standard output's handle, or 0 for the screen. Opened once.</summary>

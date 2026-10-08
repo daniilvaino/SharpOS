@@ -70,7 +70,11 @@ namespace OS.Kernel.Process
             bool unattended = FileSystem.Exists(AutorunScriptPath)
                               && FileSystem.Exists(ShellPath);
             if (unattended)
+            {
                 DebugLog.Write(LogLevel.Info, "autorun script found: starting the shell, not the launcher");
+                // A battery's log says which build of each program ran; a prompt does not need it.
+                AppServiceBuilder.Settings |= AppServiceTable.SettingAnnounceBuild;
+            }
 
             launcher.Path = unattended ? ShellPath : LauncherPath;
             // Follows CurrentAbiVersion rather than naming a number: pinned to

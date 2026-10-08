@@ -39,6 +39,9 @@ namespace OS.Boot.EH
         // already be damaged: no allocation, no formatting machinery, nothing
         // that can throw. The message is a stored string and the IP array
         // already exists — both are reads.
+        /// <summary>The exit code of a program whose standard end broke: ends without a report.</summary>
+        public const int QuietExitCode = 141;
+
         private static void Report(System.Exception ex)
         {
             if (ex == null) return;
@@ -47,8 +50,6 @@ namespace OS.Boot.EH
             // the app threw on the way out. Not a failure of its own — it
             // leaves (JumpStub.TryAbortCurrentApp) without a word.
             if (OS.Kernel.Threading.Scheduler.Current?.KillRequested ?? false) return;
-
-            OS.Hal.Console.Write("\r\n[unhandled] ");
 
             // The type, as the address of its MethodTable. There is no
             // reflection here to ask for a name, but that address is a symbol
@@ -64,6 +65,20 @@ namespace OS.Boot.EH
             // app (its namer answers one of its literals), the kernel's here.
             // Which app — by where the type lives, not by the thread.
             OS.Kernel.Process.AppProcess app = OS.Kernel.Process.AppProcesses.FindByAddress(mt);
+
+            // The app's own exit code for it (step197): a broken standard end
+            // is 141 and no report — the stage after a failed one, or before
+            // one that stopped reading, ends quietly.
+            OS.Kernel.Threading.Thread thread = OS.Kernel.Threading.Scheduler.Current;
+            if (app != null && app.ExceptionExitCode != 0 && thread != null && thread.App == app)
+            {
+                nint exAddress = System.Runtime.CompilerServices.Unsafe.As<System.Exception, nint>(ref ex);
+                thread.UnhandledExitCode = ((delegate* unmanaged<nint, int>)app.ExceptionExitCode)(exAddress);
+                if (thread.UnhandledExitCode == QuietExitCode) return;
+            }
+
+            OS.Hal.Console.Write("\r\n[unhandled] ");
+
             string typeName = null;
             if (app == null)
             {

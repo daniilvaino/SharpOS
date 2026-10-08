@@ -125,6 +125,13 @@ namespace System
                 case "HH:mm": return Pad(Hour, 2) + ":" + Pad(Minute, 2);
                 case "T":
                 case "HH:mm:ss": return Pad(Hour, 2) + ":" + Pad(Minute, 2) + ":" + Pad(Second, 2);
+                // The round-trip form (step197): every tick, no zone.
+                case "O":
+                case "o":
+                case "yyyy-MM-ddTHH:mm:ss.fffffff":
+                    return Pad(Year, 4) + "-" + Pad(Month, 2) + "-" + Pad(Day, 2) + "T" +
+                           Pad(Hour, 2) + ":" + Pad(Minute, 2) + ":" + Pad(Second, 2) + "." +
+                           PadFraction(_ticks % TicksPerSecond);
                 default: return ToString();
             }
         }
@@ -245,6 +252,8 @@ namespace System
                 i += run;
             }
 
+            // Exact means all of it: "2026-10-08T13:45" is not "yyyy-MM-dd".
+            if (at != input!.Length) return false;
             if (month < 1 || month > 12 || day < 1 || day > DaysInMonth(year, month)) return false;
             if (hour > 23 || minute > 59 || second > 59) return false;
 
@@ -253,7 +262,64 @@ namespace System
         }
 
         public static bool TryParse(string? input, out DateTime result)
-            => TryParseExact(input, "yyyy-MM-dd", null, DateTimeStyles.None, out result);
+            => TryParseExact(input, "yyyy-MM-dd", null, DateTimeStyles.None, out result)
+               || TryParseIso(input, out result);
+
+        private static string PadFraction(long ticks)
+        {
+            string s = ticks.ToString();
+            while (s.Length < 7) s = "0" + s;
+            return s;
+        }
+
+        /// <summary>
+        /// ISO 8601 (step197): yyyy-MM-ddTHH:mm[:ss[.f…]] with an optional Z
+        /// or ±hh:mm, which is read and not applied — this DateTime has no
+        /// kind. The "O" form round-trips every tick.
+        /// </summary>
+        public static bool TryParseIso(string? input, out DateTime result)
+        {
+            result = MinValue;
+            if (string.IsNullOrEmpty(input)) return false;
+            string s = input!.Trim();
+            if (s.Length < 16 || s[10] != 'T' && s[10] != ' ') return false;
+            if (!TryParseExact(s.Substring(0, 10), "yyyy-MM-dd", null, DateTimeStyles.None, out DateTime date)) return false;
+            int at = 11;
+            if (!Take(s, ref at, 2, out int hour) || at >= s.Length || s[at] != ':') return false;
+            at++;
+            if (!Take(s, ref at, 2, out int minute)) return false;
+            int second = 0;
+            long fraction = 0;
+            if (at < s.Length && s[at] == ':')
+            {
+                at++;
+                if (!Take(s, ref at, 2, out second)) return false;
+                if (at < s.Length && s[at] == '.')
+                {
+                    at++;
+                    int digits = 0;
+                    while (at < s.Length && s[at] >= '0' && s[at] <= '9')
+                    {
+                        if (digits < 7) fraction = fraction * 10 + (s[at] - '0');
+                        at++;
+                        digits++;
+                    }
+                    if (digits == 0) return false;
+                    for (; digits < 7; digits++) fraction *= 10;
+                }
+            }
+            if (at < s.Length && s[at] == 'Z') at++;
+            else if (at < s.Length && (s[at] == '+' || s[at] == '-'))
+            {
+                at++;
+                if (!Take(s, ref at, 2, out _)) return false;
+                if (at < s.Length && s[at] == ':') at++;
+                if (!Take(s, ref at, 2, out _)) return false;
+            }
+            if (at != s.Length || hour > 23 || minute > 59 || second > 59) return false;
+            result = new DateTime(date._ticks + hour * TicksPerHour + minute * TicksPerMinute + second * TicksPerSecond + fraction);
+            return true;
+        }
 
         private static bool Take(string input, ref int at, int width, out int value)
         {

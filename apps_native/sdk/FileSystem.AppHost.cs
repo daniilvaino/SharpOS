@@ -6,11 +6,12 @@
 //     retry on BufferTooSmall) and serves Read/Seek from that buffer.
 //     WADs are a few MB — needs the app GC pool grown past its current
 //     1 MB (GcMemorySource.AppStatic) before DOOM-sized files load.
-//   - Writing — FileStream for writing, File.WriteAllText/WriteAllBytes,
-//     StreamWriter(path) — throws IOException. Until pipe_plan.md item 7 these
-//     accepted the data and dropped it: a savegame reported "saved" and was
-//     gone. A program that tolerates a missing file catches the exception
-//     (DOOM's config save does); one that does not now ends with the reason.
+//   - Writing (step197) goes through the kernel's open files (AppFile): a
+//     FileStream for writing appends as it is written; File.WriteAllBytes /
+//     WriteAllText / AppendAllText; StreamWriter(path) (UTF-8). New names
+//     must be 8.3 (the FAT writer stores short names only). Before step197
+//     writes threw IOException, and before pipe_plan.md item 7 they were
+//     dropped silently.
 //
 // API shapes mirror BCL; each member documents its cut where behaviour
 // differs.
@@ -25,10 +26,19 @@ namespace System.IO
         private int _length;
         private int _position;
 
+        // Writing: the kernel file, and the bytes written (step197).
+        private readonly AppFile _out;
+        private long _written;
+
         public FileStream(string path, FileMode mode, FileAccess access)
         {
             if (access != FileAccess.Read)
-                throw File.WritesNotSupported(path);
+            {
+                if (mode == FileMode.Open || (mode == FileMode.CreateNew && File.Exists(path)))
+                    throw new IOException("cannot write '" + path + "': only a new file, or a file cut or appended to, can be written");
+                _out = AppFile.Open(path, mode == FileMode.Append ? AppFile.ModeAppend : AppFile.ModeWrite);
+                return;
+            }
 
             _buffer = File.ReadAllBytes(path);
             _length = _buffer.Length;
@@ -39,17 +49,18 @@ namespace System.IO
         {
         }
 
-        public override bool CanRead => true;
-        public override bool CanSeek => true;
-        public override bool CanWrite => false;
+        public override bool CanRead => _out == null;
+        public override bool CanSeek => _out == null;
+        public override bool CanWrite => _out != null;
 
-        public override long Length => _length;
+        public override long Length => _out != null ? _written : _length;
 
         public override long Position
         {
-            get => _position;
+            get => _out != null ? _written : _position;
             set
             {
+                if (_out != null) throw new NotSupportedException("a file being written does not seek");
                 if (value < 0 || value > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(value));
                 _position = (int)value;
             }
@@ -57,6 +68,7 @@ namespace System.IO
 
         public override int Read(byte[] buffer, int offset, int count)
         {
+            if (_out != null) throw new NotSupportedException("Stream does not support reading.");
             int n = _length - _position;
             if (n > count) n = count;
             if (n <= 0) return 0;
@@ -68,6 +80,7 @@ namespace System.IO
 
         public override long Seek(long offset, SeekOrigin origin)
         {
+            if (_out != null) throw new NotSupportedException("a file being written does not seek");
             long target = origin switch
             {
                 SeekOrigin.Begin => offset,
@@ -81,12 +94,21 @@ namespace System.IO
         }
 
         public override void Write(byte[] buffer, int offset, int count)
-            => throw new NotSupportedException("Stream does not support writing.");
+            => Write(new ReadOnlySpan<byte>(buffer, offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (_out == null) throw new NotSupportedException("Stream does not support writing.");
+            _out.Write(buffer);
+            _written += buffer.Length;
+        }
 
         public override void SetLength(long value)
-            => throw new NotSupportedException("Stream does not support writing.");
+            => throw new NotSupportedException("Stream does not support SetLength.");
 
         public override void Flush() { }
+
+        protected override void Dispose(bool disposing) => _out?.Dispose();
     }
 
     public static unsafe class File
@@ -94,26 +116,33 @@ namespace System.IO
         public static bool Exists(string path)
         {
             if (path == null || path.Length == 0) return false;
-            return AppHost.FileExists(path);
+            return AppHost.FileExists(SharpOS.AppSdk.Process.ResolvePath(path));
         }
 
         public static FileStream OpenRead(string path)
             => new FileStream(path, FileMode.Open, FileAccess.Read);
 
-        // No kernel write service behind the app service table yet. These used
-        // to return silently, on the reasoning that a program logging to a file
-        // should not die because the log went nowhere; the cost was that every
-        // write looked like it worked — savegames, state saves, config — and
-        // nothing ever said otherwise. A program that can live without the file
-        // catches the exception.
+        // Through the kernel's open files (step197): the file is created or
+        // cut, written, closed with its size.
         public static void WriteAllText(string path, string contents)
-            => throw WritesNotSupported(path);
+            => WriteAllBytes(path, System.Text.Encoding.UTF8.GetBytes(contents ?? ""));
 
         public static void WriteAllBytes(string path, byte[] bytes)
-            => throw WritesNotSupported(path);
+        {
+            if (bytes == null) throw new ArgumentNullException(nameof(bytes));
+            using AppFile file = AppFile.Open(path, AppFile.ModeWrite);
+            file.Write(bytes);
+        }
 
-        internal static IOException WritesNotSupported(string path)
-            => new IOException("cannot write '" + path + "': the kernel has no file write service for programs yet");
+        public static void AppendAllText(string path, string contents)
+        {
+            using AppFile file = AppFile.Open(path, AppFile.ModeAppend);
+            file.Write(System.Text.Encoding.UTF8.GetBytes(contents ?? ""));
+        }
+
+        public static FileStream Create(string path) => new FileStream(path, FileMode.Create, FileAccess.Write);
+
+        public static FileStream OpenWrite(string path) => new FileStream(path, FileMode.Create, FileAccess.Write);
 
         // Whole-file load through the AppHost read service. The service has
         // no size query, so grow + retry: BufferTooSmall and exact-fit
@@ -121,6 +150,8 @@ namespace System.IO
         public static byte[] ReadAllBytes(string path)
         {
             if (path == null) throw new ArgumentNullException(nameof(path));
+            // Relative to the working directory (step197).
+            string full = SharpOS.AppSdk.Process.ResolvePath(path);
 
             uint capacity = 256 * 1024;
             const uint MaxCapacity = 256u * 1024 * 1024;
@@ -131,7 +162,7 @@ namespace System.IO
                 uint bytesRead;
                 fixed (byte* p = buffer)
                 {
-                    status = AppHost.TryReadFile(path, p, capacity, out bytesRead);
+                    status = AppHost.TryReadFile(full, p, capacity, out bytesRead);
                 }
 
                 if (status == AppServiceStatus.NotFound)
@@ -188,19 +219,26 @@ namespace System.IO
     {
         // Single-rooted SharpOS path model (see Bcl/Path.cs): the fake CWD
         // is the volume root.
-        public static string GetCurrentDirectory() => "\\";
+        public static string GetCurrentDirectory() => SharpOS.AppSdk.Process.WorkingDirectory;
     }
 
-    // Text writer over the missing write service: refuses at construction,
-    // like FileStream for writing.
+    // A text file written as UTF-8 through the kernel's open files (step197).
     public class StreamWriter : IDisposable
     {
-        public StreamWriter(string path) { throw File.WritesNotSupported(path); }
+        private readonly AppFile _file;
 
-        public void Write(string value) { }
+        public StreamWriter(string path) : this(path, false) { }
 
-        public void WriteLine(string value) { }
+        public StreamWriter(string path, bool append)
+            => _file = AppFile.Open(path, append ? AppFile.ModeAppend : AppFile.ModeWrite);
 
-        public void Dispose() { }
+        public void Write(string value)
+        {
+            if (!string.IsNullOrEmpty(value)) _file.Write(System.Text.Encoding.UTF8.GetBytes(value));
+        }
+
+        public void WriteLine(string value) => Write((value ?? "") + "\n");
+
+        public void Dispose() => _file.Dispose();
     }
 }

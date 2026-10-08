@@ -22,7 +22,7 @@ using System.Runtime.InteropServices;
 
 namespace System
 {
-    public static class MemoryExtensions
+    public static partial class MemoryExtensions
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ReadOnlySpan<char> AsSpan(this string text)

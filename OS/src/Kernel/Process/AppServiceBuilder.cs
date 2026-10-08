@@ -321,11 +321,17 @@ namespace OS.Kernel.Process
             {
                 table.SetHwExceptionFactoryAddress = (ulong)(nint)(delegate* unmanaged<void*, void>)&AppSetHwExceptionFactory;
                 table.SetExceptionNamerAddress = (ulong)(nint)(delegate* unmanaged<void*, void>)&AppSetExceptionNamer;
+                table.SetExceptionExitCodeAddress = (ulong)(nint)(delegate* unmanaged<void*, void>)&AppSetExceptionExitCode;
             }
 
             table.PreemptionDepthAddress = (ulong)OS.Kernel.Threading.Preemption.DepthAddress;
             table.PreemptionPendingAddress = (ulong)OS.Kernel.Threading.Preemption.PendingAddress;
             table.YieldAddress = (ulong)(nint)(delegate* unmanaged<void>)&AppYield;
+            table.FileOpenAddress = (ulong)(nint)(delegate* unmanaged<ulong, int, int*, int>)&FileOpen;
+            table.FileReadAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, int, int*, int>)&FileRead;
+            table.FileWriteAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, int, int>)&FileWrite;
+            table.FileCloseAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&FileClose;
+            table.Settings = Settings;
 
             table.RegionByRefBarrierAddress = (ulong)OS.Kernel.Memory.RegionBarrier.Entry;
             if (OS.Kernel.Memory.ExchangeHeap.EnsureArena())
@@ -1281,6 +1287,13 @@ namespace OS.Kernel.Process
             global::OS.Kernel.Threading.Thread self = global::OS.Kernel.Threading.Scheduler.Current;
             if (self != null && self.KillRequested && self.App != null && self.Jump != null)
                 OS.Kernel.Exec.JumpStub.LeaveApp(self, self.App.KillCode);
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void AppSetExceptionExitCode(void* code)
+        {
+            AppProcess p = AppProcesses.Current;
+            if (p != null) p.ExceptionExitCode = (nint)code;
         }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]

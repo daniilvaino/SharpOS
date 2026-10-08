@@ -150,6 +150,9 @@
             bool upper = s_shift ^ (s_caps && baseCh >= (byte)'a' && baseCh <= (byte)'z');
             byte outCh = upper ? Set1Shift[make] : baseCh;
             if (outCh == 0) outCh = baseCh;
+            // Ctrl with a letter is its control character, as a terminal
+            // delivers it: Ctrl+C = 0x03, Ctrl+L = 0x0C (a line editor's keys).
+            if (s_ctrl && baseCh >= (byte)'a' && baseCh <= (byte)'z') outCh = (byte)(baseCh & 0x1F);
             ch = (char)outCh;
             return KeyKind.Char;
         }

@@ -62,10 +62,15 @@ namespace SharpOS.Std.Pipes
         internal Region<T> Next(Region<T> reuse = null)
         {
             Region<T> region = Receive(reuse);
-            if (region != null || Status == PipeStatus.EndOfStream) return region;
+            if (region != null) return region;
+            // A pipeline started from code is waited for at the end of its
+            // output, in the loop's step, not in Dispose (a finally); a failed
+            // stage throws the pipeline's exception naming it (step197).
+            if (Status == PipeStatus.EndOfStream || Status == PipeStatus.Broken) PipeClosing.Run(ref Closed);
+            if (Status == PipeStatus.EndOfStream) return null;
             throw new PipeException(Status, Status == PipeStatus.Refused ? "a message could not be taken: " + LastError
                                           : Status == PipeStatus.TypeMismatch ? LastError
-                                          : Pipe.Explain(Status));
+                                          : Pipe.Explain(Status), _handle);
         }
 
         /// <summary>
@@ -85,6 +90,9 @@ namespace SharpOS.Std.Pipes
 
         /// <summary>Every message on to the standard output (the screen when there is none).</summary>
         public void WriteTo() => new PipeQuery<T>(this, null).WriteTo();
+
+        /// <summary>Every message on to <paramref name="end"/> (a pair's write end, a pipeline's input: Pipe.To).</summary>
+        public void WriteTo(PipeWriteEnd end) => new PipeQuery<T>(this, null).WriteTo(end);
 
         public struct Enumerator : IDisposable
         {
@@ -231,6 +239,30 @@ namespace SharpOS.Std.Pipes
             }
         }
 
+        /// <summary>What passes goes on to <paramref name="end"/>; closing it runs what the end carries (a pipeline's wait).</summary>
+        public void WriteTo(PipeWriteEnd end)
+        {
+            if (end == null) throw new ArgumentNullException(nameof(end));
+            PipeWriter<T> output = null;
+            try
+            {
+                output = end.Write<T>();
+                Pump(output, "the pipe");
+            }
+            catch
+            {
+                // The failure that stopped the loop is the one to report; the
+                // pipeline's own is lost behind it.
+                if (output != null) output.Closed = null;
+                throw;
+            }
+            finally
+            {
+                output?.Dispose();
+                _reader.Dispose();
+            }
+        }
+
         private void Pump(PipeWriter<T> output, string what)
         {
             // One wrapper, reused: each region is moved on or let go before the next.
@@ -249,7 +281,7 @@ namespace SharpOS.Std.Pipes
                 catch (PipeException e)
                 {
                     region.Dispose();
-                    throw new PipeException(e.Status, what + ": " + e.Message);
+                    throw new PipeException(e.Status, what + ": " + e.Message, e.Handle);
                 }
             }
         }
@@ -261,8 +293,14 @@ namespace SharpOS.Std.Pipes
         internal RawRegion Next(RawRegion reuse = null)
         {
             RawRegion region = Receive(reuse);
-            if (region != null || Status == PipeStatus.EndOfStream) return region;
-            throw new PipeException(Status, Status == PipeStatus.Refused ? LastError : Pipe.Explain(Status));
+            if (region != null) return region;
+            // A pipeline started from code is waited for at the end of its
+            // output, in the loop's step — not later in its Dispose, a finally
+            // (step197). A failed stage, or the break of its output, throws
+            // the pipeline's exception naming it.
+            if (Status == PipeStatus.Broken || (Status == PipeStatus.EndOfStream && !PipeClosing.WaitInDispose)) PipeClosing.Run(ref Closed);
+            if (Status == PipeStatus.EndOfStream) return null;
+            throw new PipeException(Status, Status == PipeStatus.Refused ? LastError : Pipe.Explain(Status), _handle);
         }
 
         /// <summary>The messages as views; each lives until the next step. Leaving the loop closes this reader.</summary>
@@ -278,6 +316,9 @@ namespace SharpOS.Std.Pipes
 
         /// <summary>Every message on to the standard output, untranslated (the screen when there is none).</summary>
         public void WriteTo() => new RawQuery(this, null).WriteTo();
+
+        /// <summary>Every message on to <paramref name="end"/>, untranslated (a pair's write end, a pipeline's input: Pipe.To).</summary>
+        public void WriteTo(PipeWriteEnd end) => new RawQuery(this, null).WriteTo(end);
 
         public struct Enumerator : IDisposable
         {
@@ -410,6 +451,16 @@ namespace SharpOS.Std.Pipes
             Pump(null, handle, handle == 0);
         }
 
+        /// <summary>What passes goes on to <paramref name="end"/>, untranslated; then what the end carries runs (a pipeline's wait).</summary>
+        public void WriteTo(PipeWriteEnd end)
+        {
+            if (end == null) throw new ArgumentNullException(nameof(end));
+            Action closed = end.Closed;
+            end.Closed = null;
+            Pump(null, end.Take("the end was written to"), false);
+            closed?.Invoke();
+        }
+
         // To the pipe called name (connected at the first message, when the
         // input's description is known), to an end already held, or to the screen.
         private void Pump(string name, int held, bool screen)
@@ -430,9 +481,9 @@ namespace SharpOS.Std.Pipes
                     }
                     if (screen)
                     {
-                        string line = region.Root.ToString();
-                        region.Dispose();
-                        PipeTransport.Print(line);
+                        // A string as itself, a byte[] as its text (step197).
+                        try { ScreenText.Print(region.Root); }
+                        finally { region.Dispose(); }
                         continue;
                     }
                     if (!declared)
@@ -461,7 +512,7 @@ namespace SharpOS.Std.Pipes
                     if (sent != PipeStatus.Ok)
                     {
                         region.Dispose();
-                        throw new PipeException(sent, what + ": " + Pipe.Explain(sent));
+                        throw new PipeException(sent, what + ": " + Pipe.Explain(sent), output);
                     }
                     region.End(movedOn);
                 }

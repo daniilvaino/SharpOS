@@ -23,6 +23,12 @@ namespace System
         internal const string ArgumentNull_ArrayValue = "Found a null value within an array.";
         internal const string ArgumentOutOfRange_Range = "Valid values are between {0} and {1}, inclusive.";
         internal const string InvalidOperation_ReadOnly = "Instance is read-only.";
+        internal const string Argument_CannotParsePrecision = "Characters following the format symbol must be a number of {0} or less.";
+        internal const string Argument_GWithPrecisionNotSupported = "The 'G' format combined with a precision is not supported.";
+        internal const string Argument_PrecisionTooLarge = "Precision cannot be larger than {0}.";
+        internal const string BufferMaximumSizeExceeded = "Cannot allocate a buffer of size {0}.";
+        internal const string BufferWriterAdvancedTooFar = "Cannot advance past the end of the buffer, which has a size of {0}.";
+        internal const string Format_InvalidStringWithValue = "The input string '{0}' was not in a correct format.";
 
         internal static string Format(string resourceFormat, object? p1) => string.Format(resourceFormat, p1);
 

@@ -52,6 +52,12 @@
 # pass's bytes, a refusal that changes nothing, fifty types in one stream;
 # exit code = checks passed. Its [perf195] lines are the measurements.
 #
+# External data (step 197): JSONTEST.EXE checks the JSON reader and writer;
+# DATATEST.EXE runs READ, WRITE, CONVERT, `>`/`>>`, bytes and text over a pipe,
+# Into<T> from an Expando and pipelines from code — exit code = checks passed;
+# --quick leaves out the 100 MiB file and the 64 MiB copy, which the full run
+# makes. DATATEST --perf prints the [perf197] measurements.
+#
 # Paths use FORWARD slashes. This is bash syntax — the parser is a bash parser
 # — and in bash a backslash escapes the next character, so \apps\AOTTESTS.EXE
 # arrives as appsAOTTESTS.EXE with the separators eaten. The shell converts
@@ -77,3 +83,6 @@ PIPEGEN 1000 | PIPEFILT 3 | PIPECNT
 expect 59 /apps/PROCTEST.EXE
 expect 54 /apps/PROCTEST.EXE --gc-stress 16
 expect 15 /apps/PIPEPERF.EXE
+expect 42 /apps/JSONTEST.EXE
+expect 44 /apps/DATATEST.EXE
+expect 41 /apps/DATATEST.EXE --gc-stress 16 --quick

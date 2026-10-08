@@ -54,6 +54,16 @@ namespace OS.Hal
         private static byte* s_fatCache;
         private static ulong s_fatCachedLba = ulong.MaxValue;
 
+        // The cached FAT sector holds changes not yet on disk (step197): a
+        // file being written links its clusters here and the sector is
+        // written once, when the cache moves to another sector or the file
+        // closes — not once per cluster per FAT copy.
+        private static bool s_fatDirty;
+
+        // Where the last component Resolve found has its directory entry.
+        private static ulong s_foundEntryLba;
+        private static uint s_foundEntryOffset;
+
         public static bool Mounted => s_mounted;
         public static bool IsFat32 => s_isFat32;
         public static uint BytesPerSector => s_bps;
@@ -131,6 +141,8 @@ namespace OS.Hal
             s_rootLba = partLba + rsvd + numFats * fatSz;
             s_dataLba = partLba + firstData;
             s_rootClus = s_isFat32 ? RdU32(b, 44) : 0;
+            uint fsInfo = s_isFat32 ? RdU16(b, 48) : 0u;
+            s_fsInfoLba = fsInfo >= 1 && fsInfo < rsvd ? partLba + fsInfo : 0;
             return true;
         }
 
@@ -233,6 +245,7 @@ namespace OS.Hal
         private static bool ReadFatSector(ulong lba)
         {
             if (lba == s_fatCachedLba) return true;
+            if (!FlushFatCache()) return false;
             if (!s_disk.Read(lba, 1, s_fatCache)) return false;
             s_fatCachedLba = lba;
             return true;
@@ -357,6 +370,8 @@ namespace OS.Hal
                         lfnLen = 0;
                         if (hit)
                         {
+                            s_foundEntryLba = lba;
+                            s_foundEntryOffset = off;
                             firstClus = ((uint)RdU16(ent, 20) << 16) | RdU16(ent, 26);
                             size = RdU32(ent, 28);
                             isDir = (ent[11] & 0x10) != 0;

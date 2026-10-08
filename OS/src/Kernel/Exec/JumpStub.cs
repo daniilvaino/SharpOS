@@ -229,16 +229,23 @@ namespace OS.Kernel.Exec
             if (self.KillRequested)
                 LeaveApp(self, p.KillCode);
 
-            Console.Write("[app] ");
-            Console.Write(p.Name);
-            Console.Write(": unhandled exception");
-            Console.Write(self == p.MainThread ? "" : " on a worker thread");
-            Console.Write(": process ended, exit code ");
-            Console.WriteUInt(UnhandledExitCode);
-            Console.WriteLine("");
+            // The app's own code for it (step197, asked in the report): 141
+            // for a broken standard end, said nothing about.
+            int code = self.UnhandledExitCode != 0 ? self.UnhandledExitCode : UnhandledExitCode;
+            self.UnhandledExitCode = 0;
+            if (code != OS.Boot.EH.UnhandledExceptionReport.QuietExitCode)
+            {
+                Console.Write("[app] ");
+                Console.Write(p.Name);
+                Console.Write(": unhandled exception");
+                Console.Write(self == p.MainThread ? "" : " on a worker thread");
+                Console.Write(": process ended, exit code ");
+                Console.WriteUInt((uint)code);
+                Console.WriteLine("");
+            }
 
-            OS.Kernel.Process.AppServiceBuilder.RequestEnd(p, UnhandledExitCode, failed: true);
-            LeaveApp(self, UnhandledExitCode);
+            OS.Kernel.Process.AppServiceBuilder.RequestEnd(p, code, failed: true);
+            LeaveApp(self, code);
             return false;   // not reached
         }
 
