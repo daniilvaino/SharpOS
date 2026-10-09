@@ -130,6 +130,52 @@ namespace OS.Hal.Idt
             h.DataSlotHole(a, ref dispData, "dispatcherSlot");
         }
 
+        // EmitCommonStub for XCR0 with AVX state (step199, Idt.UseXsave). Same
+        // frame, same dispatcher; only the FP save differs: XSAVE of every
+        // component XCR0 enables (EDX:EAX = all ones; RAX/RDX are already in
+        // the frame) into (frame - 840) & ~63. XSAVE needs 64-byte alignment,
+        // and x87+SSE+AVX is 832 bytes (512 legacy + 64 header + 256 YMM
+        // upper halves), which 840 leaves room for above the rounding.
+        // X64Asm.EmitResumeXsaveBootAsm_Body finds the image by the same
+        // formula. After it RSP is 0 mod 64, so the shadow space keeps the
+        // call 16-aligned.
+        [CompileTimeAsm]
+        private static partial int EmitCommonStubXsave(byte* dst, void* dispatcherSlot);
+
+        [CompileTimeAsmBody(nameof(EmitCommonStubXsave))]
+        private static void EmitCommonStubXsave_Body(Iced.Intel.Assembler a, BootAsm.HoleCollector h)
+        {
+            var dispData = a.CreateLabel();
+
+            a.push(r15); a.push(r14); a.push(r13); a.push(r12);
+            a.push(r11); a.push(r10); a.push(r9);  a.push(r8);
+            a.push(rbp); a.push(rdi); a.push(rsi); a.push(rbx);
+            a.push(rdx); a.push(rcx); a.push(rax);
+
+            a.mov(rax, cr2);
+            a.push(rax);
+
+            a.mov(rcx, rsp);
+
+            a.sub(rsp, 840);
+            a.and(rsp, -64);
+            a.or(eax, -1);
+            a.or(edx, -1);
+            a.xsave(__[rsp]);
+
+            a.sub(rsp, 0x20);
+
+            a.mov(rax, __qword_ptr[dispData]);
+            a.call(rax);
+
+            var haltLoop = a.CreateLabel();
+            a.Label(ref haltLoop);
+            a.hlt();
+            a.jmp(haltLoop);
+
+            h.DataSlotHole(a, ref dispData, "dispatcherSlot");
+        }
+
         // ─────────────────────────────────────────────────────────────────
         // Per-vector entry stubs (16-byte slots).
         //

@@ -204,5 +204,19 @@ namespace OS.Hal
             if (s == null) return;
             for (int i = 0; i < s.Length; i++) WriteChar(s[i]);
         }
+
+        /// <summary>
+        /// <paramref name="digits"/> hex digits of <paramref name="value"/>,
+        /// straight to the port: for reports from where the console must not be
+        /// entered (a collection in progress, a fault inside the console).
+        /// </summary>
+        public static void WriteHex(ulong value, int digits)
+        {
+            for (int i = digits - 1; i >= 0; i--)
+            {
+                int d = (int)((value >> (i * 4)) & 0xF);
+                WriteChar((char)(d < 10 ? '0' + d : 'A' + d - 10));
+            }
+        }
     }
 }

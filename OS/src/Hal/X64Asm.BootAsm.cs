@@ -56,6 +56,19 @@ namespace OS.Hal
             a.ret();
         }
 
+        // xgetbv: ECX = selector → EDX:EAX, returned as one 64-bit value.
+        [CompileTimeAsm]
+        private static partial int EmitXgetbvBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitXgetbvBootAsm))]
+        private static void EmitXgetbvBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.xgetbv();
+            a.shl(rdx, 32);
+            a.or(rax, rdx);
+            a.ret();
+        }
+
         // mov rax, cr4 ; ret
         [CompileTimeAsm]
         private static partial int EmitReadCr4BootAsm(byte* dst);
@@ -361,6 +374,59 @@ namespace OS.Hal
             // 520 spelled out, not IdtTrampolines.FpAreaBytes — the walker
             // takes literals only. Change one, change both.
             a.fxrstor(__zmmword_ptr[rcx - 520]);
+
+            a.mov(rax, __qword_ptr[rcx +   8]);
+            a.mov(rdx, __qword_ptr[rcx +  24]);
+            a.mov(rbx, __qword_ptr[rcx +  32]);
+            a.mov(rsi, __qword_ptr[rcx +  40]);
+            a.mov(rdi, __qword_ptr[rcx +  48]);
+            a.mov(rbp, __qword_ptr[rcx +  56]);
+            a.mov(r8,  __qword_ptr[rcx +  64]);
+            a.mov(r9,  __qword_ptr[rcx +  72]);
+            a.mov(r10, __qword_ptr[rcx +  80]);
+            a.mov(r11, __qword_ptr[rcx +  88]);
+            a.mov(r12, __qword_ptr[rcx +  96]);
+            a.mov(r13, __qword_ptr[rcx + 104]);
+            a.mov(r14, __qword_ptr[rcx + 112]);
+            a.mov(r15, __qword_ptr[rcx + 120]);
+            a.lea(rsp, __qword_ptr[rcx + 0x90]);
+            a.mov(rcx, __qword_ptr[rcx + 16]);
+            a.iretq();
+        }
+
+        // EmitResumeBootAsm for the XSAVE interrupt path (X64Asm.UseXsave):
+        // the common stub's XSAVE variant put the image at
+        // (frame - 840) & ~63 — XSAVE wants 64-byte alignment, so the offset
+        // from the frame is not fixed, but this formula gives the same address
+        // from the same frame. 840 and -64 are spelled out for the walker; the
+        // stub (IdtTrampolines.EmitCommonStubXsave_Body) uses the same two.
+        // EDX:EAX = all ones: restore every component XCR0 enables. RAX, RDX
+        // and R8 are reloaded from the frame right after.
+        [CompileTimeAsm]
+        private static partial int EmitResumeXsaveBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitResumeXsaveBootAsm))]
+        private static void EmitResumeXsaveBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.lea(r8, __qword_ptr[rcx - 840]);
+            a.and(r8, -64);
+            // The XSAVE header is not fully written by XSAVE, and the image sits
+            // on a stack that held anything before. The standard-form XRSTOR
+            // raises #GP unless (Intel SDM, XRSTOR):
+            //   - XSTATE_BV (image + 512) has no bit outside XCR0 — XSAVE writes
+            //     only the bits of the components it saves, x87|SSE|AVX (0..2),
+            //     and leaves the rest as they were: 0x7e4cf007 was found there;
+            //   - bytes 8..23 of the header (+520: XCOMP_BV and the reserved
+            //     qword after it) are zero — XSAVE does not touch them.
+            // Seen on the first demand-paging resume (VM manager self-test)
+            // with -cpu max. 7 is the XCR0 BootSequence.ConfigureXcr0 sets.
+            a.and(__qword_ptr[r8 + 512], 7);
+            a.xor(eax, eax);
+            a.mov(__qword_ptr[r8 + 520], rax);
+            a.mov(__qword_ptr[r8 + 528], rax);
+            a.or(eax, -1);
+            a.or(edx, -1);
+            a.xrstor(__[r8]);
 
             a.mov(rax, __qword_ptr[rcx +   8]);
             a.mov(rdx, __qword_ptr[rcx +  24]);

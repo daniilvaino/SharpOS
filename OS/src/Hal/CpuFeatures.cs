@@ -13,17 +13,20 @@ namespace OS.Hal
     {
         public static ulong Value;
 
-        public static void Initialize()
+        /// <param name="avxState">XCR0 enables AVX state and interrupts save it
+        /// (BootSequence.ConfigureXcr0) — VEX instructions, vfmadd included,
+        /// raise #UD without it.</param>
+        public static void Initialize(bool avxState)
         {
             uint* regs = stackalloc uint[4];
             ulong features = 0;
+            bool fmaCpu = false;
             if (X64Asm.Cpuid(1, 0, regs))
             {
                 uint ecx = regs[2];
                 if ((ecx & (1u << 19)) != 0) features |= LibmPatcher.FeatureSse41;
-                // FMA stays off: the kernel locks XCR0 to x87|SSE (BootSequence,
-                // FXSAVE context switches), so AVX state — and every VEX
-                // instruction, vfmadd included — is disabled and would #UD.
+                fmaCpu = (ecx & (1u << 12)) != 0;
+                if (fmaCpu && avxState) features |= LibmPatcher.FeatureFma;
             }
             Value = features;
             LibmPatcher.Apply(features);
@@ -31,7 +34,9 @@ namespace OS.Hal
             Log.Begin(LogLevel.Info);
             Console.Write("cpu features: sse4.1=");
             Console.Write((features & LibmPatcher.FeatureSse41) != 0 ? "yes" : "no");
-            Console.Write(" fma=no (XCR0 x87|SSE); libm entries replaced: ");
+            Console.Write(" fma=");
+            Console.Write((features & LibmPatcher.FeatureFma) != 0 ? "yes" : fmaCpu ? "no (AVX state off)" : "no");
+            Console.Write("; libm entries replaced: ");
             Console.WriteUInt((uint)LibmPatcher.Replaced);
             Log.EndLine();
         }

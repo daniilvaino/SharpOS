@@ -693,6 +693,11 @@ namespace AotTests
             Check("libm: % on double and float",
                   Dbl(7.5) % Dbl(2.0) == 1.5 && Dbl(-7.5) % Dbl(2.0) == -1.5 && (float)Dbl(5.25) % 2.0f == 1.25f
                   && Dbl(5.9790119248836734e+200) % Dbl(1.1258465975523544) == 0.6447968302508578);
+            // One rounding, not two: 0.1·10 rounds to 1 on its own. With FMA3
+            // the kernel patched these to vfmadd (cpu features line).
+            Check("libm: fma rounds once (double and float)",
+                  Bits64(Math.FusedMultiplyAdd(Dbl(0.1), Dbl(10.0), Dbl(-1.0))) == 0x3C90000000000000UL
+                  && MathF.FusedMultiplyAdd((float)Dbl(0.1), 10.0f, -1.0f) == 1.4901161193847656e-08f);
         }
 
         // System.Decimal (std-no-runtime/Number/Decimal*.cs). Expected values

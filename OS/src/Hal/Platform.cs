@@ -88,10 +88,39 @@ namespace OS.Hal
         /// </summary>
         public static void WriteChar(char value, OutputChannel channel)
         {
+            // Entered again before the outer character is done: a fault or an
+            // interrupt inside the terminal, the disk log or the port itself.
+            // Neither the terminal nor the disk log survives that; the raw port
+            // does. A fault in the disk log's SATA read printed straight into
+            // the terminal it had interrupted and broke it (#PF in XtermSharp),
+            // and the first fault's line was lost.
+            //
+            // Inside a collection the same: every live object carries the mark
+            // bit in its MethodTable pointer, and the disk log's virtual call
+            // on SATADevice went through a table read one byte off — straight
+            // to a non-canonical address (the collector's own "[gc] exception
+            // chain entry implausible" line, printed while marking).
+            if (s_writing != 0 || SharpOS.Std.NoRuntime.GcMark.InProgress)
+            {
+                if (s_ownConsole) Serial.WriteChar(value);
+                return;
+            }
+
+            s_writing++;
             OS.Kernel.Threading.Preemption.Suppress();
             try { WriteCharCore(value, channel); }
-            finally { OS.Kernel.Threading.Preemption.Allow(); }
+            finally { OS.Kernel.Threading.Preemption.Allow(); s_writing--; }
         }
+
+        private static int s_writing;
+
+        /// <summary>
+        /// An app thread leaves from wherever it is (JumpStub.LeaveApp),
+        /// possibly mid-character inside a service: the finally above never
+        /// runs. Preemption is off while a character is written, so a raised
+        /// count can only be this thread's.
+        /// </summary>
+        public static void AbandonWrite() => s_writing = 0;
 
         private static void WriteCharCore(char value, OutputChannel channel)
         {

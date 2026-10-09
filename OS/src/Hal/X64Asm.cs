@@ -77,6 +77,10 @@
         private const uint LoadGdtOffset        = 0x500;
         private const uint LoadTrOffset         = 0x510;
         private const uint DescriptorMinBuffer  = 0x520;
+        // AVX state (step199): mov cr4, rcx (4 bytes) and xgetbv (11 bytes).
+        private const uint WriteCr4Offset       = 0x520;
+        private const uint XgetbvOffset         = 0x530;
+        private const uint XstateMinBuffer      = 0x540;
 
         private const uint CmpXchg64Offset       = 0x1A0;
         private const uint Xchg64Offset          = 0x1C0;
@@ -604,6 +608,39 @@
             return true;
         }
 
+        /// <summary>mov cr4, rcx.</summary>
+        public static bool WriteCr4(ulong value)
+        {
+            if (s_execBuffer == null || s_execBufferSize < XstateMinBuffer) return false;
+            ((delegate* unmanaged<ulong, void>)Stub(WriteCr4Offset, 0x0F, 0x22, 0xE1, 0xC3))(value);
+            return true;
+        }
+
+        /// <summary>xgetbv: XCR[selector]. Needs CR4.OSXSAVE, or it raises #UD.</summary>
+        public static bool TryXgetbv(uint selector, out ulong value)
+        {
+            value = 0;
+            if (s_execBuffer == null || s_execBufferSize < XstateMinBuffer) return false;
+            byte* p = (byte*)s_execBuffer + XgetbvOffset;
+            EmitXgetbvBootAsm(p);
+            value = ((delegate* unmanaged<uint, ulong>)p)(selector);
+            return true;
+        }
+
+        /// <summary>
+        /// The interrupt path saves the full XSAVE image (x87, SSE, AVX) instead
+        /// of FXSAVE's. Set once at boot, when XCR0 gains AVX state, together
+        /// with re-emitting the common stub (Idt.UseXsave) and the resume stub.
+        /// </summary>
+        public static bool UsesXsave { get; private set; }
+
+        public static void UseXsave()
+        {
+            UsesXsave = true;
+            if (s_execBuffer != null && s_execBufferSize >= ResumeMinBuffer)
+                EmitResume((byte*)s_execBuffer + ResumeOffset);
+        }
+
         public static void StiHlt()
         {
             if (s_execBuffer == null || s_execBufferSize < CoopSwitchMinBuffer)
@@ -729,7 +766,8 @@
         // the original force-disp32 form; same semantics. RCX = frame*.
         private static void EmitResume(byte* p)
         {
-            EmitResumeBootAsm(p);
+            if (UsesXsave) EmitResumeXsaveBootAsm(p);
+            else EmitResumeBootAsm(p);
             s_resume = (delegate* unmanaged<void*, void>)p;
             s_resumeReady = true;
         }

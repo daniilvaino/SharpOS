@@ -7,6 +7,17 @@
 
 # Фронты — есть следующее действие
 
+## Два провала батареи под `--gc-stress`
+
+`AOTTESTS --gc-stress 16 4` (ждём 297) и `--gc-stress 1 1 --pipe-stress 1`
+(ждём 0) кончаются кодом 134: аппаратный отказ в приложении, ядро
+диспетчеризует его (`HwFaultBridge` → `DispatchEx.FindFirstPassHandler`), и
+`Exception.AppendStackFrame` читает объект исключения (куча ядра) уже
+залитым `0xCC` — освобождён во время диспетчеризации. Объект есть в цепочке
+потока (`ExInfo.Exception`), но цепочку обходит и сборщик приложения со своей
+функцией пометки, которая объекты кучи ядра пропускает. Воспроизводится в
+каждом прогоне, с CoreCLR и без. Логи: `C:/work/OS-archive/noclr_run1_*`.
+
 ## KQL в конвейере — FILTER и остальные глаголы
 
 `PIPEGEN 100 | KQL 'where Level >= 3 | project Text | sort by Level desc |
@@ -35,6 +46,14 @@ Kusto.Language — в `vendor/KustoLanguage`, KQLTEST 7/7 (step198): разбо�
 конструкторов); типы, которых нет в образе (типы во время выполнения не
 строятся). Кэш — словарь под замком на каждый вызов: если GVM окажется
 горячим, — кэш без замка, как `TypeLoaderExports` в CoreLib.
+
+## Математика по процессору
+
+`LibmPatcher` переписывает точки входа SharpLibm по CPUID: SSE4.1 —
+floor/ceil/trunc/rint/nearbyint на `roundsd`, FMA3 при AVX-состоянии
+(step199) — `fma`/`fmaf` на `vfmadd`. Дальше — что ещё выгодно переключать
+(ветки CORE-MATH, которые без аппаратного FMA считают его программно, и
+прочие инструкции по CPUID), с замером до и после.
 
 ## Потоковые статики (`[ThreadStatic]`)
 
@@ -641,26 +660,13 @@ SharpLibm — правильно округлённой.
 C#, а не в C++ форка. Цена — +650 КБ образа (экспорт корнит все функции);
 сверить, что имена не сталкиваются с другими экспортами ядра.
 
-## #DF ядра под `--pipe-stress 2` (однократно)
-
-Батарея step198, 1 из 2 прогонов: третья команда autorun
-(`AOTTESTS.EXE --pipe-stress 2`) — #GP в
-`KernelGcPreciseWalk.RunFromThrowSite+0x5c` (:543), затем #PF в
-`XtermSharp.BufferLine.CopyFrom`, запись мимо в `HeapBlockOps.Split`, и #DF
-в `X64Asm.CmpXchg64` (RSP у края ядерного стека — сбой в обработчике сбоя).
-Перед этим тест ждал смерти писателя с исключением (`exit=134`) — точный
-обход стека от места выброса в ядре под нагрузкой труб. Повтор прошёл 24/24.
-Лог: `C:/work/OS-archive/run_df_pipestress.log` (вне репозитория). Начать с `--gc-stress` на
-pipe-stress и VerifyHeap до/после обхода от точки выброса.
-
 ## SharpLibm: хвосты
 
-- Функции Бесселя `j0/j1/jn/y0/y1/yn` (go2cs `src/core/math`, BSD-3), `erfinv`.
-- Патч `modf` в `LibmPatcher` (сейчас SSE4.1 переписывает только
-  floor/ceil/trunc/rint/nearbyint).
 - Ошибки порта CoreMathSharp (~80, `// SharpLibm fix:`) отправить автору.
-- SharpLibm-tests: подключить glibc libm-test, llvm-libc, TestFloat,
-  `math_accuracy`.
+- SharpLibm-tests: `math_accuracy` (Zimmermann) и остальные наборы из
+  `fetch_suites.sh`, помеченные «not yet».
+- Флаги исключений, режимы округления, errno — для вызывающих из C через
+  экспорты (CLI фиксирует к ближайшему, `Math` они не нужны).
 
 ## Запуск сборок подряд: нужна изоляция через контексты загрузки
 

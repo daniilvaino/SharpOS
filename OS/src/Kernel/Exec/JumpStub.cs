@@ -263,10 +263,12 @@ namespace OS.Kernel.Exec
             {
                 OS.Boot.EH.ExInfoHead.s_head = context->ExInfoHead;
                 OS.Kernel.Threading.Preemption.RestoreDepth(context->PreemptionDepth);
+                OS.Hal.Platform.AbandonWrite();
                 s_abort(context, exitCode);
             }
             OS.Boot.EH.ExInfoHead.s_head = System.IntPtr.Zero;
             OS.Kernel.Threading.Preemption.RestoreDepth(0);
+            OS.Hal.Platform.AbandonWrite();
             OS.Kernel.Process.AppServiceBuilder.OnAppThreadGone(self.App);
             OS.Kernel.Threading.Scheduler.Exit();
         }

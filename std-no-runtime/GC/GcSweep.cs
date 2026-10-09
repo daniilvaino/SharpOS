@@ -134,7 +134,10 @@ namespace SharpOS.Std.NoRuntime
             // Mark phase (rooted only in CoreCLR's GC graph). Sweeping would
             // free-marker / reuse them → corruption. See GC.ReclamationDisabled.
             if (GC.ReclamationDisabled)
+            {
+                GcMark.InProgress = false;
                 return;
+            }
 
             EnsureInit();
 
@@ -234,6 +237,8 @@ namespace SharpOS.Std.NoRuntime
                 previous = seg;
                 seg = next;
             }
+
+            GcMark.InProgress = false;
 
             if (GcStress.VerifyHeap)
                 GcStress.Check(2);

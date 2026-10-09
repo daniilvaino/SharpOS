@@ -76,6 +76,13 @@ namespace OS.Boot.EH
         // halts on unhandled (per our current Dispatch behavior).
         public static void DispatchTrap(InterruptFrame* frame)
         {
+            // A fault while the previous one is still being reported: the
+            // previous one's lines are cut mid-way and it never gets to its
+            // dispatch, so say what it was first, on the raw port.
+            if (s_reporting != null)
+                ReportOuterFault(s_reporting);
+            s_reporting = frame;
+
             // Phase E9.b step 102 -- guard-page stack-overflow detection.
             // Each hosted/kernel thread (other than the UEFI boot thread)
             // reserves an unmapped 4 KiB page below StackBase. A #PF
@@ -502,6 +509,7 @@ namespace OS.Boot.EH
             // DispatchFromHwFault returns only when no handler matched —
             // then we fall through to the NativeAOT path which still
             // catches null-derefs in our own managed kernel code.
+            s_reporting = null;
             if (frame->Vector == 13 || frame->Vector == 14)
             {
                 // C# requires `fixed` scope to take address-of of a managed
@@ -513,6 +521,14 @@ namespace OS.Boot.EH
                 {
                     BuildHwExceptionRecord(rec, frame);
                     BuildContextFromInterruptFrame(ctx, frame);
+
+                    // CoreCLR and the native SEH walker know nothing of our
+                    // chain: a handler either finds it reaches a catch and
+                    // never comes back here, leaving s_head pointing into this
+                    // frame's dead stack — the next collection reads its
+                    // PrevExInfo from whatever reused the bytes. Unlinked for
+                    // them, linked again if both decline.
+                    ExInfoHead.s_head = (System.IntPtr)exInfo.PrevExInfo;
                     // step123: CoreCLR managed hardware fault path. For JIT-code
                     // null deref / AV, IsSafeToHandleHardwareException + Handle-
                     // HardwareException is the canonical route → it creates an
@@ -531,6 +547,7 @@ namespace OS.Boot.EH
                     }
                     SehDispatch.DispatchFromHwFault(rec, ctx);
                     // Returned — PAL SEH didn't find a handler. Fall through.
+                    ExInfoHead.s_head = (System.IntPtr)(&exInfo);
                 }
             }
 
@@ -556,6 +573,24 @@ namespace OS.Boot.EH
         // handling means no re-entry concerns.
         private static ExceptionRecord s_hwRec;
         private static Context s_hwCtx;
+
+        // The fault between its entry and its dispatch, when the report runs.
+        private static InterruptFrame* s_reporting;
+
+        private static void ReportOuterFault(InterruptFrame* outer)
+        {
+            Serial.WriteString("\r\n[nested fault] while reporting vec=");
+            Serial.WriteHex(outer->Vector, 2);
+            Serial.WriteString(" rip=");
+            Serial.WriteHex(outer->Rip, 16);
+            Serial.WriteString(" rsp=");
+            Serial.WriteHex(outer->Rsp, 16);
+            Serial.WriteString(" cr2=");
+            Serial.WriteHex(outer->Cr2, 16);
+            Serial.WriteString(" err=");
+            Serial.WriteHex(outer->ErrorCode, 8);
+            Serial.WriteString("\r\n");
+        }
 
         private static void BuildHwExceptionRecord(ExceptionRecord* rec, InterruptFrame* frame)
         {

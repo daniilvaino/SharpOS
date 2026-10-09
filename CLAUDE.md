@@ -141,7 +141,7 @@ Phase D закрыта (step 90 done/step081 + последующие). Сего
 - `Exception.StackTrace` через `.pdata`-walker + funclet-aware codeOffset.
 - ILC `BoxedEnumerator` thunks работают (step 115 — `Object.m_pEEType` + `RawData` declared).
 
-Когда пишешь port из BCL — **бросай по-настоящему**, не подменяй `Halt()`. Catch'ями тоже пользоваться можно. Limits: `GC.WaitForPendingFinalizers` зависает (`SYM-003`). SIMD: `Vector128` работает на всех трёх ярусах (step165, порт в `std-no-runtime/Runtime/Intrinsics/`), `Vector256` объявлен, но не ускоряется — AVX не в целевом наборе и его регистры не сохраняются через переключение контекста.
+Когда пишешь port из BCL — **бросай по-настоящему**, не подменяй `Halt()`. Catch'ями тоже пользоваться можно. Limits: `GC.WaitForPendingFinalizers` зависает (`SYM-003`). SIMD: `Vector128` работает на всех трёх ярусах (step165, порт в `std-no-runtime/Runtime/Intrinsics/`), `Vector256` объявлен, но не ускоряется — AVX не в целевом наборе ILC. Регистры AVX с step199 сохраняются прерываниями (XSAVE, на процессорах с AVX); из AVX сейчас используется только FMA в libm.
 
 ## Коммит-протокол
 

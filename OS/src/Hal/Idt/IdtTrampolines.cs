@@ -115,6 +115,12 @@
             length = (uint)EmitCommonStub(p, dispatcherPtr);
         }
 
+        /// <summary>The XSAVE variant of the common stub (XCR0 with AVX state).</summary>
+        public static void WriteCommonStubXsave(byte* p, void* dispatcherPtr, out uint length)
+        {
+            length = (uint)EmitCommonStubXsave(p, dispatcherPtr);
+        }
+
         /// <summary>Writes `lidt [rcx]; ret` — loads an IDTR from the caller's buffer.</summary>
         public static void WriteLoadIdtHelper(byte* p) => EmitLoadIdtHelper(p);
 

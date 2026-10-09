@@ -540,9 +540,14 @@ namespace OS.Kernel.Memory
         /// <summary>A walk from where a managed throw entered the runtime: the thrower's return address and registers.</summary>
         private static void RunFromThrowSite(OS.Boot.EH.PalLimitedContext* site, delegate* unmanaged<nuint, void> markRoot)
         {
+            // Shape before contents: an entry left in the chain by a dead
+            // dispatch hands over whatever its stack slot holds now, and
+            // reading through a non-canonical one faults in the middle of a
+            // mark — every live object keeps its mark bit, and the machine
+            // goes down on the next virtual call.
+            if (((ulong)site & 7) != 0 || ((ulong)site >> 47) != 0) return;
             if (!IsAvailable || site == null || site->IP == 0 || site->Rsp == 0) return;
             FindThrowStubs();
-            if (((ulong)site & 7) != 0 || ((ulong)site >> 47) != 0) return;
 
             Context ctx = default;
             ctx.Rip = site->IP;

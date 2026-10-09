@@ -90,9 +90,24 @@ namespace OS.Kernel.Memory
 
             s_activeLo = lo;
             s_activeHi = hi;
+            System.IntPtr head = OS.Boot.EH.ExInfoHead.s_head;
             s_run((void*)hi, callback);
             s_activeLo = 0;
             s_activeHi = 0;
+
+            // A stack boundary, as JumpStub.Run's is: whatever dispatch was
+            // linked on this stack is over once the run returns, and an entry
+            // left at the head points into a buffer the next run reuses — the
+            // collector then walks a "throw site" made of whatever lies there.
+            // HwFaultBridge used to leave one behind whenever CoreCLR took a
+            // page fault during the boot session; said once, then restored.
+            if (OS.Boot.EH.ExInfoHead.s_head != head)
+            {
+                OS.Hal.Serial.WriteString("\r\n[bigstack] exception chain entry left after the run: 0x");
+                OS.Hal.Serial.WriteHex((ulong)OS.Boot.EH.ExInfoHead.s_head, 16);
+                OS.Hal.Serial.WriteString(", head restored\r\n");
+                OS.Boot.EH.ExInfoHead.s_head = head;
+            }
             return true;
         }
 

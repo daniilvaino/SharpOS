@@ -834,16 +834,11 @@ namespace OS.Boot
         // becomes CPU-visible. Post-switch, MapKernel and Map both target
         // s_rootTable (now the active root).
         //
-        // XCR0 lock: gated by CR4.OSXSAVE (bit 18). xsetbv #UDs if OSXSAVE
-        // is 0 — observed empirically on QEMU/OVMF (firmware leaves it off;
-        // OSXSAVE is the OS's responsibility to set). Skipping xsetbv when
-        // OSXSAVE=0 is SAFE: cpuid.1.ecx[27] mirrors CR4.OSXSAVE and the
-        // CoreCLR JIT consults it; OSXSAVE=0 → JIT cannot use AVX/VEX →
-        // legacy SSE only → fxsave/fxrstor (512 B xmm0-15) is complete by
-        // construction. The PV2 lock (§5 / §17) is therefore enforced
-        // automatically. If a future bring-up DOES set CR4.OSXSAVE=1
-        // (e.g. to enable AVX deliberately later), the xsetbv branch fires
-        // and explicitly clears XCR0 to x87+SSE so FXSAVE stays sufficient.
+        // XCR0: ConfigureXcr0. Without AVX in the CPU, the old lock — x87|SSE,
+        // xsetbv only when the firmware set CR4.OSXSAVE (xsetbv #UDs without
+        // it; QEMU/OVMF leave it off), FXSAVE complete by construction. With
+        // AVX (step199): OSXSAVE on, XCR0 = x87|SSE|AVX, and the interrupt
+        // path saves XSAVE images.
         // step 123 diagnostic: log each loader-code exec buffer's [base..end)
         // so we can confirm whether a "garbage" RIP like 0x1E169FA4 surfaced by
         // the SEH walker belongs to one of these pools (BigStack swap thunk,
@@ -948,31 +943,103 @@ namespace OS.Boot
 
             InitializeSseControlWord();
 
-            // SharpLibm's one-instruction entry points (SSE4.1 rounding), and
-            // the feature bits apps get for their own copy (step198).
-            CpuFeatures.Initialize();
+            bool avxState = ConfigureXcr0();
+
+            // SharpLibm's one-instruction entry points (SSE4.1 rounding, FMA
+            // once AVX state is on), and the feature bits apps get for their
+            // own copy (step198).
+            CpuFeatures.Initialize(avxState);
+        }
+
+        // XCR0 (step199). With XSAVE and AVX in the CPU: x87|SSE|AVX, and the
+        // interrupt path switches to XSAVE so the upper halves of YMM survive
+        // preemption — enabled for the FMA instructions SharpLibm's fma becomes
+        // (VEX-encoded, so AVX state must be on even though they only touch
+        // XMM). Otherwise the old lock: x87|SSE, FXSAVE complete by
+        // construction, and xsetbv only when the firmware already set
+        // CR4.OSXSAVE (it #UDs without it).
+        //
+        // The cooperative switch keeps FXSAVE either way: it is a call, and the
+        // upper halves of YMM are volatile across calls in Win64.
+        //
+        // CoreCLR stays on SSE: on Windows it asks GetEnabledXStateFeatures()
+        // whether AVX is usable, and the PAL answers 0 (crt_imp_stubs.cpp).
+        private static bool ConfigureXcr0()
+        {
+            const ulong Cr4OsXsave = 1UL << 18;
+            const ulong XcrX87Sse = 0x3, XcrX87SseAvx = 0x7;
+            const uint AvxXsaveBytes = 832;   // what the stubs reserve (IdtTrampolines)
 
             if (!X64Asm.TryReadCr4(out ulong cr4))
             {
-                Log.Write(LogLevel.Warn, "XCR0 lock skipped — TryReadCr4 unavailable");
-                return;
+                Log.Write(LogLevel.Warn, "XCR0 setup skipped — TryReadCr4 unavailable");
+                return false;
             }
 
-            const ulong Cr4OsXsave = 1UL << 18;
+            uint* regs = stackalloc uint[4];
+            bool xsave = false, avx = false;
+            if (X64Asm.Cpuid(1, 0, regs))
+            {
+                xsave = (regs[2] & (1u << 26)) != 0;
+                avx = (regs[2] & (1u << 28)) != 0;
+            }
+            // And the XSAVE leaf must describe AVX state (CPUID.(0Dh,0).EAX
+            // bit 2), checked before CR4 is touched: QEMU's qemu64 with
+            // +xsave,+avx leaves that leaf empty, and its `mov cr4` setting
+            // OSXSAVE then never retires — the boot hung on that one
+            // instruction (step199, seen live through the monitor).
+            if (xsave && avx)
+            {
+                bool leaf = X64Asm.Cpuid(0, 0, regs) && regs[0] >= 0xD;
+                avx = leaf && X64Asm.Cpuid(0xD, 0, regs) && (regs[0] & 0x6) == 0x6;
+            }
+
+            if (xsave && avx)
+            {
+                if ((cr4 & Cr4OsXsave) == 0)
+                    X64Asm.WriteCr4(cr4 | Cr4OsXsave);
+                X64Asm.Xsetbv(0, XcrX87SseAvx);
+
+                // CPUID.(0Dh,0).EBX: the XSAVE image size for the current XCR0.
+                bool sized = X64Asm.Cpuid(0xD, 0, regs) && regs[1] != 0 && regs[1] <= AvxXsaveBytes;
+                bool read = X64Asm.TryXgetbv(0, out ulong xcr0) && xcr0 == XcrX87SseAvx;
+                if (sized && read && Idt.UseXsave())
+                {
+                    X64Asm.UseXsave();
+                    Log.Begin(LogLevel.Info);
+                    Console.Write("XCR0 = x87|SSE|AVX, interrupts save XSAVE (");
+                    Console.WriteUInt(regs[1]);
+                    Console.Write(" B)");
+                    Log.EndLine();
+                    return true;
+                }
+
+                X64Asm.Xsetbv(0, XcrX87Sse);
+                Log.Begin(LogLevel.Warn);
+                Console.Write("AVX state not enabled (xsave size ");
+                Console.WriteUInt(regs[1]);
+                Console.Write(sized ? "" : " too big");
+                Console.Write(read ? "" : ", xgetbv mismatch");
+                Console.Write("); XCR0 = x87|SSE");
+                Log.EndLine();
+                return false;
+            }
+
             if ((cr4 & Cr4OsXsave) == 0)
             {
                 Log.Begin(LogLevel.Info);
                 Console.Write("XCR0 lock skipped (CR4=0x");
                 Console.WriteHex(cr4, 16);
-                Console.Write(", OSXSAVE=0, legacy FXSAVE active)");
+                Console.Write(", OSXSAVE=0, no AVX; legacy FXSAVE active)");
                 Log.EndLine();
-                return;
+                return false;
             }
 
-            if (X64Asm.Xsetbv(0, 0x3UL))
+            if (X64Asm.Xsetbv(0, XcrX87Sse))
                 Log.Write(LogLevel.Info, "XCR0 = x87|SSE locked (FXSAVE-safe)");
             else
                 Log.Write(LogLevel.Warn, "XCR0 lock failed — AsmExecBuffer unavailable");
+            return false;
         }
 
         private static void InitializeAcpi(BootInfo bootInfo)

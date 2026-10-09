@@ -178,6 +178,31 @@ namespace OS.Hal.Idt
         }
 
         /// <summary>
+        /// Switch the interrupt path to XSAVE: the common stub is rewritten in
+        /// place, the per-vector stubs keep jumping to it. Called once, at
+        /// boot, right after XCR0 gains AVX state and before any interrupt
+        /// frame is live — a frame saved by one variant and resumed by the
+        /// other would restore garbage. X64Asm.UseXsave switches the resume
+        /// side.
+        /// </summary>
+        public static bool UseXsave()
+        {
+            if (!s_installed || s_buffer == null) return false;
+
+            byte* fresh = stackalloc byte[128];
+            delegate* unmanaged<InterruptFrame*, void> dispatcher = &Dispatch;
+            IdtTrampolines.WriteCommonStubXsave(fresh, (void*)dispatcher, out uint length);
+            if (length > IdtTrampolines.CommonStubMaxSize) return false;
+
+            bool interrupts = X64Asm.InterruptsEnabled();
+            X64Asm.Cli();
+            byte* stub = s_buffer + IdtTrampolines.CommonStubOffset;
+            for (uint i = 0; i < length; i++) stub[i] = fresh[i];
+            if (interrupts) X64Asm.Sti();
+            return true;
+        }
+
+        /// <summary>
         /// Point one vector above the exception range at our own dispatcher,
         /// replacing the firmware entry inherited at Install. Call only after
         /// UEFI is gone and the legacy PIC is masked — before that the entry

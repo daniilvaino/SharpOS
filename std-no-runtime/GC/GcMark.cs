@@ -59,8 +59,16 @@ namespace SharpOS.Std.NoRuntime
 
         // Start a fresh mark pass. Caller should call this before pushing the
         // first root; it resets the mark stack and the per-pass counter.
+        // From Begin to the end of the sweep: live objects carry the mark bit in
+        // their MethodTable pointer, so a virtual call or a type check on any of
+        // them reads the wrong table. Code that may run inside a collection —
+        // its diagnostics, a fault report — checks this before touching objects
+        // (the kernel's output goes to the raw serial port only).
+        public static bool InProgress;
+
         public static void Begin()
         {
+            InProgress = true;
             if (GcStress.VerifyHeap)
                 GcStress.Check(1);
             s_count = 0;
