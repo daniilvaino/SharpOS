@@ -1,5 +1,6 @@
 ﻿using SharpOS.AppSdk;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime;
 using SharpOS.Std.Exchange;
@@ -279,9 +280,22 @@ namespace AotTests
             Check("Dictionary TryGetValue", got && sq == 49);
             Check("Dictionary missing key", !dict.TryGetValue(99, out _));
 
+            CheckConcurrentDictionary();
+
             // EqualityComparer<T>.Default (interface dispatch on a value type).
             var cmp = EqualityComparer<int>.Default;
             Check("EqualityComparer<int>", cmp.Equals(5, 5) && !cmp.Equals(5, 6));
+
+            // double/float had no IEquatable<T> before step198: the default
+            // comparer fell back to boxes compared by reference.
+            double nan = double.NaN;
+            Check("EqualityComparer<double>: equal values, NaN equals NaN",
+                  EqualityComparer<double>.Default.Equals(2.5, 2.5) && EqualityComparer<double>.Default.Equals(nan, nan)
+                  && !EqualityComparer<double>.Default.Equals(2.5, 2.25) && EqualityComparer<float>.Default.Equals(1.5f, 1.5f));
+            var byDouble = new Dictionary<double, string> { [0.5] = "half" };
+            Check("Dictionary<double, T> lookup and Comparer<double> order",
+                  byDouble.ContainsKey(0.5) && byDouble[0.5] == "half" && Comparer<double>.Default.Compare(1.0, 2.0) < 0
+                  && 0.0.GetHashCode() == (-0.0).GetHashCode());
 
             // throw / catch through the shared kernel EH engine (step140):
             // app throw -> kernel RhpThrowEx -> DispatchEx walks app .pdata ->
@@ -334,6 +348,8 @@ namespace AotTests
             CheckStelem();
             CheckArrayCasts();
             CheckNumberFormatting();
+            CheckDecimal();
+            CheckLibm();
             CheckThreadsAndTasks();
             CheckPreemption();
             CheckCollectorPaths();
@@ -369,6 +385,65 @@ namespace AotTests
             // Exit code = pass count (all-green => equals total); under
             // --concurrent the count of failures.
             return s_concurrent ? (int)(s_total - s_pass) : (int)s_pass;
+        }
+
+        // ConcurrentDictionary<K,V>: the BCL port in std-no-runtime/Bcl. Lock
+        // striping, volatile bucket writes and the resize all run here even on
+        // one thread; growth to 200 entries crosses several resizes of the
+        // default 31 buckets.
+        private static void CheckConcurrentDictionary()
+        {
+            var cd = new ConcurrentDictionary<int, string>();
+            bool added = cd.TryAdd(1, "one") && cd.TryAdd(2, "two") && !cd.TryAdd(1, "uno");
+            Check("ConcurrentDictionary TryAdd", added && cd.Count == 2);
+
+            Check("ConcurrentDictionary TryGetValue",
+                cd.TryGetValue(2, out string two) && two == "two" && !cd.TryGetValue(3, out _));
+
+            string updated = cd.AddOrUpdate(1, "x", (k, old) => old + "!");
+            string inserted = cd.AddOrUpdate(3, "three", (k, old) => "wrong");
+            Check("ConcurrentDictionary AddOrUpdate",
+                updated == "one!" && inserted == "three" && cd[1] == "one!");
+
+            string existing = cd.GetOrAdd(2, k => "wrong");
+            string created = cd.GetOrAdd(4, k => "four" + k);
+            Check("ConcurrentDictionary GetOrAdd",
+                existing == "two" && created == "four4" && cd.Count == 4);
+
+            Check("ConcurrentDictionary TryRemove",
+                cd.TryRemove(3, out string removed) && removed == "three"
+                && !cd.ContainsKey(3) && !cd.TryRemove(3, out _) && cd.Count == 3);
+
+            Check("ConcurrentDictionary TryUpdate",
+                cd.TryUpdate(2, "TWO", "two") && !cd.TryUpdate(2, "no", "two") && cd[2] == "TWO");
+
+            bool threw = false;
+            try { _ = cd[99]; }
+            catch (KeyNotFoundException) { threw = true; }
+            Check("ConcurrentDictionary KeyNotFoundException", threw);
+
+            var big = new ConcurrentDictionary<string, int>();
+            for (int i = 0; i < 200; i++) big["k" + i] = i;
+            int sum = 0, seen = 0;
+            foreach (KeyValuePair<string, int> pair in big) { sum += pair.Value; seen++; }
+            Check("ConcurrentDictionary grow + enumerate",
+                big.Count == 200 && seen == 200 && sum == 19900 && big["k150"] == 150);
+
+            KeyValuePair<string, int>[] snapshot = big.ToArray();
+            Check("ConcurrentDictionary ToArray/Keys/Values",
+                snapshot.Length == 200 && big.Keys.Count == 200 && big.Values.Count == 200);
+
+            // A 16-byte value cannot be written atomically, so an update
+            // replaces the node instead of the value (IsWriteAtomic = false).
+            var wide = new ConcurrentDictionary<int, KeyValuePair<long, long>>();
+            wide[1] = new KeyValuePair<long, long>(1, 2);
+            wide[1] = new KeyValuePair<long, long>(3, 4);
+            Check("ConcurrentDictionary wide value replace",
+                wide.Count == 1 && wide[1].Key == 3 && wide[1].Value == 4);
+
+            big.Clear();
+            Check("ConcurrentDictionary Clear/IsEmpty",
+                big.IsEmpty && big.Count == 0 && !big.ContainsKey("k1") && !cd.IsEmpty);
         }
 
         // Preemption (pipe_plan.md, item 9). Each check fails rather than hangs
@@ -590,6 +665,83 @@ namespace AotTests
                         && u8[0] == (byte)'-' && u8[2] == (byte)',' && u8[6] == (byte)'.' && u8[7] == (byte)'5';
             Check("format UTF-8 TryFormat (IUtf8SpanFormattable)", utf8);
         }
+
+        // Operands go through D() so Roslyn cannot fold decimal constant
+        // arithmetic at compile time: every operator below runs DecCalc.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static decimal D(decimal x) => x;
+
+        // System.Math over SharpLibm (step198): correctly rounded results, so
+        // the bits are known exactly. Operands pass through Dbl() so Roslyn
+        // cannot fold the calls into constants.
+        private static double Dbl(double x) => x;
+        private static ulong Bits64(double x) => (ulong)BitConverter.DoubleToInt64Bits(x);
+
+        private static void CheckLibm()
+        {
+            Check("libm: sin(1), exp(1), log(10) correctly rounded",
+                  Bits64(Math.Sin(Dbl(1.0))) == 0x3FEAED548F090CEEUL
+                  && Bits64(Math.Exp(Dbl(1.0))) == 0x4005BF0A8B145769UL
+                  && Bits64(Math.Log(Dbl(10.0))) == 0x40026BB1BBB55516UL);
+            Check("libm: pow, atan2, cbrt, sqrt",
+                  Bits64(Math.Pow(Dbl(2.0), Dbl(0.5))) == 0x3FF6A09E667F3BCDUL
+                  && Bits64(Math.Atan2(Dbl(1.0), Dbl(1.0))) == 0x3FE921FB54442D18UL
+                  && Math.Cbrt(Dbl(27.0)) == 3.0 && Math.Sqrt(Dbl(2.0)) == 1.4142135623730951);
+            Check("libm: floor/ceil/round(even)/truncate on halves and big values",
+                  Math.Floor(Dbl(-2.5)) == -3.0 && Math.Ceiling(Dbl(-2.5)) == -2.0 && Math.Round(Dbl(2.5)) == 2.0
+                  && Math.Round(Dbl(3.5)) == 4.0 && Math.Truncate(Dbl(-1e300)) == -1e300 && Math.Floor(Dbl(1e19 + 0.5)) == 1e19);
+            Check("libm: % on double and float",
+                  Dbl(7.5) % Dbl(2.0) == 1.5 && Dbl(-7.5) % Dbl(2.0) == -1.5 && (float)Dbl(5.25) % 2.0f == 1.25f
+                  && Dbl(5.9790119248836734e+200) % Dbl(1.1258465975523544) == 0.6447968302508578);
+        }
+
+        // System.Decimal (std-no-runtime/Number/Decimal*.cs). Expected values
+        // are .NET's invariant-culture results.
+        private static void CheckDecimal()
+        {
+            Check("decimal 0.1 + 0.2 == 0.3", D(0.1m) + D(0.2m) == 0.3m && (D(0.1m) + D(0.2m)).ToString() == "0.3");
+            Check("decimal Parse keeps scale", decimal.Parse("123.4500").ToString() == "123.4500" && decimal.Parse(" -12,345.67 ") == -12345.67m);
+            Check("decimal from double / to double", (decimal)D2(1.5) == 1.5m && (decimal)D2(0.1) == 0.1m && (double)D(2.25m) == 2.25);
+            Check("decimal MaxValue / MinValue text", decimal.MaxValue.ToString() == "79228162514264337593543950335" && decimal.MinValue.ToString() == "-79228162514264337593543950335");
+            Check("decimal 1/3 to 28 digits", (D(1m) / D(3m)).ToString() == "0.3333333333333333333333333333");
+            Check("decimal * and %", D(1.1m) * D(1.1m) == 1.21m && D(10.5m) % D(3m) == 1.5m);
+            Check("decimal Round to even / away / digits", Math.Round(D(2.5m)) == 2m && Math.Round(D(3.5m)) == 4m
+                                                        && Math.Round(D(2.5m), MidpointRounding.AwayFromZero) == 3m && decimal.Round(D(2.345m), 2) == 2.34m);
+            Check("decimal Truncate / Floor / Ceiling", decimal.Truncate(D(-2.7m)) == -2m && Math.Floor(D(-2.1m)) == -3m && Math.Ceiling(D(2.1m)) == 3m);
+            Check("decimal format F2 / N2 / E3", D(1234.565m).ToString("F2") == "1234.57" && D(1234567.891m).ToString("N2") == "1,234,567.89"
+                                                 && D(12345.6789m).ToString("E3") == "1.235E+004");
+            Check("decimal to int / long truncates", (int)D(-7.9m) == -7 && (long)D(12345678901.99m) == 12345678901L && (decimal)ulong.MaxValue == 18446744073709551615m);
+            int[] bits = decimal.GetBits(D(-1.5m));
+            Check("decimal GetBits / ctor(int[])", bits.Length == 4 && bits[0] == 15 && bits[1] == 0 && bits[2] == 0 && bits[3] == unchecked((int)0x80010000)
+                                                   && new decimal(bits) == -1.5m && new decimal(15, 0, 0, true, 1) == -1.5m);
+            Check("decimal equality ignores scale", D(1.0m) == D(1.00m) && D(1.0m).GetHashCode() == D(1.00m).GetHashCode()
+                                                    && D(1.0m).Equals((object)1.00m) && D(2m).CompareTo(D(1.99m)) > 0);
+            Check("decimal TryParse styles", decimal.TryParse("1e3", System.Globalization.NumberStyles.Float, null, out decimal e3) && e3 == 1000m
+                                             && !decimal.TryParse("abc", out _) && !decimal.TryParse("1e3", out _));
+
+            bool overflow = false;
+            try { decimal sum = D(decimal.MaxValue) + D(1m); }
+            catch (OverflowException) { overflow = true; }
+            Check("decimal MaxValue + 1 throws OverflowException", overflow);
+
+            bool narrow = false;
+            try { byte b = (byte)D(256m); }
+            catch (OverflowException) { narrow = true; }
+            Check("decimal to byte overflow throws", narrow);
+
+            bool parseOverflow = false;
+            try { decimal.Parse("1e30", System.Globalization.NumberStyles.Float); }
+            catch (OverflowException) { parseOverflow = true; }
+            Check("decimal Parse overflow throws OverflowException", parseOverflow);
+
+            bool divZero = false;
+            try { decimal q = D(1m) / D(0m); }
+            catch (DivideByZeroException) { divZero = true; }
+            Check("decimal divide by zero throws", divZero);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static double D2(double x) => x;
 
         private static void CheckStelem()
         {
@@ -1605,6 +1757,19 @@ namespace AotTests
             Check("await resumes", AsyncShape.Stage >= 2);
             Check("async runs to completion", AsyncShape.Stage == 3);
             Check("async task completes", asyncTask.IsCompleted);
+
+            var added = AsyncShape.AddAsync(2, 3);
+            var twiceNow = AsyncShape.TwiceAsync(4, suspend: false);
+            var twiceLater = AsyncShape.TwiceAsync(5, suspend: true);
+            var summed = AsyncShape.SumAsync(10);
+            var canceled = AsyncShape.CancelAsync(3);
+            for (int waited = 0; waited < 500 && !(added.IsCompleted && twiceLater.IsCompleted && summed.IsCompleted && canceled.IsCompleted); waited++)
+                AppThreads.Sleep(10);
+            Check("Task<T> result after await", added.IsCompleted && added.Result == 5);
+            Check("ValueTask<T> without suspending", twiceNow.IsCompletedSuccessfully && twiceNow.Result == 8);
+            Check("ValueTask<T> after await", twiceLater.IsCompleted && twiceLater.Result == 10);
+            Check("await foreach over async iterator", summed.IsCompleted && summed.Result == 55);
+            Check("async iterator canceled by WithCancellation", canceled.IsCompleted && canceled.Result == 3);
 
             // Locks. Compare-and-swap has to be a real instruction, threads
             // need distinct ids, and `lock` has to keep two of them from losing

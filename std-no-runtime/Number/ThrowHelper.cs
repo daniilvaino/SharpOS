@@ -34,6 +34,12 @@ namespace System
         }
 
         [DoesNotReturn]
+        internal static void ThrowArgumentException_DestinationTooShort()
+        {
+            throw new ArgumentException(SR.Argument_DestinationTooShort, "destination");
+        }
+
+        [DoesNotReturn]
         internal static void ThrowFormatException_BadFormatSpecifier()
         {
             throw new FormatException(SR.Argument_BadFormatSpecifier);

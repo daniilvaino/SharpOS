@@ -948,6 +948,10 @@ namespace OS.Boot
 
             InitializeSseControlWord();
 
+            // SharpLibm's one-instruction entry points (SSE4.1 rounding), and
+            // the feature bits apps get for their own copy (step198).
+            CpuFeatures.Initialize();
+
             if (!X64Asm.TryReadCr4(out ulong cr4))
             {
                 Log.Write(LogLevel.Warn, "XCR0 lock skipped — TryReadCr4 unavailable");

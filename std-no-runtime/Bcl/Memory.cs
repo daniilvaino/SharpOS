@@ -44,6 +44,8 @@ namespace System
             _length = length;
         }
 
+        public static ReadOnlyMemory<T> Empty => default;
+
         public int Length => _length;
         public bool IsEmpty => _length == 0;
 
@@ -102,6 +104,8 @@ namespace System
             _index = start;
             _length = length;
         }
+
+        public static Memory<T> Empty => default;
 
         public int Length => _length;
         public bool IsEmpty => _length == 0;

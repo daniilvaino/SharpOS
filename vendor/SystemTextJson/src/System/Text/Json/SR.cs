@@ -12,6 +12,21 @@ namespace System.Text.Json
     internal static class SR
     {
         internal const string ArgumentOutOfRange_Generic_MustBeNonNegative = "{0} ('{1}') must be a non-negative value.";
+        // JsonDocument / JsonElement / JsonNode (step198).
+        internal const string CollectionIsReadOnly = "Collection is read-only.";
+        internal const string DuplicatePropertiesNotAllowed_NameSpan = "Duplicate property '{0}' encountered during deserialization.";
+        internal const string JsonDocumentDoesNotSupportComments = "Comments cannot be stored in a JsonDocument, only the Skip and Disallow comment handling modes are supported.";
+        internal const string JsonElementDeepEqualsInsufficientExecutionStack = "Insufficient stack to continue executing 'JsonElement.DeepEquals'. This can happen either because the 'JsonElement' values are too deep or 'DeepEquals' is being called too deep in the stack.";
+        internal const string NodeAlreadyHasParent = "The node already has a parent.";
+        internal const string NodeCycleDetected = "A node cycle was detected.";
+        internal const string NodeDuplicateKey = "An item with the same key has already been added. Key: {0}";
+        internal const string NodeElementCannotBeObjectOrArray = "The element cannot be an object or array.";
+        internal const string NodeElementWrongType = "The element must be of type '{0}'";
+        internal const string NodeParentWrongType = "The node must have a parent node of type '{0}'.";
+        internal const string NodeUnableToConvert = "A value of type '{0}' cannot be converted to a '{1}'.";
+        internal const string NodeUnableToConvertElement = "An element of type '{0}' cannot be converted to a '{1}'.";
+        internal const string NodeValueNotAllowed = "A JsonNode cannot be used as a value.";
+        internal const string NodeWrongType = "The node must be of type '{0}'.";
         internal const string Argument_InvalidOffLen = "Offset and length were out of bounds for the array or count is greater than the number of elements from index to the end of the source collection.";
         internal const string ArrayDepthTooLarge = "The maximum configured depth of {0} has been exceeded. Cannot read next JSON array.";
         internal const string ArrayIndexNegative = "Number was less than 0.";

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Host tool: runs Kusto.Language's code generators — what its T4
+       templates (*.tt next to the outputs) do inside Visual Studio — and
+       writes the generated C# into vendor/KustoLanguage/src. The outputs are
+       part of the vendored snapshot; rerun after updating the snapshot:
+
+           dotnet run - -project tools/KustoGen -c Release
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NoWarn>$(NoWarn);CS0162;CS0168;CS0219;CS8981</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\vendor\KustoLanguage\generators\*.cs" />
+  </ItemGroup>
+
+</Project>

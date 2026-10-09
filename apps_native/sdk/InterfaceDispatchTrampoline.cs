@@ -38,7 +38,7 @@ namespace SharpOS.AppSdk
             for (; ; ) { }
         }
 
-        private static void* GetMethodAddress()
+        internal static void* GetMethodAddress()
         {
             delegate*<void> fn = &RhpInitialDynamicInterfaceDispatch;
             return (void*)fn;

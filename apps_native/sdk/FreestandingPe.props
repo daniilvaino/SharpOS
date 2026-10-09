@@ -33,6 +33,13 @@
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <PublishAot>true</PublishAot>
+    <!-- PublishAot turns on the SDK's trim/AOT/single-file analyzers. They
+         warn about reflection, which this tier does not have at all, and their
+         per-method dataflow is quadratic in locals: AotTests' generated
+         GcBigFrame (4400 locals) took csc past 20 GB (step198). Off. -->
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
     <EntryPointSymbol>SharpAppEntry</EntryPointSymbol>
 
     <!-- net8/ILC8: DebuggerSupport (default on) exports DotNetRuntimeDebugHeader

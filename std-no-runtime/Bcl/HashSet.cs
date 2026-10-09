@@ -44,7 +44,24 @@ namespace System.Collections.Generic
             foreach (T item in collection) Add(item);
         }
 
+        public HashSet(IEnumerable<T> collection, IEqualityComparer<T> comparer) : this(comparer)
+        {
+            if (collection == null) throw new ArgumentNullException(nameof(collection));
+
+            foreach (T item in collection) Add(item);
+        }
+
         public int Count => _numEntries;
+
+        /// <summary>
+        /// BCL surface (step198, System.Text.Json): chains never run out of room,
+        /// so nothing is reserved; the answer is at least the capacity asked for.
+        /// </summary>
+        public int EnsureCapacity(int capacity)
+        {
+            if (capacity < 0) throw new ArgumentOutOfRangeException(nameof(capacity));
+            return capacity > _numEntries ? capacity : _numEntries;
+        }
 
         public bool IsReadOnly => false;
 

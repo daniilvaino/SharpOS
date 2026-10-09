@@ -95,37 +95,116 @@ namespace System.Threading
         }
     }
 
-    public sealed class CancellationTokenSource
+    /// <summary>
+    /// A cancellation flag and the tokens that observe it.
+    /// </summary>
+    /// <remarks>
+    /// Partial against the BCL: no callbacks (Register), no timers (CancelAfter),
+    /// no WaitHandle. Cancel wakes nobody — waiters poll the token between slices.
+    /// A linked source (CreateLinkedTokenSource) keeps its parent tokens and
+    /// reports cancelled when it or any parent is, which is what callers of a
+    /// linked source observe; it is checked on read rather than propagated by a
+    /// registration, because there are no registrations. Dispose drops the
+    /// links, as the BCL's Dispose unregisters from the parents.
+    /// </remarks>
+    public sealed class CancellationTokenSource : IDisposable
     {
         internal bool _cancelled;
 
+        // Parents of a linked source; null for an ordinary one.
+        private CancellationToken[]? _linkedTokens;
+
+        // The source behind `new CancellationToken(true)`. Lazy, not an
+        // initialiser: a static with one would need the class constructor.
+        private static CancellationTokenSource? s_canceledSource;
+
+        internal static CancellationTokenSource CanceledSource =>
+            s_canceledSource ??= new CancellationTokenSource { _cancelled = true };
+
         public CancellationToken Token => new CancellationToken(this);
-        public bool IsCancellationRequested => _cancelled;
+
+        public bool IsCancellationRequested
+        {
+            get
+            {
+                if (_cancelled) return true;
+                CancellationToken[]? linked = _linkedTokens;
+                if (linked != null)
+                {
+                    for (int i = 0; i < linked.Length; i++)
+                    {
+                        if (linked[i].IsCancellationRequested)
+                        {
+                            _cancelled = true;
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+        }
 
         public void Cancel() => _cancelled = true;
-        public void Dispose() { }
-    }
 
-    public readonly struct CancellationToken
-    {
-        private readonly CancellationTokenSource? _source;
+        public void Cancel(bool throwOnFirstException) => _cancelled = true;
 
-        internal CancellationToken(CancellationTokenSource source) { _source = source; }
+        public void Dispose() => _linkedTokens = null;
 
-        public static CancellationToken None => default;
+        /// <summary>A source that is cancelled when either token is.</summary>
+        public static CancellationTokenSource CreateLinkedTokenSource(CancellationToken token1, CancellationToken token2) =>
+            !token1.CanBeCanceled ? CreateLinkedTokenSource(token2) :
+            token2.CanBeCanceled ? new CancellationTokenSource { _linkedTokens = new[] { token1, token2 } } :
+            CreateLinkedTokenSource(token1);
 
-        public bool IsCancellationRequested => _source != null && _source._cancelled;
+        /// <summary>A source that is cancelled when the token is.</summary>
+        public static CancellationTokenSource CreateLinkedTokenSource(CancellationToken token) =>
+            token.CanBeCanceled ? new CancellationTokenSource { _linkedTokens = new[] { token } } : new CancellationTokenSource();
 
-        public void ThrowIfCancellationRequested()
+        /// <summary>A source that is cancelled when any of the tokens is.</summary>
+        public static CancellationTokenSource CreateLinkedTokenSource(params CancellationToken[] tokens)
         {
-            if (IsCancellationRequested) throw new OperationCanceledException();
+            ArgumentNullException.ThrowIfNull(tokens, nameof(tokens));
+            switch (tokens.Length)
+            {
+                case 0: throw new ArgumentException("No tokens were supplied.", nameof(tokens));
+                case 1: return CreateLinkedTokenSource(tokens[0]);
+                case 2: return CreateLinkedTokenSource(tokens[0], tokens[1]);
+            }
+            var copy = new CancellationToken[tokens.Length];
+            for (int i = 0; i < tokens.Length; i++) copy[i] = tokens[i];
+            return new CancellationTokenSource { _linkedTokens = copy };
         }
     }
 
-    public class OperationCanceledException : Exception
+    public readonly struct CancellationToken : IEquatable<CancellationToken>
     {
-        public OperationCanceledException() : base("The operation was canceled.") { }
-        public OperationCanceledException(string message) : base(message) { }
+        private readonly CancellationTokenSource? _source;
+
+        internal CancellationToken(CancellationTokenSource? source) { _source = source; }
+
+        /// <summary>A token already cancelled (true) or one that never will be (false).</summary>
+        public CancellationToken(bool canceled) : this(canceled ? CancellationTokenSource.CanceledSource : null) { }
+
+        public static CancellationToken None => default;
+
+        public bool IsCancellationRequested => _source != null && _source.IsCancellationRequested;
+
+        public bool CanBeCanceled => _source != null;
+
+        public void ThrowIfCancellationRequested()
+        {
+            if (IsCancellationRequested) throw new OperationCanceledException("The operation was canceled.", this);
+        }
+
+        public bool Equals(CancellationToken other) => _source == other._source;
+
+        public override bool Equals(object? other) => other is CancellationToken token && Equals(token);
+
+        public override int GetHashCode() => _source == null ? 0 : _source.GetHashCode();
+
+        public static bool operator ==(CancellationToken left, CancellationToken right) => left.Equals(right);
+
+        public static bool operator !=(CancellationToken left, CancellationToken right) => !left.Equals(right);
     }
 
     /// <summary>
@@ -221,7 +300,7 @@ namespace System.Threading
             }
 
             public bool IsCompleted => _completed;
-            public bool IsFaulted => _error != null;
+            public bool IsFaulted => _error != null && !_canceled;
             public Exception? Exception => _error;
 
             public static Task CompletedTask => new Task(completed: true);
@@ -317,6 +396,10 @@ namespace System.Threading
             /// </summary>
             private protected void CompleteFromBuilder(Exception? error)
             {
+                // As AsyncTaskMethodBuilder.SetException does in the BCL: a
+                // method ended by OperationCanceledException is canceled, not
+                // faulted.
+                _canceled = error is OperationCanceledException;
                 _error = error;
                 Complete();
             }
@@ -519,5 +602,29 @@ namespace System.Threading
                     ThreadBackend.WakeAll(ref s_lock);
             }
         }
+    }
+}
+
+namespace System
+{
+    using System.Threading;
+
+    public class OperationCanceledException : Exception
+    {
+        private CancellationToken _cancellationToken;
+
+        public CancellationToken CancellationToken
+        {
+            get => _cancellationToken;
+            private set => _cancellationToken = value;
+        }
+
+        public OperationCanceledException() : base("The operation was canceled.") { }
+        public OperationCanceledException(string? message) : base(message) { }
+        public OperationCanceledException(string? message, Exception? innerException) : base(message, innerException) { }
+        public OperationCanceledException(CancellationToken token) : this() { CancellationToken = token; }
+        public OperationCanceledException(string? message, CancellationToken token) : this(message) { CancellationToken = token; }
+        public OperationCanceledException(string? message, Exception? innerException, CancellationToken token)
+            : this(message, innerException) { CancellationToken = token; }
     }
 }

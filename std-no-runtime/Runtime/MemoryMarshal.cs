@@ -62,17 +62,18 @@ namespace System.Runtime.InteropServices
         }
 
         // Writes a structure of type T into the start of a span of bytes.
-        // Halt on undersize. Companion to Read above.
+        // `in T` as in .NET 8 (callers pass `ref`, step198 System.Text.Json);
+        // undersize throws, as the BCL does.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static unsafe void Write<T>(Span<byte> destination, T value) where T : unmanaged
+        public static unsafe void Write<T>(Span<byte> destination, in T value) where T : unmanaged
         {
             if (destination.Length < sizeof(T))
-                Halt();
+                throw new ArgumentOutOfRangeException("length");
             Unsafe.WriteUnaligned<T>(ref GetReference(destination), value);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static unsafe bool TryWrite<T>(Span<byte> destination, T value) where T : unmanaged
+        public static unsafe bool TryWrite<T>(Span<byte> destination, in T value) where T : unmanaged
         {
             if (destination.Length < sizeof(T))
                 return false;

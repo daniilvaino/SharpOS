@@ -176,6 +176,13 @@ namespace System
         public static bool Is64BitOperatingSystem => true;
 
         /// <summary>
+        /// One: the kernel runs on the boot processor only — no application
+        /// processor is started. Sizes ConcurrentDictionary's default lock
+        /// stripe; must change together with SMP bring-up.
+        /// </summary>
+        public static int ProcessorCount => 1;
+
+        /// <summary>
         /// Always the root. There is no per-process current directory here:
         /// the file system has one namespace and nothing tracks a cursor into
         /// it, so relative paths are resolved by whoever owns the notion of

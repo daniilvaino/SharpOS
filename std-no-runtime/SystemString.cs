@@ -345,6 +345,31 @@ namespace System
             return SharpOS.Std.NoRuntime.StringTransforms.Substring(this, startIndex, length);
         }
 
+        // Insert / Remove — BCL argument checks, then pieces joined (step198).
+        public string Insert(int startIndex, string value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if ((uint)startIndex > (uint)Length) throw new ArgumentOutOfRangeException(nameof(startIndex));
+            if (value.Length == 0) return this;
+            return Concat(Substring(0, startIndex), value, Substring(startIndex));
+        }
+
+        public string Remove(int startIndex, int count)
+        {
+            if (startIndex < 0) throw new ArgumentOutOfRangeException(nameof(startIndex), "StartIndex cannot be less than zero.");
+            if (count < 0) throw new ArgumentOutOfRangeException(nameof(count), "Count cannot be less than zero.");
+            if (count > Length - startIndex) throw new ArgumentOutOfRangeException(nameof(count), "Index and count must refer to a location within the string.");
+            if (count == 0) return this;
+            return Concat(Substring(0, startIndex), Substring(startIndex + count));
+        }
+
+        public string Remove(int startIndex)
+        {
+            if ((uint)startIndex > (uint)Length)
+                throw new ArgumentOutOfRangeException(nameof(startIndex), startIndex < 0 ? "StartIndex cannot be less than zero." : "startIndex must be less than length of string.");
+            return Substring(0, startIndex);
+        }
+
         public string Trim()
         {
             return SharpOS.Std.NoRuntime.StringTransforms.Trim(this);

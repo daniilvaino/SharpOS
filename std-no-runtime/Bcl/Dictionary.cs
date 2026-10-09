@@ -15,9 +15,9 @@
 // Transplanted with minimal changes:
 //   - namespace System.Collections.Generic (was same)
 //   - type made public
-//   - `throw new ArgumentNullException` / `KeyNotFoundException` /
-//     `ArgumentException` replaced with infinite loop (our kernel has no
-//     exception engine; halt is the honest behavior)
+//   - `ArgumentNullException` / `KeyNotFoundException` / `ArgumentException`
+//     are thrown as in the BCL (they were an infinite loop before EH, then
+//     one InvalidOperationException for all; step198)
 //   - `out TValue?` → `out TValue` (no nullable reference types surface in
 //     our stubbed Nullable)
 //   - removed `try/catch (OutOfMemoryException)` in ExpandBuckets (no
@@ -72,7 +72,7 @@ namespace System.Collections.Generic
             get
             {
                 int i = FindEntry(key);
-                if (i < 0) Halt();          // BCL throws KeyNotFoundException
+                if (i < 0) throw new KeyNotFoundException("The given key '" + key + "' was not present in the dictionary.");
                 return _entries![i].value;
             }
             set => TryInsert(key, value, overwrite: true);
@@ -93,8 +93,8 @@ namespace System.Collections.Generic
 
         public void Add([SharpOS.Std.Pipes.Retains] TKey key, [SharpOS.Std.Pipes.Retains] TValue value)
         {
-            // BCL throws ArgumentException on a duplicate key.
-            if (!TryInsert(key, value, overwrite: false)) Halt();
+            if (!TryInsert(key, value, overwrite: false))
+                throw new ArgumentException("An item with the same key has already been added. Key: " + key);
         }
 
         public bool ContainsKey(TKey key) => FindEntry(key) >= 0;
@@ -127,17 +127,13 @@ namespace System.Collections.Generic
             return value;
         }
 
-        private static void ThrowKeyNull() => Halt();
+        // The BCL's exceptions, by site (step198: code that catches
+        // KeyNotFoundException or ArgumentException missed the old blanket
+        // InvalidOperationException).
+        private static void ThrowKeyNull() => throw new ArgumentNullException("key");
 
-        private static void Halt()
-            // Was `while (true) ;`. A BCL misuse — duplicate key, pop on
-            // empty, index past the end — hung the machine silently instead
-            // of throwing, and on the app tier that hang cannot even be
-            // preempted. EH works on every tier, so throw: the frames name
-            // the caller. Type is generic because the call sites are shared;
-            // a precise one per site is a later refinement, a hang is not.
-            => throw new System.InvalidOperationException(
-                "Dictionary: invalid operation");
+        private static void ThrowCollectionReadOnly(string what) =>
+            throw new NotSupportedException("Mutating a " + what + " collection derived from a dictionary is not allowed.");
 
         private int _version;
         private IEqualityComparer<TKey> _comparer;
@@ -255,9 +251,9 @@ namespace System.Collections.Generic
             public int Count => _dict.Count;
             public bool IsReadOnly => true;
             public bool Contains(TKey item) => _dict.ContainsKey(item);
-            public void Add(TKey item) => Halt();
-            public void Clear() => Halt();
-            public bool Remove(TKey item) { Halt(); return false; }
+            public void Add(TKey item) => ThrowCollectionReadOnly("key");
+            public void Clear() => ThrowCollectionReadOnly("key");
+            public bool Remove(TKey item) { ThrowCollectionReadOnly("key"); return false; }
             public void CopyTo(TKey[] array, int arrayIndex)
             {
                 int j = arrayIndex;
@@ -284,10 +280,15 @@ namespace System.Collections.Generic
             internal ValueCollection(Dictionary<TKey, TValue> d) { _dict = d; }
             public int Count => _dict.Count;
             public bool IsReadOnly => true;
-            public bool Contains(TValue item) { Halt(); return false; }
-            public void Add(TValue item) => Halt();
-            public void Clear() => Halt();
-            public bool Remove(TValue item) { Halt(); return false; }
+            public bool Contains(TValue item)
+            {
+                foreach (var kv in _dict)
+                    if (EqualityComparer<TValue>.Default.Equals(kv.Value, item)) return true;
+                return false;
+            }
+            public void Add(TValue item) => ThrowCollectionReadOnly("value");
+            public void Clear() => ThrowCollectionReadOnly("value");
+            public bool Remove(TValue item) { ThrowCollectionReadOnly("value"); return false; }
             public void CopyTo(TValue[] array, int arrayIndex)
             {
                 int j = arrayIndex;

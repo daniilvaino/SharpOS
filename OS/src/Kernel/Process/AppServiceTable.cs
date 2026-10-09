@@ -341,6 +341,12 @@
         public ulong Settings;
 
         public const ulong SettingAnnounceBuild = 1;
+
+        // CPU features the app may use beyond x86-64's baseline (step198),
+        // bits of SharpOS.Std.NoRuntime.LibmPatcher (SSE4.1, usable FMA): the
+        // app replaces its SharpLibm entry points accordingly. 0 from an
+        // older kernel — nothing is replaced, everything still works.
+        public ulong CpuFeatures;
     }
 
     /// <summary>

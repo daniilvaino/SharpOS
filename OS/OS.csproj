@@ -51,6 +51,12 @@
     <IlcDehydrate>false</IlcDehydrate>
 
     <PublishAot>true</PublishAot>
+    <!-- The SDK's trim/AOT/single-file analyzers that PublishAot enables: no
+         reflection here to warn about, and their dataflow is quadratic in a
+         method's locals (step198, see apps_native/sdk/FreestandingPe.props). -->
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
     <!-- IlcGenerateMapFile=true was used during step 40 cctor research.
          Re-enable temporarily if investigating ILC node emission. -->
 

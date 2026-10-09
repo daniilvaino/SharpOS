@@ -13,27 +13,50 @@
 take 5'` — язык всего конвейера с дополнением и диагностикой. Клоны в
 `work/foreign/`:
 
-- **Kusto.Language** (Apache-2.0, ≈100 тыс. строк, `netstandard2.1`, без
-  зависимостей, без рефлексии и Regex; `lock`/`Interlocked`): разбор,
-  привязка, `GetCompletionItems`, `GetClassifications`, `GetDiagnostics`.
-  Добивать: LINQ (136 файлов), `CancellationToken` (147 мест), немного
-  `Tasks`. Риск — размер статических таблиц функций в образе.
-- **BabyKusto** (MIT, ≈15 тыс. строк): исполнение обходом своего дерева,
-  данные кусками через `ITableSource`. Добивать: `JsonNode` (тип `dynamic`),
-  `IAsyncEnumerable` или срезать асинхронное; Regex — две функции.
-- **KustoLoco** (MIT, живой форк, ≈25 тыс.): больше функций, больше пакетов
-  и свой генератор — если BabyKusto не хватит.
+Kusto.Language — в `vendor/KustoLanguage`, KQLTEST 7/7 (step198): разбор,
+связывание, диагностика, дополнение, раскраска. Образ 4,35 МБ; первый
+разбор+связывание — 3,2 с под TCG: замерить на железе, прежде чем решать.
 
-Порядок: (1) Kusto.Language в std, KQLTEST — разбор, диагностика,
-дополнение, размер образа; (2) дополнение в оболочке (`KQL '…'` + Tab; схема
-левой части нужна до запуска); (3) исполнение на BabyKusto поверх трубы.
-VIEWFILT → FILTER (`KQL 'where …'` или обёртка).
+- **BabyKusto** (`vendor/BabyKusto`, не собирается): исполнение обходом
+  своего дерева, данные кусками через `ITableSource`. Добивать: `JsonNode`
+  (тип `dynamic`), `IAsyncEnumerable`/`ValueTask`/`Task<T>` (начато в
+  `.claude/worktrees/async-main`), `ToAsyncEnumerable`; Regex — две функции.
+- **KustoLoco** (MIT, живой форк, ≈25 тыс., клон в `work/foreign/`): больше
+  функций, больше пакетов (NotNullStrings, Fastenshtein, geohash-dotnet,
+  T-Digest.NET) и свой генератор — если BabyKusto не хватит.
+
+Дальше: (2) дополнение в оболочке (`KQL '…'` + Tab; схема левой части нужна
+до запуска); (3) исполнение на BabyKusto поверх трубы. VIEWFILT → FILTER
+(`KQL 'where …'` или обёртка).
+
+Хвосты GVM (`GenericVirtualMethods.cs`, step198), каждый — исключением при
+встрече: вариантная интерфейсная диспетчеризация; unboxing-заглушки для
+структур-получателей; конструктор по умолчанию в словаре (нужна карта
+конструкторов); типы, которых нет в образе (типы во время выполнения не
+строятся). Кэш — словарь под замком на каждый вызов: если GVM окажется
+горячим, — кэш без замка, как `TypeLoaderExports` в CoreLib.
+
+## Потоковые статики (`[ThreadStatic]`)
+
+В приложениях нет `Internal.Runtime.ThreadStatics` — ILC требует его для
+`[ThreadStatic]`. Обошли вырезом в Kusto (`ForwardParser.s_callDepth` — один
+счётчик на все потоки). Нужно: секция TLS-индексов ILC, блок статиков на
+поток в планировщике, `GetThreadStaticBaseForType`.
 
 Попутно — Regex: в std приложений и ядра его нет (работает только на
-CoreCLR-ярусе, step107). Проверить, встаёт ли `System.Text.RegularExpressions`
-из BCL (интерпретатор `RegexInterpreter`, без компиляции) на нашу std. Kusto и
-BabyKusto его почти не требуют, но `matches regex` и `extract` без него
-вырезаются.
+CoreCLR-ярусе, step107). `System.Text.RegularExpressions` из
+`dotnet-runtime-sharpos`: 35 тыс. строк, без компиляторов (`RegexCompiler`,
+`LWCG`, `AssemblyCompiler` — Reflection.Emit; BCL и сам уходит в интерпретатор
+без динамического кода) и без `Symbolic` (NonBacktracking, ≈10 тыс.) —
+≈19 тыс. Чего нет в std (беглая сверка 2026-10-08):
+`Hashtable` (имена групп, публичный API — нужен), `CharUnicodeInfo.
+GetUnicodeCategory` с таблицами (`\w`), `SearchValues<char>`/`<string>`
+(оптимизации поиска, разбор), `ConcurrentDictionary` (кэш статических
+методов), `WeakReference<T>` (кэш замен — нужна поддержка слабых ссылок в
+сборщике), мелочь: `Environment.TickCount64`, `string.Create<TState>`,
+`IndexOfAnyInRange`, `Volatile`, `System.Threading.Lock`. Всё это — порты
+BCL, полезные и без Regex. Kusto и BabyKusto Regex почти не требуют:
+`matches regex` и `extract` без него вырезаются.
 
 ## Долги шага 197
 
@@ -605,24 +628,39 @@ MinimalRuntime обязана явно ответить «нужен ли тот
 атомарен, и имя об этом не говорит; в комментарии у него теперь сказано прямо.
 Чинить его отдельно смысла нет — он чинится вместе с `CompareExchange`.
 
-## `pow` для целых показателей идёт через логарифм
+## libm форка CoreCLR → SharpLibm
 
-Замер из оболочки (step157): `[Math]::Pow(24,3)` даёт `13824.0000130741` вместо
-ровно `13824` — хвост в девятом значащем разряде.
+На hosted-ярусе `Math` идёт в `lm_*` из `pal/sharpos/crt_imp_stubs.cpp` —
+самописные ряды: `sin`/`cos` ~1e-9, `log` ~1e-11, `pow` через `exp(y·log x)`
+(`[Math]::Pow(24,3)` = `13824.0000130741`). Ядро и приложения с step198 на
+SharpLibm — правильно округлённой.
 
-Причина: `lm_pow` в `pal/sharpos/crt_imp_stubs.cpp` всегда считает
-`exp(y·log x)`. Логарифм и экспонента точны сами по себе (~1e-11 отн.), но
-`log 24 ≈ 3.18`, умножается на показатель, и относительная ошибка растёт вместе
-с аргументом экспоненты.
+Фикс: собрать SharpLibm в ядро с `SharpLibmExports=true` (C-имена `sin`,
+`pow`, … — `[RuntimeExport]`) и убрать `lm_*` из форка: CoreCLR линкуется в
+образ ядра статически и подхватит экспорты. Новая низкоуровневая логика — в
+C#, а не в C++ форка. Цена — +650 КБ образа (экспорт корнит все функции);
+сверить, что имена не сталкиваются с другими экспортами ядра.
 
-Фикс стандартный и дешёвый: ветка для целого показателя — двоичное возведение
-умножениями, без логарифма вообще. Для `y=3` это два умножения и точный ответ.
+## #DF ядра под `--pipe-stress 2` (однократно)
 
-На hill climbing не влияет (там дробный коэффициент усиления и решения по
-десятым долям), на пользовательскую математику — напрямую.
+Батарея step198, 1 из 2 прогонов: третья команда autorun
+(`AOTTESTS.EXE --pipe-stress 2`) — #GP в
+`KernelGcPreciseWalk.RunFromThrowSite+0x5c` (:543), затем #PF в
+`XtermSharp.BufferLine.CopyFrom`, запись мимо в `HeapBlockOps.Split`, и #DF
+в `X64Asm.CmpXchg64` (RSP у края ядерного стека — сбой в обработчике сбоя).
+Перед этим тест ждал смерти писателя с исключением (`exit=134`) — точный
+обход стека от места выброса в ядре под нагрузкой труб. Повтор прошёл 24/24.
+Лог: `C:/work/OS-archive/run_df_pipestress.log` (вне репозитория). Начать с `--gc-stress` на
+pipe-stress и VerifyHeap до/после обхода от точки выброса.
 
-Остальное проверено и в порядке: `sin`/`cos` ~1e-9 (приведение к квадранту +
-ряд), `log` ~1e-11, `sqrt` — инструкция процессора.
+## SharpLibm: хвосты
+
+- Функции Бесселя `j0/j1/jn/y0/y1/yn` (go2cs `src/core/math`, BSD-3), `erfinv`.
+- Патч `modf` в `LibmPatcher` (сейчас SSE4.1 переписывает только
+  floor/ceil/trunc/rint/nearbyint).
+- Ошибки порта CoreMathSharp (~80, `// SharpLibm fix:`) отправить автору.
+- SharpLibm-tests: подключить glibc libm-test, llvm-libc, TestFloat,
+  `math_accuracy`.
 
 ## Запуск сборок подряд: нужна изоляция через контексты загрузки
 

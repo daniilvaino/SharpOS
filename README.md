@@ -180,8 +180,8 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `DateTime` / `TimeSpan` | 🟡 | 🟡 | ✅ | календарь полный; часы — нет. В ядре источник не подключён, `Now` = начало эпохи (`IsRealClock` = false). В приложениях с step182 идут монотонные часы от HPET: интервалы верны, дата нет (эпоха + аптайм). Настоящую дату отдаёт только hosted-ярус |
 | `Array.Copy` с перекрытием (семантика memmove) | ✅ | ✅ | ✅ | |
 | `Math.Abs`, `Math.Sqrt` | ✅ | ✅ | ✅ | |
-| `Math.Floor` / `Ceiling` / `Truncate` / `Round` | ✅ | ✅ | ✅ | в AOT только для \|x\| < 2^63 |
-| `Math.Sin` / `Cos` / `Exp` / `Log` / `Pow` | 🟡 | 🟡 | 🟡 | приближения: ~1e-9 в AOT, грубее в hosted; в AOT нет `Tan`, `Atan`, `Asin`, `Acos` и гиперболических |
+| `Math.Floor` / `Ceiling` / `Truncate` / `Round` | ✅ | ✅ | ✅ | |
+| `Math` / `MathF`: тригонометрия, exp/log, `Pow`, гиперболические, `Cbrt`, `FusedMultiplyAdd` | ✅ | ✅ | 🟡 | в AOT — SharpLibm, правильно округлено (проверено на худших случаях CORE-MATH против MPFR, float — на всех 2³² входах); hosted — libm форка, ~1e-9 |
 | `Vector128<T>` (SSE) | ✅ | ✅ | ✅ | `Vector256` объявлен, но не ускорен |
 | Разбор XML | ✅ | ⏳ | ✅ | TurboXml; ядро читает им манифесты приложений |
 | JSON: `Utf8JsonReader` / `Utf8JsonWriter` | ⏳ | 🟡 | ✅ | из System.Text.Json (.NET 10): чтение кусками, запись в `IBufferWriter<byte>`. Сериализатора, `JsonDocument`, `JsonNode` и `JavaScriptEncoder` нет |
@@ -278,6 +278,9 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 - **[ReadLine](https://github.com/tonerdo/readline)** (Toni Solarin-Sodara, MIT) - редактор строки оболочки: курсор, история, Ctrl-клавиши, дополнение по Tab.
 - **[TurboXml](https://github.com/xoofx/TurboXml)** (Alexandre Mutel, BSD-2-Clause) - разбор XML без аллокаций. Читает манифест приложения из ресурсов PE.
 - **[ShellSyntaxTree](https://github.com/Aaronontheweb/ShellSyntaxTree)** (Aaron Stannard, Apache-2.0) - разбор командной строки bash в дерево. На нём стоит оболочка; половина для PowerShell не компилируется.
+- **[Kusto.Language](https://github.com/microsoft/Kusto-Query-Language)** (Microsoft, Apache-2.0) - разбор и связывание KQL, диагностика, автодополнение, раскраска. Приложение KQLTEST.
+- **[BabyKusto](https://github.com/davidnx/baby-kusto-csharp)** (Microsoft, MIT) и **[t-digest](https://github.com/Cyral/t-digest-csharp)** (Heath Milligan, MIT) - исполнение KQL по таблицам в памяти. Лежит в дереве, пока не собирается.
+- **[SharpLibm](https://github.com/daniilvaino/SharpLibm)** (MIT, сабмодуль `SharpLibm/`) - libm на C#, на ней стоят `Math`/`MathF`. Внутри чужой код: [CORE-MATH](https://core-math.gitlabpages.inria.fr/) через [CoreMathSharp](https://github.com/andanteyk/CoreMathSharp) (MIT), Go `math` и [Cosmos](https://github.com/CosmosOS/Cosmos) (BSD-3), fdlibm (Sun), musl, [GeographicLib.NET](https://github.com/noelex/GeographicLib.NET), [C.math.NET](https://github.com/MachineCognitis/C.math.NET) (MIT) — список в `THIRD-PARTY-NOTICES.md`.
 - **[MOOS](https://github.com/nifanfa/MOOS)** (nifanfa, Unlicense) - драйверы `AHCI`, `Disk`, `PCI(Express)` и глифы CP437. Адаптированы под наш HAL, лежат в `OS/src/`.
 - **[Font 8x8](https://github.com/dhepper/font8x8)** (Daniel Hepper, Public Domain) - глифы framebuffer-консоли.
 

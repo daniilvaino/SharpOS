@@ -1,0 +1,21 @@
+<Project>
+
+  <!-- Kusto.Language (microsoft/Kusto-Query-Language) as a compile-in module:
+       the KQL parser, binder and editor services (completion,
+       classification, diagnostics). Sources, not the NuGet package: apps are
+       their own system module and a compiled assembly has no CoreLib to bind
+       against.
+
+       Properties\AssemblyInfo.cs is left out: it only grants the upstream
+       unit tests InternalsVisibleTo. -->
+
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);KUSTO_BUILD</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)src\**\*.cs"
+             Exclude="$(MSBuildThisFileDirectory)src\Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+
+</Project>

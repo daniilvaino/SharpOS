@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Buffers;
@@ -11,8 +11,11 @@ namespace System.Text.Json
 {
     internal static partial class JsonReaderHelper
     {
-        // SharpOS cut: SpecialCharacters / ContainsSpecialCharacters (JSON path formatting in the
-        // serializer; needs SearchValues<char>).
+        private const string SpecialCharacters = ". '/\"[]()\t\n\r\f\b\\\u0085\u2028\u2029";
+
+        // SharpOS: the netstandard body — no SearchValues<char> in std.
+        public static bool ContainsSpecialCharacters(this ReadOnlySpan<char> text) =>
+            text.IndexOfAny(SpecialCharacters.AsSpan()) >= 0;
 
         public static (int, int) CountNewLines(ReadOnlySpan<byte> data)
         {

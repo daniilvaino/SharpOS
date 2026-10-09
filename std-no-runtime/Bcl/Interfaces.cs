@@ -91,6 +91,75 @@ namespace System.Collections
         void Remove(object value);
         void RemoveAt(int index);
     }
+
+    // Non-generic comparison (step198: BabyKusto's typed comparers are these).
+    public interface IComparer
+    {
+        int Compare(object x, object y);
+    }
+
+    public interface IEqualityComparer
+    {
+        new bool Equals(object x, object y);
+        int GetHashCode(object obj);
+    }
+
+    // Non-generic dictionary surface (step198: OrderedDictionary<,> implements
+    // it). IDictionary.cs, IDictionaryEnumerator.cs, DictionaryEntry.cs of
+    // System.Private.CoreLib (MIT); DictionaryEntry without [Serializable] and
+    // ToString through string concatenation (no KeyValuePair.PairToString).
+    public interface IDictionary : ICollection
+    {
+        object? this[object key] { get; set; }
+        ICollection Keys { get; }
+        ICollection Values { get; }
+        bool Contains(object key);
+        void Add(object key, object? value);
+        void Clear();
+        bool IsReadOnly { get; }
+        bool IsFixedSize { get; }
+        new IDictionaryEnumerator GetEnumerator();
+        void Remove(object key);
+    }
+
+    public interface IDictionaryEnumerator : IEnumerator
+    {
+        object Key { get; }
+        object? Value { get; }
+        DictionaryEntry Entry { get; }
+    }
+
+    public struct DictionaryEntry
+    {
+        private object _key;
+        private object? _value;
+
+        public DictionaryEntry(object key, object? value)
+        {
+            _key = key;
+            _value = value;
+        }
+
+        public object Key
+        {
+            get => _key;
+            set => _key = value;
+        }
+
+        public object? Value
+        {
+            get => _value;
+            set => _value = value;
+        }
+
+        public void Deconstruct(out object key, out object? value)
+        {
+            key = Key;
+            value = Value;
+        }
+
+        public override string ToString() => "[" + _key + ", " + _value + "]";
+    }
 }
 
 namespace System.Collections.Generic

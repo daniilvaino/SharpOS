@@ -42,6 +42,7 @@
             // fallback path; with the slots left null the first generic
             // instantiation dispatch dies (see AppTypeManagerInit).
             SharpOS.Std.NoRuntime.GcStaticsInit.ImageBase = startup->ImageBase;
+            System.Type.ModuleBase = startup->ImageBase;    // Type.Name: "EETypeRva:0x…" (step198)
             SharpOS.Std.NoRuntime.AppTypeManagerInit.Initialize();
 
             // Wire interface dispatch (needs no GC): trampoline our
@@ -52,6 +53,11 @@
             // else that might dispatch.
             InterfaceDispatchTrampoline.PatchToKernelBridge(
                 s_services->InterfaceDispatchBridgeAddress);
+            SharpOS.Std.NoRuntime.GenericVirtualMethods.InterfaceDispatchStub = InterfaceDispatchTrampoline.GetMethodAddress();
+
+            // SharpLibm's one-instruction entry points for this CPU (step198);
+            // before any math runs. 0 from an older kernel: nothing replaced.
+            SharpOS.Std.NoRuntime.LibmPatcher.Apply(s_services->CpuFeatures);
 
             // Byref struct copies (List<T> element moves, Dictionary entries) go through
             // RhpByRefAssignRef. Our GC has no card table, so the plain helper is a

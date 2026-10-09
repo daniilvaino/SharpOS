@@ -24,6 +24,9 @@ namespace System.Threading.Tasks
     public partial class Task
     {
         public TaskAwaiter GetAwaiter() => new TaskAwaiter(this);
+
+        public ConfiguredTaskAwaitable ConfigureAwait(bool continueOnCapturedContext) =>
+            new ConfiguredTaskAwaitable(this, continueOnCapturedContext);
     }
 }
 
@@ -60,24 +63,113 @@ namespace System.Runtime.CompilerServices
 
         public void GetResult() => _task?.Wait();
 
-        public void OnCompleted(Action continuation) => Schedule(continuation);
+        public void OnCompleted(Action continuation) => OnCompletedInternal(_task, continuation);
 
-        public void UnsafeOnCompleted(Action continuation) => Schedule(continuation);
+        public void UnsafeOnCompleted(Action continuation) => OnCompletedInternal(_task, continuation);
 
-        private void Schedule(Action continuation)
+        /// <summary>
+        /// Waits for <paramref name="task"/> and then completes the awaiter: the
+        /// part TaskAwaiter, TaskAwaiter{T} and the ValueTask awaiters share.
+        /// </summary>
+        internal static void OnCompletedInternal(System.Threading.Tasks.Task task, Action continuation)
         {
             if (continuation == null) return;
 
             // Already done: no reason to involve a thread, and going through one
             // would turn every completed await into a context switch.
-            if (IsCompleted) { continuation(); return; }
+            if (task == null || task.IsCompleted) { continuation(); return; }
 
-            var task = _task;
             System.Threading.Tasks.Task.Run(() =>
             {
-                task.Wait();
+                // A failed task still resumes the awaiter: GetResult is where
+                // the failure is reported. Letting Wait's throw escape here
+                // ended the pool work item instead, and the awaiting method
+                // never resumed.
+                try { task.Wait(); }
+                catch (Exception) { }
                 continuation();
             });
+        }
+
+        /// <summary>Throws what an await on a finished task reports, if anything.</summary>
+        internal static void ValidateEnd(System.Threading.Tasks.Task task) => task.Wait();
+    }
+
+    /// <summary>The awaiter for Task{TResult}.</summary>
+    public readonly struct TaskAwaiter<TResult> : ICriticalNotifyCompletion
+    {
+        private readonly System.Threading.Tasks.Task<TResult> m_task;
+
+        internal TaskAwaiter(System.Threading.Tasks.Task<TResult> task) { m_task = task; }
+
+        public bool IsCompleted => m_task.IsCompleted;
+
+        public TResult GetResult()
+        {
+            TaskAwaiter.ValidateEnd(m_task);
+            return m_task.ResultOnSuccess;
+        }
+
+        public void OnCompleted(Action continuation) => TaskAwaiter.OnCompletedInternal(m_task, continuation);
+
+        public void UnsafeOnCompleted(Action continuation) => TaskAwaiter.OnCompletedInternal(m_task, continuation);
+    }
+
+    // Task.ConfigureAwait(bool) (step198). The shapes are the BCL's
+    // (ConfiguredTaskAwaitable[<TResult>] with a nested awaiter); the flag has
+    // nothing to choose between here — there is no context to capture, so both
+    // values resume where TaskAwaiter does.
+    public readonly struct ConfiguredTaskAwaitable
+    {
+        private readonly ConfiguredTaskAwaiter m_configuredTaskAwaiter;
+
+        internal ConfiguredTaskAwaitable(System.Threading.Tasks.Task task, bool continueOnCapturedContext) =>
+            m_configuredTaskAwaiter = new ConfiguredTaskAwaiter(task);
+
+        public ConfiguredTaskAwaiter GetAwaiter() => m_configuredTaskAwaiter;
+
+        public readonly struct ConfiguredTaskAwaiter : ICriticalNotifyCompletion
+        {
+            private readonly System.Threading.Tasks.Task m_task;
+
+            internal ConfiguredTaskAwaiter(System.Threading.Tasks.Task task) { m_task = task; }
+
+            public bool IsCompleted => m_task.IsCompleted;
+
+            public void GetResult() => TaskAwaiter.ValidateEnd(m_task);
+
+            public void OnCompleted(Action continuation) => TaskAwaiter.OnCompletedInternal(m_task, continuation);
+
+            public void UnsafeOnCompleted(Action continuation) => TaskAwaiter.OnCompletedInternal(m_task, continuation);
+        }
+    }
+
+    public readonly struct ConfiguredTaskAwaitable<TResult>
+    {
+        private readonly ConfiguredTaskAwaiter m_configuredTaskAwaiter;
+
+        internal ConfiguredTaskAwaitable(System.Threading.Tasks.Task<TResult> task, bool continueOnCapturedContext) =>
+            m_configuredTaskAwaiter = new ConfiguredTaskAwaiter(task);
+
+        public ConfiguredTaskAwaiter GetAwaiter() => m_configuredTaskAwaiter;
+
+        public readonly struct ConfiguredTaskAwaiter : ICriticalNotifyCompletion
+        {
+            private readonly System.Threading.Tasks.Task<TResult> m_task;
+
+            internal ConfiguredTaskAwaiter(System.Threading.Tasks.Task<TResult> task) { m_task = task; }
+
+            public bool IsCompleted => m_task.IsCompleted;
+
+            public TResult GetResult()
+            {
+                TaskAwaiter.ValidateEnd(m_task);
+                return m_task.ResultOnSuccess;
+            }
+
+            public void OnCompleted(Action continuation) => TaskAwaiter.OnCompletedInternal(m_task, continuation);
+
+            public void UnsafeOnCompleted(Action continuation) => TaskAwaiter.OnCompletedInternal(m_task, continuation);
         }
     }
 
@@ -111,6 +203,13 @@ namespace System.Runtime.CompilerServices
         public System.Threading.Tasks.Task Task => Ensure().Task;
 
         private Shared Ensure() => _shared ??= new Shared();
+
+        /// <summary>
+        /// Whether anything has asked for the task yet — a suspension or a
+        /// caller. AsyncIteratorMethodBuilder uses it to finish without making
+        /// a task nobody will look at.
+        /// </summary>
+        internal bool HasTask => _shared != null;
 
         public void Start<TStateMachine>(ref TStateMachine stateMachine)
             where TStateMachine : IAsyncStateMachine
@@ -152,6 +251,69 @@ namespace System.Runtime.CompilerServices
             // bound directly to an INTERFACE method is not something this
             // runtime can build. Calling one through a closure is ordinary
             // interface dispatch, which works.
+            IAsyncStateMachine box = shared.Box;
+            Action resume = () => box.MoveNext();
+
+            if (unsafeVariant && awaiter is ICriticalNotifyCompletion critical)
+                critical.UnsafeOnCompleted(resume);
+            else
+                awaiter.OnCompleted(resume);
+        }
+    }
+
+    /// <summary>
+    /// The builder for `async Task{TResult}`: AsyncTaskMethodBuilder with a
+    /// result. The same single shared reference, for the same reason.
+    /// </summary>
+    public struct AsyncTaskMethodBuilder<TResult>
+    {
+        private sealed class Shared
+        {
+            public readonly AsyncTask<TResult> Task = new AsyncTask<TResult>();
+            public IAsyncStateMachine? Box;
+        }
+
+        private Shared _shared;
+
+        public static AsyncTaskMethodBuilder<TResult> Create()
+            => new AsyncTaskMethodBuilder<TResult> { _shared = new Shared() };
+
+        public System.Threading.Tasks.Task<TResult> Task => Ensure().Task;
+
+        private Shared Ensure() => _shared ??= new Shared();
+
+        public void Start<TStateMachine>(ref TStateMachine stateMachine)
+            where TStateMachine : IAsyncStateMachine
+            => stateMachine.MoveNext();
+
+        public void SetStateMachine(IAsyncStateMachine stateMachine)
+            => Ensure().Box = stateMachine;
+
+        public void SetResult(TResult result) => Ensure().Task.Complete(result, null);
+
+        public void SetException(Exception exception) => Ensure().Task.Complete(default!, exception);
+
+        public void AwaitOnCompleted<TAwaiter, TStateMachine>(
+            ref TAwaiter awaiter, ref TStateMachine stateMachine)
+            where TAwaiter : INotifyCompletion
+            where TStateMachine : IAsyncStateMachine
+            => Suspend(ref awaiter, ref stateMachine, unsafeVariant: false);
+
+        public void AwaitUnsafeOnCompleted<TAwaiter, TStateMachine>(
+            ref TAwaiter awaiter, ref TStateMachine stateMachine)
+            where TAwaiter : ICriticalNotifyCompletion
+            where TStateMachine : IAsyncStateMachine
+            => Suspend(ref awaiter, ref stateMachine, unsafeVariant: true);
+
+        private void Suspend<TAwaiter, TStateMachine>(
+            ref TAwaiter awaiter, ref TStateMachine stateMachine, bool unsafeVariant)
+            where TAwaiter : INotifyCompletion
+            where TStateMachine : IAsyncStateMachine
+        {
+            Shared shared = Ensure();
+            shared.Box ??= stateMachine;
+
+            // A lambda, not `box.MoveNext`: see AsyncTaskMethodBuilder.
             IAsyncStateMachine box = shared.Box;
             Action resume = () => box.MoveNext();
 
@@ -229,5 +391,15 @@ namespace System.Runtime.CompilerServices
     internal sealed class AsyncTask : System.Threading.Tasks.Task
     {
         internal void Complete(Exception error) => CompleteFromBuilder(error);
+    }
+
+    /// <summary>AsyncTask with a result.</summary>
+    internal sealed class AsyncTask<TResult> : System.Threading.Tasks.Task<TResult>
+    {
+        internal void Complete(TResult result, Exception? error)
+        {
+            if (error == null) m_result = result;
+            CompleteFromBuilder(error);
+        }
     }
 }

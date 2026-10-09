@@ -101,7 +101,7 @@ namespace OS.Kernel.Threading
 
             bool threw = false;
             try { Task.Delay(5000).Wait(cts.Token); }
-            catch (OperationCanceledException) { threw = true; }
+            catch (System.OperationCanceledException) { threw = true; }
 
             Console.Write("cancel=");
             Console.Write(threw ? "ok" : "FAIL");

@@ -121,4 +121,12 @@ namespace System.Runtime.CompilerServices
     {
         public CallerLineNumberAttribute() { }
     }
+
+    /// <summary>The source text of another argument (C# 10; ArgumentNullException.ThrowIfNull and kin).</summary>
+    [AttributeUsage(AttributeTargets.Parameter, AllowMultiple = false, Inherited = false)]
+    public sealed class CallerArgumentExpressionAttribute : Attribute
+    {
+        public CallerArgumentExpressionAttribute(string parameterName) { ParameterName = parameterName; }
+        public string ParameterName { get; }
+    }
 }

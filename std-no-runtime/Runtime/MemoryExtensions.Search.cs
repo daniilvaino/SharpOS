@@ -78,6 +78,13 @@ namespace System
             return -1;
         }
 
+        // ContainsAnyExcept (step198, ConcurrentDictionary): as BCL, IndexOfAnyExcept >= 0.
+        public static bool ContainsAnyExcept<T>(this Span<T> span, T value) where T : IEquatable<T>
+            => IndexOfAnyExcept((ReadOnlySpan<T>)span, value) >= 0;
+
+        public static bool ContainsAnyExcept<T>(this ReadOnlySpan<T> span, T value) where T : IEquatable<T>
+            => IndexOfAnyExcept(span, value) >= 0;
+
         public static int LastIndexOfAnyExcept<T>(this Span<T> span, T value) where T : IEquatable<T>
             => LastIndexOfAnyExcept((ReadOnlySpan<T>)span, value);
 
@@ -173,6 +180,32 @@ namespace System
                 return default;
             }
             return new Memory<T>(array, start, length);
+        }
+
+        // ArraySegment overloads (MemoryExtensions.cs, MIT; step198 System.Text.Json).
+        public static Memory<T> AsMemory<T>(this ArraySegment<T> segment) =>
+            new Memory<T>(segment.Array!, segment.Offset, segment.Count);
+
+        public static Memory<T> AsMemory<T>(this ArraySegment<T> segment, int start)
+        {
+            if ((uint)start > (uint)segment.Count) throw new ArgumentOutOfRangeException(nameof(start));
+            return new Memory<T>(segment.Array!, segment.Offset + start, segment.Count - start);
+        }
+
+        public static Span<T> AsSpan<T>(this ArraySegment<T> segment) =>
+            new Span<T>(segment.Array!, segment.Offset, segment.Count);
+
+        public static Span<T> AsSpan<T>(this ArraySegment<T> segment, int start)
+        {
+            if ((uint)start > (uint)segment.Count) throw new ArgumentOutOfRangeException(nameof(start));
+            return new Span<T>(segment.Array!, segment.Offset + start, segment.Count - start);
+        }
+
+        public static Span<T> AsSpan<T>(this ArraySegment<T> segment, int start, int length)
+        {
+            if ((uint)start > (uint)segment.Count) throw new ArgumentOutOfRangeException(nameof(start));
+            if ((uint)length > (uint)(segment.Count - start)) throw new ArgumentOutOfRangeException(nameof(length));
+            return new Span<T>(segment.Array!, segment.Offset + start, length);
         }
     }
 }

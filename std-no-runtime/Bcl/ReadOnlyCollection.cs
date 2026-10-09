@@ -22,6 +22,12 @@ namespace System.Collections.ObjectModel
             this.list = list;
         }
 
+        /// <summary>Gets an empty <see cref="ReadOnlyCollection{T}"/>.</summary>
+        // SharpOS cut: BCL caches one instance in a static auto-property; a
+        // static initializer would give every ReadOnlyCollection<T> a class
+        // constructor, so each call wraps a fresh empty array instead.
+        public static ReadOnlyCollection<T> Empty => new ReadOnlyCollection<T>(System.Array.Empty<T>());
+
         public int Count => list.Count;
 
         public T this[int index] => list[index];

@@ -39,6 +39,37 @@ namespace System.Runtime
         }
 
         /// <summary>
+        /// `(T?)obj` (step198, Kusto): a boxed T or null into a Nullable&lt;T&gt;.
+        /// Ported in shape from Runtime.Base RhUnboxNullable + RhUnbox
+        /// (release/8.0, MIT): null clears the nullable; a box of exactly T
+        /// sets HasValue and copies the value to its offset (1 unless the type's
+        /// optional fields say otherwise); anything else is InvalidCastException.
+        /// </summary>
+        [RuntimeExport("RhUnboxNullable")]
+        public static void RhUnboxNullable(ref byte data, GcMethodTable* pUnboxToEEType, object obj)
+        {
+            uint size = pUnboxToEEType->BaseSize - 16;     // ValueTypeSize: less the object header and the MT
+            if (obj == null)
+            {
+                Unsafe.InitBlockUnaligned(ref data, 0, size);
+                return;
+            }
+
+            nint objAddr = *(nint*)&obj;
+            GcMethodTable* pObjType = *(GcMethodTable**)objAddr;
+            // MethodTable.NullableType is the instantiation argument; RelatedType
+            // of Nullable<T> is its base type, ValueType.
+            if (!TypesMatchForUnbox(pObjType, pUnboxToEEType->GetGenericArgument(0, 1)))
+                throw new InvalidCastException();
+
+            byte* optional = pUnboxToEEType->GetOptionalFieldsPtr();
+            uint offset = optional == null ? 1 : OptionalFieldsReader.GetInlineField(optional, EETypeOptionalFieldTag.NullableValueOffset, 0) + 1;
+
+            Unsafe.As<byte, bool>(ref data) = true;
+            Unsafe.CopyBlockUnaligned(ref Unsafe.Add(ref data, (int)offset), ref Unsafe.As<RawData>(obj).Data, pObjType->BaseSize - 16);
+        }
+
+        /// <summary>
         /// Whether a box of <paramref name="pObjType"/> may be unboxed to
         /// <paramref name="pTargetType"/>.
         /// </summary>

@@ -7,3 +7,6 @@
 [submodule "vendor/ShellSyntaxTree/upstream"]
 	path = vendor/ShellSyntaxTree/upstream
 	url = https://github.com/Aaronontheweb/ShellSyntaxTree.git
+[submodule "SharpLibm"]
+	path = SharpLibm
+	url = https://github.com/daniilvaino/SharpLibm

@@ -30,6 +30,26 @@ namespace System
         internal const string BufferWriterAdvancedTooFar = "Cannot advance past the end of the buffer, which has a size of {0}.";
         internal const string Format_InvalidStringWithValue = "The input string '{0}' was not in a correct format.";
 
+        // Decimal.cs, Decimal.DecCalc.cs, the decimal paths of Number.Parsing.cs, Math.cs.
+        internal const string Arg_DecBitCtor = "Decimal constructor requires an array or span of four valid decimal bytes.";
+        internal const string Arg_MustBeDecimal = "Object must be of type Decimal.";
+        internal const string Argument_DestinationTooShort = "Destination is too short.";
+        internal const string Argument_InvalidEnumValue = "The value '{0}' is not valid for this usage of the type {1}.";
+        internal const string Argument_MinMaxValue = "'{0}' cannot be greater than {1}.";
+        internal const string ArgumentOutOfRange_DecimalRound = "Decimal can only round to between 0 and 28 digits of precision.";
+        internal const string ArgumentOutOfRange_DecimalScale = "Decimal's scale value must be between 0 and 28, inclusive.";
+        internal const string Overflow_Byte = "Value was either too large or too small for an unsigned byte.";
+        internal const string Overflow_Char = "Value was either too large or too small for a character.";
+        internal const string Overflow_Currency = "Value was either too large or too small for a Currency.";
+        internal const string Overflow_Decimal = "Value was either too large or too small for a Decimal.";
+        internal const string Overflow_Int16 = "Value was either too large or too small for an Int16.";
+        internal const string Overflow_Int32 = "Value was either too large or too small for an Int32.";
+        internal const string Overflow_Int64 = "Value was either too large or too small for an Int64.";
+        internal const string Overflow_SByte = "Value was either too large or too small for a signed byte.";
+        internal const string Overflow_UInt16 = "Value was either too large or too small for a UInt16.";
+        internal const string Overflow_UInt32 = "Value was either too large or too small for a UInt32.";
+        internal const string Overflow_UInt64 = "Value was either too large or too small for a UInt64.";
+
         internal static string Format(string resourceFormat, object? p1) => string.Format(resourceFormat, p1);
 
         internal static string Format(string resourceFormat, object? p1, object? p2) => string.Format(resourceFormat, p1, p2);

@@ -82,19 +82,28 @@ class C { public static T X; static C() { X = new T(); } }   // ok
 (jagged `T[][]`); так пропатчены 3 таблицы ManagedDoom, они оставлены как
 есть.
 
-### 🔧 `new T()` с `where T : new()`
+### 🟡 `new T()` с `where T : new()` (step198)
 
-```csharp
-static T MakeNew<T>() where T : new() => new T();
-```
+`Activator.CreateInstance<T>` — порт NativeAOT CoreLib на интринсиках ILC
+(`std-no-runtime/Runtime/Activator.cs`). Собирается (Kusto); отдельной проверки
+нет. Не работает из общего кода, чей словарь строит разрешатель GVM: ячейка
+конструктора по умолчанию — заглушка с `NotSupportedException`.
 
-**Ошибка компиляции:** `Missing compiler required member 'System.Activator.CreateInstance'`.
+### 🟡 Generic virtual method (GVM) — step198
 
-**⚠️ Workaround:** либо добавить заглушку `System.Activator.CreateInstance<T>()`, либо передавать фабрику через `delegate*<T>` параметр.
+`obj.M<T>()` для виртуального/абстрактного/интерфейсного `M<T>`: ILC зовёт
+`TypeLoaderExports.GVMLookupForSlot`, ответ ищет
+`std-no-runtime/Runtime/GenericVirtualMethods.cs` по таблицам ILC в образе
+(RTR 318/319 — таблицы GVM, 336 — точные экземпляры, 322 — шаблоны общего
+кода, 335 — готовые словари). Недостающий словарь общего кода строится из
+раскладки шаблона. Проверки: `GVMTEST` 10/10, `KQLTEST` 7/7 (парсер Kusto —
+посетители `Accept<TResult>`).
 
-### ❌ Generic virtual method (GVM) — не проверено
-
-Предполагаем что тоже требует specific helpers (`RhpGenericVirtualCall` и родня). Если понадобится — добавить probe отдельно.
+Не сделано, исключение при встрече: вариантная интерфейсная диспетчеризация
+GVM, unboxing-заглушки для структур-получателей, конструктор по умолчанию в
+словаре, потоковые статики, редкие виды ячеек (ldtoken поля, constrained
+static), тип ячейки, которого нет в образе (во время выполнения типы не
+строятся). Только приложения: в ядре таблиц нет (`Rtr` не задан).
 
 ### ✅ Generic method + generic class + virtual override в generic abstract — работают (с оговорками)
 
@@ -455,6 +464,11 @@ done/step141.md).
 `AsyncTaskMethodBuilder`, `IAsyncStateMachine`), плюс подложка потоков на ярус
 (`KernelScheduler` / `AppServices`).
 
+С step198 — `Task<T>`, `ValueTask[<T>]`, `IValueTaskSource`/
+`ManualResetValueTaskSourceCore`, async-потоки (`IAsyncEnumerable<T>`,
+`await foreach`, `IAsyncDisposable`, `WithCancellation`), `ConfigureAwait` на
+`Task[<T>]`; `Stream.*Async` — синхронная база. AotTests (`AsyncShape.cs`).
+
 Это **не планировщик**, но с пулом (step174, `TaskPool`): потоки ждут работу,
 новый стартует, только когда есть очередь, нет свободных и никто не стартует —
 бесконечный цикл Terminal.Gui держит свой поток, не задерживая очередь.
@@ -483,6 +497,28 @@ done/step141.md).
 сломан, а **заслонён**. Без `Task` асинхронный метод падал на типе возврата
 раньше, чем включался переписыватель, поэтому список недостающего не был виден
 никогда. Появился `Task` — и компилятор назвал требования сам, по одному.
+
+### 🟡 `ConcurrentDictionary<TKey, TValue>` — порт BCL, с вырезами
+
+`std-no-runtime/Bcl/ConcurrentDictionary.cs`, порт dotnet/runtime v10.0.8; оба
+яруса собирают. Проверки — `CheckConcurrentDictionary` в `AotTests` (11). Вместе с
+ним добавлены `System.Threading.Volatile` (порт CoreLib), `KeyNotFoundException`,
+`Monitor.IsEntered`, `Environment.ProcessorCount` (= 1), `Array.MaxLength`,
+`ReadOnlyCollection<T>.Empty`, `MemoryExtensions.ContainsAnyExcept/IndexOfAnyExcept`,
+`HashHelpers.FastMod`.
+
+Вырезано (список — в шапке файла):
+
+- нет неуниверсального `IDictionary` (вместо него объявлен `ICollection`),
+  `AlternateLookup`, ограничения `allows ref struct` у перегрузок с `TArg`;
+- нет `NonRandomizedStringEqualityComparer` — строковые ключи хешируются
+  переданным компаратором, перехеширования при коллизиях нет;
+- полоса блокировок не растёт (`MaxLockNumber` = 1). Причина — `Monitor`:
+  таблица на 64 объекта, записи не освобождаются. Каждый словарь навсегда
+  занимает по записи на объект блокировки (по умолчанию одну). **Около 60
+  словарей за жизнь процесса, к которым обращались, исчерпывают таблицу** —
+  `InvalidOperationException` из `Monitor`. Явный `concurrencyLevel = N`
+  занимает N записей.
 
 ---
 
@@ -559,7 +595,8 @@ done/step141.md).
 | `char.IsBetween` / `IsAscii*` (.NET 7 API) | Работает (step 165): `IsBetween`, `IsAsciiDigit`, `IsAsciiLetter`, `IsAsciiLetterOrDigit`, `IsAsciiHexDigit`, `IsAscii` |
 | `IsExternalInit`, `SkipLocalsInitAttribute` | Работают (step 165). Типы-маркеры, реализовывать нечего — под каноническими именами без оговорок |
 | Разбор XML | **Работает** (step 165, `vendor/TurboXml`, BSD-2-Clause). SAX: обработчик — структура, значения приходят спанами, аллокаций нет. Правок в библиотеку 176 строк, из них 145 — изъятия (потоковые перегрузки, тела методов по умолчанию); вырезов SIMD ноль. Потребитель — чтение манифеста приложения из `RT_MANIFEST` |
-| JSON: `Utf8JsonReader` / `Utf8JsonWriter` | 🟡 (`vendor/SystemTextJson`, MIT, из System.Text.Json форка .NET 10; проверка — `apps_native/JsonTest`, 42/42 под QEMU, step197). Чтение спана целиком и кусками (`isFinalBlock: false` + `JsonReaderState`), запись в `IBufferWriter<byte>`/`Stream`, `Indented`. Вырезано: `ReadOnlySequence`-вход, `JavaScriptEncoder` (экранирование всегда как у `JavaScriptEncoder.Default` — встроено), `decimal`/`DateTime(Offset)`/`Guid`, async-члены писателя, Raw/Segment/Comment-запись; сериализатора, `JsonDocument`, `JsonNode` нет. Подробно — `vendor/SystemTextJson/PROVENANCE.md` |
+| JSON: `Utf8JsonReader` / `Utf8JsonWriter` | 🟡 (`vendor/SystemTextJson`, MIT, из System.Text.Json форка .NET 10; проверка — `apps_native/JsonTest`, 42/42 под QEMU, step197). Чтение спана целиком и кусками (`isFinalBlock: false` + `JsonReaderState`), запись в `IBufferWriter<byte>`/`Stream`, `Indented`. Вырезано: `ReadOnlySequence`-вход, `JavaScriptEncoder` (экранирование всегда как у `JavaScriptEncoder.Default` — встроено), `decimal`/`DateTime(Offset)`/`Guid`, async-члены писателя, Raw/Segment/Comment-запись. С step198 — `JsonDocument`/`JsonElement` и `System.Text.Json.Nodes` (`JsonNode`/`JsonObject`/`JsonArray`/`JsonValue`), decimal вернулся; JSONTEST 64/64. Сериализатора нет: `JsonValue.Create<T>` — только примитивы, `WriteTo/ToJsonString` без `JsonSerializerOptions`. Подробно — `vendor/SystemTextJson/PROVENANCE.md` |
+| `System.Math` / `MathF` | **Работает, правильно округлено** (step198). Переходы на SharpLibm (сабмодуль `SharpLibm/`, MIT): CORE-MATH через CoreMathSharp с ≈80 исправленными ошибками порта. Проверка — репозиторий SharpLibm-tests: double бит в бит с MPFR на ≈30 млн худших случаев CORE-MATH, float — со всеми 2³² входами C CORE-MATH; точные операции бит в бит с libc-test. `Math.Round` — roundeven, как BCL; `%` для double/float — `fmod`. Флагов исключений и режимов округления нет (CLI фиксирует к ближайшему). `LibmPatcher` при SSE4.1 переписывает floor/ceil/trunc/rint/nearbyint на `roundsd`; FMA не включается (XCR0 x87\|SSE). Нет: функции Бесселя, `erfinv` |
 | `List<T>.ToArray()` | Работает (step 135, instance-метод как в BCL). Раньше не было → `list.ToArray()` в vendored-коде без `using System.Linq` не резолвился. Instance-метод приоритетнее LINQ-extension |
 | `System.Linq` LINQ-to-objects | **Partial** (step 134, `std/.../Linq/Enumerable.cs`). Lazy yield-операторы (Where/Select/SelectMany/Skip/Take/Concat/Distinct/Reverse/Cast/OfType/OrderBy) + материализующие (ToArray/ToList/ToDictionary/Count/Any/All/First/Last/Single/ElementAt/Contains/Aggregate/Sum/Min/Max/Average). OrderBy — стабильный merge-sort. **Source ОБЯЗАН быть `List<T>`/`IEnumerable<T>`, НЕ голый массив** (§4 array-IEnumerable). Deferred: ThenBy/`IOrderedEnumerable`, GroupBy, Join, Zip, Union/Intersect/Except, nullable-numeric aggregates. Generic yield-итераторы (`Where<T>`/`Select<T,R>`) РАБОТАЮТ |
 
@@ -1297,7 +1334,7 @@ post-EBS это развёртка. `bochs-display` + EDID.
 
 ## 20. 🟡 Форматирование чисел — порт BCL (release/8.0)
 
-Неполно: культура только инвариантная; нет `decimal`, `Half`, `Int128`/`UInt128`,
+Неполно: культура только инвариантная; нет `Half`, `Int128`/`UInt128`,
 обобщённой арифметики, `Rune`; разбор чисел — старый, только десятичный;
 форматирование читает статик `NumberFormatInfo` и не годится до материализации
 статиков (кроме неотрицательных целых без формата).
@@ -1321,7 +1358,10 @@ post-EBS это развёртка. `bochs-display` + EDID.
   `NumberFormatInfo`: `"Infinity"` / `"-Infinity"` / `"NaN"`, валюта `¤`,
   проценты `"50 %"`. `CultureInfo.NumberFormat` и `GetFormat(typeof(...))`
   есть; для `typeof` в ядро перенесён `Type` из app-SDK (только тождество).
-- **Вырезано:** `decimal`, `Half`, `Int128`/`UInt128` (типов нет — публичной
+- **`decimal` (step198)** — порт `System.Decimal` + `DecCalc` .NET 8:
+  арифметика, округления, `Parse`/`TryParse`, форматы `FormatDecimal`;
+  `Math.Round/Floor/Ceiling` для него. Проверки — `CheckDecimal` в AotTests (17).
+- **Вырезано:** `Half`, `Int128`/`UInt128` (типов нет — публичной
   поверхности не теряется); аппаратные ветки `BitOperations` (нет
   `Intrinsics.X86/Arm/Wasm`, работает штатный программный путь); база
   `IBinaryInteger<T>` у `IUtfChar` (семейства generic math нет, форматтер

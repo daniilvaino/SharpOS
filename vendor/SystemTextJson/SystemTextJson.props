@@ -15,6 +15,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Common\*.cs" Link="vendor\SystemTextJson\Common\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)src\System\Text\Json\*.cs" Link="vendor\SystemTextJson\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)src\System\Text\Json\Document\*.cs" Link="vendor\SystemTextJson\Document\%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)src\System\Text\Json\Nodes\*.cs" Link="vendor\SystemTextJson\Nodes\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)src\System\Text\Json\Reader\*.cs" Link="vendor\SystemTextJson\Reader\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)src\System\Text\Json\Writer\*.cs" Link="vendor\SystemTextJson\Writer\%(Filename)%(Extension)" />
   </ItemGroup>

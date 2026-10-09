@@ -282,6 +282,10 @@
         public ulong Settings;
 
         public const ulong SettingAnnounceBuild = 1;
+
+        // CPU features beyond x86-64's baseline (step198): bits of
+        // SharpOS.Std.NoRuntime.LibmPatcher; 0 from an older kernel.
+        public ulong CpuFeatures;
     }
 
     /// <summary>

@@ -203,11 +203,37 @@ namespace System.Collections.Generic
 
             return false;
         }
+
+        /// <summary>
+        /// The value's slot, adding a default one first if the key is absent:
+        /// what CollectionsMarshal.GetValueRefOrAddDefault hands out (the BCL's
+        /// TryInsert with InsertionBehavior.None, then FindValue).
+        /// </summary>
+        internal ref TValue GetValueRefOrAddDefault(TKey key, out bool exists)
+        {
+            int i = FindEntry(key);
+            exists = i >= 0;
+            if (!exists)
+            {
+                TryInsert(key, default!, overwrite: false);
+                i = FindEntry(key);
+            }
+            return ref _entries![i].value;
+        }
+
+        /// <summary>The value's slot, or a null ref (CollectionsMarshal.GetValueRefOrNullRef).</summary>
+        internal ref TValue GetValueRefOrNullRef(TKey key)
+        {
+            int i = FindEntry(key);
+            if (i < 0) return ref System.Runtime.CompilerServices.Unsafe.NullRef<TValue>();
+            return ref _entries![i].value;
+        }
     }
 
     /// <summary>
     /// Prime sizes for the table. From dotnet/runtime's HashHelpers (MIT), cut
-    /// to the table and the two lookups.
+    /// to the table, the two lookups and the 64-bit fast modulo
+    /// (ConcurrentDictionary's bucket index).
     /// </summary>
     internal static class HashHelpers
     {
@@ -248,6 +274,28 @@ namespace System.Collections.Generic
                 return MaxPrimeArrayLength;
 
             return GetPrime(newSize);
+        }
+
+        /// <summary>Returns approximate reciprocal of the divisor: ceil(2**64 / divisor).</summary>
+        /// <remarks>This should only be used on 64-bit.</remarks>
+        public static ulong GetFastModMultiplier(uint divisor) =>
+            ulong.MaxValue / divisor + 1;
+
+        /// <summary>Performs a mod operation using the multiplier pre-computed with <see cref="GetFastModMultiplier"/>.</summary>
+        /// <remarks>This should only be used on 64-bit.</remarks>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public static uint FastMod(uint value, uint divisor, ulong multiplier)
+        {
+            // We use modified Daniel Lemire's fastmod algorithm (https://github.com/dotnet/runtime/pull/406),
+            // which allows to avoid the long multiplication if the divisor is less than 2**31.
+            System.Diagnostics.Debug.Assert(divisor <= int.MaxValue);
+
+            // This is equivalent of (uint)Math.BigMul(multiplier * value, divisor, out _). This version
+            // is faster than BigMul currently because we only need the high bits.
+            uint highbits = (uint)(((((multiplier * value) >> 32) + 1) * divisor) >> 32);
+
+            System.Diagnostics.Debug.Assert(highbits == value % divisor);
+            return highbits;
         }
 
         // A property rather than a static field: a static array field with an

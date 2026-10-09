@@ -145,6 +145,30 @@ namespace System.Threading
             return TryEnter(obj);
         }
 
+        /// <summary>Whether the current thread holds the lock on <paramref name="obj"/>.</summary>
+        /// <remarks>
+        /// Looks the slot up without claiming one: asking must not spend a
+        /// table entry on an object nobody has locked.
+        /// </remarks>
+        public static bool IsEntered(object obj)
+        {
+            if (obj == null) throw new ArgumentNullException(nameof(obj));
+
+            EnsureTables();
+
+            int start = (int)((uint)obj.GetHashCode() % Capacity);
+            for (int probe = 0; probe < Capacity; probe++)
+            {
+                int slot = (start + probe) % Capacity;
+                if (ReferenceEquals(s_owners[slot], obj))
+                    return s_holders[slot] == CurrentThreadId();
+                if (s_owners[slot] == null)
+                    return false;
+            }
+
+            return false;
+        }
+
         // Pulse / Wait are the condition-variable half of Monitor. Nothing in
         // this system uses them yet, and guessing at an implementation would be
         // worse than saying so: a Wait that returned immediately would turn

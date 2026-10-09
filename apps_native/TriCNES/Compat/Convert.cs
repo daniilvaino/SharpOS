@@ -4,11 +4,12 @@
 // (Convert.ToString(value, 2)), and that is the only thing it asks Convert
 // for. A full Convert is a large BCL type; this is the two overloads actually
 // reachable, kept app-local rather than dropped into std under a canonical
-// name it does not earn.
+// name it does not earn. Partial: std has System.Convert too (ChangeType,
+// step198), and this adds the two overloads to it.
 
 namespace System
 {
-    public static class Convert
+    public static partial class Convert
     {
         /// <summary>
         /// Value in the given base. Only 2, 8, 10 and 16 are legal bases for

@@ -9,10 +9,11 @@
 // two-digits-at-a-time integer paths.
 //
 // SharpOS cuts / changes (each marked inline with "SharpOS"):
-//   * decimal, Half, Int128 and UInt128 entry points and helpers - those
-//     types do not exist in this std. No public API is lost: the public
-//     surface is the primitives' own ToString/TryFormat, and the cut types
-//     have none.
+//   * Half, Int128 and UInt128 entry points and helpers - those types do not
+//     exist in this std. No public API is lost: the public surface is the
+//     primitives' own ToString/TryFormat, and the cut types have none.
+//     (The decimal ones - FormatDecimal, TryFormatDecimal, DecimalToNumber -
+//     are ported, verbatim, with System.Decimal.)
 //   * s_smallNumberCache (lazily filled string cache for 0..299) is not kept:
 //     it is a GC static read on every small Int32.ToString(), and the kernel
 //     formats integers before it materializes its statics. Each call
@@ -395,7 +396,87 @@ namespace System
                                         "80818283848586878889"u8 +
                                         "90919293949596979899"u8;
 
-        // SharpOS cut: FormatDecimal, TryFormatDecimal, DecimalToNumber - no System.Decimal.
+        public static unsafe string FormatDecimal(decimal value, ReadOnlySpan<char> format, NumberFormatInfo info)
+        {
+            char fmt = ParseFormatSpecifier(format, out int digits);
+
+            byte* pDigits = stackalloc byte[DecimalNumberBufferLength];
+            NumberBuffer number = new NumberBuffer(NumberBufferKind.Decimal, pDigits, DecimalNumberBufferLength);
+
+            DecimalToNumber(ref value, ref number);
+
+            char* stackPtr = stackalloc char[CharStackBufferSize];
+            var vlb = new ValueListBuilder<char>(new Span<char>(stackPtr, CharStackBufferSize));
+
+            if (fmt != 0)
+            {
+                NumberToString(ref vlb, ref number, fmt, digits, info);
+            }
+            else
+            {
+                NumberToStringFormat(ref vlb, ref number, format, info);
+            }
+
+            string result = vlb.AsSpan().ToString();
+            vlb.Dispose();
+            return result;
+        }
+
+        public static unsafe bool TryFormatDecimal<TChar>(decimal value, ReadOnlySpan<char> format, NumberFormatInfo info, Span<TChar> destination, out int charsWritten) where TChar : unmanaged, IUtfChar<TChar>
+        {
+            Debug.Assert(typeof(TChar) == typeof(char) || typeof(TChar) == typeof(byte));
+
+            char fmt = ParseFormatSpecifier(format, out int digits);
+
+            byte* pDigits = stackalloc byte[DecimalNumberBufferLength];
+            NumberBuffer number = new NumberBuffer(NumberBufferKind.Decimal, pDigits, DecimalNumberBufferLength);
+
+            DecimalToNumber(ref value, ref number);
+
+            TChar* stackPtr = stackalloc TChar[CharStackBufferSize];
+            var vlb = new ValueListBuilder<TChar>(new Span<TChar>(stackPtr, CharStackBufferSize));
+
+            if (fmt != 0)
+            {
+                NumberToString(ref vlb, ref number, fmt, digits, info);
+            }
+            else
+            {
+                NumberToStringFormat(ref vlb, ref number, format, info);
+            }
+
+            bool success = vlb.TryCopyTo(destination, out charsWritten);
+            vlb.Dispose();
+            return success;
+        }
+
+        internal static unsafe void DecimalToNumber(scoped ref decimal d, ref NumberBuffer number)
+        {
+            byte* buffer = number.GetDigitsPointer();
+            number.DigitsCount = DecimalPrecision;
+            number.IsNegative = decimal.IsNegative(d);
+
+            byte* p = buffer + DecimalPrecision;
+            while ((d.Mid | d.High) != 0)
+            {
+                p = UInt32ToDecChars(p, decimal.DecDivMod1E9(ref d), 9);
+            }
+            p = UInt32ToDecChars(p, d.Low, 0);
+
+            int i = (int)((buffer + DecimalPrecision) - p);
+
+            number.DigitsCount = i;
+            number.Scale = i - d.Scale;
+
+            byte* dst = number.GetDigitsPointer();
+            while (--i >= 0)
+            {
+                *dst++ = *p++;
+            }
+            *dst = (byte)'\0';
+
+            number.CheckConsistency();
+        }
 
         public static string FormatDouble(double value, string? format, NumberFormatInfo info)
         {

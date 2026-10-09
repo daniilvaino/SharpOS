@@ -82,6 +82,8 @@ namespace JsonCheckApp
             Malformed();
             Options();
             StdSurface();
+            Document(sample);
+            Nodes();
 
             Console.WriteLine("[jsoncheck] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
             return s_passed;
@@ -477,6 +479,73 @@ namespace JsonCheckApp
             floatReader.Read();
             floatReader.Read();
             Check("read: GetSingle", floatReader.GetSingle() == 0.1f);
+        }
+
+        // JsonDocument / JsonElement (step198).
+        private static void Document(byte[] sample)
+        {
+            using JsonDocument doc = JsonDocument.Parse(sample);
+            JsonElement root = doc.RootElement;
+            Check("doc: root is an object", root.ValueKind == JsonValueKind.Object);
+            Check("doc: string property", ExpectedName, root.GetProperty("name").GetString());
+            Check("doc: Int64", root.GetProperty("neg").GetInt64() == -42);
+            Check("doc: UInt64 too big for Int64", root.GetProperty("big").GetUInt64() == 12345678901234567890UL && !root.GetProperty("big").TryGetInt64(out _));
+            Check("doc: decimal", root.GetProperty("pi").GetDecimal() == 3.14159m);
+            Check("doc: TryGetProperty misses", !root.TryGetProperty("nothing", out _));
+
+            int items = 0;
+            foreach (JsonElement item in root.GetProperty("arr").EnumerateArray()) items++;
+            Check("doc: array length and enumeration", items == 3 && root.GetProperty("arr").GetArrayLength() == 3);
+
+            var names = new List<string>();
+            foreach (JsonProperty p in root.GetProperty("obj").GetProperty("inner").EnumerateObject()) names.Add(p.Name);
+            Check("doc: object enumeration", names.Count == 1 && names[0] == "deep");
+
+            Check("doc: raw text", "[2, {\"x\": \"y\"}]", root.GetProperty("arr")[1].GetRawText());
+
+            using JsonDocument a = JsonDocument.Parse("{\"a\":1,\"b\":[1.0,2]}");
+            using JsonDocument b = JsonDocument.Parse("{\"b\":[1,2.0],\"a\":1e0}");
+            Check("doc: DeepEquals ignores order and number form", JsonElement.DeepEquals(a.RootElement, b.RootElement));
+
+            bool threw = false;
+            try { JsonDocument.Parse("{\"a\":1,\"a\":2}", new JsonDocumentOptions { AllowDuplicateProperties = false }); }
+            catch (JsonException) { threw = true; }
+            Check("doc: duplicate property rejected when asked", threw);
+        }
+
+        // System.Text.Json.Nodes (step198).
+        private static void Nodes()
+        {
+            System.Text.Json.Nodes.JsonNode node = System.Text.Json.Nodes.JsonNode.Parse("{\"Level\":3,\"Text\":\"hi\",\"Tags\":[\"a\",\"b\"]}");
+            Check("node: parse and index", (int)node["Level"] == 3 && (string)node["Text"] == "hi");
+            Check("node: array", node["Tags"].AsArray().Count == 2 && (string)node["Tags"][1] == "b");
+            Check("node: path", "$.Tags[1]", node["Tags"][1].GetPath());
+
+            node["Level"] = 5;
+            node["Extra"] = new System.Text.Json.Nodes.JsonArray(1, 2.5, "x", true);
+            Check("node: modify and write", "{\"Level\":5,\"Text\":\"hi\",\"Tags\":[\"a\",\"b\"],\"Extra\":[1,2.5,\"x\",true]}", node.ToJsonString());
+
+            var built = new System.Text.Json.Nodes.JsonObject
+            {
+                ["n"] = 1.25m,
+                ["s"] = "q\"uote",
+                ["o"] = new System.Text.Json.Nodes.JsonObject { ["k"] = null },
+            };
+            Check("node: build object", "{\"n\":1.25,\"s\":\"q\\u0022uote\",\"o\":{\"k\":null}}", built.ToJsonString());
+            Check("node: GetValue<decimal>", built["n"].GetValue<decimal>() == 1.25m);
+            Check("node: value kind", built["s"].GetValueKind() == JsonValueKind.String && built["n"].GetValueKind() == JsonValueKind.Number);
+
+            System.Text.Json.Nodes.JsonNode copy = node.DeepClone();
+            Check("node: DeepClone + DeepEquals", System.Text.Json.Nodes.JsonNode.DeepEquals(node, copy));
+            copy["Level"] = 6;
+            Check("node: clone is independent", !System.Text.Json.Nodes.JsonNode.DeepEquals(node, copy) && (int)node["Level"] == 5);
+
+            Check("node: JsonValue.Create<long>", System.Text.Json.Nodes.JsonValue.Create<long>(7).ToJsonString() == "7");
+
+            bool threw = false;
+            try { node["Text"].GetValue<int>(); }
+            catch (InvalidOperationException) { threw = true; }
+            Check("node: wrong-type GetValue throws InvalidOperationException", threw);
         }
     }
 }

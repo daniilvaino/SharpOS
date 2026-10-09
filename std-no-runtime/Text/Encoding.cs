@@ -39,6 +39,13 @@ namespace System.Text
         public string GetString(byte[] bytes, int index, int count)
             => GetString(new ReadOnlySpan<byte>(bytes, index, count));
 
+        public unsafe string GetString(byte* bytes, int byteCount)
+        {
+            if (bytes == null) throw new ArgumentNullException(nameof(bytes));
+            if (byteCount < 0) throw new ArgumentOutOfRangeException(nameof(byteCount));
+            return GetString(new ReadOnlySpan<byte>(bytes, byteCount));
+        }
+
         // --- encode: string -> bytes ------------------------------------
 
         public abstract int GetByteCount(string s);

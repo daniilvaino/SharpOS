@@ -27,7 +27,7 @@ namespace SharpOS.Std.NoRuntime
         // returned here became a constructor storing fields at null+8,
         // silently into physical page 0 until the pager unmaps it.
         [RuntimeExport("RhpNewFast")]
-        private static void* RhpNewFast(GcMethodTable* mt)
+        internal static void* RhpNewFast(GcMethodTable* mt)
         {
             if (mt == null)
                 return null;

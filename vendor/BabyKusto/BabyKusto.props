@@ -1,0 +1,24 @@
+<Project>
+
+  <!-- BabyKusto (davidnx/baby-kusto-csharp, MIT): a KQL execution engine
+       over in-memory tables, on top of Kusto.Language. Sources compiled into
+       the app, like the language itself; tdigest\ is the t-digest library
+       its percentile aggregates use (Heath Milligan, MIT, as modified in
+       BabyKusto's repository).
+
+       Util\IsExternalInit.cs is left out: std declares that type, and two
+       definitions in one assembly do not compile. -->
+
+  <Import Project="..\KustoLanguage\KustoLanguage.props" />
+  <!-- JsonNode: the values of KQL's `dynamic` type. -->
+  <Import Project="..\SystemTextJson\SystemTextJson.props" />
+
+  <ItemGroup>
+    <!-- MatchRegex / ExtractRegex: no System.Text.RegularExpressions in std yet
+         (their registrations are cut in BuiltInOperators / BuiltInScalarFunctions). -->
+    <Compile Include="$(MSBuildThisFileDirectory)src\**\*.cs"
+             Exclude="$(MSBuildThisFileDirectory)src\Util\IsExternalInit.cs;$(MSBuildThisFileDirectory)src\Evaluation\BuiltIns\Operators\MatchRegex.cs;$(MSBuildThisFileDirectory)src\Evaluation\BuiltIns\ScalarFunctions\ExtractRegex.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)tdigest\*.cs" />
+  </ItemGroup>
+
+</Project>

@@ -13,7 +13,7 @@
 //    forever, same end result.
 //  - ctor(IEnumerable<T>) — add later when a real use-case shows up.
 //  - AddRange / InsertRange / GetRange — same reason.
-//  - Sort / BinarySearch / FindIndex — same.
+//  - (Sort, BinarySearch and FindIndex have since been added.)
 
 namespace System.Collections.Generic
 {
@@ -26,6 +26,22 @@ namespace System.Collections.Generic
 
         private T[] _items;
         private int _size;
+
+        /// <summary>The live items, for CollectionsMarshal.AsSpan.</summary>
+        internal Span<T> ItemsSpan => new Span<T>(_items, 0, _size);
+
+        /// <summary>CollectionExtensions.InsertRange(list, index, span): the BCL body over std's fields.</summary>
+        internal void InsertSpan(int index, ReadOnlySpan<T> source)
+        {
+            if ((uint)index > (uint)_size) throw new ArgumentOutOfRangeException(nameof(index));
+            if (source.IsEmpty) return;
+
+            EnsureCapacity(checked(_size + source.Length));
+            if (index < _size)
+                Array.Copy(_items, index, _items, index + source.Length, _size - index);
+            source.CopyTo(new Span<T>(_items, index, source.Length));
+            _size += source.Length;
+        }
 
         public List()
         {
@@ -204,6 +220,19 @@ namespace System.Collections.Generic
         // Cut, as elsewhere in this file: the _version bump and the argument
         // validation, which our ThrowHelpers cannot report anyway.
         public void AddRange(IEnumerable<T> collection) => InsertRange(_size, collection);
+
+        // Onto Array.BinarySearch over the live range (step198).
+        public int BinarySearch(int index, int count, T item, IComparer<T> comparer)
+        {
+            if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "Non-negative number required.");
+            if (count < 0) throw new ArgumentOutOfRangeException(nameof(count), "Non-negative number required.");
+            if (_size - index < count) throw new ArgumentException("Offset and length were out of bounds for the array or count is greater than the number of elements from index to the end of the source collection.");
+            return Array.BinarySearch(_items, index, count, item, comparer);
+        }
+
+        public int BinarySearch(T item) => BinarySearch(0, _size, item, null);
+
+        public int BinarySearch(T item, IComparer<T> comparer) => BinarySearch(0, _size, item, comparer);
 
         // Straight onto Array.Sort (introsort, step115) over the live backing
         // array, bounded by _size so the unused tail stays out of it. Through

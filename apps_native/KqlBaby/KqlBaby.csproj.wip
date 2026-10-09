@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IlcSystemModule>KqlBaby</IlcSystemModule>
+    <LangVersion>latest</LangVersion>
+    <Nullable>annotations</Nullable>
+  </PropertyGroup>
+
+  <!-- The freestanding win-x64 PE recipe every AOT app uses. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <!-- KQL executed: BabyKusto over Kusto.Language. -->
+  <Import Project="..\..\vendor\BabyKusto\BabyKusto.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>

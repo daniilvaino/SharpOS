@@ -3,7 +3,8 @@
 // plus the FileMode/FileAccess/SeekOrigin enums (verbatim values).
 //
 // Cuts vs original:
-//   - All async surface (ReadAsync/WriteAsync/BeginRead/EndRead/...).
+//   - BeginRead/EndRead/BeginWrite/EndWrite; ReadAsync/WriteAsync/FlushAsync
+//     exist (step198) but their base versions complete synchronously.
 //   - CopyTo/CopyToAsync, timeouts, CanTimeout, synchronized
 //     wrapper, TextReader/TextWriter integration.
 // Kept: the sync byte[] Read/Write/Seek core + ReadExactly (net7+) that
@@ -125,6 +126,59 @@ namespace System.IO
             {
                 System.Buffers.ArrayPool<byte>.Shared.Return(sharedBuffer);
             }
+        }
+
+        // Async surface (step198: System.Text.Json's ParseAsync, BabyKusto). The
+        // members are the BCL's; the base implementations complete
+        // synchronously through the sync core — upstream's run the sync call
+        // on the thread pool (BeginRead/EndRead), which std does not have. A
+        // stream with a real asynchronous path overrides them, as upstream.
+        public System.Threading.Tasks.Task<int> ReadAsync(byte[] buffer, int offset, int count) =>
+            ReadAsync(buffer, offset, count, default);
+
+        public virtual System.Threading.Tasks.Task<int> ReadAsync(byte[] buffer, int offset, int count, System.Threading.CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return System.Threading.Tasks.Task.FromCanceled<int>(cancellationToken);
+            try { return System.Threading.Tasks.Task.FromResult(Read(buffer, offset, count)); }
+            catch (Exception e) { return System.Threading.Tasks.Task.FromException<int>(e); }
+        }
+
+        public virtual System.Threading.Tasks.ValueTask<int> ReadAsync(Memory<byte> buffer, System.Threading.CancellationToken cancellationToken = default)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return System.Threading.Tasks.ValueTask.FromCanceled<int>(cancellationToken);
+            try { return new System.Threading.Tasks.ValueTask<int>(Read(buffer.Span)); }
+            catch (Exception e) { return System.Threading.Tasks.ValueTask.FromException<int>(e); }
+        }
+
+        public System.Threading.Tasks.Task WriteAsync(byte[] buffer, int offset, int count) =>
+            WriteAsync(buffer, offset, count, default);
+
+        public virtual System.Threading.Tasks.Task WriteAsync(byte[] buffer, int offset, int count, System.Threading.CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return System.Threading.Tasks.Task.FromCanceled(cancellationToken);
+            try { Write(buffer, offset, count); return System.Threading.Tasks.Task.CompletedTask; }
+            catch (Exception e) { return System.Threading.Tasks.Task.FromException(e); }
+        }
+
+        public virtual System.Threading.Tasks.ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, System.Threading.CancellationToken cancellationToken = default)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return System.Threading.Tasks.ValueTask.FromCanceled(cancellationToken);
+            try { Write(buffer.Span); return default; }
+            catch (Exception e) { return System.Threading.Tasks.ValueTask.FromException(e); }
+        }
+
+        public System.Threading.Tasks.Task FlushAsync() => FlushAsync(default);
+
+        public virtual System.Threading.Tasks.Task FlushAsync(System.Threading.CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return System.Threading.Tasks.Task.FromCanceled(cancellationToken);
+            try { Flush(); return System.Threading.Tasks.Task.CompletedTask; }
+            catch (Exception e) { return System.Threading.Tasks.Task.FromException(e); }
         }
 
         public virtual void Write(ReadOnlySpan<byte> buffer)

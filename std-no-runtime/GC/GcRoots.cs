@@ -23,7 +23,9 @@ namespace SharpOS.Std.NoRuntime
 
     internal static unsafe class GcRoots
     {
-        public const int Capacity = 256;
+        // One slot per GC statics block of the image: Kusto.Language alone
+        // brings several hundred (step198), 256 was enough for our own code.
+        public const int Capacity = 4096;
 
         private static GcRootsStorage s_slots;
         private static int s_count;

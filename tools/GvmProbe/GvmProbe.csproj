@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Host tool (step198): reads an app's PE the way the GVM resolver will
+       read it in memory — the ReadyToRun header, the NativeFormat tables ILC
+       emits for generic virtual methods — and prints them. The NativeFormat
+       reader is std's own copy, so the tool and the runtime read alike.
+
+           dotnet run - -project tools/GvmProbe -c Release - - path/to/App.exe
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NoWarn>$(NoWarn);CS8981;CS0162</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\std-no-runtime\Runtime\NativeFormat\*.cs" />
+  </ItemGroup>
+
+</Project>

@@ -746,9 +746,47 @@ namespace System.Text.Json
             throw new ObjectDisposedException(nameof(Utf8JsonWriter));
         }
 
-        // SharpOS cut: ThrowObjectDisposedException_JsonDocument (JsonDocument not ported).
+        [DoesNotReturn]
+        public static void ThrowObjectDisposedException_JsonDocument()
+        {
+            throw new ObjectDisposedException(nameof(JsonDocument));
+        }
 
-        // SharpOS cut: ThrowInsufficientExecutionStackException_... (JsonElement.DeepEquals not ported).
+        [DoesNotReturn]
+        public static void ThrowInsufficientExecutionStackException_JsonElementDeepEqualsInsufficientExecutionStack()
+        {
+            throw new InsufficientExecutionStackException(SR.JsonElementDeepEqualsInsufficientExecutionStack);
+        }
+
+        // From ThrowHelper.Serialization.cs: the members JsonDocument and
+        // JsonNode use (the rest of that file is the serializer's).
+        [DoesNotReturn]
+        public static void ThrowJsonException(string? message = null)
+        {
+            throw new JsonException(message) { AppendPathInformation = true };
+        }
+
+        [DoesNotReturn]
+        public static void ThrowJsonException_DuplicatePropertyNotAllowed(ReadOnlySpan<byte> nameBytes)
+        {
+            string name = JsonHelpers.Utf8GetString(nameBytes);
+            throw new JsonException(SR.Format(SR.DuplicatePropertiesNotAllowed_NameSpan, Truncate(name)));
+        }
+
+        private static string Truncate(ReadOnlySpan<char> str)
+        {
+            const int MaxLength = 15;
+
+            if (str.Length <= MaxLength)
+            {
+                return str.ToString();
+            }
+
+            Span<char> builder = stackalloc char[MaxLength + 3];
+            str.Slice(0, MaxLength).CopyTo(builder);
+            builder[MaxLength] = builder[MaxLength + 1] = builder[MaxLength + 2] = '.';
+            return builder.ToString();
+        }
     }
 
     internal enum ExceptionResource

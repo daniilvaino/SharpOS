@@ -97,6 +97,66 @@ namespace System
             : base(message, paramName) { }
         public ArgumentOutOfRangeException(string paramName, object actualValue, string message)
             : base(message, paramName) { }
+
+        // The ThrowIf family (System.Private.CoreLib ArgumentOutOfRangeException.cs,
+        // .NET 8+, MIT; messages from its Strings.resx). The comparison ones are
+        // upstream's, generic over IComparable<T>/IEquatable<T>. ThrowIfZero,
+        // ThrowIfNegative and ThrowIfNegativeOrZero are generic over INumberBase<T>
+        // upstream; std has no generic math, so they come as overloads for the
+        // types callers pass (int, long, nint, double) — source-compatible for those.
+        public static void ThrowIfZero(int value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value == 0) ThrowZero(value, paramName); }
+        public static void ThrowIfZero(long value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value == 0) ThrowZero(value, paramName); }
+        public static void ThrowIfZero(nint value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value == 0) ThrowZero(value, paramName); }
+        public static void ThrowIfZero(double value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value == 0) ThrowZero(value, paramName); }
+
+        public static void ThrowIfNegative(int value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value < 0) ThrowNegative(value, paramName); }
+        public static void ThrowIfNegative(long value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value < 0) ThrowNegative(value, paramName); }
+        public static void ThrowIfNegative(nint value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value < 0) ThrowNegative(value, paramName); }
+        public static void ThrowIfNegative(double value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value < 0) ThrowNegative(value, paramName); }
+
+        public static void ThrowIfNegativeOrZero(int value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value <= 0) ThrowNegativeOrZero(value, paramName); }
+        public static void ThrowIfNegativeOrZero(long value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value <= 0) ThrowNegativeOrZero(value, paramName); }
+        public static void ThrowIfNegativeOrZero(nint value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value <= 0) ThrowNegativeOrZero(value, paramName); }
+        public static void ThrowIfNegativeOrZero(double value, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) { if (value <= 0) ThrowNegativeOrZero(value, paramName); }
+
+        public static void ThrowIfEqual<T>(T value, T other, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) where T : IEquatable<T>?
+        {
+            if (System.Collections.Generic.EqualityComparer<T>.Default.Equals(value, other))
+                Throw(paramName, value, "{0} ('{1}') must not be equal to '{2}'.", (object?)value ?? "null", (object?)other ?? "null");
+        }
+
+        public static void ThrowIfNotEqual<T>(T value, T other, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) where T : IEquatable<T>?
+        {
+            if (!System.Collections.Generic.EqualityComparer<T>.Default.Equals(value, other))
+                Throw(paramName, value, "{0} ('{1}') must be equal to '{2}'.", (object?)value ?? "null", (object?)other ?? "null");
+        }
+
+        public static void ThrowIfGreaterThan<T>(T value, T other, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) where T : IComparable<T>
+        {
+            if (value.CompareTo(other) > 0) Throw(paramName, value, "{0} ('{1}') must be less than or equal to '{2}'.", value, other);
+        }
+
+        public static void ThrowIfGreaterThanOrEqual<T>(T value, T other, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) where T : IComparable<T>
+        {
+            if (value.CompareTo(other) >= 0) Throw(paramName, value, "{0} ('{1}') must be less than '{2}'.", value, other);
+        }
+
+        public static void ThrowIfLessThan<T>(T value, T other, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) where T : IComparable<T>
+        {
+            if (value.CompareTo(other) < 0) Throw(paramName, value, "{0} ('{1}') must be greater than or equal to '{2}'.", value, other);
+        }
+
+        public static void ThrowIfLessThanOrEqual<T>(T value, T other, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(value))] string? paramName = null) where T : IComparable<T>
+        {
+            if (value.CompareTo(other) <= 0) Throw(paramName, value, "{0} ('{1}') must be greater than '{2}'.", value, other);
+        }
+
+        private static void ThrowZero(object value, string? paramName) => Throw(paramName, value, "{0} ('{1}') must be a non-zero value.", value, null);
+        private static void ThrowNegative(object value, string? paramName) => Throw(paramName, value, "{0} ('{1}') must be a non-negative value.", value, null);
+        private static void ThrowNegativeOrZero(object value, string? paramName) => Throw(paramName, value, "{0} ('{1}') must be a non-negative and non-zero value.", value, null);
+
+        private static void Throw(string? paramName, object? value, string format, object? shown, object? other) =>
+            throw new ArgumentOutOfRangeException(paramName, value, string.Format(format, paramName, shown, other));
     }
 
     public class OutOfMemoryException : Exception
@@ -243,6 +303,13 @@ namespace System
         public BadImageFormatException(string message) : base(message) { }
         public BadImageFormatException(string message, Exception innerException)
             : base(message, innerException) { }
+    }
+
+    public sealed class InsufficientExecutionStackException : Exception
+    {
+        public InsufficientExecutionStackException() : base("Insufficient stack to continue executing the program safely. This can happen from having too many functions on the call stack or function on the stack using too much stack space.") { }
+        public InsufficientExecutionStackException(string message) : base(message) { }
+        public InsufficientExecutionStackException(string message, Exception innerException) : base(message, innerException) { }
     }
 }
 

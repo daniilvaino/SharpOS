@@ -25,6 +25,9 @@ namespace System
     {
         public static T[] Empty<T>() => new T[0];
 
+        /// <summary>The largest length an array may have; BCL value (CoreLib Array.MaxLength).</summary>
+        public static int MaxLength => 0x7FFFFFC7;
+
         // Rank and per-dimension lengths. A single-dimension array carries
         // neither — its MethodTable says rank 1 and Length is the answer — so
         // both read the multidimensional bounds block only when there is one.
@@ -296,6 +299,48 @@ namespace System
             if (index < 0 || index + length > array.Length) return;
             if (comparer == null) return;
             ComparerIntroSort(array, index, index + length - 1, 2 * Log2((uint)length), comparer);
+        }
+
+        // ---- BinarySearch (step198) ----
+        // Ported from dotnet/runtime v8.0 Array.BinarySearch<T> and
+        // ArraySortHelper<T>.InternalBinarySearch: the index of value, or the
+        // bitwise complement of where it would go. A null comparer is
+        // Comparer<T>.Default. Cut: the non-generic Array overloads.
+
+        public static int BinarySearch<T>(T[] array, T value)
+        {
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            return BinarySearch(array, 0, array.Length, value, null);
+        }
+
+        public static int BinarySearch<T>(T[] array, T value, IComparer<T> comparer)
+        {
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            return BinarySearch(array, 0, array.Length, value, comparer);
+        }
+
+        public static int BinarySearch<T>(T[] array, int index, int length, T value)
+            => BinarySearch(array, index, length, value, null);
+
+        public static int BinarySearch<T>(T[] array, int index, int length, T value, IComparer<T> comparer)
+        {
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            if (index < 0) throw new ArgumentOutOfRangeException(nameof(index), "Non-negative number required.");
+            if (length < 0) throw new ArgumentOutOfRangeException(nameof(length), "Non-negative number required.");
+            if (array.Length - index < length) throw new ArgumentException("Offset and length were out of bounds for the array or count is greater than the number of elements from index to the end of the source collection.");
+
+            comparer ??= Comparer<T>.Default;
+            int lo = index;
+            int hi = index + length - 1;
+            while (lo <= hi)
+            {
+                int i = lo + ((hi - lo) >> 1);
+                int order = comparer.Compare(array[i], value);
+                if (order == 0) return i;
+                if (order < 0) lo = i + 1;
+                else hi = i - 1;
+            }
+            return ~lo;
         }
 
         // Comparison<T> overload — wraps the delegate in an IComparer<T>

@@ -48,6 +48,9 @@ namespace System
         /// </remarks>
         public virtual string ToString() => "(object)";
 
+        /// <summary>The exact type: its MethodTable (Type is that pointer here). Names: std Runtime/Type.Statics.cs.</summary>
+        public Type GetType() => new RuntimeType(m_pEEType);
+
         public static bool Equals(object objA, object objB)
         {
             if (ReferenceEquals(objA, objB)) return true;
@@ -74,7 +77,7 @@ namespace System
     // boxes. Mirrors OS/src/Boot/MinimalRuntime.cs (kernel tier); the app tier
     // was shapeless (`struct Int32 { }`) so int was NOT IEquatable<int> and every
     // value-type comparison silently gave the wrong answer.
-    public struct Boolean : IEquatable<bool>, IComparable<bool>, IComparable
+    public partial struct Boolean : IEquatable<bool>, IComparable<bool>, IComparable
     {
         private bool _value;
         public bool Equals(bool other) => _value == other;
@@ -509,7 +512,7 @@ namespace System
     /// inheritance queries, no Type.GetType(string). Those need metadata the
     /// compiler does not emit for us, and inventing answers reads as real.
     /// </remarks>
-    public abstract class Type
+    public abstract partial class Type
     {
         // MethodTable*. Unique per type and stable for the life of the image.
         internal readonly IntPtr _handle;

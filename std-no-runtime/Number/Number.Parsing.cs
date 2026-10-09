@@ -1,15 +1,18 @@
 // Ported from dotnet/runtime release/7.0 (MIT):
 //   src/libraries/System.Private.CoreLib/src/System/Number.Parsing.cs
-// (the CoreLib snapshot in gc-experiment/dotnet-runtime). The floating-point half only: the
-// NumberStyles/NumberFormatInfo scanner (TryParseNumber), TryParseDouble /
-// TryParseSingle with their NaN/Infinity symbol handling, and NumberToDouble /
-// NumberToSingle over Number.NumberToFloatingPointBits.cs. Bodies verbatim.
+// (the CoreLib snapshot in gc-experiment/dotnet-runtime). The floating-point and decimal
+// half: the NumberStyles/NumberFormatInfo scanner (TryParseNumber), TryParseDouble /
+// TryParseSingle with their NaN/Infinity symbol handling, NumberToDouble /
+// NumberToSingle over Number.NumberToFloatingPointBits.cs, and ParseDecimal /
+// TryParseDecimal / TryNumberToDecimal. Bodies verbatim.
 //
 // SharpOS cuts:
 //   * The integer parsers (TryParseInt32IntegerStyle & co., Int128/UInt128): the
 //     primitives' Parse/TryParse forward to SharpOS.Std.NoRuntime.NumberParsing (see
 //     NumberParsing.cs); porting these is a separate job.
-//   * Decimal and Half parsing: no System.Decimal / System.Half in std.
+//   * Half parsing: no System.Half in std.
+//   * ParseDecimal reports overflow through release/8.0's ThrowOverflowException(string)
+//     (added here) instead of the TypeCode overload: no TypeCode in std.
 //   * GetOverflowException is reduced to the floating-point needs (TypeCode-specific
 //     overflow texts belong to the integer parsers above).
 
@@ -291,8 +294,144 @@ namespace System
             return false;
         }
 
-        // SharpOS cut: TryParseInt32IntegerStyle ... TryParseUInt128HexNumberStyle, ParseDecimal,
-        // TryNumberToDecimal (see header).
+        // SharpOS cut: TryParseInt32IntegerStyle ... TryParseUInt128HexNumberStyle (see header).
+
+        internal static decimal ParseDecimal(ReadOnlySpan<char> value, NumberStyles styles, NumberFormatInfo info)
+        {
+            ParsingStatus status = TryParseDecimal(value, styles, info, out decimal result);
+            if (status != ParsingStatus.OK)
+            {
+                // SharpOS: upstream is `ThrowOverflowOrFormatException(status, value, TypeCode.Decimal);`.
+                // std has no TypeCode; the overflow text comes the release/8.0 way instead.
+                if (status == ParsingStatus.Failed)
+                {
+                    ThrowOverflowOrFormatException(status, value);
+                }
+                ThrowOverflowException(SR.Overflow_Decimal);
+            }
+
+            return result;
+        }
+
+        internal static unsafe bool TryNumberToDecimal(ref NumberBuffer number, ref decimal value)
+        {
+            number.CheckConsistency();
+
+            byte* p = number.GetDigitsPointer();
+            int e = number.Scale;
+            bool sign = number.IsNegative;
+            uint c = *p;
+            if (c == 0)
+            {
+                // To avoid risking an app-compat issue with pre 4.5 (where some app was illegally using Reflection to examine the internal scale bits), we'll only force
+                // the scale to 0 if the scale was previously positive (previously, such cases were unparsable to a bug.)
+                value = new decimal(0, 0, 0, sign, (byte)Math.Clamp(-e, 0, 28));
+                return true;
+            }
+
+            if (e > DecimalPrecision)
+                return false;
+
+            ulong low64 = 0;
+            while (e > -28)
+            {
+                e--;
+                low64 *= 10;
+                low64 += c - '0';
+                c = *++p;
+                if (low64 >= ulong.MaxValue / 10)
+                    break;
+                if (c == 0)
+                {
+                    while (e > 0)
+                    {
+                        e--;
+                        low64 *= 10;
+                        if (low64 >= ulong.MaxValue / 10)
+                            break;
+                    }
+                    break;
+                }
+            }
+
+            uint high = 0;
+            while ((e > 0 || (c != 0 && e > -28)) &&
+              (high < uint.MaxValue / 10 || (high == uint.MaxValue / 10 && (low64 < 0x99999999_99999999 || (low64 == 0x99999999_99999999 && c <= '5')))))
+            {
+                // multiply by 10
+                ulong tmpLow = (uint)low64 * 10UL;
+                ulong tmp64 = (uint)(low64 >> 32) * 10UL + (tmpLow >> 32);
+                low64 = (uint)tmpLow + (tmp64 << 32);
+                high = (uint)(tmp64 >> 32) + high * 10;
+
+                if (c != 0)
+                {
+                    c -= '0';
+                    low64 += c;
+                    if (low64 < c)
+                        high++;
+                    c = *++p;
+                }
+                e--;
+            }
+
+            if (c >= '5')
+            {
+                if ((c == '5') && ((low64 & 1) == 0))
+                {
+                    c = *++p;
+
+                    bool hasZeroTail = !number.HasNonZeroTail;
+
+                    // We might still have some additional digits, in which case they need
+                    // to be considered as part of hasZeroTail. Some examples of this are:
+                    //  * 3.0500000000000000000001e-27
+                    //  * 3.05000000000000000000001e-27
+                    // In these cases, we will have processed 3 and 0, and ended on 5. The
+                    // buffer, however, will still contain a number of trailing zeros and
+                    // a trailing non-zero number.
+
+                    while ((c != 0) && hasZeroTail)
+                    {
+                        hasZeroTail &= (c == '0');
+                        c = *++p;
+                    }
+
+                    // We should either be at the end of the stream or have a non-zero tail
+                    Debug.Assert((c == 0) || !hasZeroTail);
+
+                    if (hasZeroTail)
+                    {
+                        // When the next digit is 5, the number is even, and all following
+                        // digits are zero we don't need to round.
+                        goto NoRounding;
+                    }
+                }
+
+                if (++low64 == 0 && ++high == 0)
+                {
+                    low64 = 0x99999999_9999999A;
+                    high = uint.MaxValue / 10;
+                    e++;
+                }
+            }
+        NoRounding:
+
+            if (e > 0)
+                return false;
+
+            if (e <= -DecimalPrecision)
+            {
+                // Parsing a large scale zero can give you more precision than fits in the decimal.
+                // This should only happen for actual zeros or very small numbers that round to zero.
+                value = new decimal(0, 0, 0, sign, DecimalPrecision - 1);
+            }
+            else
+            {
+                value = new decimal((int)low64, (int)(low64 >> 32), (int)high, sign, (byte)-e);
+            }
+            return true;
+        }
 
         internal static double ParseDouble(ReadOnlySpan<char> value, NumberStyles styles, NumberFormatInfo info)
         {
@@ -314,7 +453,26 @@ namespace System
             return result;
         }
 
-        // SharpOS cut: ParseHalf, TryParseDecimal (no System.Half / System.Decimal).
+        // SharpOS cut: ParseHalf (no System.Half).
+
+        internal static unsafe ParsingStatus TryParseDecimal(ReadOnlySpan<char> value, NumberStyles styles, NumberFormatInfo info, out decimal result)
+        {
+            NumberBuffer number = new NumberBuffer(NumberBufferKind.Decimal, stackalloc byte[DecimalNumberBufferLength]);
+
+            result = 0;
+
+            if (!TryStringToNumber(value, styles, ref number, info))
+            {
+                return ParsingStatus.Failed;
+            }
+
+            if (!TryNumberToDecimal(ref number, ref result))
+            {
+                return ParsingStatus.Overflow;
+            }
+
+            return ParsingStatus.OK;
+        }
 
         internal static bool SpanStartsWith(ReadOnlySpan<char> span, char c) => !span.IsEmpty && span[0] == c;
 
@@ -533,6 +691,14 @@ namespace System
         // with the integer parsers it served; the floating-point callers only ever pass Failed.
         [DoesNotReturn]
         internal static void ThrowOverflowOrFormatException(ParsingStatus status, ReadOnlySpan<char> value) => throw GetException(status, value);
+
+        // SharpOS: release/8.0's ThrowOverflowException(string), verbatim - the overflow throw of
+        // Decimal.DecCalc.cs and ParseDecimal (std has no TypeCode for the 7.0 overload).
+        [DoesNotReturn]
+        internal static void ThrowOverflowException(string message)
+        {
+            throw new OverflowException(message);
+        }
 
         private static Exception GetException(ParsingStatus status, ReadOnlySpan<char> value)
         {

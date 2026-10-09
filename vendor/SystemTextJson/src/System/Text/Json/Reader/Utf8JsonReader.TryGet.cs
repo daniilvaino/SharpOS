@@ -648,9 +648,30 @@ namespace System.Text.Json
             return value;
         }
 
-        // SharpOS cut: GetDecimal - no System.Decimal in std.
+        /// <summary>
+        /// Parses the current JSON token value from the source as a <see cref="decimal"/>.
+        /// Returns the value if the entire UTF-8 encoded token value can be successfully parsed to a <see cref="decimal"/>
+        /// value.
+        /// Throws exceptions otherwise.
+        /// </summary>
+        public decimal GetDecimal()
+        {
+            if (!TryGetDecimal(out decimal value))
+            {
+                ThrowHelper.ThrowFormatException(NumericType.Decimal);
+            }
+            return value;
+        }
 
-        // SharpOS cut: GetDecimalWithQuotes.
+        internal decimal GetDecimalWithQuotes()
+        {
+            ReadOnlySpan<byte> span = GetUnescapedSpan();
+            if (!TryGetDecimalCore(out decimal value, span))
+            {
+                ThrowHelper.ThrowFormatException(NumericType.Decimal);
+            }
+            return value;
+        }
 
         // SharpOS cut: GetDateTime - JsonHelpers.Date.cs (ISO 8601 parser) not ported.
 
@@ -1036,9 +1057,36 @@ namespace System.Text.Json
             return false;
         }
 
-        // SharpOS cut: TryGetDecimal.
+        /// <summary>
+        /// Parses the current JSON token value from the source as a <see cref="decimal"/>.
+        /// Returns <see langword="true"/> if the entire UTF-8 encoded token value can be successfully
+        /// parsed to a <see cref="decimal"/> value.
+        /// Returns <see langword="false"/> otherwise.
+        /// </summary>
+        public bool TryGetDecimal(out decimal value)
+        {
+            if (TokenType != JsonTokenType.Number)
+            {
+                ThrowHelper.ThrowInvalidOperationException_ExpectedNumber(TokenType);
+            }
 
-        // SharpOS cut: TryGetDecimalCore.
+            ReadOnlySpan<byte> span = ValueSpan; // SharpOS cut: ValueSequence (HasValueSequence is always false)
+            return TryGetDecimalCore(out value, span);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static bool TryGetDecimalCore(out decimal value, ReadOnlySpan<byte> span)
+        {
+            if (Utf8Parser.TryParse(span, out decimal tmp, out int bytesConsumed)
+                && span.Length == bytesConsumed)
+            {
+                value = tmp;
+                return true;
+            }
+
+            value = 0;
+            return false;
+        }
 
         // SharpOS cut: TryGetDateTime.
 
