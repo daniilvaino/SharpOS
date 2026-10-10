@@ -588,16 +588,12 @@ namespace OS.Kernel.Memory
             if (mt->HasDispatchMap)
             {
                 byte* optFields = mt->GetOptionalFieldsPtr();
-                uint idx = OptionalFieldsReader.GetInlineField(
-                    optFields, EETypeOptionalFieldTag.DispatchMap, 0xFFFFFFFFu);
                 mt->GetTypeManagerDispatchMapTableDiag(
                     out byte* pIndirection, out byte* slot, out byte* tm, out byte* table);
 
                 Log.Begin(LogLevel.Warn);
                 Console.Write("  optFields=0x");
                 Console.WriteHexRaw((ulong)optFields, 16);
-                Console.Write(" dmIdx=");
-                Console.WriteULongRaw(idx);
                 Log.EndLine();
 
                 Log.Begin(LogLevel.Warn);

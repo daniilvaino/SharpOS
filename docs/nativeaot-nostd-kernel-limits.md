@@ -248,11 +248,13 @@ step 103** (`reference_msc_throw_becomes_sehexception` РЕШЕНО):
 
 ## 3. Nullable\<T\>
 
-### 🔧 `Nullable<T>.HasValue` / `.Value` / `.GetValueOrDefault()`
+### ✅ `Nullable<T>`: члены, упаковка и распаковка (step200)
 
-**Ошибка компиляции:** наш `public struct Nullable<T> where T : struct { }` — пустой. Свойства не определены.
-
-**⚠️ Workaround:** либо дописать минимальную реализацию Nullable с `_hasValue + _value` полями и свойствами, либо не использовать nullable value types — передавать `(bool has, T value)` tuple или sentinel-значение.
+Члены работают давно. Упаковка и распаковка — с step200: `RhBox` разворачивает
+`T?` как NativeAOT (`null` или упакованный `T`), а смещение значения
+(`GcMethodTable.NullableValueOffset`) читается по тегам optional fields
+release/8.0 — до этого таблица тегов была старше .NET 8, смещение читалось
+как 1, и каждое `object o = (long?)5` / `(long?)o` сдвигало значение на 7 байт.
 
 ---
 
@@ -594,6 +596,7 @@ done/step141.md).
 | `Span<T>.ToString()` / `ReadOnlySpan<T>.ToString()` | **Починили** (step 165). Возвращал `null`, что ломает контракт `object` и читается потребителем как «значения не было» — так терялось имя приложения из разобранного манифеста. Для символов возвращает содержимое; тип элемента различается по РАЗМЕРУ, потому что `typeof` в std не используется нигде (спан `ushort` поэтому отрисуется текстом) |
 | `char.IsBetween` / `IsAscii*` (.NET 7 API) | Работает (step 165): `IsBetween`, `IsAsciiDigit`, `IsAsciiLetter`, `IsAsciiLetterOrDigit`, `IsAsciiHexDigit`, `IsAscii` |
 | `IsExternalInit`, `SkipLocalsInitAttribute` | Работают (step 165). Типы-маркеры, реализовывать нечего — под каноническими именами без оговорок |
+| Исполнение KQL | 🟡 (step200, `vendor/BabyKusto`, MIT, поверх `vendor/KustoLanguage`). KQLBABY 6/6: where/project/take, summarize by, sort, extend, contains, print. Глагол конвейера `KQL 'запрос'` (`apps_native/KqlApp`): сообщения входа — таблица `Input`, читается по мере прихода (step201): `where` отвечает сразу, `sort`/`summarize` ждут конца, `take` прекращает чтение; запрос из одних `where`/`take`/`sort` пересылает исходные блоки входа (без копии, тип входа); над Expando и `extend` — столбцы-числа, bool и строки пишутся в само сообщение (`ExpandoEdits`), блок идёт дальше; иной результат — Expando. Столбцы — поля типа; вложенные объекты, массивы и Expando — `dynamic` через `JsonNode`: поля, сравнения и арифметика с числом, строкой, bool и `dynamic` (вырез BabyKusto, типы — как связывает Kusto.Language), `tostring`/`tolong` (через текст узла). Ошибки запроса с позицией. PROCTEST 18 (7/7), KQLBABY 9/9. Вырезано: `matches regex` и `extract()` (нет `Regex`), `url_decode`/`url_encode_component` (нет `System.Uri`). `dynamic` переводится в `JsonNode` на каждое сообщение |
 | Разбор XML | **Работает** (step 165, `vendor/TurboXml`, BSD-2-Clause). SAX: обработчик — структура, значения приходят спанами, аллокаций нет. Правок в библиотеку 176 строк, из них 145 — изъятия (потоковые перегрузки, тела методов по умолчанию); вырезов SIMD ноль. Потребитель — чтение манифеста приложения из `RT_MANIFEST` |
 | JSON: `Utf8JsonReader` / `Utf8JsonWriter` | 🟡 (`vendor/SystemTextJson`, MIT, из System.Text.Json форка .NET 10; проверка — `apps_native/JsonTest`, 42/42 под QEMU, step197). Чтение спана целиком и кусками (`isFinalBlock: false` + `JsonReaderState`), запись в `IBufferWriter<byte>`/`Stream`, `Indented`. Вырезано: `ReadOnlySequence`-вход, `JavaScriptEncoder` (экранирование всегда как у `JavaScriptEncoder.Default` — встроено), `decimal`/`DateTime(Offset)`/`Guid`, async-члены писателя, Raw/Segment/Comment-запись. С step198 — `JsonDocument`/`JsonElement` и `System.Text.Json.Nodes` (`JsonNode`/`JsonObject`/`JsonArray`/`JsonValue`), decimal вернулся; JSONTEST 64/64. Сериализатора нет: `JsonValue.Create<T>` — только примитивы, `WriteTo/ToJsonString` без `JsonSerializerOptions`. Подробно — `vendor/SystemTextJson/PROVENANCE.md` |
 | `System.Math` / `MathF` | **Работает, правильно округлено** (step198). Переходы на SharpLibm (сабмодуль `SharpLibm/`, MIT): CORE-MATH через CoreMathSharp с ≈80 исправленными ошибками порта. Проверка — репозиторий SharpLibm-tests: double бит в бит с MPFR на ≈30 млн худших случаев CORE-MATH, float — со всеми 2³² входами C CORE-MATH; точные операции бит в бит с libc-test. `Math.Round` — roundeven, как BCL; `%` для double/float — `fmod`. Флагов исключений, режимов округления и errno нет (CLI фиксирует к ближайшему; для C-вызывающих через экспорты — дальнейшая задача). `LibmPatcher` при SSE4.1 переписывает floor/ceil/trunc/rint/nearbyint на `roundsd`, при FMA3 и AVX-состоянии в XCR0 (step199) — `fma`/`fmaf` на `vfmadd`. Сверх `Math`: функции Бесселя, `erfinv`/`erfcinv`, `compoundn` (step199; не правильно округлены, границы в ulp — README SharpLibm) |
@@ -827,6 +830,19 @@ V2 и привязана к `AppServiceTable.CurrentAbiVersion` (п. 8).
   `PipelineException` со стадией и кодом. Проверка — `DATATEST.EXE`. Жёлтое:
   только QEMU; файл слева от `>` и `<` не поддержаны; JSON экранирует
   не-ASCII (`\uXXXX`, как `JavaScriptEncoder.Default`).
+- **Expando и правки на месте (step201):** таблица записей в порядке вставки
+  и корзины (FNV-1a по UTF-16 — часть формата); скаляры без упаковки, род
+  значения меняется; вид находит поле по корзине, индексы проверяются.
+  Стадия `RawPipeReader.Edit` владеет принятым сообщением: `ExpandoEdits.Set/
+  Remove` — на месте, в хвост блока, рост вдвое или сжатие (`EditCost`);
+  `Set<T>` для чисел, bool и char — без упаковки. Проверки: AotTests (Expando
+  в куче; pipe 20 — все четыре пути), PIPEPERF 7: правка существующей записи
+  и удаление — ноль выделений; поиск не зависит от числа записей (4–256:
+  ≈120–140 нс в куче, ≈750–870 нс видом под QEMU); 100 стадий по полю и 1 000
+  добавлений/удалений — значения верны, блок ограничен. KQL `extend` над
+  Expando пишет на месте. Жёлтое: правится только Expando; значения правки —
+  скаляры, строки, null (объект — `NotSupportedException`); замеры только
+  под QEMU.
 - **Порча кучи до барьера объяснена (step189)** — четыре ошибки поиска корней,
   см. §10 и `done/step189.md`; не труба.
 

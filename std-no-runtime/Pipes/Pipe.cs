@@ -174,6 +174,24 @@ namespace SharpOS.Std.Pipes
             _scope?.End(because);
         }
 
+        internal ViewScope Scope => _gone ? null : _scope;
+
+        // Edits in place (ExpandoEdits, step201). Records written into the
+        // block's tail: views stay valid. The block replaced by a bigger or a
+        // compacted one: every view of the old one refuses from now on.
+        internal void Extend(ulong length)
+        {
+            Length = length;
+            if (_scope != null) _scope.Length = length;
+        }
+
+        internal void Relocate(byte* block, ulong length)
+        {
+            Block = block;
+            Length = length;
+            _scope?.Reset(block, length);
+        }
+
         public byte* Block { get; private set; }
         public ulong Length { get; private set; }
         public byte[] Schema { get; private set; }
@@ -570,12 +588,19 @@ namespace SharpOS.Std.Pipes
         /// </summary>
         public RawRegion Receive() => Receive(null);
 
+        /// <summary>
+        /// The next region if one is there now, without waiting (step201: a
+        /// stage that batches what has arrived); null otherwise — Status says
+        /// Empty, the end of the stream, or why.
+        /// </summary>
+        public RawRegion TryReceive() => Receive(null, false);
+
         /// <summary>The next region in <paramref name="reuse"/>, one of this reader's that is gone already (a loop's previous step).</summary>
-        internal RawRegion Receive(RawRegion reuse)
+        internal RawRegion Receive(RawRegion reuse, bool wait = true)
         {
             if (_handle == 0) throw new ObjectDisposedException("RawPipeReader", "the pipe end is closed");
             LastError = null;
-            Status = PipeTransport.Receive(_handle, true, out void* raw, out ulong length, out uint dropped);
+            Status = PipeTransport.Receive(_handle, wait, out void* raw, out ulong length, out uint dropped);
             Dropped += dropped;
             if (Status != PipeStatus.Ok) return null;
             if (Schema == null)

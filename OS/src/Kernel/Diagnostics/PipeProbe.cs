@@ -221,6 +221,7 @@ namespace OS.Kernel.Diagnostics
                 case 21: return DynamicOut();
                 case 22: return (int)Send("probe.dynamic.bench", Report(), 1);
                 case 23: return LogOut();
+                case 24: return EditOut();
                 case 12:
                     // The byref barrier test, run by the kernel on its own pipe.
                     return ByRefProbe.RunOnPipe();
@@ -291,6 +292,10 @@ namespace OS.Kernel.Diagnostics
                     connected = RawPipeReader.Connect(test == 23 ? "probe.app.report" : "probe.app.expando", out RawPipeReader raw, out error);
                     reader = raw;
                     break;
+                case 26:
+                    connected = PipeReader<Expando>.Connect("probe.edit.back", out PipeReader<Expando> edited, out error);
+                    reader = edited;
+                    break;
                 case 25:
                     // With its class: a pipe the app forwarded to carries the
                     // input's description and root type, checked as usual.
@@ -340,6 +345,7 @@ namespace OS.Kernel.Diagnostics
                     case 23:
                     case 24: ViewCheck(test, (RawPipeReader)reader); break;
                     case 25: EditedBack((PipeReader<KernelReport>)reader); break;
+                    case 26: ExpandoEditsBack((PipeReader<Expando>)reader); break;
                 }
             }
             catch (Exception e)
@@ -600,6 +606,76 @@ namespace OS.Kernel.Diagnostics
         }
 
         private const int EchoItems = 100;
+
+        // Test 26 (step201): four Expandos the app edits in place, in their
+        // blocks, and sends back — read here through the typed reader.
+        private static int EditOut()
+        {
+            if (PipeWriter<Expando>.Connect("probe.edit.out", out PipeWriter<Expando> writer, out string error) != PipeStatus.Ok)
+                return (int)PipeStatus.Refused;
+            using (writer)
+            {
+                for (int k = 0; k < 4; k++)
+                {
+                    var e = new Expando();
+                    e["Level"] = (long)k;
+                    e["Text"] = "line " + k.ToString();
+                    e["Keep"] = true;
+                    e["Drop"] = 1.5;
+                    PipeStatus sent = writer.Copy(e);
+                    if (sent != PipeStatus.Ok) return (int)sent;
+                }
+            }
+            return 0;
+        }
+
+        private static void ExpandoEditsBack(PipeReader<Expando> reader)
+        {
+            using (reader)
+            {
+                int count = 0;
+                string bad = null;
+                Region<Expando> region;
+                while ((region = reader.Receive()) != null)
+                {
+                    using (region)
+                    {
+                        bad ??= EditedExpando(region.Root, count);
+                        count++;
+                    }
+                }
+                Say($"edits back: {count} message(s), {bad ?? "as edited"}, end {(int)reader.Status}");
+                Finish(26, count, bad == null && count == 4, reader.Status, 0);
+            }
+        }
+
+        // What the app's edits (AotTests PipeEdit) leave in message k.
+        private static string EditedExpando(Expando e, int k)
+        {
+            if (!(e["Level"] is int level) || level != 100 + k) return "message " + k.ToString() + ": Level " + e["Level"];
+            var keys = new List<string>(e.Keys);
+            switch (k)
+            {
+                case 0:
+                    if (e.Count != 5 || e.ContainsKey("Drop")) return "message 0: " + e.ToString();
+                    if (!(e["Text"] is string t0) || t0 != "edited 0") return "message 0: Text";
+                    if (!(e["Added"] is int a) || a != 7 || !(e["Note"] is string n) || n != "n0") return "message 0: added " + e.ToString();
+                    if (keys[0] != "Level" || keys[2] != "Keep" || keys[3] != "Added" || keys[4] != "Note") return "message 0: order " + e.ToString();
+                    return null;
+                case 1:
+                    if (e.Count != 34 || keys[4] != "e0" || keys[33] != "e29") return "message 1: " + e.Count.ToString() + " entries";
+                    for (int i = 0; i < 30; i++)
+                        if (!(e["e" + i.ToString()] is int v) || v != i) return "message 1: e" + i.ToString();
+                    return null;
+                case 2:
+                    if (e.Count != 4 || !(e["Text"] is string t2) || t2 != "churn 59" + new string('x', 40)) return "message 2: " + e.ToString();
+                    if (!(e["Drop"] is double d) || d != 1.5) return "message 2: Drop";
+                    return null;
+                default:
+                    if (e.Count != 4 || !(e["Text"] is string t3) || t3 != "line 3" || !(e["Keep"] is bool keep) || !keep) return "message 3: " + e.ToString();
+                    return null;
+            }
+        }
 
         private static int EchoOut()
         {

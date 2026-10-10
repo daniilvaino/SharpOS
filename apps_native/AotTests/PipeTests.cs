@@ -254,6 +254,7 @@ namespace AotTests
             Clean("17 nested type", PipeNested);
             Clean("18 expando graph", PipeExpandoGraph);
             Clean("19 devirtualization", PipeDevirt);
+            Clean("20 expando edits", PipeEdit);
 
             if (!s_stress)
             {
@@ -549,6 +550,71 @@ namespace AotTests
                   moved == PipeStatus.Ok && done && count == 1 && ok && end == PipeStatus.EndOfStream);
         }
 
+        // Test 20 (step201): Expandos from the kernel edited in place by the
+        // app — the block neither translated nor rebuilt from values — and
+        // read back by the kernel. Message 0: a kind changed in place, a
+        // string, a removal, an addition; 1: thirty additions, the table
+        // rebuilt and the block grown; 2: sixty strings over one entry, the
+        // garbage compacted away; 3: one number.
+        private static void PipeEdit()
+        {
+            Probe(1, 26, null);
+            RawPipeReader input = Pipe.Read("probe.edit.out");
+            Probe(24, 0, null);
+            var level = new ExpandoName("Level");
+            var text = new ExpandoName("Text");
+            var drop = new ExpandoName("Drop");
+            var added = new ExpandoName("Added");
+            var note = new ExpandoName("Note");
+            bool inPlace = false, tail = false, grown = false, compacted = false;
+            int k = 0;
+            void Cost(EditCost c)
+            {
+                if (c == EditCost.InPlace) inPlace = true;
+                else if (c == EditCost.Tail) tail = true;
+                else if (c == EditCost.Grown) grown = true;
+                else compacted = true;
+            }
+            string failed = null;
+            try
+            {
+                input.Edit(region =>
+                {
+                    int m = k++;
+                    // A view dies when its block is replaced: Root again each time.
+                    Cost(region.Set(region.Root, level, 100 + m));
+                    if (m == 0)
+                    {
+                        Cost(region.Set(region.Root, text, "edited 0"));
+                        region.Remove(region.Root, drop);
+                        Cost(region.Set(region.Root, added, 7));
+                        Cost(region.Set(region.Root, note, "n0"));
+                    }
+                    else if (m == 1)
+                    {
+                        for (int i = 0; i < 30; i++) Cost(region.Set(region.Root, "e" + i.ToString(), i));
+                    }
+                    else if (m == 2)
+                    {
+                        for (int i = 0; i < 60; i++) Cost(region.Set(region.Root, text, "churn " + i.ToString() + new string('x', 40)));
+                    }
+                    return true;
+                }).WriteTo("probe.edit.back");
+            }
+            catch (Exception e)
+            {
+                failed = e.GetType().Name + ": " + e.Message;
+            }
+            bool done = Verdict(26, out int count, out bool ok, out PipeStatus end, out _);
+            AppHost.WriteString("[pipe] expando edits: in place " + inPlace.ToString() + ", tail " + tail.ToString()
+                                + ", grown " + grown.ToString() + ", compacted " + compacted.ToString()
+                                + (failed != null ? ", " + failed : "") + "\n");
+            Check("pipe 20: Expandos edited in place in their blocks — kinds, strings, removals, additions — read back by the kernel",
+                  failed == null && done && count == 4 && ok && end == PipeStatus.EndOfStream);
+            Check("pipe 20: the edits took every path: in place, the tail, a grown block, a compacted one",
+                  inPlace && tail && grown && compacted);
+        }
+
         private static EchoMessage EchoSample(string tag)
         {
             var items = new Item[4];
@@ -661,19 +727,23 @@ namespace AotTests
             string inPlace = region == null ? "nothing received" : StdProbe.Check(region.Root, "app");
             Expando heap = region?.ToHeap();
             string copied = heap == null ? "no copy" : StdProbe.Check(heap, "app");
-            bool refused = false, untouched = false;
+            bool numberInPlace = false, refused = false, untouched = false;
             if (region != null)
             {
+                // A number is a scalar of the entry (step201): written in place.
+                WriteNumberIntoExpando(region.Root);
+                numberInPlace = region.Root["Count"] is int n && n == 9;
                 try { WriteIntoExpando(region.Root); }
                 catch (RegionReferenceException) { refused = true; }
-                untouched = region.Root["Count"] is int c && c == 42;
+                untouched = region.Root["Count"] is int c && c == 9;
                 region.Dispose();
             }
             if (inPlace != null || copied != null)
                 AppHost.WriteString("[pipe] std expando: in place " + (inPlace ?? "ok") + ", copied " + (copied ?? "ok") + "\n");
             Check("pipe 12: an Expando with every std structure arrives whole, read in place", inPlace == null);
             Check("pipe 12: ToHeap gives a real Expando", copied == null);
-            Check("pipe 12: a new value into a received Expando is refused, the field unchanged", refused && untouched);
+            Check("pipe 12: a number into a received Expando goes in place; a new string is refused, the field unchanged",
+                  numberInPlace && refused && untouched);
 
             bool resent = false;
             if (heap != null)
@@ -737,7 +807,10 @@ namespace AotTests
         // The analyzer refuses this where it sees the region (SOSR006); behind a
         // parameter it cannot, and the barrier does.
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static void WriteIntoExpando(Expando e) => e["Count"] = 9;
+        private static void WriteIntoExpando(Expando e) => e["Count"] = "nine";
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void WriteNumberIntoExpando(Expando e) => e["Count"] = 9;
 
         // ---- step 192: views, Expando, Into, the convenient layer ----
 

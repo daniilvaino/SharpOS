@@ -236,10 +236,7 @@ namespace SharpOS.Std.Pipes
                 {
                     int i = ExpandoIndex(name);
                     if (i < 0) throw new KeyNotFoundException("no field '" + name + "' in the Expando: a view cannot add one");
-                    View current = ExpandoValue(i);
-                    if (current._shape != Value)
-                        throw new InvalidOperationException("field '" + name + "' of the Expando holds an object: a view writes values only");
-                    WriteValue(current._at, current._value, value, name);
+                    ExpandoWriteScalar(i, value, name);
                     return;
                 }
                 if (_shape != Obj && _shape != InPlace)
@@ -287,9 +284,9 @@ namespace SharpOS.Std.Pipes
                 var list = new List<ViewField>();
                 if (_shape == Obj && _type.IsExpando)
                 {
-                    int count = ExpandoCount();
-                    for (int i = 0; i < count; i++)
-                        list.Add(new ViewField(ExpandoName(i), ExpandoValue(i)));
+                    int used = ExpandoUsed();
+                    for (int i = 0; i < used; i++)
+                        if (!ExpandoDead(i)) list.Add(new ViewField(ExpandoName(i), ExpandoValue(i)));
                 }
                 else if (_shape == Obj || _shape == InPlace)
                 {
@@ -310,25 +307,180 @@ namespace SharpOS.Std.Pipes
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-        // ---- an Expando, read by its own fields ----
+        // ---- an Expando, read by its own table (step201) ----
+        //
+        // Expando's layout: a table of entries in insertion order and buckets
+        // of a hash of the names (Expando.cs). The offsets are worked out once
+        // per type description and kept on it. The table came from another
+        // image: every index is checked against the table, and a chain walk
+        // stops after as many steps as there are entries — a corrupt block
+        // is an exception, never a loop or a read outside it.
 
-        // Its own fields, read directly: this view's indexer looks up entries.
-        private int ExpandoCount() => *(int*)(_at + (ulong)_type.Field("_count").Offset);
-
-        private View ExpandoArray(string field) => OfSlot(_scope, _at + (ulong)_type.Field(field).Offset, _type.Field(field));
-
-        private int ExpandoIndex(string name)
+        internal sealed class ExpandoShape
         {
-            int count = ExpandoCount();
-            View names = ExpandoArray("_names");
-            for (int i = 0; i < count; i++)
-                if (names[i].TextEquals(name)) return i;
+            public int Entries, Buckets, Used, Live;       // the Expando's fields, from its table word
+            public bool HasElements;
+            public int First, Stride, BucketFirst;         // the arrays' first element and the entry size
+            public int Hash, Next, Kind, Dead, Bits, Name, Ref;   // an entry's fields, from the entry's start
+        }
+
+        internal ExpandoShape ExpandoLayout()
+        {
+            ExpandoShape known = _type.Cache as ExpandoShape;
+            if (known != null && known.HasElements) return known;
+            ExpandoShape s = known ?? new ExpandoShape
+            {
+                Entries = _type.Field("_entries").Offset,
+                Buckets = _type.Field("_buckets").Offset,
+                Used = _type.Field("_count").Offset,
+                Live = _type.Field("_live").Offset,
+            };
+            ulong entries = ExpandoRef(s.Entries), buckets = ExpandoRef(s.Buckets);
+            if (entries != 0 && buckets != 0)
+            {
+                TypeShape table = _scope.Shapes[*(ulong*)entries];
+                TypeShape index = _scope.Shapes[*(ulong*)buckets];
+                if (table == null || table.Elements == null || table.Elements.Struct == null || index == null || index.Elements == null)
+                    throw new InvalidOperationException("the Expando's table has no description");
+                TypeShape entry = table.Elements.Struct;
+                s.First = table.Elements.Offset;
+                s.Stride = table.ComponentSize;
+                s.BucketFirst = index.Elements.Offset;
+                // A struct's field offsets count from the start of its box, 8
+                // before the value laid out in the array.
+                s.Hash = entry.Field("Hash").Offset - 8;
+                s.Next = entry.Field("Next").Offset - 8;
+                s.Kind = entry.Field("Kind").Offset - 8;
+                s.Dead = entry.Field("Dead").Offset - 8;
+                s.Bits = entry.Field("Bits").Offset - 8;
+                s.Name = entry.Field("Name").Offset - 8;
+                s.Ref = entry.Field("Ref").Offset - 8;
+                s.HasElements = true;
+            }
+            _type.Cache = s;
+            return s;
+        }
+
+        private ulong ExpandoRef(int field)
+        {
+            ulong offset = *(ulong*)(_at + (ulong)field);
+            return offset == 0 ? 0 : (ulong)_scope.Block + offset;
+        }
+
+        private int ExpandoCount() => *(int*)(_at + (ulong)ExpandoLayout().Live);
+
+        // Entries used, live and dead — never more than the table holds.
+        private int ExpandoUsed()
+        {
+            ExpandoShape s = ExpandoLayout();
+            int used = *(int*)(_at + (ulong)s.Used);
+            if (used <= 0) return 0;
+            ulong entries = ExpandoRef(s.Entries);
+            if (entries == 0 || used > *(int*)(entries + 8)) throw ExpandoMalformed();
+            return used;
+        }
+
+        private ulong ExpandoEntryAt(int i)
+        {
+            ExpandoShape s = ExpandoLayout();
+            return ExpandoRef(s.Entries) + (ulong)s.First + (ulong)i * (ulong)s.Stride;
+        }
+
+        private bool ExpandoDead(int i) => *(byte*)(ExpandoEntryAt(i) + (ulong)ExpandoLayout().Dead) != 0;
+
+        private int ExpandoIndex(string name) => name == null ? -1 : ExpandoFind(name.AsSpan(), ExpandoHash.Of(name));
+
+        /// <summary>The entry of a name whose hash the caller worked out once (a filter's names, step201); -1 when there is none.</summary>
+        internal int ExpandoFind(ReadOnlySpan<char> name, int hash)
+        {
+            int used = ExpandoUsed();
+            if (used == 0) return -1;
+            ExpandoShape s = ExpandoLayout();
+            ulong entries = ExpandoRef(s.Entries), buckets = ExpandoRef(s.Buckets);
+            if (buckets == 0) throw ExpandoMalformed();
+            int count = *(int*)(buckets + 8);
+            if (count <= 0 || (count & (count - 1)) != 0) throw ExpandoMalformed();
+            int at = *(int*)(buckets + (ulong)s.BucketFirst + 4UL * (ulong)ExpandoHash.Bucket(hash, count));
+            for (int steps = 0; at != 0; steps++)
+            {
+                if (steps >= used || (uint)(at - 1) >= (uint)used) throw ExpandoMalformed();
+                ulong e = entries + (ulong)s.First + (ulong)(at - 1) * (ulong)s.Stride;
+                if (*(int*)(e + (ulong)s.Hash) == hash && *(byte*)(e + (ulong)s.Dead) == 0
+                    && TextAt(*(ulong*)(e + (ulong)s.Name), name))
+                    return at - 1;
+                at = *(int*)(e + (ulong)s.Next);
+            }
             return -1;
         }
 
-        private string ExpandoName(int i) => (string)ExpandoArray("_names")[i];
+        // A string record of the block (by its offset) against characters.
+        private bool TextAt(ulong offset, ReadOnlySpan<char> name)
+        {
+            if (offset == 0) return false;
+            ulong s = (ulong)_scope.Block + offset;
+            int length = *(int*)(s + 8);
+            if (length != name.Length) return false;
+            char* chars = (char*)(s + 12);
+            for (int i = 0; i < length; i++)
+                if (chars[i] != name[i]) return false;
+            return true;
+        }
 
-        private View ExpandoValue(int i) => ExpandoArray("_values")[i];
+        private string ExpandoName(int i)
+        {
+            ulong offset = *(ulong*)(ExpandoEntryAt(i) + (ulong)ExpandoLayout().Name);
+            return offset == 0 ? null : (string)OfObject(_scope, (ulong)_scope.Block + offset);
+        }
+
+        private View ExpandoValue(int i)
+        {
+            ExpandoShape s = ExpandoLayout();
+            ulong e = ExpandoEntryAt(i);
+            byte kind = *(byte*)(e + (ulong)s.Kind);
+            if (kind < (byte)FieldKind.Reference)
+                return new View(_scope, e + (ulong)s.Bits, null, (FieldKind)kind, Value, null);
+            if (kind != (byte)FieldKind.Reference) throw ExpandoMalformed();
+            ulong offset = *(ulong*)(e + (ulong)s.Ref);
+            return offset == 0 ? new View(_scope, 0, null, FieldKind.Reference, Null, null)
+                               : OfObject(_scope, (ulong)_scope.Block + offset);
+        }
+
+        // A scalar into an entry, whatever it held: the kind is the new
+        // value's (step201) — a number where a string was, a bool where a
+        // number was. The reference it held, if any, becomes garbage of the
+        // block. Strings and objects need room in the block (ExpandoEditor).
+        private void ExpandoWriteScalar(int i, View value, string what)
+        {
+            value.Check();
+            if (!TryScalarBits(value, out FieldKind kind, out ulong bits))
+                throw new InvalidOperationException("'" + what + "' of the Expando: a view writes numbers, bool and char only; a "
+                                                    + value.Kind.ToString() + " needs room in the block");
+            ExpandoShape s = ExpandoLayout();
+            ulong e = ExpandoEntryAt(i);
+            *(ulong*)(e + (ulong)s.Bits) = bits;
+            *(ulong*)(e + (ulong)s.Ref) = 0;
+            *(byte*)(e + (ulong)s.Kind) = (byte)kind;
+        }
+
+        // A number, bool or char as an entry's kind and bits (ExpandoValues' encoding).
+        internal static bool TryScalarBits(View v, out FieldKind kind, out ulong bits)
+        {
+            kind = v._value;
+            bits = 0;
+            bool scalar = v._shape == Value || (v._shape == Detached && v._text == null && v._value != FieldKind.Reference);
+            if (!scalar || kind >= FieldKind.Reference) return false;
+            switch (kind)
+            {
+                case FieldKind.Bool: bits = v.Integer() != 0 ? 1UL : 0UL; break;
+                case FieldKind.Single: bits = (uint)BitConverter.SingleToInt32Bits((float)v.Float()); break;
+                case FieldKind.Double: bits = (ulong)BitConverter.DoubleToInt64Bits(v.Float()); break;
+                default: bits = (ulong)v.Integer(); break;
+            }
+            return true;
+        }
+
+        private static InvalidOperationException ExpandoMalformed()
+            => new InvalidOperationException("the Expando's table in the region is malformed");
 
         // ---- values out ----
 
@@ -768,6 +920,7 @@ namespace SharpOS.Std.Pipes
 
         internal ViewScope Scope => _scope;
         internal ulong Address => _at;
+        internal void EnsureAlive() => Check();
         internal TypeShape Shape => _type;
         internal FieldKind ValueKind => _value;
         internal bool IsInPlaceStruct => _shape == InPlace;

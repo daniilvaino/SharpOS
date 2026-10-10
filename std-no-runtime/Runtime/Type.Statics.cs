@@ -23,6 +23,27 @@ namespace System
 
         public override string ToString() => LastResortName;
 
+        // What a type without metadata can say about where it was declared
+        // (step200, TypeNameHelper in BabyKusto's messages): as NativeAOT with
+        // no reflection data for the type — no namespace, no declaring type,
+        // so not nested. A runtime type is never a generic parameter.
+        public virtual string? Namespace => null;
+
+        public virtual Type? DeclaringType => null;
+
+        public bool IsNested => DeclaringType != null;
+
+        public virtual bool IsGenericParameter => false;
+
+        public unsafe int GetArrayRank()
+        {
+            if (!IsArray) throw new ArgumentException("Must be an array type.");
+            // The bounds block above an SzArray's base size: two Int32s per
+            // dimension (Array.Rank reads the same).
+            int boundsSize = (int)Table->BaseSize - 24;
+            return Table->ElementType == SharpOS.Std.NoRuntime.GcEETypeElementType.SzArray || boundsSize <= 0 ? 1 : boundsSize / (2 * sizeof(int));
+        }
+
         /// <summary>The image base names count from; set by the app tier at start (AppRuntime), 0 in the kernel.</summary>
         internal static ulong ModuleBase;
 

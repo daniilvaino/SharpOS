@@ -12,7 +12,7 @@
 #
 # `expect CODE COMMAND` runs the command and counts it as a failure unless it
 # exits with exactly CODE. Needed because "non-zero means broken" is not true
-# here: AOTTESTS.EXE returns the number of tests it passed, so 298 is a clean
+# here: AOTTESTS.EXE returns the number of tests it passed, so 302 is a clean
 # run and 0 would be a catastrophe.
 #
 # The two --pipe-writer-dies runs end a pipe writer with its queue full —
@@ -49,14 +49,25 @@
 #
 # PIPEPERF.EXE (step 195): the lower layer's speed and its checks — no
 # allocation per message on any path, 100 000-object graphs, the reverse
-# pass's bytes, a refusal that changes nothing, fifty types in one stream;
-# exit code = checks passed. Its [perf195] lines are the measurements.
+# pass's bytes, a refusal that changes nothing, fifty types in one stream,
+# and (step201) the Expando: a lookup by hash, edits in place without an
+# allocation, 100 stages adding a field, 1 000 adds and removes; exit code =
+# checks passed. Its [perf195] and [perf201] lines are the measurements.
 #
 # External data (step 197): JSONTEST.EXE checks the JSON reader and writer;
 # DATATEST.EXE runs READ, WRITE, CONVERT, `>`/`>>`, bytes and text over a pipe,
 # Into<T> from an Expando and pipelines from code — exit code = checks passed;
 # --quick leaves out the 100 MiB file and the 64 MiB copy, which the full run
 # makes. DATATEST --perf prints the [perf197] measurements.
+#
+# KQL (step200, streaming since step201): KQL 'query' runs the query over the
+# messages on its input (the table Input) as they come. `where Level == 4`
+# sends PIPEGEN's own messages on — four LogEntry lines; the summarize line
+# prints Level 3 and 4 with n = 20 each; KQL with an unknown column says
+# where and exits with 1. PROCTEST test 18 checks the rest: take stops the
+# reading, an Expando input, extend writing into Expandos in place, an input
+# that ends at once. KQLBABY.EXE checks the engine itself on a table in
+# memory — exit code = checks passed.
 #
 # Paths use FORWARD slashes. This is bash syntax — the parser is a bash parser
 # — and in bash a backslash escapes the next character, so \apps\AOTTESTS.EXE
@@ -67,24 +78,28 @@
 expect 0 /apps/AOTTESTS.EXE --pipe-writer-dies normal
 expect 134 /apps/AOTTESTS.EXE --pipe-writer-dies crash
 expect 0 /apps/AOTTESTS.EXE --pipe-stress 2
-expect 298 /apps/AOTTESTS.EXE
-expect 298 /apps/AOTTESTS.EXE
+expect 302 /apps/AOTTESTS.EXE
+expect 302 /apps/AOTTESTS.EXE
 expect 0  /apps/BENCHAOT.EXE
 expect 3 /apps/AOTTESTS.EXE --echo-args 'two words' третий
 expect 2 /apps/AOTTESTS.EXE --untranslated-interface1
 expect 2 /apps/AOTTESTS.EXE --untranslated-interface2
 expect 2 /apps/AOTTESTS.EXE --untranslated-interface3
 expect 1 /apps/AOTTESTS.EXE --untranslated-interface4
-expect 297 /apps/AOTTESTS.EXE --gc-stress 16 4
+expect 302 /apps/AOTTESTS.EXE --gc-stress 16 4
 expect 0 /apps/AOTTESTS.EXE --gc-stress 1 1 --pipe-stress 1
-expect 22 /apps/AOTTESTS.EXE --gc-stress 1 1 --dynamic
+expect 23 /apps/AOTTESTS.EXE --gc-stress 1 1 --dynamic
 PIPEGEN 5
 PIPEGEN 1000 | PIPEFILT 3 | PIPECNT
-expect 59 /apps/PROCTEST.EXE
-expect 54 /apps/PROCTEST.EXE --gc-stress 16
-expect 15 /apps/PIPEPERF.EXE
+PIPEGEN 20 | KQL 'where Level == 4'
+PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level | sort by Level asc'
+expect 1 /apps/KQL.EXE 'where Levl > 1'
+expect 66 /apps/PROCTEST.EXE
+expect 61 /apps/PROCTEST.EXE --gc-stress 16
+expect 19 /apps/PIPEPERF.EXE
 expect 64 /apps/JSONTEST.EXE
 expect 44 /apps/DATATEST.EXE
 expect 41 /apps/DATATEST.EXE --gc-stress 16 --quick
 expect 10 /apps/GVMTEST.EXE
 expect 7 /apps/KQLTEST.EXE
+expect 9 /apps/KQLBABY.EXE

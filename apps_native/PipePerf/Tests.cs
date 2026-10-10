@@ -34,6 +34,7 @@ namespace PipeApps
             Run("4 bytes back", BytesBack);
             Run("5 refusal", Refusal);
             Run("6 fifty types", FiftyTypes);
+            Run("7 smart expando", SmartExpando);
         }
 
         private static void Run(string name, Action test)

@@ -943,6 +943,7 @@ namespace OS.PAL.SharpOSHost
             }
 
             ctx->Rip = targetIp;
+            OS.Boot.EH.ExInfoHead.PopBelow(ctx->Rsp);
             RestoreContextAsm(ctx);
         }
 
@@ -1080,6 +1081,7 @@ namespace OS.PAL.SharpOSHost
                     uc->Rip = (ulong)targetIp;
                     uc->Rsp = target;
                     uc->Rax = (ulong)returnValue;
+                    OS.Boot.EH.ExInfoHead.PopBelow(uc->Rsp);
                     RestoreContextAsm(uc);
                     return;   // unreachable
                 }

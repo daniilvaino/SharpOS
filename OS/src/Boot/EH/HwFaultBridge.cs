@@ -76,12 +76,16 @@ namespace OS.Boot.EH
         // halts on unhandled (per our current Dispatch behavior).
         public static void DispatchTrap(InterruptFrame* frame)
         {
-            // A fault while the previous one is still being reported: the
-            // previous one's lines are cut mid-way and it never gets to its
-            // dispatch, so say what it was first, on the raw port.
-            if (s_reporting != null)
-                ReportOuterFault(s_reporting);
-            s_reporting = frame;
+            // A fault while this thread's previous one is still being reported:
+            // the previous one's lines are cut mid-way and it never gets to its
+            // dispatch, so say what it was first, on the raw port. Kept per
+            // thread: a fault of another process while this report waits is
+            // not a nested one.
+            var reporter = OS.Kernel.Threading.Scheduler.Current;
+            InterruptFrame* outer = reporter != null ? (InterruptFrame*)reporter.ReportingFault : s_reporting;
+            if (outer != null)
+                ReportOuterFault(outer);
+            SetReporting(reporter, frame);
 
             // Phase E9.b step 102 -- guard-page stack-overflow detection.
             // Each hosted/kernel thread (other than the UEFI boot thread)
@@ -509,7 +513,7 @@ namespace OS.Boot.EH
             // DispatchFromHwFault returns only when no handler matched —
             // then we fall through to the NativeAOT path which still
             // catches null-derefs in our own managed kernel code.
-            s_reporting = null;
+            SetReporting(reporter, null);
             if (frame->Vector == 13 || frame->Vector == 14)
             {
                 // C# requires `fixed` scope to take address-of of a managed
@@ -522,12 +526,15 @@ namespace OS.Boot.EH
                     BuildHwExceptionRecord(rec, frame);
                     BuildContextFromInterruptFrame(ctx, frame);
 
-                    // CoreCLR and the native SEH walker know nothing of our
-                    // chain: a handler either finds it reaches a catch and
-                    // never comes back here, leaving s_head pointing into this
-                    // frame's dead stack — the next collection reads its
-                    // PrevExInfo from whatever reused the bytes. Unlinked for
-                    // them, linked again if both decline.
+                    // CoreCLR knows nothing of our chain: when it handles the
+                    // fault it resumes at its own catch and never comes back
+                    // here, leaving s_head in this frame's dead stack (step199:
+                    // its page faults during the boot session on BigStack).
+                    // Unlinked for that call only — it allocates nothing in
+                    // our heap. The SEH walker below prints and allocates, so
+                    // the entry stays linked for it (its collections must see
+                    // the exception and the faulting frames), and it pops the
+                    // entry itself when it resumes (ExInfoHead.PopBelow).
                     ExInfoHead.s_head = (System.IntPtr)exInfo.PrevExInfo;
                     // step123: CoreCLR managed hardware fault path. For JIT-code
                     // null deref / AV, IsSafeToHandleHardwareException + Handle-
@@ -545,9 +552,9 @@ namespace OS.Boot.EH
                         // continue execution at the (modified) context".
                         return;
                     }
+                    ExInfoHead.s_head = (System.IntPtr)(&exInfo);
                     SehDispatch.DispatchFromHwFault(rec, ctx);
                     // Returned — PAL SEH didn't find a handler. Fall through.
-                    ExInfoHead.s_head = (System.IntPtr)(&exInfo);
                 }
             }
 
@@ -574,8 +581,15 @@ namespace OS.Boot.EH
         private static ExceptionRecord s_hwRec;
         private static Context s_hwCtx;
 
-        // The fault between its entry and its dispatch, when the report runs.
+        // The fault between its entry and its dispatch, when the report runs:
+        // on the thread (Thread.ReportingFault), here before the scheduler.
         private static InterruptFrame* s_reporting;
+
+        private static void SetReporting(OS.Kernel.Threading.Thread reporter, InterruptFrame* frame)
+        {
+            if (reporter != null) reporter.ReportingFault = frame;
+            else s_reporting = frame;
+        }
 
         private static void ReportOuterFault(InterruptFrame* outer)
         {

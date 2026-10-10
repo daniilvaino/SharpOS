@@ -77,6 +77,20 @@ namespace OS.Boot.EH
 
         public static ExInfo* Current => (ExInfo*)s_head;
 
+        /// <summary>
+        /// Unlinks every entry below <paramref name="resumeSp"/>: their frames
+        /// are being unwound. Stock NativeAOT does the same when a catch
+        /// resumes (ExInfo::PopExInfos); a dispatcher that resumes on its own
+        /// (the native SEH walker) has to do it too, or the head is left in
+        /// dead stack.
+        /// </summary>
+        public static void PopBelow(ulong resumeSp)
+        {
+            ExInfo* e = (ExInfo*)s_head;
+            while (e != null && (ulong)e < resumeSp) e = e->PrevExInfo;
+            s_head = (IntPtr)e;
+        }
+
         // Address of the static field — used by shellcode emitter to
         // patch a `mov r8, imm64` instruction with the head's address.
         public static byte** GetHeadAddress()

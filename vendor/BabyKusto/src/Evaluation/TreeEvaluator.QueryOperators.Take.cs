@@ -47,7 +47,9 @@ namespace BabyKusto.Core.Evaluation
                 if (context.Remaining >= chunk.RowCount)
                 {
                     context.Remaining -= chunk.RowCount;
-                    return (context, chunk.ReParent(this), false);
+                    // SharpOS cut: stop once the count is reached exactly too. Upstream
+                    // asked for one more chunk first — on a pipe, a wait for one more message.
+                    return (context, chunk.ReParent(this), context.Remaining == 0);
                 }
                 else
                 {

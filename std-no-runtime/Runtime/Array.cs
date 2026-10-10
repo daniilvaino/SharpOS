@@ -74,6 +74,26 @@ namespace System
             return 0;
         }
 
+        // Array.GetValue(int) (step200, BabyKusto reads columns through it):
+        // the element boxed as BCL boxes it — a value type through RhBox, so
+        // T? gives null or a box of T; a reference as it is. Single-dimension
+        // only, as the rest of this class.
+        public unsafe object GetValue(int index)
+        {
+            if (Rank != 1) throw new ArgumentException("Only single dimensional arrays are supported for the requested action.");
+            if ((uint)index >= (uint)Length) throw new IndexOutOfRangeException();
+
+            Array self = this;
+            byte* obj = *(byte**)Unsafe.AsPointer(ref self);
+            var mt = *(SharpOS.Std.NoRuntime.GcMethodTable**)obj;
+            ushort elementSize = *(ushort*)mt;
+            byte* element = obj + 16 + (nuint)index * elementSize;
+            SharpOS.Std.NoRuntime.GcMethodTable* elementType = mt->RelatedType;
+            if (elementType->IsValueType)
+                return SharpOS.Std.NoRuntime.GcRuntimeExports.RhBox((Internal.Runtime.MethodTable*)elementType, ref *element);
+            return Unsafe.As<byte, object>(ref *element);
+        }
+
         private const int SzArrayBaseSize = 24;
 
         // Ported from dotnet/runtime v8.0.27 Array.cs. The compiler binds `array.CopyTo(...)`

@@ -51,6 +51,9 @@ namespace SharpOS.Std.Exchange
         public long[] EnumValues;
         internal Dictionary<string, FieldShape> ByName;
 
+        /// <summary>What a reader worked out once about this type (an Expando's table offsets, step201).</summary>
+        internal object Cache;
+
         public bool IsArray => Elements != null && !IsString;
 
         /// <summary>

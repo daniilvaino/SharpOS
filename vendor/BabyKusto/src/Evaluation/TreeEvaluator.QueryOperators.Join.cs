@@ -107,7 +107,9 @@ namespace BabyKusto.Core.Evaluation
 
                         // TODO: Should nulls be treated differently than empty string?
                         // TODO: Use a less expensive composite key computation
-                        var key = string.Join("|", onValues.Select(v => Uri.EscapeDataString(v?.ToString() ?? "")));
+                        // SharpOS cut: Uri.EscapeDataString (std has no System.Uri); the key
+                        // only has to be unambiguous, so % and the separator are escaped.
+                        var key = string.Join("|", onValues.Select(v => v?.ToString()?.Replace("%", "%25").Replace("|", "%7C") ?? ""));
                         if (!result.Buckets.TryGetValue(key, out var bucket))
                         {
                             bucket = (OnValues: onValues, Data: new ColumnBuilder[numColumns]);

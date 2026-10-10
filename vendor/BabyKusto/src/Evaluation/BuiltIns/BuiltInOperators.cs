@@ -27,7 +27,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.Add,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicArithmetic.Add,
                     new ScalarOverloadInfo(new AddIntOperatorImpl(), ScalarTypes.Int, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new AddLongOperatorImpl(), ScalarTypes.Long, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new AddDoubleOperatorImpl(), ScalarTypes.Real, ScalarTypes.Real, ScalarTypes.Real),
@@ -36,7 +36,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.Subtract,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicArithmetic.Subtract,
                     new ScalarOverloadInfo(new SubtractIntOperatorImpl(), ScalarTypes.Int, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new SubtractLongOperatorImpl(), ScalarTypes.Long, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new SubtractDoubleOperatorImpl(), ScalarTypes.Real, ScalarTypes.Real, ScalarTypes.Real),
@@ -46,7 +46,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.Multiply,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicArithmetic.Multiply,
                     new ScalarOverloadInfo(new MultiplyIntOperatorImpl(), ScalarTypes.Int, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new MultiplyLongOperatorImpl(), ScalarTypes.Long, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new MultiplyDoubleOperatorImpl(), ScalarTypes.Real, ScalarTypes.Real, ScalarTypes.Real),
@@ -54,7 +54,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.Divide,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicArithmetic.Divide,
                     new ScalarOverloadInfo(new DivideIntOperatorImpl(), ScalarTypes.Int, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new DivideLongOperatorImpl(), ScalarTypes.Long, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new DivideDoubleOperatorImpl(), ScalarTypes.Real, ScalarTypes.Real, ScalarTypes.Real),
@@ -62,7 +62,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.Modulo,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicArithmetic.Modulo,
                     new ScalarOverloadInfo(new ModuloIntOperatorImpl(), ScalarTypes.Int, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new ModuloLongOperatorImpl(), ScalarTypes.Long, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new ModuloDoubleOperatorImpl(), ScalarTypes.Real, ScalarTypes.Real, ScalarTypes.Real),
@@ -70,7 +70,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.GreaterThan,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicComparison.GreaterThan,
                     new ScalarOverloadInfo(new GreaterThanIntOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new GreaterThanLongOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new GreaterThanDoubleOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Real, ScalarTypes.Real),
@@ -79,7 +79,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.GreaterThanOrEqual,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicComparison.GreaterThanOrEqual,
                     new ScalarOverloadInfo(new GreaterThanOrEqualIntOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new GreaterThanOrEqualLongOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new GreaterThanOrEqualDoubleOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Real, ScalarTypes.Real),
@@ -88,7 +88,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.LessThan,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicComparison.LessThan,
                     new ScalarOverloadInfo(new LessThanIntOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new LessThanLongOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new LessThanDoubleOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Real, ScalarTypes.Real),
@@ -97,7 +97,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.LessThanOrEqual,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicComparison.LessThanOrEqual,
                     new ScalarOverloadInfo(new LessThanOrEqualIntOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new LessThanOrEqualLongOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new LessThanOrEqualDoubleOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Real, ScalarTypes.Real),
@@ -106,7 +106,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.Equal,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicComparison.Equal,
                     new ScalarOverloadInfo(new EqualIntOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new EqualLongOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new EqualDoubleOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Real, ScalarTypes.Real),
@@ -116,7 +116,7 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
 
             operators.Add(
                 Operators.NotEqual,
-                new ScalarFunctionInfo(
+                WithDynamic(DynamicComparison.NotEqual,
                     new ScalarOverloadInfo(new NotEqualIntOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Int, ScalarTypes.Int),
                     new ScalarOverloadInfo(new NotEqualLongOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Long, ScalarTypes.Long),
                     new ScalarOverloadInfo(new NotEqualDoubleOperatorImpl(), ScalarTypes.Bool, ScalarTypes.Real, ScalarTypes.Real),
@@ -148,6 +148,48 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
             operators.Add(Operators.NotEndsWithCs, new ScalarFunctionInfo(new ScalarOverloadInfo(new NotEndsWithCsOperatorImpl(), ScalarTypes.Bool, ScalarTypes.String, ScalarTypes.String)));
 
             // SharpOS cut: `matches regex` (MatchRegexOperatorImpl) — no System.Text.RegularExpressions in std yet.
+        }
+
+        // SharpOS cut: a comparison's dynamic operands (DynamicComparison.cs),
+        // ahead of the typed overloads: a typed overload's string parameter
+        // takes any argument, and would take a dynamic as its text.
+        private static ScalarFunctionInfo WithDynamic(DynamicComparison op, params ScalarOverloadInfo[] typed)
+        {
+            var impl = new DynamicComparisonOperatorImpl(op);
+            var all = new List<ScalarOverloadInfo>
+            {
+                new ScalarOverloadInfo(impl, ScalarTypes.Bool, ScalarTypes.Dynamic, ScalarTypes.Dynamic),
+                new ScalarOverloadInfo(impl, ScalarTypes.Bool, ScalarTypes.Dynamic, ScalarTypes.Long),
+                new ScalarOverloadInfo(impl, ScalarTypes.Bool, ScalarTypes.Long, ScalarTypes.Dynamic),
+                new ScalarOverloadInfo(impl, ScalarTypes.Bool, ScalarTypes.Dynamic, ScalarTypes.Real),
+                new ScalarOverloadInfo(impl, ScalarTypes.Bool, ScalarTypes.Real, ScalarTypes.Dynamic),
+                new ScalarOverloadInfo(impl, ScalarTypes.Bool, ScalarTypes.Dynamic, ScalarTypes.Bool),
+                new ScalarOverloadInfo(impl, ScalarTypes.Bool, ScalarTypes.Bool, ScalarTypes.Dynamic),
+                new ScalarOverloadInfo(impl, ScalarTypes.Bool, ScalarTypes.Dynamic, ScalarTypes.String),
+                new ScalarOverloadInfo(impl, ScalarTypes.Bool, ScalarTypes.String, ScalarTypes.Dynamic),
+            };
+            all.AddRange(typed);
+            return new ScalarFunctionInfo(all.ToArray());
+        }
+
+        // SharpOS cut: arithmetic's dynamic operands (DynamicArithmetic.cs),
+        // typed as Kusto.Language types them: by the other operand, two
+        // dynamics as dynamic.
+        private static ScalarFunctionInfo WithDynamic(DynamicArithmetic op, params ScalarOverloadInfo[] typed)
+        {
+            var bag = new DynamicArithmeticOperatorImpl(op, ScalarTypes.Dynamic);
+            var whole = new DynamicArithmeticOperatorImpl(op, ScalarTypes.Long);
+            var real = new DynamicArithmeticOperatorImpl(op, ScalarTypes.Real);
+            var all = new List<ScalarOverloadInfo>
+            {
+                new ScalarOverloadInfo(bag, ScalarTypes.Dynamic, ScalarTypes.Dynamic, ScalarTypes.Dynamic),
+                new ScalarOverloadInfo(whole, ScalarTypes.Long, ScalarTypes.Dynamic, ScalarTypes.Long),
+                new ScalarOverloadInfo(whole, ScalarTypes.Long, ScalarTypes.Long, ScalarTypes.Dynamic),
+                new ScalarOverloadInfo(real, ScalarTypes.Real, ScalarTypes.Dynamic, ScalarTypes.Real),
+                new ScalarOverloadInfo(real, ScalarTypes.Real, ScalarTypes.Real, ScalarTypes.Dynamic),
+            };
+            all.AddRange(typed);
+            return new ScalarFunctionInfo(all.ToArray());
         }
 
         public static ScalarOverloadInfo GetOverload(OperatorSymbol symbol, IRExpressionNode[] arguments, List<Parameter> parameters)

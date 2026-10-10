@@ -38,7 +38,8 @@ namespace BabyKusto.Core.Evaluation.BuiltIns.Impl
                 return string.Empty;
             }
 
-            return Uri.UnescapeDataString(url);
+            // SharpOS cut: std has no System.Uri yet (donext: port it).
+            throw new NotSupportedException("url_decode needs System.Uri, which is not ported");
         }
     }
 }

@@ -132,6 +132,19 @@ namespace SharpOS.Std.NoRuntime
 
         public GcEETypeKind Kind => (GcEETypeKind)(Flags & EETypeKindMask);
 
+        // Where Nullable<T> keeps its value: NativeAOT's MethodTable
+        // .NullableValueOffset (release/8.0) — encoded minus one in the
+        // optional fields, 1 when there are none.
+        public byte NullableValueOffset
+        {
+            get
+            {
+                byte* optional = GetOptionalFieldsPtr();
+                if (optional == null) return 1;
+                return (byte)(OptionalFieldsReader.GetInlineField(optional, EETypeOptionalFieldTag.NullableValueOffset, 0) + 1);
+            }
+        }
+
         public GcEETypeElementType ElementType =>
             (GcEETypeElementType)((Flags & ElementTypeMask) >> ElementTypeShift);
 

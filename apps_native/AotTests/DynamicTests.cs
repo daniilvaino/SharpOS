@@ -66,6 +66,7 @@ namespace AotTests
             DynamicCache();
             DynamicInference();
             DynamicExpando();
+            ExpandoTable();
             if (!s_gcStress && !s_kernelStressed && !s_concurrent) BenchDynamic();
         }
 
@@ -348,6 +349,48 @@ namespace AotTests
             AppHost.WriteString("[dyn] cache: one type " + one.ToString() + " lookup(s), two types " + two.ToString() + "\n");
             Check("dynamic: one type at a call site — the name looked up once", one == 1 && sum == 200);
             Check("dynamic: two types in turn — once each, the right member for each", two == 2 && mixed == 25 * 2 + 25 * 1);
+        }
+
+        // Expando's table (step201): order after removals and additions, a
+        // table rebuilt past its size, a value that changes kind, numbers kept
+        // as their own type, a value that cannot travel refused.
+        private static void ExpandoTable()
+        {
+            var e = new Expando();
+            for (int i = 0; i < 100; i++) e["k" + i.ToString()] = i;
+            for (int i = 0; i < 100; i += 2) e.Remove("k" + i.ToString());
+            e["k1"] = "one";                 // a number becomes a string
+            e["k3"] = 3.5;                   // an int becomes a double
+            e["new"] = (byte)7;              // added after the removals: last
+            e["k0"] = true;                  // a removed name comes back: after "new"
+            bool counts = e.Count == 52 && !e.ContainsKey("k2") && e.ContainsKey("k99");
+            bool kinds = e["k1"] is string s && s == "one" && e["k3"] is double d && d == 3.5
+                         && e["k5"] is int five && five == 5 && e["new"] is byte b && b == 7
+                         && e["k0"] is bool t && t && e["k7"] is int seven && seven == 7;
+            var names = new System.Collections.Generic.List<string>(e.Keys);
+            bool order = names.Count == 52 && names[0] == "k1" && names[1] == "k3" && names[49] == "k99"
+                         && names[50] == "new" && names[51] == "k0";
+            e.Remove("missing");
+            int sum = 0;
+            foreach (var kv in e) if (kv.Value is int n) sum += n;   // k5..k99 odd, minus k1/k3 changed
+            bool sumOk = sum == 2500 - 1 - 3;
+            // Past the table's 128 cells with 50 dead in it: rebuilt from the
+            // live ones, the order kept.
+            for (int i = 0; i < 30; i++) e["x" + i.ToString()] = i;
+            var after = new System.Collections.Generic.List<string>(e.Keys);
+            order = order && after.Count == 82 && after[0] == "k1" && after[50] == "new" && after[52] == "x0"
+                    && after[81] == "x29" && e["k99"] is int last && last == 99;
+            // A value that could not travel is refused where it is set, and the
+            // Expando is as it was.
+            bool refusedOk = false;
+            try { e["Bad"] = new System.Text.StringBuilder(); }
+            catch (ArgumentException) { refusedOk = e.Count == 82 && !e.ContainsKey("Bad"); }
+            if (!(counts && kinds && order && refusedOk && sumOk))
+                AppHost.WriteString("[expando] table: counts " + counts.ToString() + ", kinds " + kinds.ToString()
+                                    + ", order " + order.ToString() + " (" + string.Join(",", names.ToArray()) + "), refused "
+                                    + refusedOk.ToString() + ", sum " + sum.ToString() + "\n");
+            Check("Expando: order after removals, a rebuilt table, kinds that change, int stays int, a value that cannot travel refused",
+                  counts && kinds && order && refusedOk && sumOk);
         }
 
         private static void DynamicExpando()

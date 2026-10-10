@@ -11,5 +11,6 @@
     <Compile Include="Tests.cs" />
     <Compile Include="Mixed.cs" />
     <Compile Include="Upper.cs" />
+    <Compile Include="Edits.cs" />
   </ItemGroup>
 </Project>

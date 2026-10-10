@@ -86,7 +86,9 @@ namespace BabyKusto.Core.Evaluation
 
                     // TODO: Should nulls be treated differently than empty string?
                     // TODO: Use a less expensive composite key computation
-                    var key = string.Join("|", byValues.Select(v => Uri.EscapeDataString(v?.ToString() ?? "")));
+                    // SharpOS cut: Uri.EscapeDataString (std has no System.Uri); the key
+                    // only has to be unambiguous, so % and the separator are escaped.
+                    var key = string.Join("|", byValues.Select(v => v?.ToString()?.Replace("%", "%25").Replace("|", "%7C") ?? ""));
 
                     if (!context.BucketizedTables.TryGetValue(key, out var bucket))
                     {
@@ -108,6 +110,18 @@ namespace BabyKusto.Core.Evaluation
 
             protected override ITableChunk? ProcessLastChunk(SummarizeResultTableContext context)
             {
+                // SharpOS cut: without `by`, one row even over no input — count() is 0,
+                // as KQL has it; upstream made no bucket and returned no row.
+                if (_byExpressions.Count == 0 && context.BucketizedTables.Count == 0)
+                {
+                    var empty = new ColumnBuilder[Source.Type.Columns.Count];
+                    for (int j = 0; j < empty.Length; j++)
+                    {
+                        empty[j] = ColumnHelpers.CreateBuilder(Source.Type.Columns[j].Type);
+                    }
+                    context.BucketizedTables[string.Empty] = (new List<object?>(), empty);
+                }
+
                 var resultsData = new ColumnBuilder[_byExpressions.Count + _aggregationExpressions.Count];
                 for (int i = 0; i < resultsData.Length; i++)
                 {

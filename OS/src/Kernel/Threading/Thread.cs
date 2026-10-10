@@ -200,6 +200,11 @@
         // no guard reserved by us).
         public byte* GuardPage;
 
+        // The hardware fault this thread is reporting (HwFaultBridge), between
+        // its entry and its dispatch; null otherwise. Per thread: a fault of
+        // another thread meanwhile is not a nested one.
+        public void* ReportingFault;
+
         // TEB pointer. Phase E4 leaves this null on kernel-only threads
         // (no gs base swap yet); E5+ wires per-thread TEBs.
         public byte* Teb;

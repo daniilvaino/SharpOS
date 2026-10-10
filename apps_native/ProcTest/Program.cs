@@ -80,6 +80,7 @@ namespace PipeApps
             Run("10 stdin and stdout", LauncherTalks);
             Run("11 WriteTo across three", WriteToAcrossThree);
             Run("11b a stage that passes nothing", EmptyStage);
+            Run("18 KQL as a stage", KqlStage);
             if (full) Run("12 resources back", ResourcesBack);
             if (full) Run("14 measurements", Measurements);
 
@@ -624,6 +625,88 @@ namespace PipeApps
             foreach (Seq q in Pipe.Read<Seq>("t11b.late")) n++;
             Check("11b: the same by name, its reader coming late: the end of the stream, not a wait",
                   n == 0 && Finish(s) == 0);
+        }
+
+        // ---- 18 (step201) ----
+
+        // KQL as a stage: where and take send the input's own blocks on (the
+        // writer's type arrives) and take stops the reading; any other result
+        // is Expandos; an Expando input is one dynamic column, and extend over
+        // it writes into each message in place; an input that ends at once
+        // still names the columns by its declared type.
+        private static void KqlStage()
+        {
+            var p1 = Pipe.Create(); var p2 = Pipe.Create();
+            Process g = Start("PIPEGEN.EXE", A("100000"), output: p1.WriteEnd);
+            Process k = Start("KQL.EXE", A("where Level == 4 | take 3"), input: p1.ReadEnd, output: p2.WriteEnd);
+            string texts = "";
+            bool own = true;
+            foreach (View v in p2.ReadEnd.Read())
+            {
+                if (v.TypeName != "PipeApps.LogEntry" || (int)v["Level"] != 4) own = false;
+                texts += (string)v["Text"] + ";";
+            }
+            int kc = Finish(k), gc = Finish(g);
+            Check("18: PIPEGEN 100000 | KQL 'where Level == 4 | take 3': text 4, 9, 14, PIPEGEN's own LogEntry messages (KQL exit "
+                  + kc.ToString() + ")", kc == 0 && own && texts == "text 4;text 9;text 14;");
+            Check("18: take stopped the reading: PIPEGEN ended with 141, its reader gone (" + gc.ToString() + ")", gc == 141);
+
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("summarize n = count() by Level | sort by Level asc"), input: p1.ReadEnd, output: p2.WriteEnd);
+            int rows = 0;
+            bool right = true;
+            foreach (View v in p2.ReadEnd.Read())
+            {
+                if ((long)v["Level"] != rows || (long)v["n"] != 20) right = false;
+                rows++;
+            }
+            Check("18: KQL 'summarize n = count() by Level | sort by Level asc' over 100: five rows of 20, as Expandos",
+                  Finish(k) == 0 && Finish(g) == 0 && rows == 5 && right);
+
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PROCTEST.EXE", A("--child", "expando-out", "10"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("where Value.Kind == 'odd' | project n = tolong(Value.N)"),
+                      input: p1.ReadEnd, output: p2.WriteEnd);
+            string odd = "";
+            foreach (View v in p2.ReadEnd.Read()) odd += ((long)v["n"]).ToString() + ";";
+            Check("18: Expandos are one dynamic column, Value: Value.Kind == 'odd' finds 1, 3, 5, 7, 9 (" + odd + ")",
+                  Finish(k) == 0 && Finish(g) == 0 && odd == "1;3;5;7;9;");
+
+            // extend over Expandos writes into each message: the DateTime,
+            // which a new message would carry as text, arrives as it was.
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PROCTEST.EXE", A("--child", "expando-out", "10"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("where Value.N >= 6 | extend Twice = Value.N * 2, Note = 'seen'"),
+                      input: p1.ReadEnd, output: p2.WriteEnd);
+            string twice = "";
+            bool kept = true;
+            foreach (View v in p2.ReadEnd.Read())
+            {
+                twice += ((long)v["Twice"]).ToString() + ";";
+                if (v["When"].TypeName != "System.DateTime" || (string)v["Note"] != "seen") kept = false;
+            }
+            Check("18: extend over Expandos writes into each message in place: Twice 12, 14, 16, 18, Note, the DateTime as it was ("
+                  + twice + ")", Finish(k) == 0 && Finish(g) == 0 && kept && twice == "12;14;16;18;");
+
+            // A dynamic column is not written in place: new messages, flat —
+            // the bag's entries, the column beside them, the DateTime as text.
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PROCTEST.EXE", A("--child", "expando-out", "2"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("extend Copy = Value.Kind"), input: p1.ReadEnd, output: p2.WriteEnd);
+            string flat = "";
+            foreach (View v in p2.ReadEnd.Read())
+                flat += (string)v["Kind"] + "=" + (string)v["Copy"] + "," + v["When"].TypeName + ";";
+            Check("18: extend of a dynamic over Expandos: new messages, flat (" + flat + ")",
+                  Finish(k) == 0 && Finish(g) == 0 && flat == "even=even,System.String;odd=odd,System.String;");
+
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PIPEGEN.EXE", A("0"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("where Level > 1"), input: p1.ReadEnd, output: p2.WriteEnd);
+            int none = 0;
+            foreach (View v in p2.ReadEnd.Read()) none++;
+            Check("18: an input that ends at once: its declared type names the columns, nothing goes out (exit 0)",
+                  Finish(k) == 0 && Finish(g) == 0 && none == 0);
         }
 
         // ---- 12 ----

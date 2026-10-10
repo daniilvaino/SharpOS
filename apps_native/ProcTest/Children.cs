@@ -67,6 +67,24 @@ namespace PipeApps
                     return 0;
                 }
 
+                // Test 18: Expandos to the standard output, even and odd, each
+                // with a DateTime — an entry KQL carries as text when it makes
+                // a new message, and leaves as it is when it writes in place.
+                case "expando-out":
+                {
+                    using var o = Pipe.Write<Expando>();
+                    int n = int.Parse(a2);
+                    for (int i = 0; i < n; i++)
+                    {
+                        var x = new Expando();
+                        x["N"] = i;
+                        x["Kind"] = i % 2 == 0 ? "even" : "odd";
+                        x["When"] = new DateTime(2026, 10, 10);
+                        o.Copy(x);
+                    }
+                    return 0;
+                }
+
                 // Test 5: n numbers to the standard output; exit 0 when the
                 // writer had to wait for its reader — one write, past the full
                 // queue, took 20 ms or more (the reader starts 300 ms late) —

@@ -21,6 +21,24 @@ namespace System
         internal static void Memmove<T>(ref T dest, ref T src, nuint len)
             => SharpOS.Std.MemoryOps.Memmove<T>(ref dest, ref src, len);
 
+        // MemoryCopy (step201): as BCL — a copy between raw memory, the size
+        // checked against the destination, overlap allowed (Memmove).
+        [CLSCompliant(false)]
+        public static unsafe void MemoryCopy(void* source, void* destination, long destinationSizeInBytes, long sourceBytesToCopy)
+        {
+            if (sourceBytesToCopy > destinationSizeInBytes)
+                throw new ArgumentOutOfRangeException(nameof(sourceBytesToCopy));
+            Memmove(ref *(byte*)destination, ref *(byte*)source, checked((nuint)sourceBytesToCopy));
+        }
+
+        [CLSCompliant(false)]
+        public static unsafe void MemoryCopy(void* source, void* destination, ulong destinationSizeInBytes, ulong sourceBytesToCopy)
+        {
+            if (sourceBytesToCopy > destinationSizeInBytes)
+                throw new ArgumentOutOfRangeException(nameof(sourceBytesToCopy));
+            Memmove(ref *(byte*)destination, ref *(byte*)source, checked((nuint)sourceBytesToCopy));
+        }
+
         /// <summary>
         /// Byte-wise block copy between arrays. Offsets and count are in
         /// BYTES, not elements — the BCL signature's oldest trap, preserved

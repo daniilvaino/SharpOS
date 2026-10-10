@@ -82,6 +82,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\MessageCatalog.cs" Link="std\Pipes\MessageCatalog.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\Expando.cs" Link="std\Pipes\Expando.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\View.cs" Link="std\Pipes\View.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\ExpandoEdits.cs" Link="std\Pipes\ExpandoEdits.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\ViewCopy.cs" Link="std\Pipes\ViewCopy.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeLoops.cs" Link="std\Pipes\PipeLoops.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionShapes.cs" Link="std\Exchange\RegionShapes.cs" />
@@ -181,6 +182,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)IO\TextReader.cs" Link="std\IO\TextReader.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\TextWriter.cs" Link="std\IO\TextWriter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Linq\Enumerable.cs" Link="std\Linq\Enumerable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Linq\AsyncEnumerable.cs" Link="std\Linq\AsyncEnumerable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)MemoryPrimitives.cs" Link="std\MemoryPrimitives.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)NumberFormatting.cs" Link="std\NumberFormatting.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)NumberParsing.cs" Link="std\NumberParsing.cs" />

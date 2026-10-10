@@ -37,33 +37,67 @@ namespace System
         private const int DaysPer100Years = DaysPer4Years * 25 - 1;
         private const int DaysPer400Years = DaysPer100Years * 4 + 1;
 
-        private readonly long _ticks;
+        // As in BCL (step200): the ticks in the low 62 bits, the kind in the top
+        // two, under BCL's field name — the pipe catalog keys fields by name, so
+        // the hosted tier's DateTime and this one describe themselves alike.
+        // Comparison and hashing look at the ticks only; arithmetic keeps the
+        // kind. No time zones: Local and Utc are labels, ToLocalTime and
+        // ToUniversalTime are not here.
+        private const ulong TicksMask = 0x3FFFFFFFFFFFFFFF;
+        private const ulong FlagsMask = 0xC000000000000000;
+        private const int KindShift = 62;
 
-        public DateTime(long ticks) { _ticks = ticks; }
+        private readonly ulong _dateData;
+
+        private long _ticks => (long)(_dateData & TicksMask);
+        private ulong InternalKind => _dateData & FlagsMask;
+
+        public DateTime(long ticks) { _dateData = (ulong)ticks; }
+
+        public DateTime(long ticks, DateTimeKind kind)
+        {
+            if ((uint)kind > (uint)DateTimeKind.Local) throw new ArgumentException("Invalid DateTimeKind value.", nameof(kind));
+            _dateData = (ulong)ticks | ((ulong)(uint)kind << KindShift);
+        }
+
+        private DateTime(ulong dateData) { _dateData = dateData; }
 
         public DateTime(int year, int month, int day)
             : this(year, month, day, 0, 0, 0) { }
 
         public DateTime(int year, int month, int day, int hour, int minute, int second)
-        {
-            _ticks = DateToTicks(year, month, day)
-                   + hour * TicksPerHour + minute * TicksPerMinute + second * TicksPerSecond;
-        }
+            : this(year, month, day, hour, minute, second, 0, DateTimeKind.Unspecified) { }
+
+        public DateTime(int year, int month, int day, int hour, int minute, int second, DateTimeKind kind)
+            : this(year, month, day, hour, minute, second, 0, kind) { }
+
+        public DateTime(int year, int month, int day, int hour, int minute, int second, int millisecond)
+            : this(year, month, day, hour, minute, second, millisecond, DateTimeKind.Unspecified) { }
+
+        public DateTime(int year, int month, int day, int hour, int minute, int second, int millisecond, DateTimeKind kind)
+            : this(DateToTicks(year, month, day)
+                   + hour * TicksPerHour + minute * TicksPerMinute + second * TicksPerSecond
+                   + millisecond * TicksPerMillisecond, kind) { }
 
         public long Ticks => _ticks;
+
+        public DateTimeKind Kind => (DateTimeKind)(_dateData >> KindShift);
+
+        public static DateTime SpecifyKind(DateTime value, DateTimeKind kind) => new DateTime(value._ticks, kind);
 
         public static DateTime MinValue => new DateTime(0);
         public static DateTime MaxValue => new DateTime(3155378975999999999L);
 
-        public static DateTime Now => Clock.Now();
-        public static DateTime UtcNow => Clock.Now();
+        public static DateTime Now => new DateTime(Clock.Now()._ticks, DateTimeKind.Local);
+        public static DateTime UtcNow => new DateTime(Clock.Now()._ticks, DateTimeKind.Utc);
         public static DateTime Today => Now.Date;
 
-        public DateTime Date => new DateTime(_ticks - _ticks % TicksPerDay);
+        public DateTime Date => new DateTime((ulong)(_ticks - _ticks % TicksPerDay) | InternalKind);
 
         public int Year => GetDatePart(DatePart.Year);
         public int Month => GetDatePart(DatePart.Month);
         public int Day => GetDatePart(DatePart.Day);
+        public int DayOfYear => GetDatePart(DatePart.DayOfYear);
 
         public int Hour => (int)((_ticks / TicksPerHour) % 24);
         public int Minute => (int)((_ticks / TicksPerMinute) % 60);
@@ -74,7 +108,37 @@ namespace System
 
         public TimeSpan TimeOfDay => TimeSpan.FromTicks(_ticks % TicksPerDay);
 
-        public DateTime AddTicks(long value) => new DateTime(_ticks + value);
+        public DateTime AddTicks(long value)
+        {
+            long ticks = _ticks + value;
+            if ((ulong)ticks > (ulong)MaxValue._ticks)
+                throw new ArgumentOutOfRangeException(nameof(value), "The added or subtracted value results in an un-representable DateTime.");
+            return new DateTime((ulong)ticks | InternalKind);
+        }
+
+        // Ported from dotnet/runtime: the day is clamped to the target
+        // month's length, the time of day kept.
+        public DateTime AddMonths(int months)
+        {
+            if (months < -120000 || months > 120000) throw new ArgumentOutOfRangeException(nameof(months));
+            int y = Year, m = Month, d = Day;
+            m += months;
+            int q = m > 0 ? (int)((uint)(m - 1) / 12) : m / 12 - 1;
+            y += q;
+            m -= q * 12;
+            if (y < 1 || y > 9999) throw new ArgumentOutOfRangeException(nameof(months));
+            int days = DaysInMonth(y, m);
+            if (d > days) d = days;
+            return new DateTime((ulong)(DateToTicks(y, m, d) + _ticks % TicksPerDay) | InternalKind);
+        }
+
+        public DateTime AddYears(int value)
+        {
+            if (value < -10000 || value > 10000) throw new ArgumentOutOfRangeException(nameof(value));
+            return AddMonths(value * 12);
+        }
+
+        public DateTime AddMilliseconds(double value) => AddTicks((long)(value * TicksPerMillisecond));
         public DateTime AddDays(double value) => AddTicks((long)(value * TicksPerDay));
         public DateTime AddHours(double value) => AddTicks((long)(value * TicksPerHour));
         public DateTime AddMinutes(double value) => AddTicks((long)(value * TicksPerMinute));
@@ -274,8 +338,8 @@ namespace System
 
         /// <summary>
         /// ISO 8601 (step197): yyyy-MM-ddTHH:mm[:ss[.f…]] with an optional Z
-        /// or ±hh:mm, which is read and not applied — this DateTime has no
-        /// kind. The "O" form round-trips every tick.
+        /// (kind Utc, step200) or ±hh:mm, which is read and not applied — there
+        /// are no time zones. The "O" form round-trips every tick.
         /// </summary>
         public static bool TryParseIso(string? input, out DateTime result)
         {
@@ -308,7 +372,8 @@ namespace System
                     for (; digits < 7; digits++) fraction *= 10;
                 }
             }
-            if (at < s.Length && s[at] == 'Z') at++;
+            DateTimeKind kind = DateTimeKind.Unspecified;
+            if (at < s.Length && s[at] == 'Z') { at++; kind = DateTimeKind.Utc; }
             else if (at < s.Length && (s[at] == '+' || s[at] == '-'))
             {
                 at++;
@@ -317,7 +382,7 @@ namespace System
                 if (!Take(s, ref at, 2, out _)) return false;
             }
             if (at != s.Length || hour > 23 || minute > 59 || second > 59) return false;
-            result = new DateTime(date._ticks + hour * TicksPerHour + minute * TicksPerMinute + second * TicksPerSecond + fraction);
+            result = new DateTime(date._ticks + hour * TicksPerHour + minute * TicksPerMinute + second * TicksPerSecond + fraction, kind);
             return true;
         }
 
@@ -354,6 +419,13 @@ namespace System
 
             internal static DateTime Now() => s_ticks == null ? MinValue : new DateTime(s_ticks());
         }
+    }
+
+    public enum DateTimeKind
+    {
+        Unspecified = 0,
+        Utc = 1,
+        Local = 2,
     }
 
     public enum DayOfWeek

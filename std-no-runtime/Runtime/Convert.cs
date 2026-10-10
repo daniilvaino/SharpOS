@@ -7,15 +7,29 @@
 // from bool, float or double), strings parsed invariantly, anything to string
 // by ToString. A value already of the target type comes back as it is.
 //
-// Cuts: decimal and DateTime as targets (decimal until System.Decimal is in
-// std), IFormatProvider is accepted and ignored (std has the invariant
-// culture only), Nullable<T> targets, the rest of System.Convert (ToXxx,
-// base64 and friends) — this class holds only what callers have needed.
+// Cuts: decimal and DateTime as targets, IFormatProvider is accepted and
+// ignored (std has the invariant culture only), Nullable<T> targets, the rest
+// of System.Convert (typed ToXxx overloads, base64 and friends) — this class
+// holds only what callers have needed. decimal is read as a source (step200).
+//
+// ToBoolean/ToInt32/ToInt64/ToDouble/ToString(object) (step200, BabyKusto):
+// null gives the default, as in .NET; anything else goes through ChangeType,
+// which is what IConvertible.ToXxx does for the types above.
 
 namespace System
 {
     public static partial class Convert
     {
+        public static bool ToBoolean(object value) => value != null && (bool)ChangeType(value, typeof(bool));
+
+        public static int ToInt32(object value) => value == null ? 0 : (int)ChangeType(value, typeof(int));
+
+        public static long ToInt64(object value) => value == null ? 0 : (long)ChangeType(value, typeof(long));
+
+        public static double ToDouble(object value) => value == null ? 0 : (double)ChangeType(value, typeof(double));
+
+        public static string ToString(object value) => value == null ? string.Empty : value.ToString() ?? string.Empty;
+
         public static object ChangeType(object value, Type conversionType) => ChangeType(value, conversionType, null);
 
         public static object ChangeType(object value, Type conversionType, IFormatProvider provider)
@@ -81,6 +95,7 @@ namespace System
                 case ulong v: return checked((long)v);
                 case float f: return checked((long)Math.Round((double)f));
                 case double d: return checked((long)Math.Round(d));
+                case decimal m: return (long)Math.Round(m);
             }
             throw new InvalidCastException("Object must implement IConvertible.");
         }
@@ -93,6 +108,7 @@ namespace System
                 case double d: return d;
                 case ulong u: return u;
                 case bool b: return b ? 1 : 0;
+                case decimal m: return (double)m;
             }
             return Integral(value, TypeCode.Double);
         }

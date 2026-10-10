@@ -59,6 +59,44 @@ namespace System
         /// <summary>Clears the screen and puts the cursor at its top left (the terminal's ESC [H ESC [2J).</summary>
         public static void Clear() => AppHost.WriteString("\u001b[H\u001b[2J");
 
+        // Colours (step200) as the terminal takes them: ANSI SGR, the sixteen
+        // ConsoleColor values on the 30–37/90–97 codes (backgrounds +10). The
+        // terminal does not report its colours back, so these remember what
+        // was set; the starting values are BCL's defaults on Windows.
+        private static ConsoleColor s_foreground = ConsoleColor.Gray;
+        private static ConsoleColor s_background = ConsoleColor.Black;
+
+        public static ConsoleColor ForegroundColor
+        {
+            get => s_foreground;
+            set { s_foreground = value; SetColor(value, background: false); }
+        }
+
+        public static ConsoleColor BackgroundColor
+        {
+            get => s_background;
+            set { s_background = value; SetColor(value, background: true); }
+        }
+
+        public static void ResetColor()
+        {
+            s_foreground = ConsoleColor.Gray;
+            s_background = ConsoleColor.Black;
+            AppHost.WriteString("\u001b[0m");
+        }
+
+        private static void SetColor(ConsoleColor color, bool background)
+        {
+            if ((uint)color > (uint)ConsoleColor.White)
+                throw new ArgumentException("The ConsoleColor enum value was not defined on that enum.", background ? "BackgroundColor" : "ForegroundColor");
+            // ConsoleColor counts blue as bit 0, ANSI counts red as bit 0.
+            // Dark ones (Black..Gray) on 30–37, bright ones (DarkGray..White) on 90–97.
+            int c = (int)color;
+            int ansi = ((c & 1) << 2) | (c & 2) | ((c & 4) >> 2);
+            int code = (c < 8 ? 30 : 90) + ansi + (background ? 10 : 0);
+            AppHost.WriteString("\u001b[" + code.ToString() + "m");
+        }
+
         // The key service never blocks: a poll with a sleep, below what a
         // typist can feel (the shell's prompt used the same ten milliseconds).
         private const uint KeyPollMilliseconds = 10;

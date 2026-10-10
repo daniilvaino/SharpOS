@@ -315,7 +315,7 @@ namespace SharpOS.Std.Pipes.Probe
             if (v["Words"].Length != 2 || !(v["Words"][1] == "b")) return "Words";
             View places = v["Places"];
             if (places.Length != 2 || !(places[1]["Floor"] == 5) || !(places[0]["Name"] == "a")) return "Places";
-            if (!(v["When"]["_ticks"] == When.Ticks)) return "When";
+            if (!(v["When"]["_dateData"] == When.Ticks)) return "When";
             if (!(v["Next"]["I"] == I) || !(v["Next"]["Next"]["Text"] == Text)) return "Next";
             if (v.Has("Missing") || !v.Has("Text")) return "Has";
             int named = 0;

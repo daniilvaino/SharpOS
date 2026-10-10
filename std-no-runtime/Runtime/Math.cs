@@ -66,6 +66,18 @@ namespace System
         public static int Sign(short value) => value < 0 ? -1 : (value > 0 ? 1 : 0);
         public static int Sign(int value)   => value < 0 ? -1 : (value > 0 ? 1 : 0);
         public static int Sign(long value)  => value < 0 ? -1 : (value > 0 ? 1 : 0);
+        public static int Sign(nint value)  => value < 0 ? -1 : (value > 0 ? 1 : 0);
+
+        // As in BCL: NaN has no sign.
+        public static int Sign(double value)
+        {
+            if (value < 0) return -1;
+            if (value > 0) return 1;
+            if (value == 0) return 0;
+            throw new ArithmeticException("Function does not accept floating point Not-a-Number values.");
+        }
+
+        public static int Sign(float value) => Sign((double)value);
 
         // ---- Clamp ----
         public static byte   Clamp(byte value, byte min, byte max)     => value < min ? min : (value > max ? max : value);

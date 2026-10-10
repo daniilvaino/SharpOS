@@ -122,9 +122,12 @@ namespace SharpOS.Std.NoRuntime
         // on a value type where the target method is inherited from Object
         // (e.g., x.Equals(y) inside a generic `where T : anything`).
         //
-        // Real NativeAOT RhBox handles Nullable<T> unwrapping, GC write barriers,
-        // and RequiresAlign8 misaligned alloc. We skip all of that — our GC is
-        // non-generational (no barrier) and Nullable<T> is a stub empty struct.
+        // Nullable<T> as in NativeAOT's RhBox (release/8.0, MIT): no value boxes
+        // to null, a value boxes as T, not as Nullable<T> — `object o = (long?)5;
+        // o is long` (step200; before, the box kept the Nullable shape and
+        // every test on it failed). The value sits after HasValue, at the
+        // offset RhUnboxNullable reads. Skipped: GC write barriers (the
+        // collector is non-generational) and RequiresAlign8.
         //
         // Copy size: real runtime uses mt->ValueTypeSize; we don't have that
         // field on GcMethodTable, so we use mt->BaseSize - 8 (BaseSize includes
@@ -138,6 +141,12 @@ namespace SharpOS.Std.NoRuntime
             // Our GcMethodTable shares layout with Internal.Runtime.MethodTable;
             // cast via nint/pointer-reinterpret to read BaseSize.
             GcMethodTable* gcMt = (GcMethodTable*)mt;
+            if (gcMt->ElementType == GcEETypeElementType.Nullable)
+            {
+                if (data == 0) return null;                    // HasValue
+                GcMethodTable* valueType = gcMt->GetGenericArgument(0, 1);
+                return RhBox((Internal.Runtime.MethodTable*)valueType, ref Unsafe.Add(ref data, gcMt->NullableValueOffset));
+            }
             void* obj = GcHeap.AllocateObject(gcMt->BaseSize, mt);
             if (obj == null)
                 throw GcHeap.OutOfMemory();

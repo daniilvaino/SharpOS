@@ -311,6 +311,14 @@ namespace SharpOS.Std.Pipes
 
         public RawQuery Where(Func<View, bool> predicate) => new RawQuery(this, predicate);
 
+        /// <summary>
+        /// A step that owns each message (step201): it reads the region and
+        /// edits it in place (ExpandoEdits) — true sends the block on, false
+        /// drops the message. An edit may replace the block; what goes on is
+        /// the region's block as it is then.
+        /// </summary>
+        public RawQuery Edit(Func<RawRegion, bool> step) => new RawQuery(this, null, step);
+
         /// <summary>Every message on to the pipe called <paramref name="name"/>, untranslated: no copy, no translation.</summary>
         public void WriteTo(string name) => new RawQuery(this, null).WriteTo(name);
 
@@ -417,17 +425,26 @@ namespace SharpOS.Std.Pipes
     {
         private readonly RawPipeReader _reader;
         private readonly Func<View, bool> _filter;
+        private readonly Func<RawRegion, bool> _edit;
 
-        internal RawQuery(RawPipeReader reader, Func<View, bool> filter)
+        internal RawQuery(RawPipeReader reader, Func<View, bool> filter, Func<RawRegion, bool> edit = null)
         {
             _reader = reader;
             _filter = filter;
+            _edit = edit;
         }
 
         public RawQuery Where(Func<View, bool> predicate)
         {
             Func<View, bool> first = _filter;
-            return new RawQuery(_reader, first == null ? predicate : v => first(v) && predicate(v));
+            return new RawQuery(_reader, first == null ? predicate : v => first(v) && predicate(v), _edit);
+        }
+
+        /// <summary>A step that owns each message and edits it in place (see RawPipeReader.Edit); after the conditions.</summary>
+        public RawQuery Edit(Func<RawRegion, bool> step)
+        {
+            Func<RawRegion, bool> first = _edit;
+            return new RawQuery(_reader, _filter, first == null ? step : r => first(r) && step(r));
         }
 
         public RawPipeReader.Enumerator GetEnumerator() => new RawPipeReader.Enumerator(_reader, _filter);
@@ -475,6 +492,11 @@ namespace SharpOS.Std.Pipes
                 while ((region = _reader.Next(region)) != null)
                 {
                     if (_filter != null && !_filter(region.Root))
+                    {
+                        region.Dispose();
+                        continue;
+                    }
+                    if (_edit != null && !_edit(region))
                     {
                         region.Dispose();
                         continue;
