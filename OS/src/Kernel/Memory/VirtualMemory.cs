@@ -42,7 +42,7 @@ namespace OS.Kernel.Memory
     internal static unsafe class VirtualMemory
     {
         private const ulong PageSize   = 0x1000UL;
-        private const ulong WindowBase = 0x0000500000000000UL;
+        internal const ulong WindowBase = 0x0000500000000000UL;
         private const ulong WindowSize = 0x100000000UL;          // 4 GiB VA
 
         private static ulong s_cursor = WindowBase;

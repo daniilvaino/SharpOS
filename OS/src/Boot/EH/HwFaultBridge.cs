@@ -212,17 +212,17 @@ namespace OS.Boot.EH
                     OS.PAL.SharpOSHost.SharpOSHostMemory.DumpHistoryFor(frame->Cr2);
                     Log.EndLine();
 
-                    // Faults at low addresses keep landing exactly 0x50000000000
-                    // below a region the runtime uses, which is what a code
-                    // pointer truncated to 32 bits looks like. Test that instead
-                    // of matching digits by eye: report the reconstructed
+                    // A fault at a low address can be a code pointer into the
+                    // runtime's window (4 GiB, so its low 32 bits are unique)
+                    // truncated to 32 bits. Test that instead of matching
+                    // digits by eye: report the reconstructed
                     // address, whether it is mapped, and whether anyone ever
                     // asked for it to be executable.
                     if (frame->Cr2 < 0x100000000UL)
                     {
-                        ulong recon = frame->Cr2 | 0x50000000000UL;
+                        ulong recon = frame->Cr2 | OS.Kernel.Memory.VirtualMemory.WindowBase;
                         Log.Begin(LogLevel.Info);
-                        Console.Write("  [trunc?] cr2|0x50000000000 = 0x");
+                        Console.Write("  [trunc?] cr2|window base = 0x");
                         Console.WriteHex(recon);
                         Console.Write(" mapped=");
                         bool mapped = OS.Kernel.Paging.X64PageTable.TryGetKernelLeafPte(recon, out ulong rpte);

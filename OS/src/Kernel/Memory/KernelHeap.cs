@@ -3,6 +3,20 @@ using OS.Kernel.Util;
 
 namespace OS.Kernel.Memory
 {
+    // The kernel's raw heap: kernel strings, the managed heap's segments,
+    // interface-dispatch caches, per-thread C++ catch stacks.
+    //
+    // Every block, used or free, sits on one list in address order inside
+    // its region; that list is what joins a freed block with its neighbours,
+    // and it is never searched. Free blocks are also on one of the bucket
+    // lists below, which is what an allocation searches.
+    //
+    // Before the buckets an allocation walked the address list from the head
+    // to the first free block big enough, and Free walked it again to check
+    // the pointer. The list only grows — pages are never handed back and the
+    // dispatch caches are never freed — so by the end of a battery it held
+    // about 0.8 million blocks and one allocation cost ~5 ms, 96-99 % of all
+    // samples (done/step202.md).
     internal static unsafe class KernelHeap
     {
         private const uint PageSize = 4096;
@@ -15,6 +29,11 @@ namespace OS.Kernel.Memory
         private static HeapBlock* s_tail;
         private static bool s_initialized;
 
+        // Lowest and highest address any region covers: a cheap first check
+        // in Free before a pointer is dereferenced as a block header.
+        private static ulong s_lowest;
+        private static ulong s_highest;
+
         private static uint s_heapPages;
 
         /// <summary>Pages the heap holds, free blocks included: it never gives any back.</summary>
@@ -25,9 +44,57 @@ namespace OS.Kernel.Memory
         private static uint s_coalesceCount;
         private static uint s_allocFailures;
 
+        // Blocks on the address list and how many of them are free; free
+        // blocks looked at while searching, over the life of the heap. The
+        // last one is the cost of allocating, and it is what the grow line
+        // prints: without it "faster" is a feeling.
+        private static uint s_blockCount;
+        private static uint s_freeBlocks;
+        private static ulong s_probeSteps;
+
         public static bool IsInitialized => s_initialized;
 
         internal static HeapBlock* FirstBlock => s_head;
+
+        // Free blocks, bucketed by payload size: bucket b holds sizes in
+        // [2^(4+b), 2^(5+b)) — 16..31, 32..63, and so on. Every block in a
+        // bucket above the request's own is larger than the request by
+        // construction, so its head fits without being measured; only the
+        // request's own bucket is searched, and only so far.
+        //
+        // The links live in the free block's payload (16 bytes at least, the
+        // minimum a block is ever given). Heads live in .bss, in a fixed-size
+        // struct: the heap starts in Phase 1, long before static
+        // initializers can run.
+        private const int BucketCount = 32;
+        private const int MaxSameBucketProbes = 8;
+
+        [System.Runtime.InteropServices.StructLayout(
+            System.Runtime.InteropServices.LayoutKind.Sequential,
+            Size = BucketCount * 8)]
+        private struct BucketHeadStorage { }
+        private static BucketHeadStorage s_buckets;
+
+        private struct FreeLinks
+        {
+            public HeapBlock* PrevFree;
+            public HeapBlock* NextFree;
+        }
+
+        private static HeapBlock** BucketHeads()
+            => (HeapBlock**)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_buckets);
+
+        private static FreeLinks* LinksOf(HeapBlock* block)
+            => (FreeLinks*)HeapBlockOps.GetPayload(block);
+
+        // 16..31 -> 0, 32..63 -> 1, ...
+        private static int BucketOf(uint size)
+        {
+            uint v = size >> 4;
+            int b = 0;
+            while (v > 1) { v >>= 1; b++; }
+            return b < BucketCount ? b : BucketCount - 1;
+        }
 
         public static bool Init()
         {
@@ -54,14 +121,12 @@ namespace OS.Kernel.Memory
                 return null;
 
             OS.Kernel.Threading.Preemption.Suppress();
-            void* result = AllocCore(size);
-            OS.Kernel.Threading.Preemption.Allow();
-            return result;
+            try { return AllocCore(size); }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
         }
 
         private static void* AllocCore(uint size)
         {
-
             uint requestedSize = AlignRequest(size);
             if (requestedSize == 0)
             {
@@ -71,7 +136,7 @@ namespace OS.Kernel.Memory
 
             while (true)
             {
-                HeapBlock* block = FindFirstFit(requestedSize);
+                HeapBlock* block = FindFit(requestedSize);
                 if (block != null)
                     return AllocateFromBlock(block, requestedSize);
 
@@ -105,7 +170,7 @@ namespace OS.Kernel.Memory
         private static void FreeCore(void* pointer)
         {
             HeapBlock* block = HeapBlockOps.FromPayload(pointer);
-            if (!ContainsBlock(block))
+            if (!LooksLikeBlock(block))
             {
                 Log.Write(LogLevel.Warn, "heap free ignored: unknown pointer");
                 return;
@@ -120,16 +185,46 @@ namespace OS.Kernel.Memory
             block->IsFree = 1;
             s_freeCount++;
 
+            // Free blocks are always joined as far as they go, so one step
+            // each way is all a newly freed block can need.
             HeapBlock* merged = block;
-            while (true)
+            HeapBlock* previous = merged->Prev;
+            if (previous != null && previous->IsFree != 0 && HeapBlockOps.AreAdjacent(previous, merged))
             {
-                HeapBlock* previous = merged;
-                merged = MergeWithPrevious(merged);
-                merged = MergeWithNext(merged);
-
-                if (merged == previous)
-                    break;
+                RemoveFree(previous);
+                Absorb(previous, merged);
+                merged = previous;
             }
+
+            HeapBlock* next = merged->Next;
+            if (next != null && next->IsFree != 0 && HeapBlockOps.AreAdjacent(merged, next))
+            {
+                RemoveFree(next);
+                Absorb(merged, next);
+            }
+
+            InsertFree(merged);
+        }
+
+        // A pointer the heap handed out: inside a region, aligned, and its
+        // neighbours on the address list point back at it. Replaces a walk
+        // from the head of the list to the block; a stray pointer into the
+        // middle of some block fails the back-links.
+        private static bool LooksLikeBlock(HeapBlock* block)
+        {
+            ulong address = (ulong)block;
+            if (address < s_lowest || address + HeapBlockOps.HeaderSize > s_highest)
+                return false;
+            if ((address & 7) != 0)
+                return false;
+
+            HeapBlock* previous = block->Prev;
+            HeapBlock* next = block->Next;
+            if (previous == null ? s_head != block : previous->Next != block)
+                return false;
+            if (next == null ? s_tail != block : next->Prev != block)
+                return false;
+            return true;
         }
 
         internal static void GetSummary(out HeapSummary summary)
@@ -161,12 +256,21 @@ namespace OS.Kernel.Memory
             s_head = null;
             s_tail = null;
             s_initialized = false;
+            s_lowest = ulong.MaxValue;
+            s_highest = 0;
             s_heapPages = 0;
             s_allocCount = 0;
             s_freeCount = 0;
             s_growCount = 0;
             s_coalesceCount = 0;
             s_allocFailures = 0;
+            s_blockCount = 0;
+            s_freeBlocks = 0;
+            s_probeSteps = 0;
+
+            HeapBlock** heads = BucketHeads();
+            for (int i = 0; i < BucketCount; i++)
+                heads[i] = null;
         }
 
         private static uint AlignRequest(uint size)
@@ -194,15 +298,38 @@ namespace OS.Kernel.Memory
             return pages;
         }
 
-        private static HeapBlock* FindFirstFit(uint requestedSize)
+        private static HeapBlock* FindFit(uint requestedSize)
         {
-            HeapBlock* current = s_head;
+            HeapBlock** heads = BucketHeads();
+            int own = BucketOf(requestedSize);
+
+            // The own bucket holds blocks on both sides of the request, so it
+            // is the only one that can be searched in vain: look a few deep.
+            HeapBlock* current = heads[own];
+            for (int probes = 0; current != null && probes < MaxSameBucketProbes; probes++)
+            {
+                s_probeSteps++;
+                if (current->Size >= requestedSize)
+                    return current;
+                current = LinksOf(current)->NextFree;
+            }
+
+            for (int b = own + 1; b < BucketCount; b++)
+            {
+                s_probeSteps++;
+                if (heads[b] != null)
+                    return heads[b];
+            }
+
+            // Nothing larger anywhere: the rest of the own bucket before
+            // asking for pages, so a fit deeper than the probe limit is not
+            // left behind while the heap grows past it.
             while (current != null)
             {
-                if (current->IsFree != 0 && current->Size >= requestedSize)
+                s_probeSteps++;
+                if (current->Size >= requestedSize)
                     return current;
-
-                current = current->Next;
+                current = LinksOf(current)->NextFree;
             }
 
             return null;
@@ -210,16 +337,66 @@ namespace OS.Kernel.Memory
 
         private static void* AllocateFromBlock(HeapBlock* block, uint requestedSize)
         {
+            RemoveFree(block);
+
             if (HeapBlockOps.CanSplit(block, requestedSize))
             {
                 HeapBlock* split = HeapBlockOps.Split(block, requestedSize);
                 if (block == s_tail)
                     s_tail = split;
+                s_blockCount++;
+                InsertFree(split);
             }
 
             block->IsFree = 0;
             s_allocCount++;
             return HeapBlockOps.GetPayload(block);
+        }
+
+        private static void InsertFree(HeapBlock* block)
+        {
+            HeapBlock** heads = BucketHeads();
+            int b = BucketOf(block->Size);
+            FreeLinks* links = LinksOf(block);
+            links->PrevFree = null;
+            links->NextFree = heads[b];
+            if (heads[b] != null)
+                LinksOf(heads[b])->PrevFree = block;
+            heads[b] = block;
+            s_freeBlocks++;
+        }
+
+        // Must run before the block's Size changes: the bucket is found from it.
+        private static void RemoveFree(HeapBlock* block)
+        {
+            FreeLinks* links = LinksOf(block);
+            if (links->PrevFree != null)
+                LinksOf(links->PrevFree)->NextFree = links->NextFree;
+            else
+                BucketHeads()[BucketOf(block->Size)] = links->NextFree;
+
+            if (links->NextFree != null)
+                LinksOf(links->NextFree)->PrevFree = links->PrevFree;
+
+            links->PrevFree = null;
+            links->NextFree = null;
+            s_freeBlocks--;
+        }
+
+        // Joins `right` into `left` on the address list; neither is on a
+        // bucket list at this point.
+        private static void Absorb(HeapBlock* left, HeapBlock* right)
+        {
+            left->Size += HeapBlockOps.HeaderSize + right->Size;
+            left->Next = right->Next;
+
+            if (right->Next != null)
+                right->Next->Prev = left;
+            else
+                s_tail = left;
+
+            s_blockCount--;
+            s_coalesceCount++;
         }
 
         private static bool AddRegion(uint pageCount)
@@ -271,6 +448,23 @@ namespace OS.Kernel.Memory
             s_tail = block;
             s_heapPages += pageCount;
             s_growCount++;
+            s_blockCount++;
+            if (regionBase < s_lowest)
+                s_lowest = regionBase;
+            if (regionBase + regionBytes > s_highest)
+                s_highest = regionBase + regionBytes;
+
+            // A region that starts where the previous one ended continues its
+            // free tail. Joined and on a bucket list before anything below can
+            // allocate again.
+            HeapBlock* previous = block->Prev;
+            if (previous != null && previous->IsFree != 0 && HeapBlockOps.AreAdjacent(previous, block))
+            {
+                RemoveFree(previous);
+                Absorb(previous, block);
+                block = previous;
+            }
+            InsertFree(block);
 
             // On the measurement channel, not the log's: this is a number for
             // whoever compares runs, and it was being painted over a
@@ -280,8 +474,19 @@ namespace OS.Kernel.Memory
             // eight times in one session of it. Same argument OutputRouting
             // already makes for [perf]: drawing a measurement is one more cost
             // inside the thing being measured.
+            //
+            // blocks/free: the address list and the bucket lists; probes:
+            // free blocks looked at by every allocation so far.
             PerfLine("[info] heap grow pages: ");
             PerfUInt(pageCount);
+            PerfLine(" blocks=");
+            PerfUInt(s_blockCount);
+            PerfLine(" free=");
+            PerfUInt(s_freeBlocks);
+            PerfLine(" allocs=");
+            PerfUInt(s_allocCount);
+            PerfLine(" probes=");
+            PerfULong(s_probeSteps);
             PerfLine("\r\n");
 
             // Periodically, what the heap is full OF. Growth alone says only
@@ -292,7 +497,6 @@ namespace OS.Kernel.Memory
             if (every != 0 && (s_growCount % every) == 0)
                 GcHeapCensus.Dump(12);
 
-            MergeWithPrevious(block);
             return true;
         }
 
@@ -302,9 +506,11 @@ namespace OS.Kernel.Memory
                 OS.Hal.Platform.WriteChar(text[i], OS.Hal.OutputChannel.Perf);
         }
 
-        private static void PerfUInt(uint value)
+        private static void PerfUInt(uint value) => PerfULong(value);
+
+        private static void PerfULong(ulong value)
         {
-            char* digits = stackalloc char[10];
+            char* digits = stackalloc char[20];
             int count = 0;
             do
             {
@@ -314,74 +520,6 @@ namespace OS.Kernel.Memory
 
             while (count > 0)
                 OS.Hal.Platform.WriteChar(digits[--count], OS.Hal.OutputChannel.Perf);
-        }
-
-        private static HeapBlock* MergeWithPrevious(HeapBlock* block)
-        {
-            if (block == null || block->Prev == null)
-                return block;
-
-            HeapBlock* previous = block->Prev;
-            if (previous->IsFree == 0 || block->IsFree == 0)
-                return block;
-
-            if (!HeapBlockOps.AreAdjacent(previous, block))
-                return block;
-
-            previous->Size += HeapBlockOps.HeaderSize + block->Size;
-            previous->Next = block->Next;
-
-            if (block->Next != null)
-                block->Next->Prev = previous;
-            else
-                s_tail = previous;
-
-            s_coalesceCount++;
-            // [trace] heap coalesce — silenced (per-coalesce log spam
-            // around child teardown); s_coalesceCount still tracks it.
-            // Log.Write(LogLevel.Trace, "heap coalesce");
-            return previous;
-        }
-
-        private static HeapBlock* MergeWithNext(HeapBlock* block)
-        {
-            if (block == null || block->Next == null)
-                return block;
-
-            HeapBlock* next = block->Next;
-            if (block->IsFree == 0 || next->IsFree == 0)
-                return block;
-
-            if (!HeapBlockOps.AreAdjacent(block, next))
-                return block;
-
-            block->Size += HeapBlockOps.HeaderSize + next->Size;
-            block->Next = next->Next;
-
-            if (next->Next != null)
-                next->Next->Prev = block;
-            else
-                s_tail = block;
-
-            s_coalesceCount++;
-            // [trace] heap coalesce — silenced (per-coalesce log spam
-            // around child teardown); s_coalesceCount still tracks it.
-            // Log.Write(LogLevel.Trace, "heap coalesce");
-            return block;
-        }
-
-        private static bool ContainsBlock(HeapBlock* block)
-        {
-            HeapBlock* current = s_head;
-            while (current != null)
-            {
-                if (current == block)
-                    return true;
-
-                current = current->Next;
-            }
-
-            return false;
         }
     }
 }

@@ -193,17 +193,26 @@ namespace OS.Kernel.Memory
             return (nint)target;
         }
 
-        // Allocates a single-slot InterfaceDispatchCache from KernelHeap,
-        // populates it with { thisMT, target }, and writes a non-tagged
-        // pointer to it into cell.m_pCache. Subsequent calls for the same
-        // call site with the same instance type skip the resolver via the
-        // shellcode fast path (test r11,3 == 0 → cmp + jmp).
+        // Points cell.m_pCache at a single-slot InterfaceDispatchCache
+        // { thisMT, target }. Subsequent calls for the same call site with the
+        // same instance type skip the resolver via the shellcode fast path
+        // (test r11,3 == 0 → cmp + jmp).
         //
         // The resolver runs for the whole session, from kernel and app
-        // threads alike. Publishing with one plain store is still safe — no
+        // threads alike. Publishing with one plain store is safe — no
         // cmpxchg16b needed — because a replaced cache is never freed: a
         // reader on the fast path that loaded the old pointer keeps reading
-        // valid memory. Each cache is 48 bytes of KernelHeap, kept for good.
+        // valid memory.
+        //
+        // Never freed, so never made twice: a cache is nothing but its four
+        // fields, and every cell that needs the same four shares one. A call
+        // site whose object type alternates used to allocate a fresh cache on
+        // every switch — 72 bytes of KernelHeap each, the bulk of that heap's
+        // growth in long runs (done/step202.md). Now the count is bounded by
+        // the distinct (interface, slot, type, target) the machine has seen.
+        // An app loaded again at the same slot reuses its earlier caches;
+        // another image there never matches, because the target differs.
+        //
         // On alloc failure the cell stays tagged; we'll just resolve again
         // next call (slow but correct).
         private static void PublishCache(
@@ -211,6 +220,99 @@ namespace OS.Kernel.Memory
             GcMethodTable* thisMT,
             void* target,
             in DispatchCellInfo info)
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
+            {
+                byte* shared = FindOrCreateCache(info.InterfaceType, (uint)info.InterfaceSlot << 2, thisMT, target);
+                if (shared != null)
+                    cell->Cache = (nuint)shared;
+            }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
+
+        // Open-addressed table of every cache ever made, keyed by content.
+        // Raw KernelHeap memory: the resolver can run before the managed
+        // heap exists and must not allocate managed objects mid-dispatch.
+        private static byte** s_caches;
+        private static uint s_cacheMask;
+        private static uint s_cacheCount;
+
+        /// <summary>Distinct dispatch caches made so far (each 48 bytes, kept for good).</summary>
+        public static uint CacheCount => s_cacheCount;
+
+        private static uint HashCache(GcMethodTable* iface, uint slotField, GcMethodTable* mt, void* target)
+        {
+            ulong h = (ulong)mt * 0x9E3779B97F4A7C15UL;
+            h ^= (ulong)target + 0x632BE59BD9B4E019UL + (h << 6) + (h >> 2);
+            h ^= (ulong)iface + slotField + (h << 6) + (h >> 2);
+            return (uint)(h ^ (h >> 32));
+        }
+
+        private static bool CacheMatches(byte* cache, GcMethodTable* iface, uint slotField, GcMethodTable* mt, void* target)
+            => *(GcMethodTable**)(cache + 0) == iface
+            && *(uint*)(cache + 8) == slotField
+            && *(GcMethodTable**)(cache + 32) == mt
+            && *(void**)(cache + 40) == target;
+
+        private static byte* FindOrCreateCache(GcMethodTable* iface, uint slotField, GcMethodTable* mt, void* target)
+        {
+            if (s_caches == null && !GrowCacheTable(1024))
+                return NewCache(iface, slotField, mt, target);
+
+            uint hash = HashCache(iface, slotField, mt, target);
+            uint i = hash & s_cacheMask;
+            while (s_caches[i] != null)
+            {
+                if (CacheMatches(s_caches[i], iface, slotField, mt, target))
+                    return s_caches[i];
+                i = (i + 1) & s_cacheMask;
+            }
+
+            byte* cache = NewCache(iface, slotField, mt, target);
+            if (cache == null)
+                return null;
+
+            s_caches[i] = cache;
+            s_cacheCount++;
+            if (s_cacheCount * 2 > s_cacheMask + 1)
+                GrowCacheTable((s_cacheMask + 1) * 2);
+            return cache;
+        }
+
+        // A failed grow keeps the old table: lookups stay correct, only
+        // denser. The old array goes back to KernelHeap — nothing reads the
+        // table outside this suppressed section.
+        private static bool GrowCacheTable(uint capacity)
+        {
+            byte** table = (byte**)KernelHeap.Alloc(capacity * (uint)sizeof(byte*));
+            if (table == null)
+                return false;
+            OS.Kernel.Util.Memory.Zero(table, capacity * (uint)sizeof(byte*));
+
+            uint mask = capacity - 1;
+            if (s_caches != null)
+            {
+                for (uint j = 0; j <= s_cacheMask; j++)
+                {
+                    byte* cache = s_caches[j];
+                    if (cache == null)
+                        continue;
+                    uint k = HashCache(*(GcMethodTable**)(cache + 0), *(uint*)(cache + 8),
+                                       *(GcMethodTable**)(cache + 32), *(void**)(cache + 40)) & mask;
+                    while (table[k] != null)
+                        k = (k + 1) & mask;
+                    table[k] = cache;
+                }
+                KernelHeap.Free(s_caches);
+            }
+
+            s_caches = table;
+            s_cacheMask = mask;
+            return true;
+        }
+
+        private static byte* NewCache(GcMethodTable* iface, uint slotField, GcMethodTable* mt, void* target)
         {
             // Layout (matches shellcode fast-path offsets):
             //   +0  InterfaceType (from CacheHeader)
@@ -224,22 +326,21 @@ namespace OS.Kernel.Memory
             const uint CacheSize = 48;
 
             byte* cache = (byte*)KernelHeap.Alloc(CacheSize);
-            if (cache == null) return;
+            if (cache == null) return null;
             OS.Kernel.Util.Memory.Zero(cache, CacheSize);
 
             // Low 2 bits of pointer must be 0 so shellcode's `test r11, 3`
             // sees this as a cache, not a tagged interface. KernelHeap
             // returns 8-byte-aligned pointers, so the tag bits are already 0.
             // Defensive check — abandon cache publish if alignment is off.
-            if (((nuint)cache & InterfaceDispatchCellFlags.CachePointerMask) != 0) return;
+            if (((nuint)cache & InterfaceDispatchCellFlags.CachePointerMask) != 0) return null;
 
-            *(GcMethodTable**)(cache + 0) = info.InterfaceType;                 // CacheHeader.InterfaceType
-            *(uint*)(cache + 8) = (uint)info.InterfaceSlot << 2;                // slot << 2 | flag=TypeAndSlotIndex(0)
+            *(GcMethodTable**)(cache + 0) = iface;                              // CacheHeader.InterfaceType
+            *(uint*)(cache + 8) = slotField;                                    // slot << 2 | flag=TypeAndSlotIndex(0)
             *(uint*)(cache + 24) = 1;                                           // Entries = 1
-            *(GcMethodTable**)(cache + 32) = thisMT;                            // entries[0].InstanceType
+            *(GcMethodTable**)(cache + 32) = mt;                                // entries[0].InstanceType
             *(void**)(cache + 40) = target;                                     // entries[0].TargetCode
-
-            cell->Cache = (nuint)cache;
+            return cache;
         }
 
         /// <summary>

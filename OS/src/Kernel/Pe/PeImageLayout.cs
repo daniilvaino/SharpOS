@@ -58,15 +58,32 @@ namespace OS.Kernel.Pe
             out ulong entryPoint,
             out uint sectionCount)
         {
+            if (file == null)
+            {
+                sizeOfImage = 0; imageBase = 0; entryPoint = 0; sectionCount = 0;
+                return false;
+            }
+            return TryReadLayout(new BufferFile(file), out sizeOfImage, out imageBase, out entryPoint, out sectionCount);
+        }
+
+        /// <summary>
+        /// The same, for a file read where it lies (<see cref="PointerRawFile"/>).
+        /// </summary>
+        public static bool TryReadLayout(
+            IRawFile raw,
+            out uint sizeOfImage,
+            out ulong imageBase,
+            out ulong entryPoint,
+            out uint sectionCount)
+        {
             sizeOfImage = 0;
             imageBase = 0;
             entryPoint = 0;
             sectionCount = 0;
 
-            if (file == null || file.Length < 0x40)
+            if (raw.Length < 0x40)
                 return false;
 
-            var raw = new BufferFile(file);
             var parsers = new NativeStructureParsers(raw);
 
             var nt = parsers.ImageNtHeaders;
@@ -94,11 +111,14 @@ namespace OS.Kernel.Pe
         /// written here is the image's BSS, and the caller owns making it zero.
         /// </summary>
         public static bool TryPlace(byte[] file, Span<byte> image)
+            => file != null && TryPlace(new BufferFile(file), image);
+
+        public static bool TryPlace(IRawFile raw, Span<byte> image)
         {
-            if (file == null || file.Length < 0x40)
+            if (raw.Length < 0x40)
                 return false;
 
-            var raw = new BufferFile(file);
+            long fileLength = raw.Length;
             var parsers = new NativeStructureParsers(raw);
 
             var nt = parsers.ImageNtHeaders;
@@ -114,11 +134,11 @@ namespace OS.Kernel.Pe
 
             // Headers: copy [0, SizeOfHeaders) from the file, clamped to both
             // the file length and the image buffer.
-            int hdr = (int)sizeOfHeaders;
-            if (hdr > file.Length) hdr = file.Length;
+            long hdr = sizeOfHeaders;
+            if (hdr > fileLength) hdr = fileLength;
             if (hdr > image.Length) hdr = image.Length;
             if (hdr > 0)
-                Copy(file, 0, image, 0, hdr);
+                Copy(raw, 0, image, 0, (int)hdr);
 
             // Sections: raw data -> VirtualAddress. Leave the rest zero (BSS +
             // inter-section padding).
@@ -132,10 +152,10 @@ namespace OS.Kernel.Pe
                     continue;
 
                 // Clamp the copy to the file (source) and image (destination).
-                if (ptr < 0 || ptr >= file.Length)
+                if (ptr < 0 || ptr >= fileLength)
                     continue;
-                if (ptr + rawSize > file.Length)
-                    rawSize = file.Length - ptr;
+                if (ptr + rawSize > fileLength)
+                    rawSize = fileLength - ptr;
                 if (va < 0 || va >= image.Length)
                     continue;
                 if (va + rawSize > image.Length)
@@ -143,15 +163,15 @@ namespace OS.Kernel.Pe
                 if (rawSize <= 0)
                     continue;
 
-                Copy(file, (int)ptr, image, (int)va, (int)rawSize);
+                Copy(raw, ptr, image, (int)va, (int)rawSize);
             }
 
             return true;
         }
 
-        private static void Copy(byte[] src, int srcOffset, Span<byte> dst, int dstOffset, int count)
+        private static void Copy(IRawFile src, long srcOffset, Span<byte> dst, int dstOffset, int count)
         {
-            new Span<byte>(src, srcOffset, count).CopyTo(dst.Slice(dstOffset, count));
+            src.AsSpan(srcOffset, count).CopyTo(dst.Slice(dstOffset, count));
         }
     }
 }

@@ -222,7 +222,7 @@ namespace OS.Kernel.Process
                 request[1] = PhysicalMemory.HandedOutPages - PhysicalMemory.FreedPages
                              - global::OS.Kernel.Memory.KernelHeap.HeapPages
                              - ProgramCache.Pages
-                             - paging.TablePages - paging.SpareTablePages
+                             - paging.TablePages   // spares included: counted when taken
                              - AppProcesses.RunningHeapPages();
                 request[2] = (ulong)AppProcesses.Running;
                 request[3] = (ulong)AppProcesses.Records;

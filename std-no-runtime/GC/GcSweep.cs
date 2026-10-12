@@ -68,7 +68,7 @@ namespace SharpOS.Std.NoRuntime
             }
         }
 
-        private static void EnsureInit()
+        internal static void EnsureInit()
         {
             if (s_initialized)
                 return;

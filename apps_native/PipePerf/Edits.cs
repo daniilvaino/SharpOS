@@ -49,21 +49,31 @@ namespace PipeApps
             for (int k = 0; k < sizes.Length; k++)
             {
                 Expando bag = Numbers(sizes[k]);
-                string key = "k" + (sizes[k] / 2).ToString();
                 RawRegion region = Received(bag, shapes);
                 View root = region.Root;
                 heap[k] = view[k] = long.MaxValue;
-                for (int w = 0; w <= Rounds; w++)
+
+                // Four keys spread over the entries, the best of them kept. One
+                // key made the result hang on where a single entry happened to
+                // land: under QEMU without acceleration some placements cost 3x
+                // for the same work (step203, a heap change that only moved
+                // objects). A search by name would be slow for every key.
+                int[] picks = { 0, sizes[k] / 4, sizes[k] / 2, sizes[k] - 1 };
+                for (int p = 0; p < picks.Length; p++)
                 {
-                    int n = w == 0 ? 20 : N;   // a warm-up round first
-                    Timer t = Timer.Start();
-                    for (int i = 0; i < n; i++) if (bag.ContainsKey(key)) sink++;
-                    long h = t.Stop("find_heap", n, false);
-                    t = Timer.Start();
-                    for (int i = 0; i < n; i++) sink += (int)root[key];
-                    long v = t.Stop("find_view", n, false);
-                    if (w > 0 && h < heap[k]) heap[k] = h;
-                    if (w > 0 && v < view[k]) view[k] = v;
+                    string key = "k" + picks[p].ToString();
+                    for (int w = 0; w <= Rounds; w++)
+                    {
+                        int n = w == 0 ? 20 : N;   // a warm-up round first
+                        Timer t = Timer.Start();
+                        for (int i = 0; i < n; i++) if (bag.ContainsKey(key)) sink++;
+                        long h = t.Stop("find_heap", n, false);
+                        t = Timer.Start();
+                        for (int i = 0; i < n; i++) sink += (int)root[key];
+                        long v = t.Stop("find_view", n, false);
+                        if (w > 0 && h < heap[k]) heap[k] = h;
+                        if (w > 0 && v < view[k]) view[k] = v;
+                    }
                 }
                 Console.WriteLine("[perf201] find_heap_" + sizes[k].ToString() + "_ns=" + heap[k].ToString()
                                   + " find_view_" + sizes[k].ToString() + "_ns=" + view[k].ToString());

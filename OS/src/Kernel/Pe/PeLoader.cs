@@ -33,11 +33,10 @@ namespace OS.Kernel.Pe
             if (!image.IsValid)
                 return false;
 
-            // Copy the raw file into a managed byte[] for the pure-transform
-            // flatten stage.
-            int fileLen = (int)image.Length;
-            byte[] file = new byte[fileLen];
-            new Span<byte>(image.Pointer, fileLen).CopyTo(new Span<byte>(file));
+            // Parsed where it lies: the caller's buffer stays put until we
+            // return. A managed copy here grew the kernel heap by a segment
+            // the size of the EXE on every launch (PointerRawFile).
+            var file = new PointerRawFile((byte*)image.Pointer, (int)image.Length);
             stage = 1;
 
             if (!PeImageLayout.TryReadLayout(file, out uint sizeOfImage32,

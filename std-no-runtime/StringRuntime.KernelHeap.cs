@@ -38,6 +38,36 @@ namespace SharpOS.Std.NoRuntime
             if (length < 0)
                 throw new System.OverflowException();
 
+            // NativeAOT intrinsic — reliable for all types including string.
+            // Confirmed in kernel context during SUPER-2 phase 0 recon.
+            void* methodTable = System.EETypePtr.EETypePtrOf<string>().ToPointer();
+
+            // In the managed heap whenever it can take one, so the collector
+            // reclaims it. Kernel strings used to live in KernelHeap for good:
+            // every formatted number, every Concat, never freed (step202).
+            //
+            // KernelHeap remains for the three moments the managed heap cannot
+            // be used: before it exists (Phase 1), inside its own critical
+            // section (a new segment comes from KernelHeap, whose periodic
+            // census prints numbers), and during a collection, which would
+            // sweep an object made behind the mark.
+            if (GcHeap.IsInitialized && !GcHeap.InAllocator && !GcMark.InProgress)
+            {
+                GcMethodTable* mt = (GcMethodTable*)methodTable;
+                ulong size = ((ulong)mt->BaseSize + (ulong)length * mt->ComponentSize + 7UL) & ~7UL;
+                if (size > GcHeap.MaxAllocationSize)
+                {
+                    GcHeap.NoteRefusedRequest(size);
+                    throw GcHeap.OutOfMemory();
+                }
+
+                // Zeroed by the allocator, length written with the header.
+                void* obj = GcHeap.AllocateArray((uint)size, methodTable, length);
+                if (obj == null)
+                    throw GcHeap.OutOfMemory();
+                return *(string*)&obj;
+            }
+
             if (!OS.Kernel.Memory.KernelHeap.IsInitialized)
             {
                 OS.Kernel.Panic.Fail("string allocated before the kernel heap exists");
@@ -54,10 +84,6 @@ namespace SharpOS.Std.NoRuntime
             void* raw = OS.Kernel.Memory.KernelHeap.Alloc((uint)bytes);
             if (raw == null)
                 throw GcHeap.OutOfMemory();
-
-            // NativeAOT intrinsic — reliable for all types including string.
-            // Confirmed in kernel context during SUPER-2 phase 0 recon.
-            void* methodTable = System.EETypePtr.EETypePtrOf<string>().ToPointer();
 
             *(void**)raw = methodTable;
             *(int*)((byte*)raw + 8) = length;

@@ -133,6 +133,16 @@ namespace SharpOS.Std.NoRuntime
         private static ulong s_segmentScanSteps;
 
         public static bool IsInitialized => s_initialized;
+
+        /// <summary>True while an allocation holds the heap's critical section.</summary>
+        /// <remarks>
+        /// Growing the heap can run code that allocates again — in the kernel,
+        /// a new segment comes from KernelHeap, whose periodic census formats
+        /// numbers into strings. A string runtime that allocates here checks
+        /// this and goes elsewhere rather than re-entering the heap mid-change.
+        /// </remarks>
+        public static bool InAllocator => s_inAllocator;
+        private static bool s_inAllocator;
         public static GcSegmentHeader* FirstSegment => s_firstSegment;
 
         // The counters below are read AROUND an allocation to measure what it
@@ -604,8 +614,10 @@ namespace SharpOS.Std.NoRuntime
             s_lastRequest = size;
 
             if (s_enterCritical != null) s_enterCritical();
+            s_inAllocator = true;
             void* allocated = AllocateRawCore(size);
             WriteHeader(allocated, methodTable, length, hasLength);
+            s_inAllocator = false;
             if (s_leaveCritical != null) s_leaveCritical();
 
             if (allocated != null)
@@ -638,10 +650,12 @@ namespace SharpOS.Std.NoRuntime
                 s_grownSinceCollect = 0;
 
                 if (s_enterCritical != null) s_enterCritical();
+                s_inAllocator = true;
                 s_growAfterCollect = true;
                 allocated = AllocateRawCore(size);
                 s_growAfterCollect = false;
                 WriteHeader(allocated, methodTable, length, hasLength);
+                s_inAllocator = false;
                 if (s_leaveCritical != null) s_leaveCritical();
             }
 
@@ -711,6 +725,7 @@ namespace SharpOS.Std.NoRuntime
                     if (fresh == null)
                         return null;
 
+                    RetireTail(s_currentSegment);
                     s_currentSegment->Next = fresh;
                     s_currentSegment = fresh;
                     s_segmentCount++;
@@ -733,6 +748,38 @@ namespace SharpOS.Std.NoRuntime
                 p[i] = 0;
 
             return result;
+        }
+
+        // The segment being left behind still has [Current, End) unused, and
+        // every heap walk — sweep, census, rebuild — stops at Current. Left
+        // as it was, that tail was never seen again: in the kernel, whose
+        // segments are never released, about 95 MiB over a battery
+        // (done/step202.md). It becomes a walkable free block instead, and a
+        // reusable one when it can hold the next-pointer.
+        private static void RetireTail(GcSegmentHeader* seg)
+        {
+            uint tailBytes = (uint)(seg->End - seg->Current) & ~(ObjectAlignment - 1);
+            if (tailBytes < ObjectAlignment)
+                return;
+
+            // The marker's method table is filled by the first sweep; a tail
+            // can be retired before any collection has run.
+            GcSweep.EnsureInit();
+
+            nint tailPtr = seg->Current;
+            GcObject* tail = (GcObject*)tailPtr;
+            tail->RawMethodTable = GcSweep.FreeObjectMt;
+            tail->Length = tailBytes - 12;      // ComputeSize == tailBytes
+            seg->Current += (nint)tailBytes;
+
+            if (tailBytes >= MinFreeBlockSize)
+            {
+                nint* heads = BucketHeads();
+                int bucket = BucketOf(tailBytes);
+                *(nint*)(tailPtr + FreeNextOffset) = heads[bucket];
+                heads[bucket] = tailPtr;
+                s_freelistNodes++;
+            }
         }
 
         // Own size class first, then the smallest larger one.

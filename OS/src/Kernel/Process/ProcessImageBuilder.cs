@@ -115,6 +115,7 @@ namespace OS.Kernel.Process
 
                     Log.EndLine();
                     Log.Write(LogLevel.Warn, "process build: pager map failed for stack page");
+                    global::OS.Kernel.PhysicalMemory.FreePage(physicalPage);
                     UnmapStack(processImage.StackBase, processImage.MappedStackPages);
                     return false;
                 }
@@ -145,12 +146,16 @@ namespace OS.Kernel.Process
             return true;
         }
 
+        // Gives the pages back too: a failed build used to unmap the stack
+        // and keep its pages, up to 1 MiB per failure.
         private static void UnmapStack(ulong stackBase, ulong mappedStackPages)
         {
             ulong currentVirtual = stackBase;
             for (ulong i = 0; i < mappedStackPages; i++)
             {
-                Pager.Unmap(currentVirtual);
+                bool mapped = Pager.TryQuery(currentVirtual, out ulong physicalPage, out _);
+                if (Pager.Unmap(currentVirtual) && mapped && physicalPage != 0)
+                    global::OS.Kernel.PhysicalMemory.FreePage(physicalPage);
                 if (i + 1 < mappedStackPages)
                     currentVirtual += PageSize;
             }
