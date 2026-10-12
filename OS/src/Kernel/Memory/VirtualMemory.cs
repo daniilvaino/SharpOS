@@ -7,7 +7,8 @@ namespace OS.Kernel.Memory
     //
     // Demand-mapped: Reserve hands out a contiguous VA window slice with NO
     // physical backing; Commit pulls frames from PhysicalMemory and maps them
-    // into the ACTIVE (firmware) PML4 via X64PageTable.MapKernel. This is what
+    // into the ACTIVE PML4 (the pager's clone of the firmware tables) via
+    // X64PageTable.MapKernel. This is what
     // CoreCLR's region GC expects — a large cheap VA reservation, lazily
     // committed per region. (Old path routed VirtualAlloc→kernel GcHeap which
     // commit-on-alloc'd everything → degenerate gc_heap → IsHeapPointer=false
@@ -18,12 +19,15 @@ namespace OS.Kernel.Memory
     // pointers live in the lower half (Linux/Windows ASLR never sets bit 63).
     // A higher-half window (0xFFFF9000…) gets 32-bit-truncated + sign-extended
     // by those paths → non-canonical → #GP. Lower half matches every real
-    // CoreCLR deployment. PML4[160], clear of identity RAM (0..0x2000_0000),
-    // kernel image (~0x1C00_0000), pager-test (PML4[64]), DirectMapBase.
+    // CoreCLR deployment. PML4[160], clear of identity-mapped RAM and the
+    // kernel image (both in the low PML4 entries; on a 512 MiB QEMU guest
+    // that is 0..0x2000_0000 with the image near 0x1C00_0000), pager-test
+    // (PML4[64]), DirectMapBase.
     //
-    // RetainVM=true semantics: Decommit/Release are no-ops (PhysicalMemory is
-    // bump-only — no frame reclaim anyway; keeping mappings is correct &
-    // simplest). Single-threaded: no locking.
+    // Decommit/Release unmap the committed pages and return their frames via
+    // PhysicalMemory.FreePage; the VA itself is not recycled (the reserve
+    // cursor only moves forward). Reserve/Commit/Decommit run with
+    // preemption suppressed.
     //
     // Demand-fault completion: the region GC touches its reserved RegionRange
     // (region metadata, card / brick / mark tables) at a commit granularity
@@ -63,8 +67,9 @@ namespace OS.Kernel.Memory
             => WindowBase + WindowSize - PageSize;
 
         // #PF (not-present) demand path: back the single 4 KiB page covering
-        // `faultVa` with a frame and map it RW (executable — NX is globally
-        // off, so JIT-code pages in the window resolve here too). Returns
+        // `faultVa` with a frame and map it RW without the NX bit (executable,
+        // so JIT-code pages in the window resolve here too; EFER.NXE is left
+        // as the firmware set it). Returns
         // false if `faultVa` is outside the window, the page is already
         // mapped (→ genuine protection fault, let the panic path handle it),
         // or no frame is available (true OOM). Caller IRETQ-resumes on true.
@@ -80,8 +85,9 @@ namespace OS.Kernel.Memory
 
             if (!X64PageTable.MapKernel(p, pa, PageFlags.Present | PageFlags.Writable))
             {
-                // Single-threaded: the only MapKernel failure here is an
-                // intermediate-table alloc failure (OOM) — already not mapped.
+                // We run in the #PF handler with interrupts off, so nobody
+                // maps this page meanwhile: the only MapKernel failure here
+                // is an intermediate-table alloc failure (OOM).
                 if (!X64PageTable.TryQueryKernel(p, out _, out _)) return false;
             }
             // No TLB flush needed: the faulting access tripped because the

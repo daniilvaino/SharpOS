@@ -209,10 +209,10 @@ namespace SharpOS.Std.NoRuntime
         }
 
         // Forward scan of the own image for the RTR header — bounded by
-        // SizeOfImage from the PE headers at the fixed base, so it never
+        // SizeOfImage from the PE headers at ImageBase, so it never
         // touches unmapped pages. (The kernel scans outward from an anchor
         // MT instead; a forward scan is enough here because the image base
-        // is a link-time constant.)
+        // is known — AppRuntime sets it from the startup block.)
         internal static byte* FindReadyToRunHeader()
         {
             byte* imageBase = (byte*)ImageBase;

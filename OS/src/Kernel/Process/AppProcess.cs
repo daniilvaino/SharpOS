@@ -135,7 +135,8 @@ namespace OS.Kernel.Process
         // thunks (112 TiB). They were at 4 GiB until the first run on the
         // laptop: with 7 GiB of RAM the firmware had put the kernel itself at
         // 0x1_4000_0000, and the shell's first child was loaded over it.
-        // An image with its 64 MiB heap pool takes about 70 MiB of a range.
+        // The image takes at most 64 MiB of a range; the heap and the thread
+        // stacks have their own parts of it, laid out below.
         public const ulong ImageRegionBase = 0x0000200000000000UL;
         public const ulong ImageRegionStride = 0x0000000040000000UL;
 

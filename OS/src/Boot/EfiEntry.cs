@@ -38,7 +38,7 @@ namespace OS.Boot
             // the still-active boot stack region as "Usable" and hand
             // its pages out to KernelHeap / GC, leading to silent
             // overwrites of GC object m_pMT fields. See
-            // done/step104.md (BootStackSwitch) and pal-minimal-audit.md.
+            // done/step104.md (BootStackSwitch).
             //
             // Activate() never returns — the continuation calls
             // KernelMain.Start and then Platform.Shutdown/Halt on the

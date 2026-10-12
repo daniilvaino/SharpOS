@@ -1,5 +1,6 @@
 // GcMemorySource backed by the kernel's KernelHeap allocator.
-// Linked into OS.csproj only. Apps get a different backend (static pool).
+// Linked into OS.csproj only. Apps get a different backend
+// (GcMemorySource.AppStatic.cs: pages committed on demand, given back).
 
 namespace SharpOS.Std.NoRuntime
 {

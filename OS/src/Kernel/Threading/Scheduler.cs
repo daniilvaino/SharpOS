@@ -4,12 +4,12 @@ using OS.Kernel;
 
 namespace OS.Kernel.Threading
 {
-    // Phase E4 cooperative scheduler. Round-robin runnable queue, single
-    // CPU, no preemption — threads explicitly call Yield/Exit to relinquish.
+    // Round-robin scheduler, single CPU. Threads give up the CPU with
+    // Yield/Exit, and the timer tick preempts them (Preemption.OnTick).
     //
     // The boot thread is wrapped on Init so it has a ContextBlock that
-    // CoopSwitch can save into; its stack stays unowned (UEFI/loader did
-    // the allocation, we don't free).
+    // CoopSwitch can save into; its stack is BootStackPool (4 MiB in .bss,
+    // no guard page), which is never freed.
     //
     // Spawned threads get a fresh stack via PhysicalMemory.AllocPages
     // (page-aligned, identity-mapped VA == PA) and a synthetic initial
@@ -17,7 +17,6 @@ namespace OS.Kernel.Threading
     // function. Initial FP state is snapshotted from the current thread.
     internal static unsafe class Scheduler
     {
-        private const uint ContextBlockBytes = 528;     // 16 (RSP + reserved) + 512 fxsave
         private const uint FxsaveAreaOffset  = 0x10;
         private const uint DefaultStackBytes = 16 * 4096;  // 64 KiB
 
@@ -950,8 +949,8 @@ namespace OS.Kernel.Threading
             // any access past StackBase #PFs cleanly with CR2 in the
             // guard range and the trap handler reports stack overflow
             // (HwFaultBridge.cs) instead of letting it walk into the
-            // adjacent heap object. The boot thread's UEFI stack has
-            // no guard (we don't own that allocation).
+            // adjacent heap object. The boot thread's stack
+            // (BootStackPool in .bss) has no guard.
             uint pageCount = (stackBytes + 4095) / 4096;
             uint totalPages = pageCount + 1;
             ulong phys = PhysicalMemory.AllocPages(totalPages);

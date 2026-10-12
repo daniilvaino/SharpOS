@@ -11,19 +11,17 @@ namespace OS.Kernel.Threading
         Zombie  = 2,    // all threads gone, exit code captured, awaiting reap
     }
 
-    // Phase E7 -- logical process container. NO MMU isolation (single
-    // address space cooperative model); the Process serves as:
+    // Phase E7 -- logical container for kernel threads. NO MMU isolation
+    // (single address space); the Process serves as:
     //   1. PID + diagnostic name.
     //   2. Owner of one or more kernel.Thread instances (singly-linked
     //      via Thread.NextInProcess so a process can iterate its
     //      threads on exit).
     //   3. Exit-code rendezvous + state machine.
-    //   4. Future home for the handle table (events / files / etc.).
     //
-    // Real concurrent execution at the SAME virtual address (e.g., two
-    // apps linked at the same image base) requires per-process CR3 -- not
-    // landed in E7. For now Process is the abstraction; apps at the
-    // same VA still serialise at the launcher level.
+    // Only ProcessProbe launches these. Application processes are
+    // OS.Kernel.Process.AppProcess: relocated PE images, each in its own
+    // 1 GiB slot of the shared address space (AppProcesses).
     internal unsafe class Process
     {
         public uint Id;

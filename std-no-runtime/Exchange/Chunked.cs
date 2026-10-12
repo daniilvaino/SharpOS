@@ -4,9 +4,11 @@ namespace SharpOS.Std.Exchange
 {
     /// <summary>
     /// A growable array in pieces of 8192 elements (step195): the buffers of
-    /// the region writer and reader grow with the largest graph they see, and
-    /// an app's heap is a pool cut into 256 KiB segments — past a few hundred
-    /// thousand bytes nothing fits in one piece once the pool is carved.
+    /// the region writer and reader grow with the largest graph they see.
+    /// Past the first piece, growing adds pieces and never copies the
+    /// elements already there, and no single array is larger than one piece:
+    /// a big buffer does not need one large contiguous object (in an app,
+    /// a segment of its own counted against the heap budget).
     /// Indexing is a shift and a mask.
     /// </summary>
     public sealed class Chunked<T>

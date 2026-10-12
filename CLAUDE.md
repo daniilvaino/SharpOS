@@ -26,7 +26,7 @@ SharpOS — **experimental unikernel целиком на C#**, собирает�
 
 - **`docs/nativeaot-nostd-kernel-limits.md`** — живой реестр известных ограничений NoStdLib среды: что работает, что нет, workarounds, причины. **Читать перед любой нетривиальной задачей.**
 - **`plan.md`** — супер-задачи проекта (SUPER-1…SUPER-12) с критериями готовности.
-- **`done/stepNN.md`** — разбор завершённых шагов с архитектурой, трассами ошибок, файлами. Последний на сегодня: `done/step174.md` (ожидания блокируются в ядре вместо `Sleep(1)`-опроса, пул задач, потоки приложения умирают вместе с ним; AOT-задача 116 → 0.3 мкс на тёплом пуле). До него `done/step173.md` — тик 1000 Гц и чистая сессия для замеров, `done/step172.md` — железо ноутбука и ПК. Базовая прошивка проекта собрана в `done/step041..step090` (EH/GC/threading/CoreCLR-host), последующие — bring-up конкретных подсистем.
+- **`done/stepNN.md`** — разбор завершённых шагов с архитектурой, трассами ошибок, файлами. Последний на сегодня: `done/step201.md` (умный Expando, правки на месте, KQL потоком). Процессы и трубы — `done/step194..197.md`, SharpLibm — `done/step198.md`. Базовая прошивка проекта собрана в `done/step041..step090` (EH/GC/threading/CoreCLR-host), последующие — bring-up конкретных подсистем.
 - **`OS/src/Boot/BootSequence.cs`** — single source of truth для kernel boot ordering. Phase0…Phase5 с явными pre/post conditions. `Kernel.cs` — пустой shell, делегирует сюда. См. `docs/boot-order.md`.
 - **`OS/src/Kernel/Diagnostics/Probes.cs`** — central registry compile-time `const bool` toggles для всех boot-time probes/smoke-тестов. Отключённые probes elim'ятся ILC'ом.
 - **`gc-experiment/dotnet-runtime/src/coreclr/nativeaot/`** — снимок NativeAOT runtime'а для reference при порте helpers.
@@ -108,8 +108,9 @@ dotnet/runtime», только источник шире. Самописный �
 порт `ClassConstructorRunner`, снятый флаг ILC `--resilient`, материализация
 GC-статики (`GcStaticsMaterializer`).
 
-**Что осталось:** материализация идёт **поздно**, после ACPI/HPET. Поэтому в коде,
-исполняющемся на самом раннем boot'е (баннер, heap init, exec-стабы), статиков
+**Что осталось:** материализация идёт в Phase 2, сразу после `GcHeap.Init`
+(`BootSequence.Phase2_Runtime`). Поэтому в коде, исполняющемся раньше (баннер,
+heap init, exec-стабы), статиков
 с инициализацией по-прежнему нельзя — там факт-property (`public static T Default
 => new T();`) или данные inline в методе. В приложениях то же делает
 `GcStaticsInit.Materialize()` из `AppRuntime.Initialize`.

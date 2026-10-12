@@ -70,7 +70,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)AppThreads.cs"           Link="sdk\AppThreads.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppConsole.cs"           Link="sdk\AppConsole.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppGC.cs"                Link="sdk\AppGC.cs" />
-    <!-- What fills the app's fixed 64 MiB pool, reported when it takes a new
+    <!-- What fills the app's heap, reported when it takes a new
          segment. Polled from the idle loop, never from the allocator. -->
     <Compile Include="$(MSBuildThisFileDirectory)AppHeapCensus.cs"        Link="sdk\AppHeapCensus.cs" />
     <!-- Key-to-frame time, measured at the main loop's own boundaries. The

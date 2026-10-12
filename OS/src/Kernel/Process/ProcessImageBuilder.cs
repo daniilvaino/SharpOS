@@ -19,26 +19,9 @@ namespace OS.Kernel.Process
         // to fault on, an overrun ran on into whatever was mapped there.
         private const uint DefaultStackPages = (uint)(AppProcesses.MainStackBytes / 4096);
 
-        // One stack region per nesting level, because a parent's stack stays
-        // mapped the whole time its child runs — it is what the kernel is
-        // still executing on. Two fixed addresses were enough while only one
-        // level of nesting existed; a third app down the chain would have
-        // landed on its parent's stack.
-        //
-        // The stride is enormous next to the 32 KiB a stack actually uses, and
-        // deliberately so: these are addresses, not memory, and the distance
-        // makes an overrun fault instead of quietly reaching the neighbour.
-        public const ulong StackRegionStride = 0x0000004000000000UL;
-        public const ulong DefaultStackMappedTop = StackRegionStride;
-
-        /// <summary>
-        /// Stack top for an app at the given nesting depth: 0 is the app the
-        /// kernel starts, each nested launch adds one. Depths 0 and 1 keep the
-        /// addresses they had when they were named constants.
-        /// </summary>
-        public static ulong StackMappedTopForDepth(uint depth)
-            => DefaultStackMappedTop + (ulong)depth * StackRegionStride;
-
+        // The caller passes the stack top: the main thread's window at the top
+        // of the process's slot (AppProcesses.StackTopForSlot), with nothing
+        // mapped below the stack inside its 4 MiB window.
         public static bool TryBuild(
             ref LoadedImage loadedImage,
             ulong markerVirtualAddress,

@@ -10,9 +10,8 @@
 //   Array  : [MethodTable*](8)[Length(4)]    — BaseSize + Length*ComponentSize
 //   String : same as Array (NativeAOT treats string as an array in this path)
 //
-// Signatures copied from portable.cpp. Linked into OS.csproj (kernel) only
-// for phase 3; apps keep C-stub RhNewString until phase 4 when we migrate
-// them off.
+// Signatures copied from portable.cpp. Linked into the kernel and into apps
+// alike (Std.props); each allocates from its own GcHeap.
 
 using System;
 using System.Runtime;

@@ -81,15 +81,16 @@ namespace OS.PAL.SharpOSHost
             return 0;
         }
 
-        // Executable memory allocation via UEFI BootServices->AllocatePages with
-        // type EfiLoaderCode. Returns 4 KiB-aligned RX pages even when firmware
-        // enforces strict W^X. CoreCLR JIT needs to first WRITE generated code
-        // and then EXECUTE it — i.e. full RWX. EfiLoaderCode gives RX only,
-        // so after allocation we walk the active UEFI PML4 и flip the W bit
-        // (preserving NX=0) на каждой странице.
+        // Executable memory allocation. Before ExitBootServices: UEFI
+        // BootServices->AllocatePages with type EfiLoaderCode. Returns 4 KiB-
+        // aligned RX pages even when firmware enforces strict W^X. CoreCLR JIT
+        // needs to first WRITE generated code and then EXECUTE it — i.e. full
+        // RWX. EfiLoaderCode gives RX only, so after allocation we walk the
+        // active PML4 и flip the W bit (preserving NX=0) на каждой странице.
         //
-        // BootServices remains valid (kernel never calls ExitBootServices) →
-        // allocation works for the SharpOS lifetime. Pages are never freed.
+        // After ExitBootServices (the default boot calls it, see
+        // ExitBootServicesProbe) the pages come from PhysicalMemory instead.
+        // Pages are never freed.
         [RuntimeExport("SharpOSHost_AllocExecutable")]
         public static void* AllocExecutable(ulong size)
         {

@@ -4,12 +4,11 @@ namespace SharpOS.AppSdk
 {
     // What is filling an application's heap.
     //
-    // The app heap is a fixed 64 MiB pool in the image's .bss
-    // (GcMemorySource.AppStatic): blocks are handed out by bumping a cursor
-    // and never returned. AppGC reclaims inside the segments it already has,
-    // but a growing LIVE set needs new ones, and when the pool runs dry the
-    // next allocation throws out of memory — at whichever innocent call site
-    // asked first.
+    // The app heap takes pages from the kernel as it grows, up to a budget
+    // (GcMemorySource.AppStatic, HeapBudget). AppGC reclaims inside its
+    // segments and gives empty ones back, but a growing LIVE set needs new
+    // ones, and when the budget runs out the next allocation throws out of
+    // memory — at whichever innocent call site asked first.
     //
     // That is what a launcher walked around for a few minutes does: it slows
     // as collections grow frequent and useless, then dies somewhere in a

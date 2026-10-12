@@ -2,7 +2,7 @@
 
 Живой документ. Перечень managed-паттернов C#, которые **не работают** или работают с оговорками в **самом ядре SharpOS** (NativeAOT **8.0.27 / RTR major 9** + `NoStdLib=true` + наш `MinimalRuntime` без полной BCL; бампнут с 7.0.20 в step130 — вся батарея проб зелёная под ILC 8, кроме `EnumToString`).
 
-**Область применения:** код ядра (`OS/`) **и** свободностоящих PE-приложений (`apps_native/`) — с step141 они компилят тот же std, поэтому карта у них общая, а немногочисленная app-специфика помечена по месту. ELF-ярус удалён; [`nativeaot-nostd-elf-limits.md`](nativeaot-nostd-elf-limits.md) оставлен как исторический снимок. У stock CoreCLR-hosted кода ещё другая поверхность — см. [`coreclr-hosted-limits.md`](coreclr-hosted-limits.md). Общий обзор всех трёх tier'ов с компаративной таблицей — в [`README.md`](../README.md).
+**Область применения:** код ядра (`OS/`) **и** свободностоящих PE-приложений (`apps_native/`) — с step141 они компилят тот же std, поэтому карта у них общая, а немногочисленная app-специфика помечена по месту. ELF-ярус удалён (step137). У stock CoreCLR-hosted кода ещё другая поверхность — см. [`coreclr-hosted-limits.md`](coreclr-hosted-limits.md). Общий обзор всех трёх tier'ов с компаративной таблицей — в [`README.md`](../README.md).
 
 Все пункты проверены на практике через `OS/src/Kernel/Diagnostics/NativeAotProbe.cs` — там живут минимальные repro-ы. Если что-то из этого списка понадобится для конкретной задачи — сначала убеждаемся что работаем через workaround, потом принимаем решение: либо оставить ограничение, либо дописать недостающий helper.
 
@@ -31,7 +31,7 @@ public static T Default => s_default;
 2. **Drop `--resilient` ILC flag** — без этого ILC молча подставляет fallback stub'ы (sentinel `0xFFFFF0000000000E`) вместо нашего runner'а. CSproj `DropResilient` MSBuild target пере-эмитит `OS.ilc.rsp` без флага между `WriteIlcRspFileForCompilation` и `IlcCompile`.
 3. **GC statics materialization** — `OS/src/Kernel/Memory/GcStaticsMaterializer.cs`. Port `StartupCodeHelpers.InitializeStatics`: walks `ReadyToRunSectionType.GCStaticRegion` (id=201), для каждого Uninitialized entry аллоцирует объект через `RhpNewFast`-equivalent, копирует preInit blob в raw data, заменяет tagged pointer на object reference. Без неё canonical pattern с implicit cctor крашится с `#GP` (sentinel `0xFFFF000000000010`) — ILC's TypePreinit interpreter эмитит descriptor cell, но без runtime materialization она остаётся unresolved.
 
-Ограничение текущего setup: materialization runs **поздно** в boot (после ACPI/HPET). Для использования `static readonly T x = new T()` в коде, который **выполняется на самом раннем boot'е** (banner, heap init, exec stubs), нужен step 42 — переместить materialization сразу после `GcHeap.Init()`. До этого момента continued использовать `""` literal или factory property.
+Материализация идёт в Phase 2, сразу после `GcHeap.Init`, `PrepareOutOfMemory`, `NativeAotModuleInit` и таблицы `.pdata` (`BootSequence.Phase2_Runtime`). Код, исполняющийся раньше (баннер, инициализация кучи, exec-стабы), статиков с инициализацией использовать не может — там литерал `""` или factory-property. Приложения материализуют в `AppRuntime.Initialize` (`GcStaticsInit`).
 
 ### ✅ Explicit static cctor работает
 
@@ -186,7 +186,7 @@ Probe `shared-gen iface call: ok val=808` подтверждает end-to-end р
 
 **Риски:**
 - Unwind info managed wrapper не синхронна с overwrite-нутым телом. Нерелевантно пока нет exception engine.
-- Cache leak при polymorphism (MT меняется) — старые single-slot caches в `KernelHeap`. Допустимо для short workloads.
+- Cache leak при polymorphism (MT меняется) — старые single-slot caches (48 Б + 24 заголовка) в `KernelHeap`, не освобождаются никогда, в том числе после выхода процесса. **Главный источник длины списка KernelHeap в длинных прогонах**: KQLBABY 4,9 с на свежей загрузке → 188 с в конце батареи step201 (разбор — `done/step202.md`).
 - Real HW с W^X: прямая запись в .text не пройдёт, понадобится alias-map через pager root + CR3 switch. Not blocking для QEMU/OVMF.
 
 **Что откладываем:**
@@ -629,7 +629,7 @@ Milestone-1 срез [PeNet](https://github.com/secana/PeNet) (Apache-2.0, `vend
 
 **Kernel execute-side:** `PeLoader.TryLoad(MemoryBlock)` — flatten → map contiguous phys→VA@ImageBase (RWX) → blit → `LoadedImage` → тот же `ProcessImageBuilder`+`JumpStub`. Проверка `MZ` в `AppServiceBuilder` (не PE — `Unsupported`); лаунчер при загрузке грузит `LauncherBoot` (до step171 — `ElfValidation`). **JumpStub entry-ABI**: startup block кладётся в **RCX** (Win64 arg0), не RDI (SysV-legacy от ELF) — иначе win64 PE-апп читает адрес entry как startup → #GP.
 
-**Build-side (без WSL):** freestanding win-x64 PE через `dotnet publish -r win-x64` (рецепт в app-csproj, gated win-x64): `/ENTRY:SharpAppBootstrap /SUBSYSTEM:NATIVE /BASE:0x400000 /FIXED /NODEFAULTLIB` (с step194 — `/BASE:0x100000000` без `/FIXED`: образ перемещаемый) + снятие SDK-рантайма (`ExcludeNativeAotRuntime`: `Runtime.WorkstationGC`/`VxsortEnabled`/`bootstrapper.obj`) + `DebuggerSupport=false` + `IlcDehydrate=false` + `__security_cookie` через CoffStub.Generator + `__managed__Startup` no-op стаб. Апп на net8.0. HelloSharpFs исполнен на bare metal, TUI-файлпикер видит `.EXE`, self-launch с nested-лимитом. ELF выпилен из app-batch (kernel ELF-файлы — Stage B, пока живут unused).
+**Build-side (без WSL):** freestanding win-x64 PE через `dotnet publish -r win-x64` (рецепт в app-csproj, gated win-x64): `/ENTRY:SharpAppBootstrap /SUBSYSTEM:NATIVE /BASE:0x400000 /FIXED /NODEFAULTLIB` (с step194 — без `/FIXED`, образ перемещаемый; сейчас `/BASE:0x200000000000` = слот 0) + снятие SDK-рантайма (`ExcludeNativeAotRuntime`: `Runtime.WorkstationGC`/`VxsortEnabled`/`bootstrapper.obj`) + `DebuggerSupport=false` + `IlcDehydrate=false` + `__security_cookie` через CoffStub.Generator + `__managed__Startup` no-op стаб. Апп на net8.0. HelloSharpFs исполнен на bare metal, TUI-файлпикер видит `.EXE`, self-launch с nested-лимитом. ELF выпилен из app-batch (kernel ELF-файлы — Stage B, пока живут unused).
 
 ### 🟡 Процессы: несколько приложений сразу (step194)
 
@@ -693,7 +693,7 @@ IST1); куча приложения не в образе — страницы �
 | `List<T>.Contains`, `Dictionary.TryGetValue`, `EqualityComparer<int>.Default.Equals` | ✅ (step139) | `DefaultComparer.Equals` → `x is IEquatable<T>` (isinst) + `eq.Equals(y)` (dispatch) через shared kernel-мост |
 | `throw`/`catch`, `try/finally`, finally-on-unwind, catch-by-base, `e.Message`, multi-catch | ✅ (step140) | app `throw` → kernel `RhpThrowEx` (handoff) → `DispatchEx` идёт по кадрам аппы через её `.pdata` (multi-image function-table) → апп catch/finally funclet. **step197:** throw из finally, вызванного на обычном пути (выход из `foreach`/`using`), возобновлял catch того же метода с кадром фанклета — итератор разматывал фанклет по unwind info корня; теперь по своей, клаузы родителя до фанклета пропускаются (DATATEST 12–15) |
 | `GC.Collect` при нескольких потоках | 🟡 (step169) | `AppGC` берёт у ядра обход корней: стек собирающего потока, стеки остальных (`KernelGC.MarkOtherThreadStacks`) и сквозь переходники служб (`TryUnwindServiceThunk`) — спящий поток стоит внутри `Sleep`. До step169 объект, живой только у другого потока, освобождался. AotTests «other thread's stack roots survive collect». **step175:** обход читал только прерываемые диапазоны `GcInfo`, а таблицу точек безопасности пропускал не читая — кадр на адресе возврата (то есть почти любой кадр обхода) объявлялся неразметимым, и его локальные ссылки подметались живыми. Добавлены `FindSafePoint` + разбор набора живых слотов (косвенная таблица с RLE и простая битовая карта) и сдвиг смещения на −1 внутрь инструкции `call`. Касается обоих сборщиков — обходчик общий. **step189:** ещё четыре ошибки корней (стресс труб): консервативный внутренний указатель принимался за начало объекта (теперь карта начал объектов в сегменте); стековые слоты декодировались не по стоку (дельта знаковая, флаг Untracked до выбора); живость полностью прерываемых методов считалась неверно — задача пула подметалась на ходу; рабочие регистры неактивных кадров шли в корни. **step190:** исключения в диспетчеризации (объект и кадр аппаратного сбоя) — корни каждого потока (`MarkExceptionChain`). **step197:** кадр finally, вызванного на обычном пути, разматывался кодами корня метода — обход перескакивал кадр родителя; теперь фанклет разматывается своей записью и родитель обходится в точке вызова (DATATEST 15 под `--gc-stress`). **Ограничение (почему 🟡):** один процессор — «остановка мира» есть подавление вытеснения на всю сборку (пауза для всех потоков; на SMP нужны точки безопасности или IPI); вытесненный поток сканируется консервативно (лишнее удерживается); обходятся потоки всех программ |
-| Большой объект в куче приложения | 🟡 (step195) | пул 64 МиБ режется на сегменты по 256 КиБ; когда он разрезан весь, объект больше ≈256 КиБ не выделяется — `OutOfMemoryException` и строка `[oom]`, хотя свободны десятки МиБ (найдено тестом графа из 100 000 объектов). Буферы регионов поэтому кусками (`Chunked<T>`) |
+| Большой объект в куче приложения | 🟡 (step196) | куча ленивая (`HeapCommit`, бюджет 64 МиБ), большой объект получает сегмент своего размера (256 КиБ·2^k); PROCTEST 17 — `byte[8<<20]`, `List<int>` на миллион. Предел одного объекта ≈31,75 МиБ: первый сегмент не отдаётся, поэтому сегмент 64 МиБ в бюджет не влезает (вывод из кода, прогоном не проверен). До step196 — пул в образе, отказ уже на ≈256 КиБ |
 | Вывод строками | ✅ (step169) | запись, кончающаяся `\n`, не рисует экран сама (перевод строки рисует не чаще 60/с, остальное — помпа или `TryReadKey`); прочие записи (кадры интерфейса) рисуют сразу. 0.43 мс на строку под QEMU, как у hosted |
 | Поток ошибок (stderr) | ✅ (step167) | `AppHost.WriteError(string)` → служба `WriteErrorAddress` → канал `AppErr` (COM4 / `last_err.log`); без службы — обычный вывод. `System.Console.Error` нет: в std нет `TextWriter` |
 
@@ -818,7 +818,7 @@ V2 и привязана к `AppServiceTable.CurrentAbiVersion` (п. 8).
   `WriteTo()` без имени — стандартные вход и выход (нет входа — пустой поток,
   нет выхода — печать на экран строкой вида). Писатели удобного слоя бросают
   `PipeException`. Оболочка: `a | b | c`. Только QEMU, один процессор;
-  сообщение приложение → приложение ≈35 мкс под QEMU.
+  сообщение приложение → приложение: запись 25,5 + чтение 17,2 мкс под QEMU, 0,4 + 3,4 мкс на ноутбуке (step194).
 - **Внешние данные (step197):** `Pipe.ReadBytes/WriteBytes` (`Stream`; `byte[]`
   и `string` как UTF-8 + LF, куски до 64 КиБ), `ReadText/WriteText`; экран
   печатает `byte[]` текстом, если это UTF-8 без управляющих, иначе размер и hex;
@@ -961,8 +961,9 @@ ScanStack (только smoke-test-callers через `CaptureStackTop` discipli
 форме. Любой новый обход, пересекающий эту границу (EH сквозь службу,
 профайлер), должен делать то же.
 
-Остаток: куча ядра на практике не собирается — растёт (`kgc.calls=0` во всех
-прогонах step169).
+Остаток: куча ядра собирается при отказе выделения и перед ростом, когда число
+сегментов удвоилось (`CollectBeforeGrowing`, step194), но страниц сегментов не
+отдаёт; строки ядра живут в `KernelHeap` мимо сборщика.
 
 ### 🟡 Точный обход — и для `GC.Collect`, и для сборки при нехватке (pipe_plan.md, п. 2)
 
@@ -1254,15 +1255,14 @@ post-EBS это развёртка. `bochs-display` + EDID.
   простой — HLT до прерывания, а прерывание одно — тик; `Sleep(1)` = до следующего тика;
   активация для остановки потока под сборку доставляется на тике. При 100 Гц это давало
   фиксированные 10 мс там, где ждут: задачи, эхо клавиш.
-- **Вытеснение включено только на время сессии CoreCLR при загрузке**
-  (`ExitBootServicesProbe`: `Preemption.Enable()` … `Disable()` после
-  `RunCoreClrSession`). Лаунчер и запущенные из него программы — кооперативно.
+- **Вытеснение включено** на время сессии CoreCLR при загрузке
+  (`Probes.PreemptHostedSession`) и для лаунчера с программами
+  (`Probes.PreemptLauncher`, `Phase5_Apps`).
 - **Профайлер сэмплирует на тике**: событие короче 1/TimerHz он не видит.
-- **Потоки приложения умирают с ним** (step174): поток получает «поколение» запуска
-  приложения (`Scheduler.EnterApp`), при возврате приложения оставшиеся снимаются с очереди
-  готовых, таймеров и адресов (`LeaveApp`, в лог — `app threads ended with the app: N`).
-  Раньше продолжали жить — в выгруженном коде или просыпались в следующем приложении по
-  тому же адресу. Стеки не освобождаются (как у любого завершённого потока).
+- **Потоки приложения умирают с ним** (step174, с step194 — с процессом): `EndProcess`
+  снимает рабочие потоки (`EndProcessThreads`: `RequestKill` и ожидание), поток уходит
+  через `JumpStub.LeaveApp`. Стек в слоте, ядерная половина, страж и контекст
+  возвращаются (`ReapDead`); у потоков ядра и хостовых CoreCLR — нет.
 - **Засыпание атомарно с проверкой**: `AddressWait.WaitOnAddress` и `Scheduler.Sleep`
   ставят поток в очередь под `Suppress`; иначе тик между проверкой и постановкой теряет
   поток или пробуждение. Ожидание с таймаутом — сон на таймере, не цикл с `Yield`.

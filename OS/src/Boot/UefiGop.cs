@@ -1,9 +1,9 @@
 namespace OS.Boot
 {
     // Phase B#2 sub-step 1 — capture the GOP framebuffer while UEFI Boot
-    // Services are still alive (SharpOS never ExitBootServices, so the
-    // protocol stays valid, but we snapshot base/geometry into BootInfo
-    // so the kernel can map it and a managed renderer can draw to it).
+    // Services are still alive. The protocol is gone after ExitBootServices
+    // (which the default boot calls), so we snapshot base/geometry into
+    // BootInfo; the kernel maps it and a managed renderer draws to it.
     // EFI_GRAPHICS_OUTPUT_PROTOCOL GUID {9042a9de-23dc-4a38-96fb-7aded080516a}.
     internal static unsafe class UefiGop
     {

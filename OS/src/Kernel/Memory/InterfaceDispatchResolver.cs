@@ -199,9 +199,13 @@ namespace OS.Kernel.Memory
         // call site with the same instance type skip the resolver via the
         // shellcode fast path (test r11,3 == 0 → cmp + jmp).
         //
-        // Single-threaded boot — no cmpxchg16b needed. On alloc failure the
-        // cell stays tagged; we'll just resolve again next call (slow but
-        // correct).
+        // The resolver runs for the whole session, from kernel and app
+        // threads alike. Publishing with one plain store is still safe — no
+        // cmpxchg16b needed — because a replaced cache is never freed: a
+        // reader on the fast path that loaded the old pointer keeps reading
+        // valid memory. Each cache is 48 bytes of KernelHeap, kept for good.
+        // On alloc failure the cell stays tagged; we'll just resolve again
+        // next call (slow but correct).
         private static void PublishCache(
             InterfaceDispatchCell* cell,
             GcMethodTable* thisMT,

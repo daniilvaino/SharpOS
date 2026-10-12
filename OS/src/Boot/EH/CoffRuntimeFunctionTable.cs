@@ -160,17 +160,15 @@ namespace OS.Boot.EH
         /// Removes a registered image by base. No-op if not found.
         /// </summary>
         /// <remarks>
-        /// Searches from the END, and that is the whole correctness of it:
-        /// every app is linked at the SAME base, so a base does not identify an
-        /// image — a parent and the child it launched are both registered at
-        /// 0x100000000. Nesting is strictly stacked, so the last entry with a
-        /// given base is the innermost image, which is the one being torn down.
+        /// Apps are relocated (DIR64) into a slot of their own,
+        /// 0x2000_0000_0000 + slot · 1 GiB, so among running processes a base
+        /// identifies one image. The search runs from the END: if a slot's
+        /// base were ever registered twice, the last entry is the newest
+        /// image, which is the one being torn down.
         ///
-        /// Searching from the front removed the PARENT's entry when a child
-        /// exited, leaving the child's registration behind. The dead entry then
-        /// pointed at unmapped memory, and the next stack walk — a GC in the
-        /// parent, moments later — faulted inside SearchImage with nothing to
-        /// connect it to the launch that had just finished.
+        /// A stale entry left behind points at unmapped memory, and the next
+        /// stack walk faults inside SearchImage with nothing to connect it to
+        /// the launch that had just finished.
         /// </remarks>
         public static void UnregisterImage(byte* imageBase)
         {

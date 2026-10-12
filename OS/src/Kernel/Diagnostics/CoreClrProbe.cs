@@ -283,9 +283,9 @@ namespace OS.Kernel.Diagnostics
             (byte)'R', (byte)'u', (byte)'n', 0 };
 
         // step 72 / Frontier-C — entry for the BigStack trampoline. The
-        // whole CoreCLR session runs here on a 4 MiB pre-mapped stack
-        // (the 128 KiB UEFI boot stack overflows under reflection-mode
-        // System.Text.Json → silent triple fault). Plain forwarder; no
+        // whole CoreCLR session runs here on a 16 MiB pre-mapped stack
+        // (reflection-mode System.Text.Json recursion outgrows a kernel
+        // stack → silent triple fault). Plain forwarder; no
         // args (Win64 trampoline calls `delegate* unmanaged<void>`).
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         public static void RunOnBigStackThunk() => Run();
@@ -393,7 +393,7 @@ namespace OS.Kernel.Diagnostics
             // stack frames (e.g. GenerateCallStubForSig+0x74 #GP at
             // 0x00000002_0C43A7AE).
             //
-            // Strategy: synthesize a minimal TEB in GcHeap memory:
+            // Strategy: synthesize a minimal TEB in NativeArena memory:
             //   teb[0x30] = &teb        (TEB.Self)
             //   teb[0x58] = &tls_slots  (TEB.TlsSlots[64] pointer block)
             //   tls_slots[0] = &tls_block  (per-thread copy of TLS template)
@@ -678,7 +678,7 @@ namespace OS.Kernel.Diagnostics
         // and produces non-canonical pointers → #GP deep in the call chain.
         //
         // Walks the PE TLS directory dynamically (so RVAs survive image
-        // rebuilds), allocates GcHeap-backed buffers, wires TEB.Self +
+        // rebuilds), allocates NativeArena-backed buffers, wires TEB.Self +
         // TEB.TlsSlots[0]->tls_block, copies the linker-emitted TLS template
         // into tls_block, writes _tls_index = 0, and emits a wrmsr stub
         // into BootInfo.AsmExecBuffer to load IA32_GS_BASE.

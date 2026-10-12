@@ -49,7 +49,8 @@ namespace OS.Boot
         public uint IdtExecBufferSize;
 
         // Small EfiLoaderCode buffer для misc inline-asm helpers (STI/CLI/HLT
-        // в OS.Hal.X64Asm). 256 bytes — несколько 2-3-byte instruction stubs.
+        // в OS.Hal.X64Asm). 2048 bytes — instruction stubs plus SehDispatch's
+        // capture/restore context shellcode at 0x80/0x200.
         // KernelHeap allocations are NX post-pager-init, поэтому helpers
         // typed as `delegate* unmanaged<...>` нуждаются в proper exec memory.
         public void* AsmExecBuffer;

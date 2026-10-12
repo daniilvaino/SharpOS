@@ -86,8 +86,9 @@
                 s_services->RhpRethrowAddress);
 
             // Bring up the managed GC heap before any `new string` or `new object()`
-            // hits its RhNewString / RhpNewFast export. GcMemorySource backing is
-            // GcAppPool (64 MB in .bss), provided via GcMemorySource.AppStatic.cs.
+            // hits its RhNewString / RhpNewFast export. GcMemorySource.AppStatic.cs
+            // takes pages from the kernel as the heap grows (HeapCommit, budget
+            // HeapBudget) in the process's heap range, and gives empty segments back.
             // Without it every allocation fails, so the app stops here with the
             // reason instead of running on into its first `new`.
             SharpOS.Std.NoRuntime.GcHeap.s_fatal = &Fatal;

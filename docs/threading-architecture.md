@@ -559,8 +559,9 @@ collection IS the suspension. Critical sections (kernel heap, managed heap) use
 the same counter rather than a lock, which cannot re-enter through the
 allocating logging path.
 
-Preemption is enabled only around its probes: globally on, it would invalidate
-the assumptions this document is built on. See `docs/preemption-readiness.md`.
+Preemption is on for the boot CoreCLR session (`Probes.PreemptHostedSession`)
+and for the launcher with its programs (`Probes.PreemptLauncher`); parts of
+this document were written for the cooperative scheduler and predate that.
 
 - Real concurrent GC + suspend (Phase F, **SP1 main risk**)
 - Preemption via APIC-timer-tick — landed step155, gated off by default

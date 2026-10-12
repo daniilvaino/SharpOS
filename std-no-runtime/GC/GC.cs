@@ -1,10 +1,11 @@
-// Public GC API. Apps call `GC.Collect()` to run a full mark + sweep cycle.
+// Public GC API. `GC.Collect()` runs a full mark + sweep cycle.
 //
-// Kernel does NOT use this directly — it has its own wrapper that routes
-// MarkAll through the register-spill trampoline (GcStackSpill). Apps don't
-// have that trampoline, so they get a best-effort conservative scan that
-// only sees references ILC has already spilled to the stack. This is the
-// Cosmos-style contract and it's fine for our current app workloads.
+// Both the kernel and apps install a collector in s_collectHook, and Collect
+// routes there: the kernel's KernelGC (precise GcInfo walk, or the
+// register-spill trampoline GcStackSpill for a conservative pass), an app's
+// AppGC (static roots + the kernel's precise stack walk, lent through the
+// service table). The fallback below, used only before a hook is installed,
+// is a best-effort conservative scan of the current stack.
 //
 // The order below matters:
 //   1. Mark.Begin   — reset mark bits / counters
@@ -44,13 +45,11 @@ namespace SharpOS.Std.NoRuntime
 
         // When true, GcSweep.Run() is a no-op: unmarked objects are NOT
         // converted to free markers and the freelist is not rebuilt, so no
-        // block is ever reused. Set this once a foreign managed runtime
-        // (CoreCLR) starts allocating into the kernel GcHeap: its objects are
-        // reachable only from ITS GC graph, which the kernel Mark phase does
-        // not scan — so they look dead here and sweep would clobber them
-        // (observed: AppContext.s_dataStore zeroed mid-run). The kernel arena
-        // is bump-backed; disabling reclamation just forgoes reuse, which is
-        // acceptable until CoreCLR is fully off the kernel heap (plan 5b).
+        // block is ever reused. A guard for objects reachable only from a
+        // graph the kernel Mark phase does not scan (a foreign runtime's
+        // allocations in this heap would look dead and be clobbered). Off:
+        // CoreCLR's native blobs live in NativeArena, not here, and nothing
+        // in the tree sets it to true.
         public static bool ReclamationDisabled;
 
         public static void Collect()

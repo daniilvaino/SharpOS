@@ -11,8 +11,7 @@ namespace OS.PAL.SharpOSHost
     // CRT heap forwarders — fork-side `malloc`/`free`/`realloc` in
     // winapi_shim.cpp dispatch to these (per D9: CoreCLR memory routed
     // through SharpOSHost). Real allocation goes via NativeArena —
-    // page-backed bump arena, dedicated to non-managed native blobs
-    // (memory-ownership.md §3 / §7.1 / M1).
+    // page-backed bump arena, dedicated to non-managed native blobs.
     //
     // `free` is no-op (NativeArena is bump-only, lifetime = forever).
     // `realloc` allocs new + copies; old block leaks the same way it
@@ -61,8 +60,8 @@ namespace OS.PAL.SharpOSHost
         [RuntimeExport("SharpOSHost_HeapFree")]
         public static void HeapFree(void* ptr)
         {
-            // No-op — managed GC handles reclaim. Block becomes unreachable
-            // once C++ caller drops the pointer.
+            // No-op — the block lives in NativeArena and is never given
+            // back; nothing reclaims it once the C++ caller drops the pointer.
         }
 
         [RuntimeExport("SharpOSHost_HeapRealloc")]
@@ -151,10 +150,12 @@ namespace OS.PAL.SharpOSHost
 
         // --- File I/O substrate ---
         //
-        // Fake handle = pointer к FileState struct on GcHeap. Buffer holds
-        // entire file content (slurped at open time via Platform.TryReadFile
-        // → UEFI SimpleFileSystem). Read seeks within in-memory buffer.
-        // CloseHandle is no-op; GC reclaims state + buffer.
+        // Fake handle = pointer к FileState struct in NativeArena. Buffer
+        // holds entire file content (slurped at open time via
+        // Platform.TryReadFile — our FAT into NativeArena once a volume is
+        // mounted, UEFI SimpleFileSystem pool before). Read seeks within
+        // in-memory buffer. CloseHandle is no-op; neither state nor buffer
+        // is ever freed.
 
         [StructLayout(LayoutKind.Sequential)]
         private struct FileState
@@ -230,7 +231,7 @@ namespace OS.PAL.SharpOSHost
 
             // PE files loaded for CoreCLR (SPC.dll, etc.) contain native /
             // R2R-compiled code that the runtime jumps to directly via the
-            // pointer returned by PAL_LOADLoadPEFile. Our GcHeap allocator
+            // pointer returned by PAL_LOADLoadPEFile. NativeArena
             // returns RW (NX=1) pages — JIT/interop jumps into those pages
             // fault with #PF I=1 (NX violation). Walk the buffer's pages and
             // flip NX off (RWX is the simplest workable scheme; per-section
@@ -313,7 +314,7 @@ namespace OS.PAL.SharpOSHost
         [RuntimeExport("SharpOSHost_FileClose")]
         public static void FileClose(void* handle)
         {
-            // No-op — GC reclaims FileState and its buffer when unreachable.
+            // No-op — FileState and its buffer stay allocated for good.
         }
     }
 }

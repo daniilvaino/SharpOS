@@ -1118,13 +1118,10 @@ namespace OS.PAL.SharpOSHost
 
         // Emits "capture context" and "restore context" shellcode into
         // BootInfo.AsmExecBuffer. Layout: capture at offset 0x80, restore
-        // at offset 0x100 (past X64Asm STI/CLI/HLT 0..63 and GS-base
-        // wrmsr stub from CoreClrProbe at 64..82).
-        //
-        // step 115 follow-up: parallel-emit via Iced + byte-compare gate.
-        // Iced writes to the LIVE buffer (capCode/resCode), legacy
-        // byte-emitter writes to a scratch on our stack. Bytes must match
-        // exactly — any drift panics with offset + expected/got.
+        // at offset 0x200 (past X64Asm STI/CLI/HLT 0..63 and GS-base
+        // wrmsr stub from CoreClrProbe at 64..82). The bytes are baked at
+        // build time (SehDispatch.BootAsm.cs) and copied in; nothing is
+        // assembled or compared at run time.
         private static void EnsureShellcode()
         {
             if (s_shellcodeReady) return;
@@ -1135,7 +1132,7 @@ namespace OS.PAL.SharpOSHost
             // Layout: STI/CLI/HLT 0..63, wrmsr GS_BASE 64..82,
             // capture shellcode at 0x80 (~140 bytes → 0x10C),
             // restore shellcode at 0x200 (~140 bytes → 0x28C).
-            // Buffer is 1024 — comfortably fits with no overlap.
+            // Buffer is 2048 — comfortably fits with no overlap.
             byte* capCode = buf + 0x80;
             byte* resCode = buf + 0x200;
 

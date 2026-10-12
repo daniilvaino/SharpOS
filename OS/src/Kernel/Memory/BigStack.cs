@@ -5,16 +5,15 @@ namespace OS.Kernel.Memory
 {
     // step 72 / Frontier-C — run CoreCLR on a large stack.
     //
-    // SharpOS is a unikernel: the whole system runs on the fixed
-    // ~128 KiB UEFI boot stack (proven via [SOSstk]:
-    // 0x1FE78000..0x1FE98000). Unlike the GC heap (demand-mapped, grows
-    // on #PF), the stack region is fixed and the pager does NOT auto-grow
-    // it; a stack #PF pushes the fault frame on the overrun SP → #DF →
-    // triple fault → QEMU `-no-reboot` exits silently. Stock .NET
-    // reserves ~1 MB/thread; reflection-mode System.Text.Json (nested
-    // DoRunClassInit → JIT-on-first-call → typeload → cctor recursion)
-    // overruns 128 KiB → the silent death after the gcinfodecoder fix
-    // let it recurse that deep.
+    // The boot thread runs on BootStackPool (4 MiB in .bss, no guard
+    // page). Unlike the GC heap (demand-mapped, grows on #PF), a stack is
+    // fixed and the pager does NOT auto-grow it; a stack #PF pushes the
+    // fault frame on the overrun SP → #DF → triple fault → QEMU
+    // `-no-reboot` exits silently. Stock .NET reserves ~1 MB/thread;
+    // reflection-mode System.Text.Json (nested DoRunClassInit →
+    // JIT-on-first-call → typeload → cctor recursion) recurses deep enough
+    // to need more than a kernel stack, so the CoreCLR run gets its own
+    // 16 MiB buffer (BootSequence BigStackSize).
     //
     // Minimal fix: a Win64 shellcode trampoline that switches RSP to a
     // large pre-mapped buffer, calls a callback, restores RSP and
@@ -120,10 +119,10 @@ namespace OS.Kernel.Memory
         //   mov  rsp, rbp      ; restore to saved-rbp slot
         //   pop  rbp           ; restore rbp; rsp → entry rsp
         //   ret
-        // 14 bytes. newStackTop must be 16-aligned (caller masks ~0xF).
+        // 18 bytes. newStackTop must be 16-aligned (caller masks ~0xF).
         //
         // step 115 follow-up #3: emitted via Iced. Smallest of the three
-        // shellcode migrations (8 instructions, 14 bytes) — compare-gate
+        // shellcode migrations (8 instructions, 18 bytes) — compare-gate
         // dropped after #1/#2 confirmed byte parity on representative
         // patterns. If Iced silently produces 0 bytes the length print
         // will show it; any real divergence breaks Phase3 boot loudly.

@@ -36,11 +36,12 @@ namespace SharpOS.Std.NoRuntime
         private static uint s_segmentCount;
 
         /// <summary>
-        /// Collect before growing once the heap has grown by half since the
-        /// last collection (step194). Off by default — an app's heap is a
-        /// fixed pool, and running out of it collects anyway; the kernel turns
-        /// it on: its heap takes pages from the same machine processes are
-        /// loaded into, never gives them back, and otherwise grew by every
+        /// Collect before growing once the segment count has doubled since the
+        /// last collection, and at least four segments were added (step194).
+        /// Off by default — an app's heap is bounded by its page budget,
+        /// running out of it collects anyway, and the empty segments a
+        /// collection finds are given back; the kernel turns it on: its heap
+        /// takes pages from the same machine processes are loaded into, never gives them back, and otherwise grew by every
         /// launch's garbage until a start found no memory, with no collection
         /// asked for on that path.
         /// </summary>
@@ -694,7 +695,7 @@ namespace SharpOS.Std.NoRuntime
                 else
                 {
                     // 3. Grow: need a new segment.
-                    // Grown by half since the last collection: collect first (the
+                    // Segment count doubled since the last collection: collect first (the
                     // caller does, on a null), and grow only if that was not enough.
                     if (CollectBeforeGrowing && !s_growAfterCollect && GC.s_collectHook != null
                         && s_grownSinceCollect >= 4 && s_grownSinceCollect * 2 >= s_segmentCount)
@@ -1119,8 +1120,9 @@ namespace SharpOS.Std.NoRuntime
 
             GcSegmentHeader* hdr = (GcSegmentHeader*)block;
             hdr->Start = (nint)block;
-            // sizeof(GcSegmentHeader) = 40 → block+40 is only 8-aligned even if
-            // block is page-aligned. Bump round-up to ObjectAlignment (16) so
+            // sizeof(GcSegmentHeader) = 56, and the bitmap after it has any
+            // length → its end is not 16-aligned even if block is
+            // page-aligned. Bump round-up to ObjectAlignment (16) so
             // the first user allocation lands at a 16-aligned address. All
             // subsequent allocations bump by 16-multiples and stay aligned.
             // Required by CoreCLR (and CRT spec): malloc-returned memory must

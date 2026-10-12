@@ -1,15 +1,15 @@
 // GcSegment — contiguous heap region with bump allocator.
 //
 // Layout within a memory block returned by GcMemorySource:
-//   [SegmentHeader (40 bytes)]
-//   [object data ... ]
+//   [SegmentHeader (56 bytes)]
+//   [object-start bitmap: one bit per 16 bytes of the object area]
+//   [object data ... ] (from ObjectStart, 16-aligned)
 //
 // Next field forms a linked list of all segments in the heap (used by
 // GcHeap for iteration and FindSegmentContaining).
 //
-// Brick table (for conservative stack scanning / interior pointer
-// resolution) is not included in phase 2 — added in phase 3 when Mark
-// needs it.
+// The bitmap (Starts) resolves interior pointers and conservative
+// candidates to the object they fall in (GcHeap.FindObjectStart).
 
 using System.Runtime.InteropServices;
 

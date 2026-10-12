@@ -8,31 +8,28 @@ namespace OS.Kernel.Memory
     // PE file image buffers, TEB/TLS blocks, SEH dispatcher structs,
     // TPA buffer, fake-file FileState handles. They share three
     // properties:
-    //   - never freed (lifetime = forever, like the old "free no-op"),
+    //   - mostly never freed (only FreeLarge gives back a run of
+    //     ChunkBytes or more),
     //   - have no MethodTable (GC mark walker can't reason about them),
     //   - can hold native pointers internally (PE blobs especially),
     //     which would be mis-traced as OBJECTREF by a kernel GC walk.
     //
-    // Sitting them in GcHeap is the historical reason kernel GC sweep
-    // had to be frozen via `GC.ReclamationDisabled = true` for the
-    // whole hosted session (memory-ownership.md §3, §7.1). Routing
-    // them through NativeArena removes that requirement at the source:
-    // GcHeap then contains only real managed kernel objects, mark/sweep
-    // becomes safe again, and `ReclamationDisabled` can be lifted (M5).
+    // Keeping them out of GcHeap means GcHeap contains only real managed
+    // kernel objects, so mark/sweep is safe with reclamation on.
     //
     // Allocation policy:
     //   - small/mid (< ChunkBytes): bump within a 64 KiB chunk that
     //     refills from `PhysicalMemory.AllocPages` on demand,
     //   - large (>= ChunkBytes): own page run via `PhysicalMemory.
-    //     AllocPages` directly (e.g. the 22.5 MiB CoreLib buffer),
+    //     AllocPages` directly (PE file buffers and the like); FreeLarge
+    //     returns those pages,
     //   - everything goes through `VirtualMemory.MapFixed` identity-map
     //     so virt == phys and the buffer is plain RW kernel memory,
     //   - allocations are zero-filled to match the old `GcHeap.
     //     AllocateRaw` semantics callers relied on.
     //
-    // No lock — same single-threaded discipline as KernelHeap (memory-
-    // ownership.md §7.5). SMP/preempt will need one alongside the
-    // KernelHeap lock.
+    // No lock: Allocate runs with preemption suppressed, which on one CPU
+    // is enough.
     internal static unsafe class NativeArena
     {
         private const int ChunkBytes = 64 * 1024;

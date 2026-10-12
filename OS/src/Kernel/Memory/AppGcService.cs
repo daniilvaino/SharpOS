@@ -27,8 +27,9 @@ namespace OS.Kernel.Memory
     // freed block ends up in the free list under a live writer (step169,
     // AotTests "other thread's stack roots survive collect"). The kernel's
     // own collector has walked parked threads since the scheduler existed.
-    // Threads of other programs and of the kernel are walked as well — their
-    // roots point outside this app's heap, and the app's marker drops those.
+    // Only threads of the caller's own process are walked
+    // (KernelGC.MarkOtherThreadStacks): no other stack can hold a reference
+    // into this app's heap, and the app's marker drops anything outside it.
     internal static unsafe class AppGcService
     {
         [System.Runtime.InteropServices.UnmanagedCallersOnly]

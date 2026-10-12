@@ -184,8 +184,8 @@
 
         // Stack ownership. StackBase = low VA (allocation start),
         // StackTop = high VA (StackBase + StackBytes). For the wrapped
-        // boot thread, StackBase/Top are null (we don't own the boot
-        // stack — UEFI/loader did the allocation).
+        // boot thread, Scheduler.Init sets them to BootStackPool's bounds
+        // (null only if BootStackSwitch did not run).
         public byte* StackBase;
         public byte* StackTop;
         public uint StackBytes;
@@ -196,8 +196,8 @@
         // inside [GuardPage, GuardPage+4096); the trap handler
         // recognises the range and halts with an identifiable
         // thread / overflow message instead of silently corrupting
-        // adjacent GC heap. Null on the boot thread (UEFI stack;
-        // no guard reserved by us).
+        // adjacent GC heap. Null on the boot thread (BootStackPool
+        // has no guard page).
         public byte* GuardPage;
 
         // The hardware fault this thread is reporting (HwFaultBridge), between

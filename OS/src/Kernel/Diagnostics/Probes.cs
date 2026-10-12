@@ -530,13 +530,11 @@
         // Every N growths of the kernel heap, print what is IN it — live
         // objects tallied by type, biggest first. 0 turns it off.
         //
-        // The managed kernel heap grows and never collects: collection fires
-        // only when an allocation fails, and allocations do not fail while
-        // there are pages to hand out. A machine left at a prompt grew 133 MiB
-        // and stopped, and the log said only "heap grow pages" 502 times —
-        // enough to see it filling, nothing about who filled it. Turning
-        // collection on by a budget would have hidden the question rather than
-        // answered it: garbage a collector reclaims, a leak it does not.
+        // The managed kernel heap collects before it grows
+        // (GcHeap.CollectBeforeGrowing), so what keeps growing is live. A bare
+        // "heap grow pages" line says the heap is filling, nothing about who
+        // fills it; the census names the types: garbage a collector reclaims,
+        // a leak it does not.
         //
         // 16 rather than every growth: each census is a full heap walk, and by
         // the end of a long run that is not free.

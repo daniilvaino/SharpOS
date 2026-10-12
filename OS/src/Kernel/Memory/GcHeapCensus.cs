@@ -4,21 +4,17 @@ namespace OS.Kernel.Memory
 {
     // Who is filling the managed kernel heap.
     //
-    // The heap grows and never collects under normal operation — collection
-    // only fires when an allocation fails, and allocations do not fail while
-    // KernelHeap still has pages to give. A machine left at a prompt therefore
-    // grows until memory runs out: 502 growths of 65 pages, ~133 MiB, before
-    // it stopped.
-    //
-    // Turning collection on by a budget would hide that symptom, and hiding it
-    // is the wrong move while nobody knows whether the heap holds garbage or a
-    // leak. Garbage a collector reclaims; a leak it does not, and the machine
-    // would still die, just later. This says which, by naming what is IN the
-    // heap rather than how much.
+    // The heap collects before it grows (GcHeap.CollectBeforeGrowing, set in
+    // BootSequence), so steady growth means live objects, not uncollected
+    // garbage. Garbage a collector reclaims; a leak it does not, and the
+    // machine still dies, just later. This says which types hold the heap,
+    // by naming what is IN it rather than how much.
     //
     // The walk is GcSweep's, without the writes: segments in order, object by
-    // object, size from the MethodTable. Allocates nothing — it has to be
-    // callable from inside the allocator, and it is counting allocations.
+    // object, size from the MethodTable. The walk itself allocates nothing;
+    // the printing does (Console.WriteUInt/WriteHex format through strings
+    // once KernelHeap is up, and AllocProfiler.Report allocates too), hence
+    // the re-entrancy guard in Dump.
     internal static unsafe class GcHeapCensus
     {
         // Distinct types tracked. Past this the tail is lumped into "other":

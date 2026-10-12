@@ -6,9 +6,10 @@ using OS.Kernel.Memory;
 namespace OS.PAL.SharpOSHost
 {
     // C-ABI surface over the SharpOS VM manager. The CoreCLR fork's
-    // gc/sharpos/gcenv.sharpos.cpp (GCToOSInterface::Virtual*) and
-    // pal/sharpos/crt_imp_stubs.cpp (VirtualAlloc) call these instead of
-    // routing through the kernel managed GcHeap (wired in S3).
+    // pal/sharpos/crt_imp_stubs.cpp (VirtualAlloc & co.) calls these; the
+    // GC's OS layer is the stock gc/windows/gcenv.windows.cpp, which reaches
+    // them through those Win32 entry points, not through the kernel managed
+    // GcHeap.
     //
     // POD-only across the C-ABI line. int returns: 1=ok, 0=fail.
     internal static unsafe class VirtualMemoryHost

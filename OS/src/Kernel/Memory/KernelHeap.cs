@@ -42,21 +42,12 @@ namespace OS.Kernel.Memory
             return true;
         }
 
-        // Phase E6 note: KernelHeap.Alloc/Free are NOT lock-wrapped today.
-        // Cooperative single-CPU + no Yield inside the critical region
-        // means there's no actual concurrent access window. A naive
-        // SpinYieldLock wrap was tried (step 95 follow-up) and broke:
-        // the "heap grow" log path itself allocates (NumberFormatting.
-        // UIntToString -> StringRuntime.FastAllocateString -> KernelHeap.
-        // Alloc), causing recursive Acquire. Reentrant lock infra is
-        // ready in OS/src/Kernel/Threading/Mutex.cs + SpinYieldLock.cs;
-        // they'll be wired in once preemption / SMP arrives (Phase F+),
-        // along with a reentrancy depth counter that survives the
-        // logging detour.
-        // Preemption is suppressed across the whole operation. See the note
-        // above: a lock cannot be used here because the logging path allocates
-        // and re-enters, while suppression is a counter that nothing waits on.
-        // On one CPU that is enough — nobody else can be running.
+        // Alloc and Free run with preemption suppressed, not under a lock.
+        // The heap re-enters itself: growing it from inside AddRegion can
+        // allocate again (the periodic GcHeapCensus dump formats strings into
+        // this heap), and a non-reentrant lock would deadlock there.
+        // Suppression is a counter that nests with itself and that nothing
+        // waits on. On one CPU that is enough — nobody else can be running.
         public static void* Alloc(uint size)
         {
             if (!s_initialized || size == 0)
