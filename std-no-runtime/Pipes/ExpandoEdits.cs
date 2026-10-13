@@ -198,6 +198,103 @@ namespace SharpOS.Std.Pipes
             return false;
         }
 
+        /// <summary>
+        /// Renames an entry where it is (step205, KQL project-rename): the new
+        /// name goes into the block's tail, the entry moves to the new name's
+        /// chain and keeps its place — the order of the names does not change,
+        /// and the value, whatever it is, stays where it lies. An entry already
+        /// holding the new name is removed first. False when there is no
+        /// entry of <paramref name="from"/>.
+        /// </summary>
+        public static bool Rename(this RawRegion region, View expando, ExpandoName from, ExpandoName to)
+        {
+            ViewScope scope = Owned(region, expando);
+            if (expando.ExpandoFind(from.Name.AsSpan(), from.Hash) < 0) return false;
+            if (from.Name == to.Name) return true;
+            if (expando.ExpandoFind(to.Name.AsSpan(), to.Hash) >= 0) Remove(region, expando, to);
+
+            TypeShape stringType = scope.Shapes.ByName("System.String") ?? throw NoType("System.String");
+            Reserve(region, ref expando, RecordSize(stringType, (uint)to.Name.Length));
+            scope = region.Scope;
+            View.ExpandoShape s = expando.ExpandoLayout();
+            int i = expando.ExpandoFind(from.Name.AsSpan(), from.Hash);
+            ulong nameAt = NewString(region, stringType, to.Name);
+
+            int used = Used(expando, s);
+            int* head = Bucket(scope, expando, s, from.Hash);
+            int previous = 0;
+            int steps = 0;
+            for (int at = *head; at != 0; previous = at, at = *(int*)(Entry(scope, expando, s, at - 1) + (ulong)s.Next))
+            {
+                if (steps++ >= used || (uint)(at - 1) >= (uint)used) throw Malformed();
+                if (at - 1 != i) continue;
+                ulong e = Entry(scope, expando, s, i);
+                int next = *(int*)(e + (ulong)s.Next);
+                if (previous == 0) *head = next;
+                else *(int*)(Entry(scope, expando, s, previous - 1) + (ulong)s.Next) = next;
+                *(int*)(e + (ulong)s.Hash) = to.Hash;
+                *(ulong*)(e + (ulong)s.Name) = nameAt;
+                int* bucket = Bucket(scope, expando, s, to.Hash);
+                *(int*)(e + (ulong)s.Next) = *bucket;
+                *bucket = i + 1;
+                return true;
+            }
+            throw Malformed();
+        }
+
+        /// <summary>
+        /// Removes every entry but those named (step205, KQL project): the kept
+        /// ones stay where they are, in their order. The number removed.
+        /// </summary>
+        public static int KeepOnly(this RawRegion region, View expando, ExpandoName[] keep)
+        {
+            Owned(region, expando);
+            int slots = expando.ExpandoSlots;
+            int removed = 0;
+            for (int i = 0; i < slots; i++)
+            {
+                string name = expando.ExpandoLiveName(i);
+                if (name == null) continue;
+                bool kept = false;
+                for (int k = 0; k < keep.Length && !kept; k++) kept = keep[k].Name == name;
+                if (!kept && Remove(region, expando, new ExpandoName(name))) removed++;
+            }
+            return removed;
+        }
+
+        /// <summary>
+        /// A string into a field of an object of the region (step205, KQL
+        /// extend over a class): the new string is a new record in the
+        /// block's tail — room, a grown block or a compacted one, as for an
+        /// Expando — and the field points at it. The old string is never
+        /// written over, whatever its length: another field may point at it
+        /// too, and a record that changed length would break the walk of the
+        /// block. It stays behind, a whole dead record. Null clears the field.
+        /// </summary>
+        public static EditCost SetText(this RawRegion region, View obj, string field, string text)
+        {
+            if (region == null) throw new ArgumentNullException(nameof(region));
+            ViewScope scope = region.Scope;
+            if (scope == null) throw new ObjectDisposedException("RawRegion", "the region is gone: it went on, or was disposed");
+            obj.EnsureAlive();
+            if (obj.Scope != scope || obj.Shape == null || obj.Kind != ViewKind.Object)
+                throw new ArgumentException("not an object of this region", nameof(obj));
+            FieldShape f = obj.Shape.Field(field) ?? throw new KeyNotFoundException("no field '" + field + "' in " + obj.Shape.Name);
+            if (f.Kind != FieldKind.Reference || f.TypeName != "System.String")
+                throw new InvalidOperationException("'" + field + "' does not hold a string");
+            scope.EnsureValid();
+            if (text == null)
+            {
+                *(ulong*)(obj.Address + (ulong)f.Offset) = 0;
+                return EditCost.InPlace;
+            }
+            TypeShape stringType = scope.Shapes.ByName("System.String") ?? throw NoType("System.String");
+            EditCost cost = Reserve(region, ref obj, RecordSize(stringType, (uint)text.Length));
+            ulong at = NewString(region, stringType, text);
+            *(ulong*)(obj.Address + (ulong)f.Offset) = at;
+            return cost;
+        }
+
         // ---- the block ----
 
         private static ViewScope Owned(RawRegion region, View expando)
@@ -208,6 +305,9 @@ namespace SharpOS.Std.Pipes
             expando.EnsureAlive();
             if (!expando.IsExpandoObject || expando.Scope != scope)
                 throw new ArgumentException("not an Expando of this region", nameof(expando));
+            // An edit reads and moves records by raw address, not through
+            // views: the block is walked whole once before the first one.
+            scope.EnsureValid();
             return scope;
         }
 

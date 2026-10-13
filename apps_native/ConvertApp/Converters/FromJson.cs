@@ -10,7 +10,9 @@ namespace PipeApps
     // --from json: bytes (or text) of JSON into Expando messages (step197).
     //
     // A message is each element of a top-level array, or each value of a
-    // sequence of them (JSON Lines, or objects one after another). An object
+    // sequence of them (JSON Lines, or objects one after another) — which of
+    // the two, the first token says. --from jsonl (FromJsonl, step206) takes
+    // the sequence only: a top-level array is an error. An object
     // is an Expando, an array object[], a string string, an integer long
     // (double when it does not fit), a fraction double, true/false bool,
     // null nothing. An element that is not an object is an error.
@@ -20,11 +22,13 @@ namespace PipeApps
     // only the element being built is held — a file of any size passes in the
     // memory of its largest element. An error says the line and column and
     // ends the program with 1.
-    internal sealed class FromJson : IConverter
+    internal class FromJson : IConverter
     {
         public string Direction => "from";
-        public string Format => "json";
+        public virtual string Format => "json";
         public string Options => "";
+
+        protected virtual bool SequenceOnly => false;
 
         private const int Piece = 64 * 1024;
 
@@ -53,13 +57,13 @@ namespace PipeApps
                 }
                 catch (JsonException e)
                 {
-                    Console.WriteLine("CONVERT --from json: line " + ((e.LineNumber ?? 0) + 1).ToString()
+                    Console.WriteLine("CONVERT --from " + Format + ": line " + ((e.LineNumber ?? 0) + 1).ToString()
                                       + ", column " + ((e.BytePositionInLine ?? 0) + 1).ToString() + ": " + Plain(e.Message));
                     return 1;
                 }
                 catch (FormatException e)
                 {
-                    Console.WriteLine("CONVERT --from json: " + e.Message);
+                    Console.WriteLine("CONVERT --from " + Format + ": " + e.Message);
                     return 1;
                 }
             }
@@ -118,6 +122,8 @@ namespace PipeApps
             if (_arrayMode < 0)
             {
                 _arrayMode = token == JsonTokenType.StartArray ? 1 : 0;
+                if (_arrayMode == 1 && SequenceOnly)
+                    throw NotObject(ref reader, "a top-level array in JSON Lines");
                 if (_arrayMode == 1) return;
             }
             if (_stack.Count == 0)

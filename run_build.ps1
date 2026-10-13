@@ -45,6 +45,9 @@
     # instead (perf suspect 20). "max" offers everything TCG can emulate —
     # comparing the two tells how much of a benchmark that costs.
     [string]$Cpu = "qemu64,+nx",
+    # QEMU's accelerator: "tcg" (the default, any host) or "whpx" (Windows
+    # Hypervisor Platform, step205) — timings without the emulator's own costs.
+    [string]$Accel = "tcg",
     # ESP staged as a real FAT32 image; 253 MB of payload today, so 512 leaves headroom.
     [int]$EspImageSizeMb = 512,
     # Guest RAM. Past 4 GiB the firmware may load the kernel above 4 GiB, as
@@ -887,9 +890,9 @@ $savedInputEncoding = [Console]::InputEncoding
 Push-Location $qemuWorkDir
 try {
     $machineArgs = if ($NoPs2) {
-        @("-machine", "q35,accel=tcg,i8042=off")
+        @("-machine", "q35,accel=$Accel,i8042=off")
     } else {
-        @("-machine", "q35,accel=tcg")
+        @("-machine", "q35,accel=$Accel")
     }
     # +nx: expose the NX/XD bit to firmware and OS (required for NX memory
     # protection policy). "max" has it already; anything else passed via -Cpu
@@ -980,12 +983,23 @@ try {
     $qemuArgs = $machineArgs + $cpuArgs + @("-m", "$MemoryMb") + $displayArgs + @(
         "-net", "none",
         "-no-reboot",
-        "-qmp", "tcp:127.0.0.1:$QmpPort,server,nowait",
-        "-drive", "if=pflash,format=raw,readonly=on,file=firmware/OVMF_CODE.fd"
+        "-qmp", "tcp:127.0.0.1:$QmpPort,server,nowait"
     )
 
-    if ($localOvmfVars) {
-        $qemuArgs += @("-drive", "if=pflash,format=raw,file=firmware/OVMF_VARS.fd")
+    if ($Accel -eq "whpx") {
+        # WHPX cannot emulate OVMF's writes to its flash ("Failed to emulate
+        # MMIO access"): the firmware goes in as ROM — variables, then code,
+        # one image — and nothing it stores outlives the run.
+        $ovmfRom = "firmware/OVMF.fd"
+        $romBytes = [System.IO.File]::ReadAllBytes((Join-Path $qemuWorkDir "firmware/OVMF_VARS.fd")) +
+                    [System.IO.File]::ReadAllBytes((Join-Path $qemuWorkDir "firmware/OVMF_CODE.fd"))
+        [System.IO.File]::WriteAllBytes((Join-Path $qemuWorkDir $ovmfRom), $romBytes)
+        $qemuArgs += @("-bios", $ovmfRom)
+    } else {
+        $qemuArgs += @("-drive", "if=pflash,format=raw,readonly=on,file=firmware/OVMF_CODE.fd")
+        if ($localOvmfVars) {
+            $qemuArgs += @("-drive", "if=pflash,format=raw,file=firmware/OVMF_VARS.fd")
+        }
     }
 
     # A real FAT32 image rather than VVFAT: QEMU's fat:rw: does not store a

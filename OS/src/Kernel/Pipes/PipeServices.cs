@@ -103,6 +103,15 @@ namespace OS.Kernel.Pipes
         public static int Close(int handle)
             => (int)KernelPipes.Close(KernelPipes.CallerHolder(), handle);
 
+        [UnmanagedCallersOnly]
+        public static int WaitSchema(int handle)
+            => (int)KernelPipes.WaitSchema(KernelPipes.CallerHolder(), handle);
+
+        // A writer that failed: its reader sees the stream broken (step205).
+        [UnmanagedCallersOnly]
+        public static int Break(int handle)
+            => (int)KernelPipes.Break(KernelPipes.CallerHolder(), handle);
+
         // answer: [0] schema bytes, [1] root key. Copies when the buffer is large enough.
         [UnmanagedCallersOnly]
         public static int Schema(int handle, byte* buffer, ulong capacity, ulong* answer)

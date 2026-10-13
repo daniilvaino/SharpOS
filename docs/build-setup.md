@@ -56,6 +56,12 @@ a QMP socket, and `-drive format=raw,file=fat:rw:esp`, which needs the **VVFAT**
 backend that every stock Windows build ships. Any reasonably recent
 `qemu-system-x86_64` works.
 
+With the Windows Hypervisor Platform turned on, `.\run_build.ps1 -Accel whpx`
+runs the same image under hardware virtualisation: the full autorun battery
+takes minutes instead of an hour, and timings lose the emulator's own costs
+(step205). The firmware then goes in as ROM (`-bios`, variables and code in
+one image): WHPX cannot emulate OVMF's writes to its flash.
+
 ### Option A — official Windows installer (simplest)
 
 Grab the 64-bit installer from <https://qemu.weilnetz.de/w64/> (these are the

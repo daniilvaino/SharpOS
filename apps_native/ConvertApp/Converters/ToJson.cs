@@ -8,24 +8,26 @@ using SharpOS.Std.Pipes;
 
 namespace PipeApps
 {
-    // --to json [--lines]: any objects, read through views, into JSON text as
-    // string messages (step197). Without --lines the lines make one JSON
-    // array, an object per line:
+    // --to json: any objects, read through views, into JSON text as string
+    // messages (step197). The lines make one JSON array, an object per line:
     //
     //     [
     //     {"Level":3,"Text":"..."},
     //     {"Level":4,"Text":"..."}
     //     ]
     //
-    // with --lines, JSON Lines: an object per line and nothing else. An enum
+    // --to jsonl (ToJsonl, step206): JSON Lines, an object per line and nothing
+    // else. An enum
     // is its member's name; DateTime ("O"), TimeSpan ("c") and Guid ("D") are
     // strings; byte[] is base64. A cycle, NaN or an infinity is an error naming
     // the type and the field (exit code 1).
-    internal sealed unsafe class ToJson : IConverter
+    internal unsafe class ToJson : IConverter
     {
         public string Direction => "to";
-        public string Format => "json";
-        public string Options => "[--lines]";
+        public virtual string Format => "json";
+        public string Options => "";
+
+        protected virtual bool Lines => false;
 
         private readonly ArrayBufferWriter<byte> _buffer = new ArrayBufferWriter<byte>(4096);
         private Utf8JsonWriter _json;
@@ -33,10 +35,10 @@ namespace PipeApps
 
         public int Run(string[] options)
         {
-            bool lines = options.Length > 0 && options[0] == "--lines";
-            if (options.Length > (lines ? 1 : 0))
+            bool lines = Lines;
+            if (options.Length > 0)
             {
-                Console.WriteLine("CONVERT --to json: unknown option " + options[lines ? 1 : 0] + "; known: --lines");
+                Console.WriteLine("CONVERT --to " + Format + ": unknown option " + options[0]);
                 return 2;
             }
             _json = new Utf8JsonWriter(_buffer);
@@ -60,7 +62,7 @@ namespace PipeApps
             }
             catch (InvalidOperationException e) when (e is not ObjectDisposedException)
             {
-                Console.WriteLine("CONVERT --to json: " + e.Message);
+                Console.WriteLine("CONVERT --to " + Format + ": " + e.Message);
                 return 1;
             }
             if (!lines)

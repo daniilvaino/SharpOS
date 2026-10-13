@@ -23,6 +23,8 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
             functions.Add(
                 Functions.IsNull,
                 new ScalarFunctionInfo(
+                    // SharpOS cut (step205): dynamic first — a string parameter takes any argument.
+                    new ScalarOverloadInfo(new IsNullDynamicFunctionImpl(), ScalarTypes.Bool, ScalarTypes.Dynamic),
                     new ScalarOverloadInfo(new IsNullBoolFunctionImpl(), ScalarTypes.Bool, ScalarTypes.Bool),
                     new ScalarOverloadInfo(new IsNullIntFunctionImpl(), ScalarTypes.Bool, ScalarTypes.Int),
                     new ScalarOverloadInfo(new IsNullLongFunctionImpl(), ScalarTypes.Bool, ScalarTypes.Long),
@@ -30,6 +32,18 @@ namespace BabyKusto.Core.Evaluation.BuiltIns
                     new ScalarOverloadInfo(new IsNullDateTimeFunctionImpl(), ScalarTypes.Bool, ScalarTypes.DateTime),
                     new ScalarOverloadInfo(new IsNullTimeSpanFunctionImpl(), ScalarTypes.Bool, ScalarTypes.TimeSpan),
                     new ScalarOverloadInfo(new IsNullStringFunctionImpl(), ScalarTypes.Bool, ScalarTypes.String)));
+            // SharpOS cut (step205): isnotnull, missing from BabyKusto.
+            functions.Add(
+                Functions.IsNotNull,
+                new ScalarFunctionInfo(
+                    new ScalarOverloadInfo(new IsNotNullFunctionImpl(new IsNullDynamicFunctionImpl()), ScalarTypes.Bool, ScalarTypes.Dynamic),
+                    new ScalarOverloadInfo(new IsNotNullFunctionImpl(new IsNullBoolFunctionImpl()), ScalarTypes.Bool, ScalarTypes.Bool),
+                    new ScalarOverloadInfo(new IsNotNullFunctionImpl(new IsNullIntFunctionImpl()), ScalarTypes.Bool, ScalarTypes.Int),
+                    new ScalarOverloadInfo(new IsNotNullFunctionImpl(new IsNullLongFunctionImpl()), ScalarTypes.Bool, ScalarTypes.Long),
+                    new ScalarOverloadInfo(new IsNotNullFunctionImpl(new IsNullDoubleFunctionImpl()), ScalarTypes.Bool, ScalarTypes.Real),
+                    new ScalarOverloadInfo(new IsNotNullFunctionImpl(new IsNullDateTimeFunctionImpl()), ScalarTypes.Bool, ScalarTypes.DateTime),
+                    new ScalarOverloadInfo(new IsNotNullFunctionImpl(new IsNullTimeSpanFunctionImpl()), ScalarTypes.Bool, ScalarTypes.TimeSpan),
+                    new ScalarOverloadInfo(new IsNotNullFunctionImpl(new IsNullStringFunctionImpl()), ScalarTypes.Bool, ScalarTypes.String)));
             functions.Add(Functions.IsEmpty, new ScalarFunctionInfo(new ScalarOverloadInfo(new IsEmptyFunctionImpl(), ScalarTypes.Bool, ScalarTypes.String)));
 
             functions.Add(

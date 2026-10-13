@@ -34,6 +34,17 @@ namespace SharpOS.Std.Pipes
             => KernelPipes.Receive(Holder, handle, wait, out block, out length, out dropped);
 
         public static PipeStatus Close(int handle) => KernelPipes.Close(Holder, handle);
+        public static PipeStatus Break(int handle) => KernelPipes.Break(Holder, handle);
+        public static PipeStatus WaitSchema(int handle) => KernelPipes.WaitSchema(Holder, handle);
+        public static bool ExceptionInFlight => OS.Boot.EH.ExInfoHead.s_head != System.IntPtr.Zero;
+
+        /// <summary>
+        /// Closes a writing end the way the stage is leaving: normally — the
+        /// reader sees the end of the stream — or, when an exception is being
+        /// dispatched on this thread, broken (step205). A stage that fails
+        /// halfway no longer looks like a stream that simply ended.
+        /// </summary>
+        public static PipeStatus End(int handle) => ExceptionInFlight ? Break(handle) : Close(handle);
 
         public static PipeStatus WaitPeer(int handle) => KernelPipes.WaitPeer(Holder, handle);
 

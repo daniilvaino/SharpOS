@@ -166,6 +166,33 @@ namespace SharpOS.Std.Pipes
             return (PipeStatus)((delegate* unmanaged<int, int>)Services->PipeCloseAddress)(handle);
         }
 
+        /// <summary>Closes an end as a failed holder: the reader sees the stream broken.</summary>
+        public static PipeStatus Break(int handle)
+        {
+            if (!Available) return PipeStatus.Unsupported;
+            if (Services->PipeBreakAddress == 0) return Close(handle);
+            return (PipeStatus)((delegate* unmanaged<int, int>)Services->PipeBreakAddress)(handle);
+        }
+
+        /// <summary>Waits for the writer's type: Ok, or the end when it left without one; Unsupported from an older kernel.</summary>
+        public static PipeStatus WaitSchema(int handle)
+        {
+            if (!Available || Services->PipeWaitSchemaAddress == 0) return PipeStatus.Unsupported;
+            return (PipeStatus)((delegate* unmanaged<int, int>)Services->PipeWaitSchemaAddress)(handle);
+        }
+
+        /// <summary>An exception is being dispatched on this thread: its finally and catch blocks run.</summary>
+        public static bool ExceptionInFlight
+            => Available && Services->ExceptionHeadAddress != 0 && *(nint*)Services->ExceptionHeadAddress != 0;
+
+        /// <summary>
+        /// Closes a writing end the way the stage is leaving: normally — the
+        /// reader sees the end of the stream — or, when an exception is being
+        /// dispatched on this thread, broken (step205). A stage that fails
+        /// halfway no longer looks like a stream that simply ended.
+        /// </summary>
+        public static PipeStatus End(int handle) => ExceptionInFlight ? Break(handle) : Close(handle);
+
         public static byte[] Schema(int handle, out ulong rootKey)
         {
             rootKey = 0;

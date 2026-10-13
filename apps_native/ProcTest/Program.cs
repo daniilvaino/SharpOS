@@ -81,6 +81,7 @@ namespace PipeApps
             Run("11 WriteTo across three", WriteToAcrossThree);
             Run("11b a stage that passes nothing", EmptyStage);
             Run("18 KQL as a stage", KqlStage);
+            Run("19 KQL: the declared type, edits in place", KqlDeclaredAndEdits);
             if (full) Run("12 resources back", ResourcesBack);
             if (full) Run("14 measurements", Measurements);
 
@@ -700,6 +701,51 @@ namespace PipeApps
             Check("18: extend of a dynamic over Expandos: new messages, flat (" + flat + ")",
                   Finish(k) == 0 && Finish(g) == 0 && flat == "even=even,System.String;odd=odd,System.String;");
 
+            // extend over a type of fields (step204): a number written into
+            // the message's own field, the block sent on as it was — still
+            // PIPEGEN's LogEntry, its Text untouched.
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("where Level == 4 | take 3 | extend Level = Level * 10"), input: p1.ReadEnd, output: p2.WriteEnd);
+            string edited = "";
+            bool same = true;
+            foreach (View v in p2.ReadEnd.Read())
+            {
+                if (v.TypeName != "PipeApps.LogEntry") same = false;
+                edited += ((int)v["Level"]).ToString() + " " + (string)v["Text"] + ";";
+            }
+            kc = Finish(k); gc = Finish(g);
+            Check("18: extend Level = Level * 10 over LogEntry: written in place, LogEntry still (" + edited + ")",
+                  kc == 0 && same && edited == "40 text 4;40 text 9;40 text 14;");
+
+            // A string field too (step205): the new string in the block's
+            // tail, the field pointing at it — still LogEntry.
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("take 2 | extend Text = strcat(Text, '!')"), input: p1.ReadEnd, output: p2.WriteEnd);
+            string bangs = "";
+            bool logEntries = true;
+            foreach (View v in p2.ReadEnd.Read())
+            {
+                if (v.TypeName != "PipeApps.LogEntry") logEntries = false;
+                bangs += (string)v["Text"] + ";";
+            }
+            kc = Finish(k); Finish(g);
+            Check("18: extend of a string field: written into the block's tail, LogEntry still (" + bangs + ")",
+                  kc == 0 && logEntries && bangs == "text 0!;text 1!;");
+
+            // A value the field cannot hold is an error, not a truncation.
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("take 1 | extend Level = Level + 10000000000"), input: p1.ReadEnd, output: p2.WriteEnd);
+            int passed = 0;
+            PipeStatus how = PipeStatus.Ok;
+            try { foreach (View v in p2.ReadEnd.Read()) passed++; how = PipeStatus.EndOfStream; }
+            catch (PipeException e) { how = e.Status; }
+            kc = Finish(k); Finish(g);
+            Check("18: a long that does not fit the int field: KQL fails (exit " + kc.ToString() + "), nothing goes out, the output broken",
+                  kc == 1 && passed == 0 && how == PipeStatus.Broken);
+
             p1 = Pipe.Create(); p2 = Pipe.Create();
             g = Start("PIPEGEN.EXE", A("0"), output: p1.WriteEnd);
             k = Start("KQL.EXE", A("where Level > 1"), input: p1.ReadEnd, output: p2.WriteEnd);
@@ -707,6 +753,98 @@ namespace PipeApps
             foreach (View v in p2.ReadEnd.Read()) none++;
             Check("18: an input that ends at once: its declared type names the columns, nothing goes out (exit 0)",
                   Finish(k) == 0 && Finish(g) == 0 && none == 0);
+        }
+
+        // ---- 19 ----
+
+        // Keys of a received Expando, in their order.
+        private static string Keys(View v)
+        {
+            string s = "";
+            foreach (ViewField f in v.Fields) s += (s.Length == 0 ? "" : ",") + f.Name;
+            return s;
+        }
+
+        private static void KqlDeclaredAndEdits()
+        {
+            // A query that fails halfway breaks its output: three rows went
+            // on, the fourth (Level 3) does not fit the int, the next stage
+            // sees the stream broken, not ended.
+            var p1 = Pipe.Create(); var p2 = Pipe.Create();
+            Process g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            Process k = Start("KQL.EXE", A("extend Level = Level + iif(Level == 3, 10000000000, 0)"), input: p1.ReadEnd, output: p2.WriteEnd);
+            int n = 0;
+            PipeStatus status = PipeStatus.Ok;
+            try { foreach (View v in p2.ReadEnd.Read()) n++; status = PipeStatus.EndOfStream; }
+            catch (PipeException e) { status = e.Status; }
+            int kc = Finish(k); Finish(g);
+            Check("19: KQL failing halfway: 3 rows, then the stream broken, not ended (exit " + kc.ToString() + ", " + status.ToString() + ")",
+                  kc == 1 && n == 3 && status == PipeStatus.Broken);
+
+            // Expandos: an open table. Level a number here and a string there.
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PROCTEST.EXE", A("--child", "expando-vary", "12"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("where Level == 4"), input: p1.ReadEnd, output: p2.WriteEnd);
+            string ids = "";
+            foreach (View v in p2.ReadEnd.Read()) ids += ((long)v["Id"]).ToString() + ";";
+            Check("19: Expandos, a name's kind changing from message to message: where Level == 4 finds Id 4 (" + ids + ")",
+                  Finish(k) == 0 && Finish(g) == 0 && ids == "4;");
+
+            // A name the first message lacks and the tenth has.
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PROCTEST.EXE", A("--child", "expando-vary", "12"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("where isnotnull(Late)"), input: p1.ReadEnd, output: p2.WriteEnd);
+            ids = "";
+            foreach (View v in p2.ReadEnd.Read()) ids += ((long)v["Id"]).ToString() + "=" + ((long)v["Late"]).ToString() + ";";
+            Check("19: a name only from the tenth message on: where isnotnull(Late) finds 9, 10, 11 (" + ids + ")",
+                  Finish(k) == 0 && Finish(g) == 0 && ids == "9=90;10=100;11=110;");
+
+            // An empty input and a wrong query: the error all the same, before data, code 2.
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PIPEGEN.EXE", A("0"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("where Levl > 1"), input: p1.ReadEnd, output: p2.WriteEnd);
+            int none = 0;
+            PipeStatus how = PipeStatus.Ok;
+            try { foreach (View v in p2.ReadEnd.Read()) none++; how = PipeStatus.EndOfStream; }
+            catch (PipeException e) { how = e.Status; }
+            kc = Finish(k); Finish(g);
+            // A process that ends with a code other than 0 breaks its ends.
+            Check("19: an empty input, a name its type lacks: the error all the same, exit 2, the output broken (" + kc.ToString() + ")",
+                  kc == 2 && none == 0 && how == PipeStatus.Broken);
+
+            // project-away, project, project-rename over Expandos: the
+            // message's own block — the DateTime stays a DateTime, which a new
+            // message would carry as text — and the order of the names kept.
+            string[] queries = { "project-away Kind", "project When, N", "project-rename Num = N" };
+            string[] wanted = { "N,When", "N,When", "Num,Kind,When" };
+            for (int q = 0; q < queries.Length; q++)
+            {
+                p1 = Pipe.Create(); p2 = Pipe.Create();
+                g = Start("PROCTEST.EXE", A("--child", "expando-out", "3"), output: p1.WriteEnd);
+                k = Start("KQL.EXE", A(queries[q]), input: p1.ReadEnd, output: p2.WriteEnd);
+                string keys = "";
+                bool sameDate = true;
+                foreach (View v in p2.ReadEnd.Read())
+                {
+                    keys += Keys(v) + ";";
+                    if (v["When"].TypeName != "System.DateTime") sameDate = false;
+                }
+                string w = wanted[q] + ";" + wanted[q] + ";" + wanted[q] + ";";
+                Check("19: " + queries[q] + " over Expandos, in place: " + keys,
+                      Finish(k) == 0 && Finish(g) == 0 && sameDate && keys == w);
+            }
+
+            // A class: a string, a DateTime and a TimeSpan written into the
+            // message itself, read after KQL by the class.
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PROCTEST.EXE", A("--child", "typed-out", "3"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("extend Text = strcat(Text, '!'), When = When + 1d, Took = Took + 1h"),
+                      input: p1.ReadEnd, output: p2.WriteEnd);
+            string got = "";
+            foreach (Stamped s in p2.ReadEnd.Read<Stamped>())
+                got += s.Level.ToString() + " " + s.Text + " " + s.When.Day.ToString() + " " + ((int)s.Took.TotalMinutes).ToString() + ";";
+            Check("19: extend of a string, a DateTime, a TimeSpan in a class: written in place, read by the class (" + got + ")",
+                  Finish(k) == 0 && Finish(g) == 0 && got == "0 t 0! 11 60;1 t 1! 12 61;2 t 2! 13 62;");
         }
 
         // ---- 12 ----

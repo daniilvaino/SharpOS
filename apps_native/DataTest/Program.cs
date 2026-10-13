@@ -71,6 +71,8 @@ namespace DataApps
             Test("13 the same from a delegate in a struct enumerator's Dispose", ThrowFromEnumeratorDispose);
             Test("14 the same after kernel services in the Dispose", ThrowAfterServices);
             Test("15 test 4 with the wait in Dispose (the old reader)", OldReader);
+            Test("16 externalpipe: > keeps the messages, READ gives them back", ExternalPipeFiles);
+            Test("17 CBOR there and back", CborRoundTrip);
 
             // The last stages leave on their own time (slowly under --gc-stress):
             // the counters settle within seconds, not at once.
@@ -286,7 +288,7 @@ namespace DataApps
         {
             const int Rows = 1000000;
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            Check("5: a million rows to t5.json", Sh(Self("gen " + Rows.ToString()) + " | CONVERT --to json --lines > t5.json") == 0);
+            Check("5: a million rows to t5.json", Sh(Self("gen " + Rows.ToString()) + " | CONVERT --to jsonl > t5.json") == 0);
             long writeMs = clock.ElapsedMilliseconds;
             List<string> size = Lines("READ t5.json | " + Self("bytes-sum"));
             long bytes = size.Count == 1 ? long.Parse(size[0].Split(' ')[0]) : 0;
@@ -316,7 +318,7 @@ namespace DataApps
             double copyMs = clock.Elapsed.TotalMilliseconds;
 
             clock.Restart();
-            int wrote = Sh(Self("gen " + Rows.ToString()) + " | CONVERT --to json --lines > tp.json");
+            int wrote = Sh(Self("gen " + Rows.ToString()) + " | CONVERT --to jsonl > tp.json");
             double toMs = clock.Elapsed.TotalMilliseconds;
             List<string> size = Lines("READ tp.json | " + Self("bytes-sum"));
             long jsonBytes = size.Count == 1 ? long.Parse(size[0].Split(' ')[0]) : 0;
@@ -412,12 +414,12 @@ namespace DataApps
                 bool copied = Sh("READ " + a + " | WRITE " + b) == 0;
                 Check("7: " + size.ToString() + " B: READ a | WRITE b is equal byte for byte", made && copied && SameFile(a, b, size, true));
             }
-            Sh("PIPEGEN 3 > t7.txt");
-            Sh("PIPEGEN 2 >> t7.txt");
+            Sh("PIPEGEN 3 | CONVERT --to lines > t7.txt");
+            Sh("PIPEGEN 2 | CONVERT --to lines >> t7.txt");
             var lines = new List<string>();
             for (int i = 0; i < 3; i++) lines.Add("PipeApps.LogEntry { Level = " + i.ToString() + ", Text = \"text " + i.ToString() + "\" }");
             for (int i = 0; i < 2; i++) lines.Add("PipeApps.LogEntry { Level = " + i.ToString() + ", Text = \"text " + i.ToString() + "\" }");
-            Check("7: > and >> from an object program: the lines the screen shows", Text("t7.txt") == Join(lines));
+            Check("7: > and >> after CONVERT --to lines: the lines the screen shows", Text("t7.txt") == Join(lines));
         }
 
         // ---- 8 ----

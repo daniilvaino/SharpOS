@@ -906,6 +906,13 @@ namespace AotTests
             Report("writes through a view", writes);
             Check("pipe 13: a reference, a wrong type, an out-of-range number through a view: refused, explained", writes == null);
 
+            // A UInt64 above long.MaxValue is above every long (step205): it
+            // used to compare as the negative long its bits make.
+            View top = ulong.MaxValue, half = 9223372036854775808UL, small = 1UL;
+            Check("pipe 13: a view of a UInt64 above long.MaxValue compares by value, not as a negative long",
+                  top > 0 && !(top < 0) && top != -1 && half > long.MaxValue && half >= long.MaxValue
+                  && top > half && half > small && !(small > half) && top == (View)ulong.MaxValue);
+
             int intoCount = 0;
             string intoAll = null;
             foreach (ReportLite lite in into.Into<ReportLite>())
@@ -1021,16 +1028,18 @@ namespace AotTests
             int sent = Probe(17, 0, null);
             string a = Refusal(key), b = Refusal(size), c = Refusal(reference);
             AppHost.WriteString("[pipe] spoiled blocks: " + a + " | " + b + " | " + c + "\n");
-            Check("pipe 14: a spoiled block — unknown key, size past the end, reference outside — refused at receive",
+            Check("pipe 14: a spoiled block — unknown key, size past the end, reference outside — refused where it is read",
                   sent == 0 && a != null && a.Contains("not in the pipe's description") && b != null && b.Contains("runs past")
                   && c != null && c.Contains("is not a record"));
         }
 
+        // Since step205 a block is not walked when it arrives: a view checks
+        // each record it reaches. The copy below reaches all of them.
         private static string Refusal(RawPipeReader reader)
         {
             try
             {
-                foreach (View v in reader) return null;
+                foreach (View v in reader) { v.ToExpando(); return null; }
             }
             catch (PipeException e) when (e.Status == PipeStatus.Refused)
             {

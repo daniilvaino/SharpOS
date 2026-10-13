@@ -85,6 +85,42 @@ namespace PipeApps
                     return 0;
                 }
 
+                // Test 19 (step205): Stamped records — Level i, Text "t i",
+                // When 2026-10-10 + i days (UTC), Took i minutes.
+                case "typed-out":
+                {
+                    using var o = Pipe.Write<Stamped>();
+                    int n = int.Parse(a2);
+                    for (int i = 0; i < n; i++)
+                        o.Copy(new Stamped
+                        {
+                            Level = i,
+                            Text = "t " + i.ToString(),
+                            When = new DateTime(2026, 10, 10, 0, 0, 0, DateTimeKind.Utc).AddDays(i),
+                            Took = TimeSpan.FromMinutes(i),
+                        });
+                    return 0;
+                }
+
+                // Test 19: Expandos whose names and kinds change: Level a
+                // number in even messages and a string in odd ones; Late only
+                // from the tenth on; Id always.
+                case "expando-vary":
+                {
+                    using var o = Pipe.Write<Expando>();
+                    int n = int.Parse(a2);
+                    for (int i = 0; i < n; i++)
+                    {
+                        var x = new Expando();
+                        x["Id"] = i;
+                        if (i % 2 == 0) x["Level"] = i;
+                        else x["Level"] = "s" + i.ToString();
+                        if (i >= 9) x["Late"] = i * 10;
+                        o.Copy(x);
+                    }
+                    return 0;
+                }
+
                 // Test 5: n numbers to the standard output; exit 0 when the
                 // writer had to wait for its reader — one write, past the full
                 // queue, took 20 ms or more (the reader starts 300 ms late) —

@@ -286,6 +286,22 @@
         // CPU features beyond x86-64's baseline (step198): bits of
         // SharpOS.Std.NoRuntime.LibmPatcher; 0 from an older kernel.
         public ulong CpuFeatures;
+        // int PipeBreak(int handle) (step205): closes an end as a failed
+        // holder would — the reader sees the stream broken, not ended. Zero:
+        // an older kernel; the end is then closed.
+        public ulong PipeBreakAddress;
+
+        // Address of the exception chain's head (step205): not zero while an
+        // exception is being dispatched on the calling thread — its finally
+        // and catch blocks run with it set. A writer closed then breaks its
+        // output instead of ending it. Zero: an older kernel.
+        public ulong ExceptionHeadAddress;
+
+        // int PipeWaitSchema(int handle) (step205): waits until the writer
+        // has declared its type (Ok) or is gone without declaring one
+        // (EndOfStream / Broken). A reader binds a query to the type before
+        // the first message. Zero: an older kernel.
+        public ulong PipeWaitSchemaAddress;
     }
 
     /// <summary>

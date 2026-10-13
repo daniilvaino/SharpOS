@@ -1,3 +1,4 @@
+using System;
 using SharpOS.Std.Pipes;
 
 namespace PipeApps
@@ -31,6 +32,16 @@ namespace PipeApps
     {
         public int N;
         public string Text;
+    }
+
+    /// <summary>A class with a string, a DateTime and a TimeSpan: KQL edits all three in place (step205).</summary>
+    [Message]
+    public sealed class Stamped
+    {
+        public int Level;
+        public string Text;
+        public DateTime When;
+        public TimeSpan Took;
     }
 
     /// <summary>An address handed from one process to another.</summary>

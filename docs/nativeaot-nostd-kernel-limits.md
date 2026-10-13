@@ -596,7 +596,7 @@ done/step141.md).
 | `Span<T>.ToString()` / `ReadOnlySpan<T>.ToString()` | **Починили** (step 165). Возвращал `null`, что ломает контракт `object` и читается потребителем как «значения не было» — так терялось имя приложения из разобранного манифеста. Для символов возвращает содержимое; тип элемента различается по РАЗМЕРУ, потому что `typeof` в std не используется нигде (спан `ushort` поэтому отрисуется текстом) |
 | `char.IsBetween` / `IsAscii*` (.NET 7 API) | Работает (step 165): `IsBetween`, `IsAsciiDigit`, `IsAsciiLetter`, `IsAsciiLetterOrDigit`, `IsAsciiHexDigit`, `IsAscii` |
 | `IsExternalInit`, `SkipLocalsInitAttribute` | Работают (step 165). Типы-маркеры, реализовывать нечего — под каноническими именами без оговорок |
-| Исполнение KQL | 🟡 (step200, `vendor/BabyKusto`, MIT, поверх `vendor/KustoLanguage`). KQLBABY 6/6: where/project/take, summarize by, sort, extend, contains, print. Глагол конвейера `KQL 'запрос'` (`apps_native/KqlApp`): сообщения входа — таблица `Input`, читается по мере прихода (step201): `where` отвечает сразу, `sort`/`summarize` ждут конца, `take` прекращает чтение; запрос из одних `where`/`take`/`sort` пересылает исходные блоки входа (без копии, тип входа); над Expando и `extend` — столбцы-числа, bool и строки пишутся в само сообщение (`ExpandoEdits`), блок идёт дальше; иной результат — Expando. Столбцы — поля типа; вложенные объекты, массивы и Expando — `dynamic` через `JsonNode`: поля, сравнения и арифметика с числом, строкой, bool и `dynamic` (вырез BabyKusto, типы — как связывает Kusto.Language), `tostring`/`tolong` (через текст узла). Ошибки запроса с позицией. PROCTEST 18 (7/7), KQLBABY 9/9. Вырезано: `matches regex` и `extract()` (нет `Regex`), `url_decode`/`url_encode_component` (нет `System.Uri`). `dynamic` переводится в `JsonNode` на каждое сообщение |
+| Исполнение KQL | 🟡 (step200, `vendor/BabyKusto`, MIT, поверх `vendor/KustoLanguage`). KQLBABY 6/6: where/project/take, summarize by, sort, extend, contains, print. Глагол конвейера `KQL 'запрос'` (`apps_native/KqlApp`): сообщения входа — таблица `Input`, читается по мере прихода (step201): `where` отвечает сразу, `sort`/`summarize` ждут конца, `take` прекращает чтение; запрос из одних `where`/`take`/`sort` пересылает исходные блоки входа (без копии, тип входа); над Expando и `extend` — столбцы-числа, bool и строки пишутся в само сообщение (`ExpandoEdits`), блок идёт дальше; над классом (step204–205) `extend` существующих полей — числа, bool, `DateTime`, `TimeSpan` на месте, строка — новой записью в хвост блока, тот же тип и адрес; хвост `project`/`project-away`/`project-rename` по именам над Expando — правки самого блока, порядок ключей прежний; иной результат — Expando. Схема (step205) — из объявления писателя (служба `PipeWaitSchema`), запрос связывается до первого сообщения, ошибка связывания — код 2 и на пустом входе; над Expando таблица открытая: каждое названное в запросе имя — свой столбец `dynamic`, значение из сообщения, своего рода, null где ключа нет. Ошибка посреди потока обрывает выход. Столбцы — поля типа; вложенные объекты, массивы и Expando — `dynamic` через `JsonNode`: поля, сравнения и арифметика с числом, строкой, bool и `dynamic` (вырез BabyKusto, типы — как связывает Kusto.Language), `tostring`/`tolong` (через текст узла). Ошибки запроса с позицией. PROCTEST 18 (10/10), 19 (8/8), KQLBABY 9/9. Вырезы BabyKusto: `isnull(dynamic)`, `isnotnull` (step205). Вырезано: `matches regex` и `extract()` (нет `Regex`), `url_decode`/`url_encode_component` (нет `System.Uri`). `dynamic` переводится в `JsonNode` на каждое сообщение |
 | Разбор XML | **Работает** (step 165, `vendor/TurboXml`, BSD-2-Clause). SAX: обработчик — структура, значения приходят спанами, аллокаций нет. Правок в библиотеку 176 строк, из них 145 — изъятия (потоковые перегрузки, тела методов по умолчанию); вырезов SIMD ноль. Потребитель — чтение манифеста приложения из `RT_MANIFEST` |
 | JSON: `Utf8JsonReader` / `Utf8JsonWriter` | 🟡 (`vendor/SystemTextJson`, MIT, из System.Text.Json форка .NET 10; проверка — `apps_native/JsonTest`, 42/42 под QEMU, step197). Чтение спана целиком и кусками (`isFinalBlock: false` + `JsonReaderState`), запись в `IBufferWriter<byte>`/`Stream`, `Indented`. Вырезано: `ReadOnlySequence`-вход, `JavaScriptEncoder` (экранирование всегда как у `JavaScriptEncoder.Default` — встроено), `decimal`/`DateTime(Offset)`/`Guid`, async-члены писателя, Raw/Segment/Comment-запись. С step198 — `JsonDocument`/`JsonElement` и `System.Text.Json.Nodes` (`JsonNode`/`JsonObject`/`JsonArray`/`JsonValue`), decimal вернулся; JSONTEST 64/64. Сериализатора нет: `JsonValue.Create<T>` — только примитивы, `WriteTo/ToJsonString` без `JsonSerializerOptions`. Подробно — `vendor/SystemTextJson/PROVENANCE.md` |
 | `System.Math` / `MathF` | **Работает, правильно округлено** (step198). Переходы на SharpLibm (сабмодуль `SharpLibm/`, MIT): CORE-MATH через CoreMathSharp с ≈80 исправленными ошибками порта. Проверка — репозиторий SharpLibm-tests: double бит в бит с MPFR на ≈30 млн худших случаев CORE-MATH, float — со всеми 2³² входами C CORE-MATH; точные операции бит в бит с libc-test. `Math.Round` — roundeven, как BCL; `%` для double/float — `fmod`. Флагов исключений, режимов округления и errno нет (CLI фиксирует к ближайшему; для C-вызывающих через экспорты — дальнейшая задача). `LibmPatcher` при SSE4.1 переписывает floor/ceil/trunc/rint/nearbyint на `roundsd`, при FMA3 и AVX-состоянии в XCR0 (step199) — `fma`/`fmaf` на `vfmadd`. Сверх `Math`: функции Бесселя, `erfinv`/`erfcinv`, `compoundn` (step199; не правильно округлены, границы в ulp — README SharpLibm) |
@@ -798,8 +798,13 @@ V2 и привязана к `AppServiceTable.CurrentAbiVersion` (п. 8).
 - **Вид и удобный слой (step192):** `View` — чтение чужого объекта по имени,
   запись значений на месте, `ToExpando`, `Into<T>` (по именам), `Pipe.Read/Write`,
   `foreach` с закрытием конца, `Regions`, `Where`, `WriteTo` (блоком, у вида —
-  без перевода), `ToHeap()` у любого объекта сообщения; чужой блок проверяется
-  при приёме. Жёлтое: замеры только под QEMU; запись во временный вид C# не
+  без перевода), `ToHeap()` у любого объекта сообщения. Чужой блок с step205
+  проверяется при обращении, а не проходом при приёме: каждая запись, к которой
+  идёт вид, — внутри блока, выровнена, ключ описан, целиком до конца; массивы
+  Expando — того типа, что в раскладке; цепочка корзины — не больше записей.
+  Правка (`ExpandoEdits`) проходит блок целиком один раз перед первой. Сравнение
+  вида с `long` и вида с видом не теряет знак `UInt64` (step205). Жёлтое:
+  замеры только под QEMU; запись во временный вид C# не
   пускает (CS1612); `dynamic` — с step193 (ниже); ILC без `--scan` — девиртуализации по
   «созданным» типам нет (тест 19 — сторож на случай её включения).
 - **Скорость нижнего слоя (step195):** план на тип (размер, слоты ссылок) из
@@ -822,9 +827,20 @@ V2 и привязана к `AppServiceTable.CurrentAbiVersion` (п. 8).
 - **Внешние данные (step197):** `Pipe.ReadBytes/WriteBytes` (`Stream`; `byte[]`
   и `string` как UTF-8 + LF, куски до 64 КиБ), `ReadText/WriteText`; экран
   печатает `byte[]` текстом, если это UTF-8 без управляющих, иначе размер и hex;
-  необработанный обрыв стандартного конца — тихий выход 141. Программы `READ`,
-  `WRITE`, `CONVERT` (`--from json|lines`, `--to json [--lines]`), оболочка
+  необработанный обрыв стандартного конца — тихий выход 141. С step205 выход,
+  закрываемый, пока на потоке идёт исключение (`using (writer)`, `WriteTo`,
+  стадия KQL), обрывается, а не кончается: сосед видит сбой, а не конец
+  потока (`PipeTransport.End`, служба `PipeBreak`; признак — голова цепочки
+  исключений потока). Программы `READ`,
+  `WRITE`, `CONVERT` (`--from json|jsonl|cbor|cborseq|lines|externalpipe`,
+  `--to json|jsonl|cbor|cborseq|lines|externalpipe`; step206), оболочка
   `> файл`/`>> файл`, код конвейера — первая слева стадия с кодом не 0 и не 141.
+  С step206 `> файл` хранит поток объектов как есть (externalpipe: описание
+  трубы и блоки), `READ` отдаёт те же сообщения под тем же описанием, класс не
+  нужен; `>>` — только тех же типов, иначе отказ; поток строк и `byte[]` —
+  байтами. CBOR: документ (тег 55799, массив) и последовательность (RFC 8742);
+  `byte[]`, `DateTime`, `Guid`, `float` переживают туда и обратно, `TimeSpan`
+  — строкой.
   `Into<T>` из `Expando` (сужение с проверкой, строка → перечисление, `DateTime`/
   `TimeSpan`/`Guid` разбором). `Pipe.From/To(строка)` — через `SHELL.EXE -c`,
   `PipelineException` со стадией и кодом. Проверка — `DATATEST.EXE`. Жёлтое:
@@ -840,9 +856,13 @@ V2 и привязана к `AppServiceTable.CurrentAbiVersion` (п. 8).
   и удаление — ноль выделений; поиск не зависит от числа записей (4–256:
   ≈120–140 нс в куче, ≈750–870 нс видом под QEMU); 100 стадий по полю и 1 000
   добавлений/удалений — значения верны, блок ограничен. KQL `extend` над
-  Expando пишет на месте. Жёлтое: правится только Expando; значения правки —
-  скаляры, строки, null (объект — `NotSupportedException`); замеры только
-  под QEMU.
+  Expando пишет на месте; с step204 и над типом с полями: `extend Weight =
+  Weight * 2` пишет число или bool в само поле сообщения (`View`), блок идёт
+  дальше тем же адресом и типом, значение вне диапазона поля — ошибка
+  (PROCTEST 18). Жёлтое: добавлять и удалять поля — только у Expando; у типа
+  с полями на месте пишутся числа и bool, строка поля — новые сообщения;
+  значения правки Expando — скаляры, строки, null (объект —
+  `NotSupportedException`); замеры только под QEMU.
 - **Порча кучи до барьера объяснена (step189)** — четыре ошибки поиска корней,
   см. §10 и `done/step189.md`; не труба.
 

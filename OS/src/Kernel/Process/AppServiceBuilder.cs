@@ -355,6 +355,9 @@ namespace OS.Kernel.Process
                 table.PipeSchemaAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, ulong, ulong*, int>)&OS.Kernel.Pipes.PipeServices.Schema;
                 table.PipeOpenEndAddress = (ulong)(nint)(delegate* unmanaged<ulong*, int>)&OS.Kernel.Pipes.PipeServices.OpenEnd;
                 table.PipeWaitPeerAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.WaitPeer;
+                table.PipeBreakAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.Break;
+                table.PipeWaitSchemaAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.WaitSchema;
+                table.ExceptionHeadAddress = (ulong)OS.Boot.EH.ExInfoHead.GetHeadAddress();
                 table.ProcessAddress = (ulong)(nint)(delegate* unmanaged<int, ulong*, int>)&ProcessService;
                 if (OS.Kernel.Diagnostics.Probes.PipeProbe)
                     table.PipeProbeAddress = (ulong)(nint)(delegate* unmanaged<int, ulong, ulong*, int>)&OS.Kernel.Diagnostics.PipeProbe.Service;

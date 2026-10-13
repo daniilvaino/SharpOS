@@ -464,6 +464,36 @@ namespace OS.Kernel.Pipes
             }
         }
 
+        /// <summary>
+        /// Waits until the pipe's writer has declared its type (step205): Ok;
+        /// or until it is gone without one — EndOfStream, Broken when it
+        /// failed. A reader binds to the type before any message comes.
+        /// </summary>
+        public static PipeStatus WaitSchema(uint holder, int handle)
+        {
+            Preemption.Suppress();
+            try
+            {
+                if (!TryEnd(holder, handle, (PipeRole)0, out Pipe p)) return PipeStatus.BadHandle;
+                while (p.Schema == null)
+                {
+                    if (p.WriterGone) return p.WriterBroke ? PipeStatus.Broken : PipeStatus.EndOfStream;
+                    if (Scheduler.Current?.KillRequested ?? false) return PipeStatus.Broken;
+                    int seen = p.Version;
+                    Preemption.Allow();
+                    fixed (int* version = &p.Version)
+                        AddressWait.WaitOnAddress(version, &seen, 4, 0xFFFFFFFFu);
+                    Preemption.Suppress();
+                    if (!TryEnd(holder, handle, (PipeRole)0, out _)) return PipeStatus.BadHandle;
+                }
+                return PipeStatus.Ok;
+            }
+            finally
+            {
+                Preemption.Allow();
+            }
+        }
+
         /// <summary>Whether the other end of this one is gone (closed or its holder ended).</summary>
         public static bool PeerGone(uint holder, int handle)
         {

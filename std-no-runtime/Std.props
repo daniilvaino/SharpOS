@@ -90,6 +90,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeEnds.cs" Link="std\Pipes\PipeEnds.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\TypeCheck.cs" Link="std\Pipes\TypeCheck.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStreams.cs" Link="std\Pipes\PipeStreams.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\ExternalPipe.cs" Link="std\Pipes\ExternalPipe.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\ScreenText.cs" Link="std\Pipes\ScreenText.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeProbeMessages.cs" Link="std\Pipes\PipeProbeMessages.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStatus.cs" Link="std\Pipes\PipeStatus.cs" />

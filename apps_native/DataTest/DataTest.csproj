@@ -13,6 +13,7 @@
     <Compile Include="Children.cs" />
     <Compile Include="Messages.cs" />
     <Compile Include="JsonValues.cs" />
+    <Compile Include="ExternalFiles.cs" />
     <Compile Include="..\PipeGen\StressArgs.cs" />
   </ItemGroup>
 </Project>

@@ -189,9 +189,13 @@ namespace System
                 case "HH:mm": return Pad(Hour, 2) + ":" + Pad(Minute, 2);
                 case "T":
                 case "HH:mm:ss": return Pad(Hour, 2) + ":" + Pad(Minute, 2) + ":" + Pad(Second, 2);
-                // The round-trip form (step197): every tick, no zone.
+                // The round-trip form (step197): every tick; Z for Utc, as
+                // in the BCL (step206). Local gets no offset: no time zones.
                 case "O":
                 case "o":
+                    return Pad(Year, 4) + "-" + Pad(Month, 2) + "-" + Pad(Day, 2) + "T" +
+                           Pad(Hour, 2) + ":" + Pad(Minute, 2) + ":" + Pad(Second, 2) + "." +
+                           PadFraction(_ticks % TicksPerSecond) + (Kind == DateTimeKind.Utc ? "Z" : "");
                 case "yyyy-MM-ddTHH:mm:ss.fffffff":
                     return Pad(Year, 4) + "-" + Pad(Month, 2) + "-" + Pad(Day, 2) + "T" +
                            Pad(Hour, 2) + ":" + Pad(Minute, 2) + ":" + Pad(Second, 2) + "." +

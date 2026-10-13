@@ -50,6 +50,53 @@ namespace SharpOS.Std.Pipes
             Alive = true;
             GoneBecause = null;
             Generation++;
+            Validated = false;
+        }
+
+        // Whether the whole block was walked against the shapes (step205).
+        // A received message is not: a view checks each record it reaches
+        // (Record), so reading two fields of a big message costs two checks,
+        // not a pass over the block. Code that takes all of it — a copy to
+        // the heap, an edit — walks it once first (EnsureValid).
+        internal bool Validated;
+
+        internal void EnsureValid()
+        {
+            if (Validated) return;
+            if (!Shapes.Validate(Block, Length, out string complaint)) throw Malformed(complaint);
+            Validated = true;
+        }
+
+        internal static PipeException Malformed(string complaint)
+            => new PipeException(PipeStatus.Refused, "a malformed message: " + complaint);
+
+        /// <summary>
+        /// The record whose table word is at <paramref name="objectAt"/>: inside
+        /// the block, aligned, of a described key, all of it before the end.
+        /// Every view of an object comes through here, so a malformed message
+        /// fails where it is read — never as a read past the block.
+        /// </summary>
+        internal TypeShape Record(ulong objectAt)
+        {
+            ulong offset = objectAt - (ulong)Block;
+            bool root = offset == Region.HeaderSize;
+            if (!Validated && (objectAt < (ulong)Block || offset < Region.HeaderSize || (offset & 7) != 0
+                               || offset + 16 > Length))
+                throw Malformed($"a reference to {offset} is not a record of the block");
+            ulong key = *(ulong*)objectAt;
+            TypeShape t = Shapes[key];
+            if (t == null)
+                throw Malformed(root ? $"record at 0: key 0x{key:x} is not in the pipe's description"
+                                     : $"a reference to {offset} is not a record of the block (key 0x{key:x})");
+            if (!Validated)
+            {
+                ulong total = t.BaseSize;
+                if (t.ComponentSize != 0) total += (ulong)*(uint*)(objectAt + 8) * t.ComponentSize;
+                ulong end = offset + ((total + 7) & ~7UL) - 8;
+                if (end > Length || end <= offset)
+                    throw Malformed($"record at {offset - Region.HeaderSize} ({t.Name}) runs past the block");
+            }
+            return t;
         }
 
         internal void End(string because)
@@ -114,9 +161,7 @@ namespace SharpOS.Std.Pipes
 
         internal static View OfObject(ViewScope scope, ulong objectAt)
         {
-            TypeShape t = scope.Shapes[*(ulong*)objectAt];
-            if (t == null)
-                throw new InvalidOperationException("a record of the region has no description");
+            TypeShape t = scope.Record(objectAt);
             // A box of a number shows as the number.
             if (t.BoxedValue != null)
                 return new View(scope, objectAt + (ulong)t.BoxedValue.Offset, null, t.BoxedValue.Kind, Value, t.BoxedValue.Enum);
@@ -322,6 +367,7 @@ namespace SharpOS.Std.Pipes
             public bool HasElements;
             public int First, Stride, BucketFirst;         // the arrays' first element and the entry size
             public int Hash, Next, Kind, Dead, Bits, Name, Ref;   // an entry's fields, from the entry's start
+            public TypeShape Table, Index;                 // the arrays' types: every Expando of the pipe has these
         }
 
         internal ExpandoShape ExpandoLayout()
@@ -343,6 +389,8 @@ namespace SharpOS.Std.Pipes
                 if (table == null || table.Elements == null || table.Elements.Struct == null || index == null || index.Elements == null)
                     throw new InvalidOperationException("the Expando's table has no description");
                 TypeShape entry = table.Elements.Struct;
+                s.Table = table;
+                s.Index = index;
                 s.First = table.Elements.Offset;
                 s.Stride = table.ComponentSize;
                 s.BucketFirst = index.Elements.Offset;
@@ -364,7 +412,10 @@ namespace SharpOS.Std.Pipes
         private ulong ExpandoRef(int field)
         {
             ulong offset = *(ulong*)(_at + (ulong)field);
-            return offset == 0 ? 0 : (ulong)_scope.Block + offset;
+            if (offset == 0) return 0;
+            ulong at = (ulong)_scope.Block + offset;
+            _scope.Record(at);
+            return at;
         }
 
         private int ExpandoCount() => *(int*)(_at + (ulong)ExpandoLayout().Live);
@@ -376,7 +427,7 @@ namespace SharpOS.Std.Pipes
             int used = *(int*)(_at + (ulong)s.Used);
             if (used <= 0) return 0;
             ulong entries = ExpandoRef(s.Entries);
-            if (entries == 0 || used > *(int*)(entries + 8)) throw ExpandoMalformed();
+            if (entries == 0 || _scope.Shapes[*(ulong*)entries] != s.Table || used > *(int*)(entries + 8)) throw ExpandoMalformed();
             return used;
         }
 
@@ -397,7 +448,7 @@ namespace SharpOS.Std.Pipes
             if (used == 0) return -1;
             ExpandoShape s = ExpandoLayout();
             ulong entries = ExpandoRef(s.Entries), buckets = ExpandoRef(s.Buckets);
-            if (buckets == 0) throw ExpandoMalformed();
+            if (buckets == 0 || _scope.Shapes[*(ulong*)buckets] != s.Index) throw ExpandoMalformed();
             int count = *(int*)(buckets + 8);
             if (count <= 0 || (count & (count - 1)) != 0) throw ExpandoMalformed();
             int at = *(int*)(buckets + (ulong)s.BucketFirst + 4UL * (ulong)ExpandoHash.Bucket(hash, count));
@@ -418,6 +469,7 @@ namespace SharpOS.Std.Pipes
         {
             if (offset == 0) return false;
             ulong s = (ulong)_scope.Block + offset;
+            if (!_scope.Record(s).IsString) throw ExpandoMalformed();
             int length = *(int*)(s + 8);
             if (length != name.Length) return false;
             char* chars = (char*)(s + 12);
@@ -425,6 +477,12 @@ namespace SharpOS.Std.Pipes
                 if (chars[i] != name[i]) return false;
             return true;
         }
+
+        /// <summary>The name of entry <paramref name="i"/> if it is live; null for a removed one.</summary>
+        internal string ExpandoLiveName(int i) => ExpandoDead(i) ? null : ExpandoName(i);
+
+        /// <summary>Entries used, live and removed: the bound of <see cref="ExpandoLiveName"/>.</summary>
+        internal int ExpandoSlots => ExpandoUsed();
 
         private string ExpandoName(int i)
         {
@@ -523,6 +581,26 @@ namespace SharpOS.Std.Pipes
 
         private bool IsNumber => (_shape == Value || (_shape == Detached && _text == null && _value != FieldKind.Reference))
                                  && _value != FieldKind.Bool;
+
+        // A UInt64 above long.MaxValue: Integer() reads it as a negative long,
+        // so comparisons ask this first (step205) — it is above every long.
+        private bool AboveLong => _value == FieldKind.UInt64 && (long)(_shape == Detached ? _bits : *(ulong*)_at) < 0;
+
+        private ulong UnsignedBits => _shape == Detached ? _bits : *(ulong*)_at;
+
+        // An integer view against a long, without losing the sign.
+        private int CompareInteger(long b) => AboveLong ? 1 : Integer().CompareTo(b);
+
+        // Two integer views, without losing the sign of either.
+        private static int CompareIntegers(View a, View b)
+        {
+            bool ua = a.AboveLong, ub = b.AboveLong;
+            if (ua || ub) return ua && ub ? a.UnsignedBits.CompareTo(b.UnsignedBits) : ua ? 1 : -1;
+            return a.Integer().CompareTo(b.Integer());
+        }
+
+        private static int Compare(View a, View b)
+            => a.IsFloat || b.IsFloat ? a.Float().CompareTo(b.Float()) : CompareIntegers(a, b);
         private bool IsFloat => _value == FieldKind.Single || _value == FieldKind.Double;
 
         private void RequireNumber()
@@ -718,7 +796,7 @@ namespace SharpOS.Std.Pipes
 
         // ---- comparisons ----
 
-        public static bool operator ==(View a, long b) => a.IsNumber && (a.IsFloat ? a.Float() == b : a.Integer() == b);
+        public static bool operator ==(View a, long b) => a.IsNumber && (a.IsFloat ? a.Float() == b : a.CompareInteger(b) == 0);
         public static bool operator !=(View a, long b) => !(a == b);
         public static bool operator ==(long b, View a) => a == b;
         public static bool operator !=(long b, View a) => !(a == b);
@@ -738,7 +816,7 @@ namespace SharpOS.Std.Pipes
             a.Check();
             b.Check();
             if (a.IsNumber && b.IsNumber)
-                return a.IsFloat || b.IsFloat ? a.Float() == b.Float() : a.Integer() == b.Integer();
+                return a.IsFloat || b.IsFloat ? a.Float() == b.Float() : CompareIntegers(a, b) == 0;
             ViewKind ka = a.Kind, kb = b.Kind;
             if (ka == ViewKind.Null || kb == ViewKind.Null) return ka == kb;
             if (ka == ViewKind.Bool && kb == ViewKind.Bool) return (a.Integer() != 0) == (b.Integer() != 0);
@@ -748,10 +826,10 @@ namespace SharpOS.Std.Pipes
 
         public static bool operator !=(View a, View b) => !(a == b);
 
-        public static bool operator <(View a, long b) { a.RequireNumber(); return a.IsFloat ? a.Float() < b : a.Integer() < b; }
-        public static bool operator >(View a, long b) { a.RequireNumber(); return a.IsFloat ? a.Float() > b : a.Integer() > b; }
-        public static bool operator <=(View a, long b) { a.RequireNumber(); return a.IsFloat ? a.Float() <= b : a.Integer() <= b; }
-        public static bool operator >=(View a, long b) { a.RequireNumber(); return a.IsFloat ? a.Float() >= b : a.Integer() >= b; }
+        public static bool operator <(View a, long b) { a.RequireNumber(); return a.IsFloat ? a.Float() < b : a.CompareInteger(b) < 0; }
+        public static bool operator >(View a, long b) { a.RequireNumber(); return a.IsFloat ? a.Float() > b : a.CompareInteger(b) > 0; }
+        public static bool operator <=(View a, long b) { a.RequireNumber(); return a.IsFloat ? a.Float() <= b : a.CompareInteger(b) <= 0; }
+        public static bool operator >=(View a, long b) { a.RequireNumber(); return a.IsFloat ? a.Float() >= b : a.CompareInteger(b) >= 0; }
         public static bool operator <(long b, View a) => a > b;
         public static bool operator >(long b, View a) => a < b;
         public static bool operator <=(long b, View a) => a >= b;
@@ -760,10 +838,10 @@ namespace SharpOS.Std.Pipes
         public static bool operator >(View a, double b) { a.RequireNumber(); return a.Float() > b; }
         public static bool operator <=(View a, double b) { a.RequireNumber(); return a.Float() <= b; }
         public static bool operator >=(View a, double b) { a.RequireNumber(); return a.Float() >= b; }
-        public static bool operator <(View a, View b) { a.RequireNumber(); b.RequireNumber(); return a.Float() < b.Float(); }
-        public static bool operator >(View a, View b) { a.RequireNumber(); b.RequireNumber(); return a.Float() > b.Float(); }
-        public static bool operator <=(View a, View b) { a.RequireNumber(); b.RequireNumber(); return a.Float() <= b.Float(); }
-        public static bool operator >=(View a, View b) { a.RequireNumber(); b.RequireNumber(); return a.Float() >= b.Float(); }
+        public static bool operator <(View a, View b) { a.RequireNumber(); b.RequireNumber(); return Compare(a, b) < 0; }
+        public static bool operator >(View a, View b) { a.RequireNumber(); b.RequireNumber(); return Compare(a, b) > 0; }
+        public static bool operator <=(View a, View b) { a.RequireNumber(); b.RequireNumber(); return Compare(a, b) <= 0; }
+        public static bool operator >=(View a, View b) { a.RequireNumber(); b.RequireNumber(); return Compare(a, b) >= 0; }
 
         public static bool operator true(View v) => (bool)v;
         public static bool operator false(View v) => !(bool)v;

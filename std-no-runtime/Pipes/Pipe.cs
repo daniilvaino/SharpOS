@@ -190,6 +190,8 @@ namespace SharpOS.Std.Pipes
             Block = block;
             Length = length;
             _scope?.Reset(block, length);
+            // The new block is the edit's own: no need to walk it again.
+            if (_scope != null) _scope.Validated = true;
         }
 
         public byte* Block { get; private set; }
@@ -374,12 +376,16 @@ namespace SharpOS.Std.Pipes
             return Answer(status);
         }
 
-        /// <summary>Closes the end: the reader sees the end of the stream after the queue.</summary>
+        /// <summary>
+        /// Closes the end: the reader sees the end of the stream after the
+        /// queue — or the stream broken, when this runs because an exception
+        /// is leaving (`using (writer)` around code that threw).
+        /// </summary>
         public void Dispose()
         {
             _screen = false;
             if (_handle == 0) return;
-            PipeTransport.Close(_handle);
+            PipeTransport.End(_handle);
             _handle = 0;
             PipeClosing.Run(ref Closed);
         }
@@ -613,8 +619,9 @@ namespace SharpOS.Std.Pipes
                 _shapes = RegionShapes.Parse(Schema, out string bad);
                 if (_shapes == null) return Refuse(raw, "the pipe's description is malformed: " + bad);
             }
-            if (!_shapes.Validate((byte*)raw, length, out string complaint))
-                return Refuse(raw, "a malformed message: " + complaint);
+            // No pass over the block here (step205): a view checks each record
+            // it reaches, so a stage that reads two fields of a big message
+            // pays for two. Edits walk the block first (ViewScope.EnsureValid).
             return reuse != null ? reuse.Reset((byte*)raw, length, Schema, dropped, _shapes)
                                  : new RawRegion((byte*)raw, length, Schema, dropped, _shapes);
         }
