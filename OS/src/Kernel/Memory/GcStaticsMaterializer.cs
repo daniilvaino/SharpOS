@@ -230,7 +230,7 @@ namespace OS.Kernel.Memory
                 // confirms MT shape (ComponentSize/Flags/BaseSize) so we can
                 // see the decode landed on a real EEType before materializing
                 // all of them.
-                if (!s_diagnosticPrinted)
+                if (!s_diagnosticPrinted && OS.Kernel.Diagnostics.Probes.Diagnostics)
                 {
                     s_diagnosticPrinted = true;
                     DumpEETypeShape(eetype, tagForDiag);

@@ -1,3 +1,4 @@
+using System;
 using OS.Boot;
 using OS.Hal;
 using OS.Kernel.Exec;
@@ -20,22 +21,12 @@ namespace OS.Kernel.Process
     internal static unsafe class LauncherBoot
     {
         private const ulong PageSize = X64PageTable.PageSize;
-        // Where applications live. \EFI\BOOT holds the firmware entry point and
-        // nothing else worth listing.
-        private const string AppDirectoryPath = "\\apps";
 
-        // The launcher the kernel starts after boot: a Terminal.Gui
-        // application (step163). Being started BY the kernel rather than by
-        // another launcher is the point — the process model keeps one
-        // suspended context, so anything it starts would otherwise be refused.
-        private const string LauncherPath = "\\apps\\LAUNCHER.EXE";
-
-        // A script on the volume means the machine has work to do with nobody
-        // at it: the shell runs the lines and exits, and the batch ends the way
-        // it always does — with Shutdown below. This is how the test rig gets a
-        // full run out of a boot without a keypress.
-        private const string ShellPath = "\\apps\\SHELL.EXE";
-        private const string AutorunScriptPath = "\\apps\\AUTORUN.SH";
+        // What to start and with what environment is the configuration file's
+        // (BootConfig, step207): the launcher by default, the shell with the
+        // battery script for an unattended run. \bin is listed at boot for
+        // the log.
+        private const string ProgramDirectoryPath = "\\bin";
 
         // It exits cleanly when the user leaves it.
         private const int LauncherExitCodeExpected = 0;
@@ -47,6 +38,8 @@ namespace OS.Kernel.Process
             public int ExpectedExitCode;
             public bool OptionalIfMissing;
             public AppServiceAbi ServiceAbi;
+            // The program first, then its arguments (INIT).
+            public string[] Arguments;
         }
 
         public static void Run(BootInfo bootInfo)
@@ -62,21 +55,17 @@ namespace OS.Kernel.Process
                                      + " — the launcher and every app load from it; nothing to run");
 
             DebugLog.Write(LogLevel.Info, "fs init ok");
-            FileDiagnostics.DumpDirectory(AppDirectoryPath);
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics) FileDiagnostics.DumpDirectory(ProgramDirectoryPath);
+
+            BootConfig.Load();
+            // A battery's log says which build of each program ran; a prompt does not need it.
+            if (BootConfig.AnnounceBuild)
+                AppServiceBuilder.Settings |= AppServiceTable.SettingAnnounceBuild;
 
             // PeLoader flattens, maps and jumps it; WindowsX64 service ABI.
             BootApp launcher = default;
-
-            bool unattended = FileSystem.Exists(AutorunScriptPath)
-                              && FileSystem.Exists(ShellPath);
-            if (unattended)
-            {
-                DebugLog.Write(LogLevel.Info, "autorun script found: starting the shell, not the launcher");
-                // A battery's log says which build of each program ran; a prompt does not need it.
-                AppServiceBuilder.Settings |= AppServiceTable.SettingAnnounceBuild;
-            }
-
-            launcher.Path = unattended ? ShellPath : LauncherPath;
+            launcher.Path = BootConfig.Init[0];
+            launcher.Arguments = BootConfig.Init;
             // Follows CurrentAbiVersion rather than naming a number: pinned to
             // V2 it kept working after V3 landed, which hid the version
             // mismatch that broke every app launched from the launcher.
@@ -183,8 +172,17 @@ namespace OS.Kernel.Process
             try
             {
                 StartupData.Clear();
-                started = AppServiceBuilder.StartProcess(image, FileNameOf(app.Path),
-                    app.AppAbiVersion, app.ServiceAbi, abiFromRequest: true, launcherId: 0, out proc);
+                if (!SetArguments(app.Arguments))
+                {
+                    started = AppServiceStatus.InvalidParameter;
+                    proc = null;
+                }
+                else
+                {
+                    started = AppServiceBuilder.StartProcess(image, FileNameOf(app.Path),
+                        app.AppAbiVersion, app.ServiceAbi, abiFromRequest: true, launcherId: 0, out proc,
+                        imagePath: app.Path);
+                }
             }
             finally
             {
@@ -209,6 +207,23 @@ namespace OS.Kernel.Process
             DebugLog.EndLine();
 
             return exitCode == app.ExpectedExitCode ? AppRunResult.Success : AppRunResult.ExitCodeMismatch;
+        }
+
+        // INIT's arguments after the program, NUL-ended UTF-8 each — the
+        // form a start request carries them in.
+        private static bool SetArguments(string[] init)
+        {
+            if (init == null || init.Length < 2) return true;
+            int total = 0;
+            for (int i = 1; i < init.Length; i++) total += System.Text.Encoding.UTF8.GetByteCount(init[i]) + 1;
+            byte* list = stackalloc byte[total];
+            int at = 0;
+            for (int i = 1; i < init.Length; i++)
+            {
+                at += System.Text.Encoding.UTF8.GetBytes(init[i].AsSpan(), new System.Span<byte>(list + at, total - at));
+                list[at++] = 0;
+            }
+            return StartupData.SetArguments(list, (uint)total);
         }
 
         private static string FileNameOf(string path)

@@ -85,6 +85,9 @@ namespace OS.Kernel.Exec
             s_exitCode = 0;
             s_hr = -1;
 
+            if (!EnsureCallerTeb())
+                return false;
+
             // The same quieting the boot probe applies around its own run, and
             // for the same reason: kernel chatter between an app's prompt and
             // its echo makes the app unusable. It was missing here, so a run
@@ -125,6 +128,43 @@ namespace OS.Kernel.Exec
 
             exitCode = s_exitCode;
             return s_hr == 0;
+        }
+
+        // The calling thread's own TEB (step207). CoreCLR finds its Thread*
+        // through the TEB's TLS, gs-relative; the scheduler loads GS_BASE from
+        // the thread's context block on every switch-in. The boot thread gets
+        // one in CoreClrProbe and the runtime's threads in Scheduler, but an
+        // app's thread calling RunManagedApp had none: the run went on under
+        // whatever GS was left, and the first switch to a runtime thread and
+        // back put GS elsewhere — GetThread() null, JIT_PInvokeEnd writing to
+        // address 4 (NormalHello's "new Thread + Join", every PowerShell start
+        // from the launcher). Kept for the thread's life, so its next run finds
+        // the same Thread* in TLS. Stack bounds as the boot thread's: the
+        // thread's own stack, the run itself goes onto BigStack.
+        private static bool EnsureCallerTeb()
+        {
+            OS.Kernel.Threading.Thread self = OS.Kernel.Threading.Scheduler.Current;
+            if (self == null || self.ContextBlock == null) return true;   // before the scheduler: the boot path set GS itself
+            if (self.Teb == null)
+            {
+                ulong top = (ulong)self.StackTop, bottom = (ulong)self.StackBase;
+                if (top == 0)
+                {
+                    bottom = (ulong)s_bigStack;
+                    top = bottom + s_bigStackSize;
+                }
+                byte* teb = OS.Kernel.Threading.CoreClrTeb.Allocate(top, bottom);
+                if (teb == null)
+                {
+                    Log.Write(LogLevel.Warn, "[clr] no TEB for the calling thread — refusing to run");
+                    return false;
+                }
+                self.Teb = teb;
+                // The switch-in copy first: a switch between the two lines
+                // then restores the right GS by itself.
+                *(ulong*)(self.ContextBlock + 0x08) = (ulong)teb;
+            }
+            return OS.Hal.X64Asm.WriteGsBaseMsr((ulong)self.Teb);
         }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]

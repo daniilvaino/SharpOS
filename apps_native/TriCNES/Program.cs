@@ -19,7 +19,7 @@ namespace TriCNES
     {
         // Where the cartridge lives on the ESP, staged by the build like
         // DOOM1.WAD is.
-        private const string RomPath = "apps/GAME.NES";
+        private const string RomPath = "/games/GAME.NES";
 
         // Controller bit order, as the NES shift register reads them:
         // A, B, Select, Start, Up, Down, Left, Right.

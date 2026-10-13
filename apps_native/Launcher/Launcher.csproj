@@ -15,5 +15,6 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="FileTree.cs" />
+    <Compile Include="Tiles.cs" />
   </ItemGroup>
 </Project>

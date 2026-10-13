@@ -1,10 +1,13 @@
 # The battery the machine runs by itself.
 #
-# Staged to \apps\AUTORUN.SH by run_build.ps1 -Autorun. Its presence there is
-# the whole switch: the kernel starts SHELL.EXE instead of LAUNCHER.EXE, the
-# shell runs these lines and exits, and the batch ends the way it always does
-# — by powering the machine off. Without the switch, a build boots to the
-# launcher exactly as before.
+# Staged to \config\autorun.sh by run_build.ps1 -Autorun, which also makes
+# INIT in \config\system.env the shell with this script (step207): the kernel
+# starts SHELL.EXE instead of LAUNCHER.EXE, the shell runs these lines and
+# exits, and the batch ends the way it always does — by powering the machine
+# off. Without the switch, a build boots to the launcher.
+#
+# Programs are named bare and found along PATH (\bin;\tests;\games); the
+# shell starts in HOME (\home), where the tests write their files.
 #
 # One command per line, '#' for comments. The line worth grepping for is
 #
@@ -71,37 +74,37 @@
 # that ends at once. KQLBABY.EXE checks the engine itself on a table in
 # memory — exit code = checks passed.
 #
-# Paths use FORWARD slashes. This is bash syntax — the parser is a bash parser
-# — and in bash a backslash escapes the next character, so \apps\AOTTESTS.EXE
-# arrives as appsAOTTESTS.EXE with the separators eaten. The shell converts
-# forward slashes to the kernel's own separator on the way to the file system.
-# Single quotes would also work ('\apps\AOTTESTS.EXE'), and read worse.
+# A path, when one is needed, uses FORWARD slashes. This is bash syntax — the
+# parser is a bash parser — and in bash a backslash escapes the next
+# character, so \tests\AOTTESTS.EXE arrives as testsAOTTESTS.EXE with the
+# separators eaten. The shell converts forward slashes to the kernel's own
+# separator on the way to the file system.
 
-expect 0 /apps/AOTTESTS.EXE --pipe-writer-dies normal
-expect 134 /apps/AOTTESTS.EXE --pipe-writer-dies crash
-expect 0 /apps/AOTTESTS.EXE --pipe-stress 2
-expect 303 /apps/AOTTESTS.EXE
-expect 303 /apps/AOTTESTS.EXE
-expect 0  /apps/BENCHAOT.EXE
-expect 3 /apps/AOTTESTS.EXE --echo-args 'two words' третий
-expect 2 /apps/AOTTESTS.EXE --untranslated-interface1
-expect 2 /apps/AOTTESTS.EXE --untranslated-interface2
-expect 2 /apps/AOTTESTS.EXE --untranslated-interface3
-expect 1 /apps/AOTTESTS.EXE --untranslated-interface4
-expect 303 /apps/AOTTESTS.EXE --gc-stress 16 4
-expect 0 /apps/AOTTESTS.EXE --gc-stress 1 1 --pipe-stress 1
-expect 23 /apps/AOTTESTS.EXE --gc-stress 1 1 --dynamic
+expect 0 AOTTESTS.EXE --pipe-writer-dies normal
+expect 134 AOTTESTS.EXE --pipe-writer-dies crash
+expect 0 AOTTESTS.EXE --pipe-stress 2
+expect 303 AOTTESTS.EXE
+expect 303 AOTTESTS.EXE
+expect 0  BENCHAOT.EXE
+expect 3 AOTTESTS.EXE --echo-args 'two words' третий
+expect 2 AOTTESTS.EXE --untranslated-interface1
+expect 2 AOTTESTS.EXE --untranslated-interface2
+expect 2 AOTTESTS.EXE --untranslated-interface3
+expect 1 AOTTESTS.EXE --untranslated-interface4
+expect 303 AOTTESTS.EXE --gc-stress 16 4
+expect 0 AOTTESTS.EXE --gc-stress 1 1 --pipe-stress 1
+expect 23 AOTTESTS.EXE --gc-stress 1 1 --dynamic
 PIPEGEN 5
 PIPEGEN 1000 | PIPEFILT 3 | PIPECNT
 PIPEGEN 20 | KQL 'where Level == 4'
 PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level | sort by Level asc'
-expect 2 /apps/KQL.EXE 'where Levl > 1'
-expect 77 /apps/PROCTEST.EXE
-expect 72 /apps/PROCTEST.EXE --gc-stress 16
-expect 19 /apps/PIPEPERF.EXE
-expect 64 /apps/JSONTEST.EXE
-expect 69 /apps/DATATEST.EXE
-expect 66 /apps/DATATEST.EXE --gc-stress 16 --quick
-expect 10 /apps/GVMTEST.EXE
-expect 7 /apps/KQLTEST.EXE
-expect 9 /apps/KQLBABY.EXE
+expect 2 KQL.EXE 'where Levl > 1'
+expect 83 PROCTEST.EXE
+expect 78 PROCTEST.EXE --gc-stress 16
+expect 19 PIPEPERF.EXE
+expect 64 JSONTEST.EXE
+expect 73 DATATEST.EXE
+expect 70 DATATEST.EXE --gc-stress 16 --quick
+expect 10 GVMTEST.EXE
+expect 7 KQLTEST.EXE
+expect 9 KQLBABY.EXE

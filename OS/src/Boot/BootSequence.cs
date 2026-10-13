@@ -163,9 +163,13 @@ namespace OS.Boot
             PhysicalMemory.Init(bootInfo.MemoryMap);
             Log.Write(LogLevel.Info, "early allocator ready");
 
-            PrintAllocatedPage(PhysicalMemory.AllocPage());
-            PrintAllocatedPage(PhysicalMemory.AllocPage());
-            PrintAllocatedPage(PhysicalMemory.AllocPage());
+            // Three pages taken only to show where the allocator starts.
+            if (Probes.Diagnostics)
+            {
+                PrintAllocatedPage(PhysicalMemory.AllocPage());
+                PrintAllocatedPage(PhysicalMemory.AllocPage());
+                PrintAllocatedPage(PhysicalMemory.AllocPage());
+            }
 
             InitializeHeap();
 
@@ -221,7 +225,8 @@ namespace OS.Boot
                 InstallCallFilterFuncletShellcode();
                 // Test harness (5.5a) wired separately from EhProbe so the
                 // patcher addresses live in EhProbe statics at install time.
-                OS.Kernel.Diagnostics.EhProbe.InstallStep5_5TestHarness();
+                if (OS.Kernel.Diagnostics.Probes.Tests)
+                    OS.Kernel.Diagnostics.EhProbe.InstallStep5_5TestHarness();
             }
             if (bootInfo.JumpStubExecBuffer != null)
                 X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
@@ -352,18 +357,21 @@ namespace OS.Boot
                 Log.Write(LogLevel.Info, "tss: double fault on its own stack (IST1)");
             else
                 Log.Write(LogLevel.Warn, "tss: not installed - a stack overflow resets the machine");
-            DumpExecBuffers(bootInfo);
-            RunPagerValidation();
+            if (Probes.Diagnostics) DumpExecBuffers(bootInfo);
+            if (Probes.Tests) RunPagerValidation();
 
             // VM manager self-test — Reserve/Commit/MapKernel produce live
             // writable mappings. Must run after InitializePager (creates the
             // clone) AND ActivatePagerRootAndLockCpuFeatures (clone becomes
             // active) + PhysicalMemory (Phase1). CoreCLR GC (Phase4) depends
             // on this; fail loud here, not later.
-            if (OS.Kernel.Memory.VirtualMemory.SelfTest())
-                Log.Write(LogLevel.Info, "VM manager self-test ok");
-            else
-                Panic.Fail("VM manager self-test failed");
+            if (Probes.Tests)
+            {
+                if (OS.Kernel.Memory.VirtualMemory.SelfTest())
+                    Log.Write(LogLevel.Info, "VM manager self-test ok");
+                else
+                    Panic.Fail("VM manager self-test failed");
+            }
 
             // Right after the window exists: does taking a demand fault leave
             // the interrupted code's XMM registers intact? Runs here because
@@ -407,7 +415,7 @@ namespace OS.Boot
 
             InitializeAcpi(bootInfo);
             InitializeHpet();
-            ReportCpuClock();
+            if (Probes.Diagnostics) ReportCpuClock();   // 50 ms of measuring, for the log
 
             // After the timer, not next to the framebuffer mapping: measuring
             // needs a clock, and the framebuffer comes up first. The screen is
@@ -440,7 +448,9 @@ namespace OS.Boot
             // probe rather than by a blank screen.
             if (Probes.TerminalEngine)
             {
-                TerminalProbe.Run();
+                // The engine's self-test is a test; the front-end is the console.
+                if (Probes.Tests)
+                    TerminalProbe.Run();
 
                 if (TerminalConsole.TryInit(0, 0, 0))
                     Log.Write(LogLevel.Info, "[term] console front-end active");
@@ -517,6 +527,12 @@ namespace OS.Boot
             // EH probe — three levels (try/finally no-throw, try/catch
             // no-throw, try/catch with throw). L3 currently halts.
             EhProbe.Run();
+
+            // The scheduler: the boot thread wrapped as a Thread. It used to
+            // come up as a side effect of whichever thread probe ran first —
+            // a kernel built without its tests (Probes.Tests) had none (step207).
+            if (!OS.Kernel.Threading.Scheduler.Init())
+                OS.Kernel.Panic.Fail("Scheduler.Init failed: no context block for the boot thread");
 
             // Phase E2 — TEB facade swap probe. Allocates a fresh TebFacade,
             // CLI-fenced swaps gs base to it, reads gs:[Self] / gs:[Limit]
@@ -1223,27 +1239,31 @@ namespace OS.Boot
             // where the HPET starts.
             System.DateTime.Clock.Install(&UtcTicks);
 
-            ulong t0 = HpetTimer.ReadCounter();
-            for (int i = 0; i < 100_000; i++) { /* burn cycles */ }
-            ulong t1 = HpetTimer.ReadCounter();
+            // The counter moves and a stopwatch agrees with it: checks.
+            if (Probes.Tests)
+            {
+                ulong t0 = HpetTimer.ReadCounter();
+                for (int i = 0; i < 100_000; i++) { /* burn cycles */ }
+                ulong t1 = HpetTimer.ReadCounter();
 
-            Log.Begin(LogLevel.Info);
-            Console.Write("hpet counter delta: ");
-            Console.WriteULong(t1 - t0);
-            Console.Write(" ticks");
-            Log.EndLine();
+                Log.Begin(LogLevel.Info);
+                Console.Write("hpet counter delta: ");
+                Console.WriteULong(t1 - t0);
+                Console.Write(" ticks");
+                Log.EndLine();
 
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            ulong target = HpetTimer.ReadCounter() + HpetTimer.FrequencyHz / 1000;
-            while (HpetTimer.ReadCounter() < target) { /* busy */ }
-            sw.Stop();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                ulong target = HpetTimer.ReadCounter() + HpetTimer.FrequencyHz / 1000;
+                while (HpetTimer.ReadCounter() < target) { /* busy */ }
+                sw.Stop();
 
-            Log.Begin(LogLevel.Info);
-            Console.Write("stopwatch ~1ms spin: elapsed_us=");
-            Console.WriteULong((ulong)sw.ElapsedMicroseconds);
-            Console.Write(" elapsed_ms=");
-            Console.WriteULong((ulong)sw.ElapsedMilliseconds);
-            Log.EndLine();
+                Log.Begin(LogLevel.Info);
+                Console.Write("stopwatch ~1ms spin: elapsed_us=");
+                Console.WriteULong((ulong)sw.ElapsedMicroseconds);
+                Console.Write(" elapsed_ms=");
+                Console.WriteULong((ulong)sw.ElapsedMilliseconds);
+                Log.EndLine();
+            }
 
             // Here and not with the other probes in phase 4: while it runs,
             // the driver reads a buffer instead of the chip, and every clock

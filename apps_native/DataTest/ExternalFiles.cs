@@ -106,6 +106,79 @@ namespace DataApps
             return true;
         }
 
+        // ---- 18 (step207) ----
+
+        // The files in apps_native/DataTest/esp, written by `DATATEST
+        // --write-samples` on an earlier build and staged beside the apps:
+        // every later build must read them as they were written. A change to
+        // the block layout makes them refuse by its version, and they are
+        // written again (Region.LayoutVersion).
+        private const string SampleRecords = "sample-record.pipe", SampleExpandos = "sample-expando.pipe";
+
+        // Where the build stages them: beside DATATEST (step207); written by --write-samples into the working directory.
+        private const string SampleDirectory = "/tests/";
+
+        private static int WriteSamples()
+        {
+            using (PipeWriter<Record> w = Pipe.To("WRITE " + SampleRecords).Write<Record>())
+                for (int i = 0; i < 3; i++) w.Copy(MakeRecord(i));
+            using (PipeWriter<Expando> w = Pipe.To("WRITE " + SampleExpandos).Write<Expando>())
+                for (int i = 0; i < 3; i++) w.Copy(MakeExpando(i));
+            Console.WriteLine("[datatest] samples written: " + SampleRecords + ", " + SampleExpandos);
+            return 0;
+        }
+
+        // Every kind of value an Expando holds, nested ones too.
+        private static Expando MakeExpando(int i)
+        {
+            var inner = new Expando();
+            inner["name"] = "вложенный " + i.ToString();
+            inner["weight"] = 0.5 * i;
+            var e = new Expando();
+            e["id"] = (long)i;
+            e["small"] = i;
+            e["big"] = ulong.MaxValue - (ulong)i;
+            e["ratio"] = 1.0 / (i + 3);
+            e["single"] = 1.5f * i;
+            e["flag"] = i % 2 == 0;
+            e["text"] = "строка № " + i.ToString();
+            e["when"] = new DateTime(2026, 10, 13, 17, 0, i, DateTimeKind.Utc);
+            e["span"] = new TimeSpan(TimeSpan.TicksPerHour + 2 * TimeSpan.TicksPerMinute + 3 * TimeSpan.TicksPerSecond + i);
+            e["key"] = Guid.Parse("fedcba98-7654-3210-fedc-ba987654321" + i.ToString("x"));
+            e["bytes"] = new byte[] { 0, 1, 2, (byte)i, 255 };
+            e["list"] = new object[] { 1L, "два", 3.0, null };
+            e["inner"] = inner;
+            e["nothing"] = null;
+            if (i == 2) e.Remove("small");
+            return e;
+        }
+
+        private static void SampleFiles()
+        {
+            string records = SampleDirectory + SampleRecords, expandos = SampleDirectory + SampleExpandos;
+            Check("18: " + SampleRecords + ": the records" + RecordsBack("READ " + records, 3),
+                  RecordsBack("READ " + records, 3) == "");
+
+            // The Expandos: what the sample gives is what the same Expandos made now give.
+            using (PipeWriter<Expando> w = Pipe.To("CONVERT --to jsonl | WRITE t18now.json").Write<Expando>())
+                for (int i = 0; i < 3; i++) w.Copy(MakeExpando(i));
+            bool read = Sh("READ " + expandos + " | CONVERT --to jsonl > t18old.json") == 0;
+            string now = Text("t18now.json"), old = read ? Text("t18old.json") : "";
+            Check("18: " + SampleExpandos + ": the same values as now", read && now.Length > 0 && now == old);
+            if (now != old) Console.WriteLine(old);
+
+            // A damaged byte in a block; a layout of another number.
+            byte[] damaged = File.ReadAllBytes(records);
+            damaged[damaged.Length - 20] ^= 0x40;
+            File.WriteAllBytes("t18bad.pipe", damaged);
+            Check("18: a damaged block: READ fails with 1", FailsIn("READ t18bad.pipe", "READ", 1));
+            byte[] other = File.ReadAllBytes(records);
+            other[ExternalPipe.Signature.Length + 4] ^= 0x7F;
+            File.WriteAllBytes("t18bad.pipe", other);
+            Check("18: another layout version: READ fails with 1", FailsIn("READ t18bad.pipe", "READ", 1));
+            File.WriteAllBytes("t18bad.pipe", new byte[0]);
+        }
+
         // ---- 17 ----
 
         private static void CborRoundTrip()

@@ -19,8 +19,6 @@ namespace Shell
     /// </remarks>
     internal sealed unsafe class Executor
     {
-        private const string AppDirectory = "\\apps";
-
         private string _cwd;
 
         // `sh -c` (step197): the shell's own standard ends go to the first
@@ -40,13 +38,8 @@ namespace Shell
             _report = report;
             // The working directory is the process's: inherited, and what the
             // stages started from here inherit. A shell the kernel started
-            // ("\\") begins in the programs' directory, as it always has.
+            // begins at HOME — the kernel starts it there (step207).
             _cwd = Process.WorkingDirectory;
-            if (_cwd == "\\" && input == null && output == null)
-            {
-                _cwd = AppDirectory;
-                Process.WorkingDirectory = _cwd;
-            }
         }
 
         /// <summary>Whether the shell runs a line for a caller, its ends being the caller's pipe.</summary>
@@ -468,7 +461,14 @@ namespace Shell
 
         private int ChangeDirectory(List<string> args)
         {
-            if (args.Count == 0) { _cwd = AppDirectory; Process.WorkingDirectory = _cwd; return 0; }
+            if (args.Count == 0)
+            {
+                string home = System.Environment.GetEnvironmentVariable("HOME");
+                if (string.IsNullOrEmpty(home)) { Write("cd: HOME is not set\n"); return 1; }
+                _cwd = home;
+                Process.WorkingDirectory = _cwd;
+                return 0;
+            }
 
             string target = args[0];
             if (target == "..")
@@ -614,28 +614,35 @@ namespace Shell
         {
             Write("builtins: cd pwd ls cat echo clear history buildinfo expect exit help\n");
             Write("buildinfo on|off — programs print their build line at start (on in an autorun battery)\n");
-            Write("programs: any NAME.EXE in /apps by its name — READ, WRITE, CONVERT, PIPEGEN, ...\n");
+            Write("programs: NAME.EXE by its name, looked for along PATH (" + (System.Environment.GetEnvironmentVariable("PATH") ?? "") + ")\n");
             Write("expect CODE COMMAND — run it, succeed only on that exit code\n");
             Write("a path runs too: .EXE as a program, .DLL on the hosted runtime\n");
             Write("operators: && || ; a | b | c ; > file and >> file at the end of a pipeline\n");
             Write("keys: Up/Down history, Tab completes, Home/End, Ctrl+A/E/U/K/W, Ctrl+L clears,\n");
             Write("      Ctrl+C drops the line, Ctrl+D on an empty line leaves\n");
             // Worth saying out loud: this is bash syntax, so a backslash
-            // escapes the next character and eats itself. /apps/X.EXE works,
-            // \apps\X.EXE arrives as appsX.EXE.
-            Write("paths: use /apps/NAME.EXE — a backslash is an escape here, not a separator\n");
+            // escapes the next character and eats itself: /bin/X.EXE works,
+            // a backslash path loses its separators.
+            Write("paths: use /bin/NAME.EXE — a backslash is an escape here, not a separator\n");
             return 0;
         }
 
-        // The file a verb runs: a path as given, a bare word from pps, with
-        // .EXE added when it has no extension of its own. Null, with the code
-        // to return, when there is none.
+        // The file a verb runs: a path as given, a bare word along PATH
+        // (step207), with .EXE added when it has no extension of its own.
+        // Null, with the code to return, when there is none.
         private string ProgramPath(string verb, out int missing)
         {
             missing = 0;
-            string path = LooksLikePath(verb) ? Resolve(verb) : AppDirectory + "\\" + verb;
+            if (!LooksLikePath(verb))
+            {
+                string found = Process.FindProgram(verb);
+                if (found != null) return found;
+                missing = 127;
+                ReportMissing(verb, "PATH");
+                return null;
+            }
+            string path = Resolve(verb);
             if (AppHost.FileExistsEx(path) == AppServiceStatus.Ok) return path;
-            if (!LooksLikePath(verb) && AppHost.FileExistsEx(path + ".EXE") == AppServiceStatus.Ok) return path + ".EXE";
             missing = 127;
             ReportMissing(verb, path);
             return null;
@@ -652,7 +659,7 @@ namespace Shell
             {
                 Write("sh: unknown command: ");
                 Write(verb);
-                Write(" (no builtin, and no ");
+                Write(" (no builtin, and not on ");
                 Write(path);
                 Write(")\n");
             }
@@ -728,10 +735,12 @@ namespace Shell
             return built.ToString();
         }
 
+        // A path has a separator, as in sh: NAME.EXE is looked for along PATH
+        // (step207), ./NAME and /bin/NAME are taken as written.
         private static bool LooksLikePath(string verb)
         {
             for (int i = 0; i < verb.Length; i++)
-                if (verb[i] == '\\' || verb[i] == '/' || verb[i] == '.') return true;
+                if (verb[i] == '\\' || verb[i] == '/') return true;
             return false;
         }
 

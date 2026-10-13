@@ -1,7 +1,8 @@
 // A shell, so that "run the battery" stops meaning "press Enter eleven times".
 //
-// Two ways in, one body. With \apps\AUTORUN.SH on the volume the lines are run
-// in order and the shell exits — which is what the test rig needs: the build
+// Two ways in, one body. SHELL.EXE SCRIPT runs the script's lines in order
+// and exits (step207: the script is an argument, as in sh — the kernel starts
+// the shell with the battery's when the configuration says so) — which is what the test rig needs: the build
 // arrives over the network, a socket switches the laptop on, and nobody is
 // there to type. Without it there is a prompt.
 //
@@ -18,7 +19,6 @@ namespace Shell
 {
     internal static unsafe class AppEntry
     {
-        private const string ScriptPath = "\\apps\\AUTORUN.SH";
         private const int MaxScriptBytes = 8192;
 
         [RuntimeExport("SharpAppEntry")]
@@ -49,12 +49,10 @@ namespace Shell
                 return executor.RunLine(args[1]);
             }
 
-            return AppHost.FileExistsEx(ScriptPath) == AppServiceStatus.Ok
-                ? RunScript()
-                : Interactive();
+            return args.Length >= 1 ? RunScript(Process.ResolvePath(args[0])) : Interactive();
         }
 
-        private static int RunScript()
+        private static int RunScript(string ScriptPath)
         {
             byte* buffer = stackalloc byte[MaxScriptBytes];
             if (AppHost.TryReadFile(ScriptPath, buffer, MaxScriptBytes, out uint length)

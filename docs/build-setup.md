@@ -231,7 +231,13 @@ interval (`run.Bench` by default) per function, named from the kernel's PDB.
 Flags worth knowing: `-NoRun` builds without launching, `-SkipCoreClr` builds a
 bare kernel with no hosted runtime, `-Stop` kills a running instance through QMP
 on port 4444, `-ForkConfig Debug|Release` selects which fork build to link
-(Release by default; Debug needs the Debug fork and its CoreLib built first).
+(Release by default; Debug needs the Debug fork and its CoreLib built first),
+`-NoTests` builds a kernel without its boot-time tests and diagnostics (no EH
+gates, stress or smoke tests, no hosted census, no profiler or dumps — straight
+to `INIT`; `Probes.Tests`, `Probes.Diagnostics`),
+`-Autorun -AutorunScript FILE` runs your script instead of the battery.
+`-NoBuild` boots the image the last run left (`.qemu\esp.img`), files the guest
+wrote included; it refuses the switches that would change the image.
 
 ## MSB4062: `BootAsm.EmitCoffStubsTask` could not be loaded
 

@@ -12,13 +12,24 @@
     # Resulting BOOTX64.EFI hosts no managed app — used for measuring the
     # bare kernel image size.
     [switch]$SkipCoreClr,
+    # A kernel without boot-time tests (step207): no EH gates, no thread and
+    # allocator stress, no smoke tests, no hosted census — straight to INIT.
+    # Probes.Tests in OS/src/Kernel/Diagnostics/Probes.cs.
+    [switch]$NoTests,
+    # Boot the image the last run left (.qemu\esp.img) as it is: no build, no
+    # staging, no new image — the files the guest wrote are still there.
+    # Refused together with the switches that change what goes on the image.
+    [switch]$NoBuild,
     [switch]$NoRun,
     [switch]$Stop,
-    # Stage apps_native\Shell\autorun.sh as \apps\AUTORUN.SH, which makes the
-    # kernel start the shell instead of the launcher: it runs the script and
+    # Stage apps_native\Shell\autorun.sh as \config\autorun.sh and make INIT
+    # in \config\system.env the shell with it: it runs the script and
     # the machine powers itself off. That is the unattended shape the test rig
     # needs; without the switch a build boots to the launcher as before.
     [switch]$Autorun,
+    # With -Autorun: another script instead of the battery (step207) — one
+    # program's check, or a script that makes files to take off the image.
+    [string]$AutorunScript,
     # Trace faults instead of letting the machine die quietly. When output
     # stops mid-line and nothing follows, a triple fault and a hang look
     # exactly alike from the serial port; this tells them apart in one run.
@@ -163,6 +174,24 @@ function Resolve-OptionalPath {
 $repoRoot = Split-Path -Parent $PSCommandPath
 $efiProjectDir = Join-Path $repoRoot "OS"
 $projectFile = Join-Path $efiProjectDir "OS.csproj"
+
+if ($NoBuild) {
+    # These decide what is on the image; with nothing built they would be
+    # ignored, and a run that looks like "-NoTests" would boot the old kernel.
+    $conflicting = @()
+    if ($Autorun) { $conflicting += "-Autorun" }
+    if ($AutorunScript) { $conflicting += "-AutorunScript" }
+    if ($NoTests) { $conflicting += "-NoTests" }
+    if ($SkipCoreClr) { $conflicting += "-SkipCoreClr" }
+    if ($NoRun) { $conflicting += "-NoRun" }
+    if ($conflicting.Count -gt 0) {
+        throw "-NoBuild boots the image as it is; $($conflicting -join ', ') would change it — build without -NoBuild"
+    }
+    $previousImage = Join-Path (Join-Path $efiProjectDir ".qemu") "esp.img"
+    if (-not (Test-Path -LiteralPath $previousImage)) {
+        throw "-NoBuild: no image to boot at $previousImage — build once without it"
+    }
+}
 if (-not (Test-Path -LiteralPath $projectFile)) {
     throw "Project file not found: $projectFile"
 }
@@ -288,6 +317,13 @@ if (-not $NoRun) {
 # Сборочные инструменты: версии из toolchain.json, проверка до начала сборки.
 # Чистому ядру (-SkipCoreClr) нужны только SDK и lld-link; ядру с форком ещё
 # библиотеки MSVC CRT и Windows SDK (splat xwin).
+#
+# -NoBuild skips from here to the launch: the build, the staging of the ESP
+# tree and the image (the closing brace is at "Prepared EFI image").
+if ($NoBuild) {
+    Write-Host "NoBuild set: booting the previous image as it is."
+}
+else {
 . (Join-Path $repoRoot "tools\Toolchain.ps1")
 $toolchainParts = if ($SkipCoreClr) { @('lld', 'dotnet') } else { @('lld', 'winsdk', 'dotnet') }
 $toolchainSaved = Enter-SharpOsToolchain -Components $toolchainParts
@@ -327,7 +363,8 @@ Write-Host "Building OS ($Configuration, BuildId=$buildId)..."
 Push-Location $efiProjectDir
 try {
     $skipArg = if ($SkipCoreClr) { "/p:SkipCoreClr=true" } else { "" }
-    & dotnet publish $projectFile -c $Configuration -r win-x64 "/p:BuildId=$buildId" "/p:CoreClrForkConfig=$ForkConfig" $skipArg
+    $testsArg = if ($NoTests) { "/p:NoTests=true" } else { "/p:NoTests=false" }
+    & dotnet publish $projectFile -c $Configuration -r win-x64 "/p:BuildId=$buildId" "/p:CoreClrForkConfig=$ForkConfig" $skipArg $testsArg
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE"
     }
@@ -349,12 +386,24 @@ if (-not $builtEfi -or -not (Test-Path -LiteralPath $builtEfi)) {
 $espBootDir = Join-Path $qemuWorkDir "esp\EFI\BOOT"
 New-Item -ItemType Directory -Force -Path $espBootDir | Out-Null
 
-# Applications and the data they open live in \apps, not beside the
-# firmware entry point. \EFI\BOOT is where UEFI looks for BOOTX64.EFI, and
-# nothing else belongs there — a launcher listing that folder was offering
-# the bootloader as if it were something to run.
-$espAppsDir = Join-Path $qemuWorkDir "esp\apps"
-New-Item -ItemType Directory -Force -Path $espAppsDir | Out-Null
+# The volume's layout (step207). \EFI\BOOT is where UEFI looks for
+# BOOTX64.EFI and nothing else belongs there; the rest:
+#   \bin     programs        \tests   the battery and its data
+#   \games   games and data  \config  system.env, the battery script
+#   \home    the working directory to start in
+#   \system  for the system beyond the kernel — empty for now
+#   \sharpos the hosted runtime (CoreCLR), as before
+# Where each app goes is its .csproj's <SharpOsCategory> (tools/Apps.ps1).
+# \apps, where everything lay before, is removed: an old copy there would be
+# found by nothing and fill the volume.
+$espRoot = Join-Path $qemuWorkDir "esp"
+$legacyApps = Join-Path $espRoot "apps"
+if (Test-Path -LiteralPath $legacyApps) { Remove-Item -LiteralPath $legacyApps -Recurse -Force }
+$espDirs = @{}
+foreach ($dir in @('bin', 'tests', 'games', 'config', 'home', 'system')) {
+    $espDirs[$dir] = Join-Path $espRoot $dir
+    New-Item -ItemType Directory -Force -Path $espDirs[$dir] | Out-Null
+}
 $bootx64 = Join-Path $espBootDir "BOOTX64.EFI"
 Copy-Item -LiteralPath $builtEfi -Destination $bootx64 -Force
 
@@ -726,15 +775,20 @@ $peApps = @(
             throw "имя приложения '$($_.Short)' длиннее 8 символов — на образе оно станет $short.EXE, а FAT такого не создаст"
         }
         @{
-            Src  = (Join-Path (Join-Path $folder "bin\Release\out-win-x64") "$($_.Name).exe")
-            Dest = "$short.EXE"
+            Src      = (Join-Path (Join-Path $folder "bin\Release\out-win-x64") "$($_.Name).exe")
+            Dest     = "$short.EXE"
+            Category = $_.Category
+            Folder   = $folder
         }
     }
 )
-Write-Host "на образ: $(($peApps | ForEach-Object { $_.Dest }) -join ' ')"
+Write-Host "на образ: $(($peApps | ForEach-Object { "$($_.Category)/$($_.Dest)" }) -join ' ')"
 foreach ($peApp in $peApps) {
+    if (-not $espDirs.ContainsKey($peApp.Category) -or $peApp.Category -in @('config', 'home', 'system')) {
+        throw "приложение $($peApp.Dest): неизвестная категория '$($peApp.Category)' — bin, tests или games"
+    }
     $peSrc = Join-Path $repoRoot $peApp.Src
-    $peDst = Join-Path $espAppsDir $peApp.Dest
+    $peDst = Join-Path $espDirs[$peApp.Category] $peApp.Dest
 
     # Anything left where apps used to be staged: remove it, or the launcher
     # would list two copies and run whichever it found first.
@@ -754,23 +808,53 @@ foreach ($peApp in $peApps) {
     }
 }
 
-# The battery, when this build is meant to run by itself. Its presence at
-# \apps\AUTORUN.SH is the whole switch: the kernel sees it and starts
-# SHELL.EXE instead of LAUNCHER.EXE. Removed when the switch is off, so a
-# normal build after an -Autorun one does not keep booting headless.
-$autorunDst = Join-Path $espAppsDir "AUTORUN.SH"
+# Files an app reads, kept beside its sources (step207): <App>\esp\* go into
+# the app's own folder on the image. DATATEST's sample externalpipe files live
+# there — the bytes a past build wrote, which every build after it must still read.
+foreach ($peApp in $peApps) {
+    $appEsp = Join-Path (Join-Path $repoRoot $peApp.Folder) "esp"
+    if (-not (Test-Path -LiteralPath $appEsp)) { continue }
+    foreach ($dataFile in Get-ChildItem -LiteralPath $appEsp -File) {
+        Copy-Item -LiteralPath $dataFile.FullName -Destination (Join-Path $espDirs[$peApp.Category] $dataFile.Name) -Force
+        Write-Host "Prepared app data: $($peApp.Category)/$($dataFile.Name)"
+    }
+}
+
+# The configuration file the kernel reads (BootConfig, step207): the
+# environment it gives what it starts, and what it starts. With -Autorun the
+# shell runs the battery script and the machine powers off; without it the
+# launcher. Written every build, so a normal build after an -Autorun one does
+# not keep booting headless.
+$autorunDst = Join-Path $espDirs['config'] "autorun.sh"
+$init = '\bin\LAUNCHER.EXE'
+$buildInfo = 'off'
+if (Test-Path -LiteralPath $autorunDst) { Remove-Item -LiteralPath $autorunDst -Force }
 if ($Autorun) {
-    $autorunSrc = Join-Path $repoRoot "apps_native\Shell\autorun.sh"
+    $autorunSrc = if ($AutorunScript) { (Resolve-Path -LiteralPath $AutorunScript).Path } else { Join-Path $repoRoot "apps_native\Shell\autorun.sh" }
     if (Test-Path -LiteralPath $autorunSrc) {
         Copy-Item -LiteralPath $autorunSrc -Destination $autorunDst -Force
+        $init = '\bin\SHELL.EXE \config\autorun.sh'
+        $buildInfo = 'on'
         Write-Host "Prepared autorun script: $autorunDst"
     } else {
         Write-Host "Autorun requested but $autorunSrc is missing — skipping"
     }
-} elseif (Test-Path -LiteralPath $autorunDst) {
-    Remove-Item -LiteralPath $autorunDst -Force
-    Write-Host "Removed stale autorun script: $autorunDst"
 }
+$systemEnv = @(
+    '# SharpOS: what the kernel starts after boot, and the environment it gives',
+    '# everything it starts (OS/src/Kernel/Process/BootConfig.cs). Written by',
+    '# run_build.ps1. The .env format of Docker Compose: NAME=value, quotes,',
+    '# $NAME and ${NAME:-default} (std-no-runtime/Formats/Dotenv).',
+    'PATH=\bin;\tests;\games',
+    'HOME=\home',
+    "INIT=$init",
+    "BUILDINFO=$buildInfo"
+) -join "`n"
+[System.IO.File]::WriteAllText((Join-Path $espDirs['config'] "system.env"), $systemEnv + "`n", (New-Object System.Text.UTF8Encoding($false)))
+# The name it had before it was .env: left there it would look like the one in force.
+$oldCfg = Join-Path $espDirs['config'] "system.cfg"
+if (Test-Path -LiteralPath $oldCfg) { Remove-Item -LiteralPath $oldCfg -Force }
+Write-Host "Prepared config: INIT=$init"
 
 # Payload staging. Game data — IWADs, cartridges — lives in payloads\ at the
 # repo root, one folder for everything a build needs to hand to the apps. The
@@ -780,8 +864,8 @@ if ($Autorun) {
 # Routed to the ESP by extension, because the extension already says what the
 # file is and asking anyone to remember a second rule is how folders get put in
 # the wrong place:
-#   *.wad -> \apps\<NAME>.WAD      (ManagedDoom probes there for known IWADs)
-#   *.nes -> \apps\GAME.NES        (the fixed name both emulators open)
+#   *.wad -> \games\<NAME>.WAD     (ManagedDoom probes beside itself for known IWADs)
+#   *.nes -> \games\GAME.NES       (the fixed name both emulators open)
 #
 # One cartridge is staged, the first by name, because the apps have no way to
 # be told which to load yet. That is the argument-passing work; when it lands,
@@ -789,14 +873,14 @@ if ($Autorun) {
 $payloadDir = Join-Path $repoRoot "payloads"
 if (Test-Path -LiteralPath $payloadDir) {
     foreach ($wad in Get-ChildItem -LiteralPath $payloadDir -Filter "*.wad") {
-        $wadDst = Join-Path $espAppsDir $wad.Name.ToUpperInvariant()
+        $wadDst = Join-Path $espDirs['games'] $wad.Name.ToUpperInvariant()
         Copy-Item -LiteralPath $wad.FullName -Destination $wadDst -Force
         Write-Host "Prepared IWAD: $wadDst"
     }
 
     $roms = @(Get-ChildItem -LiteralPath $payloadDir -Filter "*.nes" | Sort-Object Name)
     if ($roms.Count -gt 0) {
-        Copy-Item -LiteralPath $roms[0].FullName -Destination (Join-Path $espAppsDir "GAME.NES") -Force
+        Copy-Item -LiteralPath $roms[0].FullName -Destination (Join-Path $espDirs['games'] "GAME.NES") -Force
         Write-Host "Prepared cartridge: GAME.NES ($($roms[0].Name))"
         # Say what was left behind rather than staging it silently: "I dropped
         # the ROM in and got the other game" is otherwise a mystery.
@@ -848,6 +932,8 @@ else {
 
 
 Write-Host "Prepared EFI image: $bootx64"
+}   # end of the build (-NoBuild skips it)
+
 if ($NoRun) {
     Write-Host "NoRun set: build finished, QEMU launch skipped."
     exit 0
@@ -1008,7 +1094,8 @@ try {
     # VVFAT when mtools are missing so a clone without MSYS2 still boots.
     . (Join-Path $repoRoot "tools\New-EspImage.ps1")
     $espImage = Join-Path $qemuWorkDir "esp.img"
-    if (New-EspImage -SourceDir (Join-Path $qemuWorkDir "esp") -RawPath $espImage -SizeMb $EspImageSizeMb) {
+    # -NoBuild: the image the last run left, guest's writes included.
+    if ($NoBuild -or (New-EspImage -SourceDir (Join-Path $qemuWorkDir "esp") -RawPath $espImage -SizeMb $EspImageSizeMb)) {
         Write-Host "ESP image: $espImage ($EspImageSizeMb MB)"
 
         # Under -UsbOnly the image is already attached over USB above; adding

@@ -29,6 +29,16 @@ namespace SharpOS.Std.Exchange
     {
         public const int HeaderSize = 8;
 
+        /// <summary>
+        /// The block's layout as a number (step207): records, keys, offsets,
+        /// the string and array forms, Expando's table and buckets. Pipes do
+        /// not need it — both ends run now — but a block kept on disk
+        /// (externalpipe) outlives the code that wrote it. A change to any of
+        /// these is a new number, and the sample files the battery reads
+        /// (apps_native/DataTest/esp) are written again.
+        /// </summary>
+        public const uint LayoutVersion = 1;
+
         /// <summary>Where each object of a graph goes, before any byte is written.</summary>
         /// <remarks>
         /// A RegionWriter of its own: the static API is for probes and one-off

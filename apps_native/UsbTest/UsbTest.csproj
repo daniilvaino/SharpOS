@@ -1,5 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- Where the image puts it (tools/Apps.ps1, step207). -->
+    <SharpOsCategory>tests</SharpOsCategory>
     <IlcSystemModule>UsbTest</IlcSystemModule>
     <!-- C# 14: the library's RuneCount / ConsoleWidth are extension properties.
          See vendor/Terminal.Gui/TerminalGui.props. -->

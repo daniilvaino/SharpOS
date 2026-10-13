@@ -19,7 +19,7 @@
 | `Std.App.props` | только `apps_native/sdk/FreestandingPe.props` | ярусная реализация для приложений |
 
 **Ярусный** — значит: одно и то же, сделанное по-разному, потому что ярусы
-разные. Не «ядру это не понадобилось». Сегодня таких пар пять:
+разные. Не «ядру это не понадобилось». Сегодня таких пар шесть:
 
 | ядро | приложения | что различается |
 |---|---|---|
@@ -28,6 +28,7 @@
 | `Threading.Tasks.KernelScheduler` | `Threading.Tasks.AppServices` | на чём крутятся задачи |
 | `Diagnostics.Output.KernelConsole` | `Diagnostics.Output.AppHost` | куда идёт `Debug` |
 | `Pipes/PipeTransport.KernelPipes` | `Pipes/PipeTransport.AppServices` | транспорт труб: прямой вызов или служба |
+| `EnvironmentStore.Kernel` | `EnvironmentStore.AppServices` | где окружение и рабочая папка: загрузочное окружение ядра или запись процесса в ядре (step207) |
 
 Плюс `GcStaticsInit` — только у приложений: у ядра своя материализация статик,
 в `OS/src`.

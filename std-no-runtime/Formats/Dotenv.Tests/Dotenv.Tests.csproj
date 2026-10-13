@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Host-side run of compose-go's own tests (godotenv_test.go,
+       godotenv_var_expansion_test.go, parser_test.go, template_test.go and
+       their fixtures) against SharpOS.Std.Dotenv. `dotnet run -c Release`
+       here. Not part of any image: std lists its files one by one. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Dotenv\*.cs" />
+    <None Include="fixtures\*.env" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

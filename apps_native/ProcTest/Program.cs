@@ -1,6 +1,7 @@
 using System;
 using System.Runtime;
 using System.Threading;
+using System.Collections.Generic;
 using SharpOS.AppSdk;
 using SharpOS.Std.Pipes;
 
@@ -82,6 +83,7 @@ namespace PipeApps
             Run("11b a stage that passes nothing", EmptyStage);
             Run("18 KQL as a stage", KqlStage);
             Run("19 KQL: the declared type, edits in place", KqlDeclaredAndEdits);
+            Run("20 the environment", EnvironmentInherited);
             if (full) Run("12 resources back", ResourcesBack);
             if (full) Run("14 measurements", Measurements);
 
@@ -447,10 +449,13 @@ namespace PipeApps
 
         // A thread collecting garbage without a pause in one process, a
         // counter in another: the counter gets at least a quarter of what it
-        // gets alone. Before the deferred tick it got almost nothing — every
-        // tick landed inside the collector's suppression.
+        // gets alone — a tenth under --gc-stress, where the collector's turns
+        // are long and the share under WHPX sits at 20 % (step207). What it
+        // catches is starvation: before the deferred tick the counter got
+        // almost nothing, every tick landing inside the collector's suppression.
         private static void CollectorShare()
         {
+            int part = StressArgs.Every != 0 ? 10 : 4;
             int alone = Count();
             Process gc = Start("PROCTEST.EXE", A("--child", "gc-spin"));
             Thread.Sleep(50);
@@ -458,8 +463,47 @@ namespace PipeApps
             gc.Kill();
             int code = Finish(gc);
             Console.WriteLine("[proctest] counter alone " + alone.ToString() + ", beside a collector " + shared.ToString());
-            Check("15: beside a process collecting without a pause, a counter gets at least a quarter of its time alone",
-                  alone > 0 && shared * 4 >= alone && code == 137);
+            Check("15: beside a process collecting without a pause, a counter gets at least 1/" + part.ToString() + " of its time alone",
+                  alone > 0 && shared * part >= alone && code == 137);
+        }
+
+        // ---- 20 (step207) ----
+
+        // The process's variables: kept by the kernel, read back by any case
+        // of the name, copied to a child; a start may give the child its own;
+        // the working directory goes along.
+        private static void EnvironmentInherited()
+        {
+            Environment.SetEnvironmentVariable("SharpOs_Test", "один два");
+            Check("20: a variable set here reads back by any case of its name",
+                  Environment.GetEnvironmentVariable("SHARPOS_TEST") == "один два");
+            List<string> got = ChildEnvironment(null);
+            Check("20: a child gets a copy (" + string.Join(" ", got) + ")",
+                  got.Contains("SHARPOS_TEST=один два") && got.Contains("ONLY=null"));
+            Check("20: and the working directory", got.Contains("cwd=" + Environment.CurrentDirectory)
+                  && Environment.CurrentDirectory == Process.WorkingDirectory);
+            got = ChildEnvironment(A("ONLY=1"));
+            Check("20: a start with an environment: the child has that one (" + string.Join(" ", got) + ")",
+                  got.Contains("ONLY=1") && got.Contains("SHARPOS_TEST=null"));
+            Environment.SetEnvironmentVariable("sharpos_test", null);
+            got = ChildEnvironment(null);
+            Check("20: removed here, gone for the next child",
+                  Environment.GetEnvironmentVariable("SHARPOS_TEST") == null && got.Contains("SHARPOS_TEST=null"));
+            bool refused = false;
+            try { Environment.SetEnvironmentVariable("A=B", "x"); }
+            catch (ArgumentException) { refused = true; }
+            Check("20: a name with '=' is refused", refused);
+        }
+
+        private static List<string> ChildEnvironment(string[] environment)
+        {
+            var pair = Pipe.Create();
+            Process c = Process.Start("PROCTEST.EXE", StressArgs.Pass(A("--child", "env", "SHARPOS_TEST,ONLY")),
+                                      output: pair.WriteEnd, environment: environment);
+            var lines = new List<string>();
+            foreach (string line in pair.ReadEnd.Read<string>()) lines.Add(line.ToHeap());
+            Finish(c);
+            return lines;
         }
 
         // Thousands of loop turns a counting process makes in one second.

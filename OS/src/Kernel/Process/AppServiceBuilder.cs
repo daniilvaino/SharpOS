@@ -1405,6 +1405,15 @@ namespace OS.Kernel.Process
             Console.Write(" ----");
             DebugLog.EndLine();
 
+            // Held in statics for the run (step207). This frame lies on the
+            // thread's own stack, below the switch to BigStack, and the kernel
+            // collector's walk stops at the BigStack stub, which has no unwind
+            // data: a string only this frame holds is garbage to it. The run
+            // collects (the hosted runtime grows the kernel heap), and the
+            // scope's name came back as someone else's bytes.
+            s_managedRunPath = path;
+            s_managedRunScope = RunScope(path);
+
             OS.Kernel.Diagnostics.PerfCounters.Mark();
             bool ok = global::OS.Kernel.Exec.CoreClrHost.TryExecute(path, out int exitCode);
             request->ExitCode = exitCode;
@@ -1414,10 +1423,15 @@ namespace OS.Kernel.Process
             Console.WriteInt(exitCode);
             Console.Write(ok ? " ----" : " (host refused) ----");
             DebugLog.EndLine();
-            OS.Kernel.Diagnostics.PerfCounters.Report(RunScope(path));
+            OS.Kernel.Diagnostics.PerfCounters.Report(s_managedRunScope);
+            s_managedRunPath = null;
+            s_managedRunScope = null;
 
             return ok ? (uint)AppServiceStatus.Ok : (uint)AppServiceStatus.DeviceError;
         }
+
+        // The running managed app's path and [perf] scope (RunManagedApp).
+        private static string s_managedRunPath, s_managedRunScope;
 
         // "\SHARPOS\Bench.dll" -> "run.Bench": the scope a run's [perf] lines
         // are filed under, so runs of different programs never mix.

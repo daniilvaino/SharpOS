@@ -35,6 +35,14 @@ namespace OS.Kernel.Process
         // Where its relative paths start (step197): its launcher's at the
         // start, "\" for what the kernel starts; the shell's `cd` moves it.
         public string WorkingDirectory = "\\";
+
+        // Its environment (step207): NAME=value, never changed in place. Its
+        // launcher's at the start, or what the start asked for; null for none
+        // set — the boot environment (ProcessEnvironment.Of).
+        public string[] Environment;
+
+        // The file it was loaded from (step207): MainModule.FileName.
+        public string ImagePath;
         public AppProcessState State;
 
         public LoadedImage Image;

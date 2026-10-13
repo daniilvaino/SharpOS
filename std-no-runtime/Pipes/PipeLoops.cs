@@ -558,6 +558,7 @@ namespace SharpOS.Std.Pipes
             }
             finally
             {
+                if (screen) ScreenText.End();
                 if (output != 0) PipeTransport.End(output);
                 if (held != 0) PipeTransport.End(held);
                 _reader.Dispose();

@@ -196,6 +196,16 @@ namespace PipeApps
                 // Test 15: a collector that never stops, and a counter.
                 case "gc-spin":
                     while (true) GC.Collect();
+                // Test 20: the variables named (comma-separated), then the working directory.
+                case "env":
+                {
+                    using var o = Pipe.Write<string>();
+                    foreach (string name in a2.Split(','))
+                        o.Copy(name + "=" + (Environment.GetEnvironmentVariable(name) ?? "null"));
+                    o.Copy("cwd=" + Environment.CurrentDirectory);
+                    return 0;
+                }
+
                 case "counter":
                 {
                     var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -367,6 +377,6 @@ namespace PipeApps
         }
 
         // A file large enough that reading it takes a while in the kernel.
-        private const string BigFile = "\\apps\\AOTTESTS.EXE";
+        private const string BigFile = "\\tests\\AOTTESTS.EXE";
     }
 }

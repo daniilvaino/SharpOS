@@ -146,7 +146,8 @@ namespace PipeApps
                            + "; the input is " + type + " — one file, one stream";
                 }
                 if (file.Complaint == null) return null;    // empty: as a new file
-                return path + " is not an externalpipe; the input is " + type + " — one file, one stream";
+                if (!file.SignatureSeen) return path + " is not an externalpipe; the input is " + type + " — one file, one stream";
+                return path + ": " + file.Complaint;
             }
         }
 

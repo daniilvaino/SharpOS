@@ -383,6 +383,7 @@ namespace SharpOS.Std.Pipes
         /// </summary>
         public void Dispose()
         {
+            if (_screen) ScreenText.End();
             _screen = false;
             if (_handle == 0) return;
             PipeTransport.End(_handle);

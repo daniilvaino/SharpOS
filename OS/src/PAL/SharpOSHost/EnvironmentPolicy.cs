@@ -1,3 +1,4 @@
+using System;
 using System.Runtime;
 using System.Runtime.InteropServices;
 
@@ -20,6 +21,11 @@ namespace OS.PAL.SharpOSHost
     //     telemetry that DOES queue can tag itself accurately.
     // Anything not in this list → ERROR_ENVVAR_NOT_FOUND (203). Fork's
     // existing fall-through behavior preserved.
+    //
+    // step207: the process environment comes first (ProcessEnvironment —
+    // the boot environment for the hosted runtime, which runs on kernel
+    // threads); the list below is what is answered when it does not set a
+    // name. Values go out as UTF-8.
     internal static unsafe class EnvironmentPolicy
     {
         public const int ERROR_ENVVAR_NOT_FOUND = 203;
@@ -52,10 +58,10 @@ namespace OS.PAL.SharpOSHost
             if (outErr != null) *outErr = ERROR_ENVVAR_NOT_FOUND;
             if (name == null || nameLen <= 0) return 0;
 
-            string? value = ResolveName(name, nameLen);
+            string? value = FromEnvironment(name, nameLen) ?? ResolveName(name, nameLen);
             if (value == null) return 0;
 
-            int vLen = value.Length;
+            int vLen = System.Text.Encoding.UTF8.GetByteCount(value);
             // Need vLen + 1 bytes (NUL). Caller probes with size=0/too-small
             // and gets the required length back; allocates and retries.
             if (outBuf == null || outBufSize < (uint)vLen + 1)
@@ -63,10 +69,18 @@ namespace OS.PAL.SharpOSHost
                 if (outErr != null) *outErr = 122;  // ERROR_INSUFFICIENT_BUFFER
                 return (uint)vLen + 1;              // required size incl NUL
             }
-            for (int i = 0; i < vLen; i++) outBuf[i] = (byte)value[i];
+            System.Text.Encoding.UTF8.GetBytes(value.AsSpan(), new System.Span<byte>(outBuf, vLen));
             outBuf[vLen] = 0;
             if (outErr != null) *outErr = 0;
             return (uint)vLen;
+        }
+
+        private static string? FromEnvironment(byte* name, int nameLen)
+        {
+            string[] env = OS.Kernel.Process.ProcessEnvironment.Of(OS.Kernel.Process.AppProcesses.Current);
+            if (env.Length == 0) return null;
+            string key = System.Text.Encoding.UTF8.GetString(new System.ReadOnlySpan<byte>(name, nameLen));
+            return OS.Kernel.Process.ProcessEnvironment.Get(env, key);
         }
 
         private static string? ResolveName(byte* name, int nameLen)

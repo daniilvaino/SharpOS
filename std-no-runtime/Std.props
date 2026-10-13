@@ -91,6 +91,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\TypeCheck.cs" Link="std\Pipes\TypeCheck.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStreams.cs" Link="std\Pipes\PipeStreams.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\ExternalPipe.cs" Link="std\Pipes\ExternalPipe.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)EnvironmentBlock.cs" Link="std\EnvironmentBlock.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Environment.Variables.cs" Link="std\Environment.Variables.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\ScreenText.cs" Link="std\Pipes\ScreenText.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeProbeMessages.cs" Link="std\Pipes\PipeProbeMessages.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStatus.cs" Link="std\Pipes\PipeStatus.cs" />
@@ -127,6 +129,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborWriter.Tag.cs" Link="std\Formats\Cbor\CborWriter.Tag.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\CborWriter.cs" Link="std\Formats\Cbor\CborWriter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Cbor\SR.cs" Link="std\Formats\Cbor\SR.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Dotenv\Template.cs" Link="std\Formats\Dotenv\Template.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Dotenv\Parser.cs" Link="std\Formats\Dotenv\Parser.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)GC\GC.cs" Link="std\GC\GC.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)GC\GcDescSeries.cs" Link="std\GC\GcDescSeries.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)GC\GcHeap.cs" Link="std\GC\GcHeap.cs" />

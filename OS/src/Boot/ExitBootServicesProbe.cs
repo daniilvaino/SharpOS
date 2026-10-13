@@ -395,7 +395,9 @@ namespace OS.Boot
             }
             Console.WriteLine(")");
 
-            VerifyTickIsMoving();
+            // 300 ms of counting ticks: a check, not the calibration above.
+            if (OS.Kernel.Diagnostics.Probes.Tests)
+                VerifyTickIsMoving();
         }
 
         // A clock is not a clock until it has been watched moving. Measured

@@ -62,7 +62,7 @@ namespace SharpOS.Std.Pipes
             Process shell;
             try
             {
-                shell = Process.Start("\\apps\\SHELL.EXE", new[] { "-c", pipeline, "--report", name }, input, output);
+                shell = Process.Start("SHELL.EXE", new[] { "-c", pipeline, "--report", name }, input, output);
             }
             catch
             {

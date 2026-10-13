@@ -1,9 +1,8 @@
 // System.Diagnostics.Process — resolution stub for the app tier. Ported
 // host code (ManagedDoom ConfigUtilities.GetExeDirectory) asks
-// Process.GetCurrentProcess().MainModule.FileName to locate the exe dir;
-// on SharpOS apps live at the volume root, so the chain reports a fixed
-// root path. No process model behind this — just enough shape for the
-// exe-directory idiom to resolve to "\" via Path.GetDirectoryName.
+// Process.GetCurrentProcess().MainModule.FileName to locate the exe dir.
+// No process model behind this — just enough shape for that idiom: the
+// file this process was loaded from, as the kernel keeps it (step207).
 
 namespace System.Diagnostics
 {
@@ -16,9 +15,8 @@ namespace System.Diagnostics
 
     public class ProcessModule
     {
-        // Apps are staged to \apps (run_build.ps1), so the exe-directory idiom
-        // (Path.GetDirectoryName(...FileName)) resolves to "\apps" — where the
-        // WADs/configs sit next to the .EXEs.
-        public string FileName => "\\apps\\APP.EXE";
+        // Path.GetDirectoryName of it is where the program lies — \games for
+        // DOOM, beside its WADs.
+        public string FileName => SharpOS.AppSdk.Process.ImagePath;
     }
 }

@@ -7,8 +7,8 @@ namespace Shell
 {
     /// <summary>
     /// Tab: the word under the cursor completed. In a command's place (the
-    /// start of the line, after | ; &amp;) — builtins and the programs in
-    /// \apps, without .EXE; anywhere else — the names in the directory the
+    /// start of the line, after | ; &amp;) — builtins and the programs along
+    /// PATH, without .EXE (step207); anywhere else — the names in the directory the
     /// word points into, a directory with a / after it. Repeated Tab cycles
     /// through the candidates (the line editor's own behaviour).
     /// </summary>
@@ -31,11 +31,16 @@ namespace Shell
             {
                 foreach (string builtin in Executor.Builtins)
                     if (StartsWith(builtin, word)) found.Add(builtin);
-                foreach (Entry e in Entries("\\apps"))
+                string path = System.Environment.GetEnvironmentVariable("PATH") ?? "";
+                foreach (string directory in path.Split(';'))
                 {
-                    if (e.IsDirectory || !EndsWith(e.Name, ".EXE")) continue;
-                    string program = e.Name.Substring(0, e.Name.Length - 4);
-                    if (StartsWith(program, word)) found.Add(program);
+                    if (directory.Length == 0) continue;
+                    foreach (Entry e in Entries(directory.Replace('/', '\\')))
+                    {
+                        if (e.IsDirectory || !EndsWith(e.Name, ".EXE")) continue;
+                        string program = e.Name.Substring(0, e.Name.Length - 4);
+                        if (StartsWith(program, word) && !found.Contains(program)) found.Add(program);
+                    }
                 }
             }
             else

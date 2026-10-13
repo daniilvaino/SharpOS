@@ -196,6 +196,13 @@
   <PropertyGroup Condition="'$(SkipCoreClr)' == 'true'">
     <DefineConstants>$(DefineConstants);SKIP_CORECLR</DefineConstants>
   </PropertyGroup>
+  <!-- A kernel with no boot-time tests (step207): -p:NoTests=true, from
+       run_build.ps1 -NoTests. Probes.Tests turns false, and every probe that
+       only checks — EH gates, thread and allocator stress, smoke tests, the
+       hosted census — folds away; what brings a device or a subsystem up stays. -->
+  <PropertyGroup Condition="'$(NoTests)' == 'true'">
+    <DefineConstants>$(DefineConstants);SHARPOS_NO_TESTS</DefineConstants>
+  </PropertyGroup>
   <!-- Библиотеки MSVC CRT и Windows SDK (splat xwin) — только ядру с форком,
        см. SharpOsNativeLink.props. Чистое ядро сшивается без них. -->
   <PropertyGroup Condition="'$(SkipCoreClr)' != 'true'">

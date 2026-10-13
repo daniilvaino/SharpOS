@@ -174,7 +174,18 @@ namespace PipeApps
             Timer t = Timer.Start();
             for (int i = 0; i < names.Length; i++)
                 costs[(int)region.Set(region.Root, names[i], i)]++;
-            t.Stop("stage_add", names.Length, true, "perf201");
+            long addNs = t.Stop("stage_add", names.Length, true, "perf201");
+
+            // A stage of its own — a process per stage in a pipeline — walks
+            // the block whole before its first edit (ViewScope.EnsureValid).
+            // Here one region takes all hundred edits, so the walk happens
+            // once; its price per stage is measured on the final block (step207).
+            const int Walks = 1000;
+            Timer w = Timer.Start();
+            for (int r = 0; r < Walks; r++) shapes.Validate((byte*)region.Block, region.Length, out _);
+            long walkNs = w.Stop("validate_walk", Walks, true, "perf207");
+            Console.WriteLine("[perf207] walk_vs_edit: block " + region.Length.ToString() + " bytes, walk "
+                              + walkNs.ToString() + " ns, edit " + addNs.ToString() + " ns");
 
             View root = region.Root;
             bool right = root.Length == 108 && (int)root["k3"] == 3;

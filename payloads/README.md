@@ -6,8 +6,8 @@
 
 | расширение | куда попадёт | кто читает |
 |---|---|---|
-| `*.wad` | `\apps\<ИМЯ>.WAD` | `DOOM.EXE` |
-| `*.nes` | `\apps\GAME.NES` | `TRICNES.EXE`, `FAMI.EXE` |
+| `*.wad` | `\games\<ИМЯ>.WAD` | `DOOM.EXE` |
+| `*.nes` | `\games\GAME.NES` | `TRICNES.EXE`, `FAMI.EXE` |
 | `pwsh\<дистрибутив>\` | `\sharpos\pwsh\` | `pwsh.dll` |
 | `starling\*.dll` | `\sharpos\starling\` | `StarlingProbe.dll` |
 

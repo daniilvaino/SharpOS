@@ -17,7 +17,7 @@ namespace SharpOS.AppSdk
     /// </remarks>
     public sealed unsafe class Process : IDisposable
     {
-        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6;
+        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18;
 
         private bool _released;
         private bool _exited;
@@ -81,31 +81,23 @@ namespace SharpOS.AppSdk
         /// </summary>
         public static string WorkingDirectory
         {
+            get => Environment.CurrentDirectory;
+            set => Environment.CurrentDirectory = value;
+        }
+
+        /// <summary>The file this process was loaded from (step207); "" when the kernel does not say.</summary>
+        public static string ImagePath
+        {
             get
             {
                 ulong* request = stackalloc ulong[4];
                 byte* buffer = stackalloc byte[260];
                 request[0] = (ulong)buffer;
                 request[1] = 260;
-                if (Call(12, request) != AppServiceStatus.Ok || request[2] > 260) return "\\";
+                if (Call(OpImagePath, request) != AppServiceStatus.Ok || request[2] > 260) return "";
                 var chars = new char[(int)request[2]];
                 for (int i = 0; i < chars.Length; i++) chars[i] = (char)buffer[i];
-                return chars.Length == 0 ? "\\" : new string(chars);
-            }
-            set
-            {
-                if (value == null) throw new ArgumentNullException(nameof(value));
-                byte* path = stackalloc byte[value.Length + 1];
-                for (int i = 0; i < value.Length; i++)
-                {
-                    if (value[i] > 0x7F) throw new ArgumentException("the path is not ASCII", nameof(value));
-                    path[i] = (byte)value[i];
-                }
-                path[value.Length] = 0;
-                ulong* request = stackalloc ulong[4];
-                request[0] = (ulong)path;
-                if (Call(13, request) != AppServiceStatus.Ok)
-                    throw new InvalidOperationException("the working directory cannot be set");
+                return new string(chars);
             }
         }
 
@@ -198,13 +190,18 @@ namespace SharpOS.AppSdk
 
         /// <summary>
         /// Starts the program at <paramref name="path"/> (a bare name is looked
-        /// for in \apps, with .EXE added when it has no extension) and returns
+        /// for along PATH, with .EXE added when it has no extension) and returns
         /// at once. The ends given become the new process's standard input and
         /// output and are gone from here; when the start fails they stay.
         /// </summary>
         /// <exception cref="InvalidOperationException">The process table is full, or the program could not be started.</exception>
+        /// <param name="environment">
+        /// The child's environment, NAME=value each (step207); null for a copy
+        /// of this process's.
+        /// </param>
         public static Process Start(string path, string[] arguments = null,
-                                    PipeReadEnd input = null, PipeWriteEnd output = null)
+                                    PipeReadEnd input = null, PipeWriteEnd output = null,
+                                    string[] environment = null)
         {
             if (path == null) throw new ArgumentNullException(nameof(path));
             if (!Available) throw new InvalidOperationException("this kernel does not start processes");
@@ -222,10 +219,25 @@ namespace SharpOS.AppSdk
             int inputHandle = input?.Take("the end was handed to " + full) ?? 0;
             int outputHandle = output?.Take("the end was handed to " + full) ?? 0;
 
-            ulong* request = stackalloc ulong[6];
+            char[] block = null;
+            if (environment != null)
+            {
+                foreach (string entry in environment)
+                {
+                    int eq = entry == null ? -1 : entry.IndexOf('=');
+                    if (eq <= 0 || entry.IndexOf('\0') >= 0)
+                        throw new ArgumentException("an environment entry is NAME=value: '" + entry + "'", nameof(environment));
+                }
+                int length = SharpOS.Std.NoRuntime.EnvironmentBlock.Encode(environment, null, 0);
+                block = new char[length + 1];
+                fixed (char* b = block) SharpOS.Std.NoRuntime.EnvironmentBlock.Encode(environment, b, length);
+            }
+
+            ulong* request = stackalloc ulong[8];
             AppServiceStatus status;
             fixed (byte* pathPointer = pathBytes)
             fixed (byte* listPointer = list)
+            fixed (char* blockPointer = block)
             {
                 request[0] = (ulong)pathPointer;
                 request[1] = (ulong)listPointer;
@@ -233,7 +245,9 @@ namespace SharpOS.AppSdk
                 request[3] = (ulong)(uint)inputHandle;
                 request[4] = (ulong)(uint)outputHandle;
                 request[5] = 0;
-                status = Call(OpStart, request);
+                request[6] = (ulong)blockPointer;
+                request[7] = block == null ? 0UL : (ulong)(block.Length - 1);
+                status = Call(block == null ? OpStart : OpStartWithEnvironment, request);
             }
             if (status != AppServiceStatus.Ok)
             {
@@ -325,8 +339,30 @@ namespace SharpOS.AppSdk
                 if (c == '\\' || c == '/') { bare = false; extension = false; }
                 else if (c == '.') extension = true;
             }
-            string full = bare ? "\\apps\\" + path : path.Replace('/', '\\');
+            if (bare) return FindProgram(path) ?? (extension ? path : path + ".EXE");
+            string full = ResolvePath(path);
             return extension ? full : full + ".EXE";
+        }
+
+        /// <summary>
+        /// A program by its bare name (step207): the first directory of PATH
+        /// (separated by ';') holding NAME, or NAME.EXE when the name has no
+        /// extension. Null when none does.
+        /// </summary>
+        public static string FindProgram(string name)
+        {
+            if (name == null) throw new ArgumentNullException(nameof(name));
+            bool extension = name.IndexOf('.') >= 0;
+            string path = Environment.GetEnvironmentVariable("PATH");
+            if (string.IsNullOrEmpty(path)) return null;
+            foreach (string directory in path.Split(';'))
+            {
+                if (directory.Length == 0) continue;
+                string dir = directory.Replace('/', '\\');
+                string candidate = (dir[dir.Length - 1] == '\\' ? dir : dir + "\\") + name + (extension ? "" : ".EXE");
+                if (AppHost.FileExistsEx(candidate) == AppServiceStatus.Ok) return candidate;
+            }
+            return null;
         }
 
         private static byte[] EncodeArguments(string[] arguments)

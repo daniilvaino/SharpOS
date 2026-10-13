@@ -721,6 +721,17 @@ IST1); куча приложения не в образе — страницы �
 чтение чужой формы таблицы; копия константы в SDK (`AppStartupBlock`) стояла на
 V2 и привязана к `AppServiceTable.CurrentAbiVersion` (п. 8).
 
+**Окружение процесса (step207):**
+- `Environment.GetEnvironmentVariable` / `SetEnvironmentVariable`. Хранит ядро, в записи процесса; потомок получает копию, `Process.Start(…, environment:)` задаёт своё.
+- Имена без учёта регистра, как в Windows.
+- `Environment.CurrentDirectory` — рабочая папка процесса (с step197; раньше std всегда отвечал `\`).
+- pwsh на CoreCLR-ярусе читает загрузочное окружение через PAL, затем прежние подстановки.
+
+Жёлтое:
+- нет `GetEnvironmentVariables` (нужен необобщённый `IDictionary`); список — `EnvironmentStore.GetAll`;
+- `GetEnvironmentStringsW` в PAL не отвечает окружением — `dir env:` в pwsh его не покажет;
+- `Path.GetFullPath` достраивает относительный путь от `C:\sharpos\` (на это опирается PAL), а не от рабочей папки.
+
 **HW-fault в приложении (pipe_plan.md, п. 3–5):** сбой в коде приложения даёт
 исключение типа приложения от его фабрики (`SetHwExceptionFactoryAddress`), и
 `catch (Exception)` приложения его ловит; IF восстанавливается до диспетчера.

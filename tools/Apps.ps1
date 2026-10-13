@@ -23,7 +23,14 @@ function Get-SharpOsApps {
         Sort-Object Name |
         ForEach-Object {
             $name = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+            # Папка на образе (step207): <SharpOsCategory> в .csproj — bin,
+            # tests или games; без свойства — bin. Второго списка нет.
+            $category = 'bin'
+            if ((Get-Content -LiteralPath $_.FullName -Raw) -match '<SharpOsCategory>\s*(\w+)\s*</SharpOsCategory>') {
+                $category = $Matches[1].ToLowerInvariant()
+            }
             [PSCustomObject]@{
+                Category = $category
                 Name    = $name
                 Folder  = $_.Directory.Name
                 # Имя, которым приложение зовут вслух: "doom", а не "DoomApp"

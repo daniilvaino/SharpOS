@@ -184,7 +184,11 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `Math` / `MathF`: тригонометрия, exp/log, `Pow`, гиперболические, `Cbrt`, `FusedMultiplyAdd` | ✅ | ✅ | 🟡 | в AOT — SharpLibm, правильно округлено (проверено на худших случаях CORE-MATH против MPFR, float — на всех 2³² входах); hosted — libm форка, ~1e-9 |
 | `Vector128<T>` (SSE) | ✅ | ✅ | ✅ | `Vector256` объявлен, но не ускорен |
 | Разбор XML | ✅ | ⏳ | ✅ | TurboXml; ядро читает им манифесты приложений |
-| JSON: `Utf8JsonReader` / `Utf8JsonWriter` | ⏳ | 🟡 | ✅ | из System.Text.Json (.NET 10): чтение кусками, запись в `IBufferWriter<byte>`. Сериализатора, `JsonDocument`, `JsonNode` и `JavaScriptEncoder` нет |
+| JSON: `Utf8JsonReader` / `Utf8JsonWriter`, `JsonDocument`, `JsonNode` | ⏳ | 🟡 | ✅ | из System.Text.Json (.NET 10): чтение кусками, запись в `IBufferWriter<byte>`. Сериализатора и `JavaScriptEncoder` нет |
+| Разбор чисел (`Parse` / `TryParse`) | 🟡 | 🟡 | ✅ | `double`, `float`, `decimal` — как в BCL; `int` и `long` — только `Parse(string)` и `TryParse`; остальных целых нет |
+| Разбор `DateTime` / `TimeSpan` / `Guid` | 🟡 | 🟡 | ✅ | только `TryParse`/`TryParseExact` (у `Guid` и `Parse`), инвариантная культура, без зон |
+| Base64 и hex через `Convert` | 🔴 | 🔴 | ✅ | кодировщики `System.Buffers.Text.Base64` есть, обёрток `Convert.From/ToBase64String`, `From/ToHexString` нет |
+| Разбор `.env` | ✅ | ✅ | 🚫 | формат `env_file` Docker Compose, проверен тестами compose-go; ядро читает им `\config\system.env` |
 | Коллекции `Concurrent.*` и `Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`, `Regex`, `ValueTuple`, `DateTimeOffset` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple<T1,T2>` есть |
 | CBOR (`System.Formats.Cbor`) | 🔴 | ✅ | ✅ | порт из dotnet/runtime; без `Half`, `BigInteger`, `decimal` и `DateTimeOffset` — теги при этом читаются. Разбор проверен на ответе аппаратного ключа, запись пока нет |
 | SHA-256 | ✅ | ✅ | ✅ | `System.Security.Cryptography.SHA256.HashData`, своя реализация в std. Других алгоритмов нет: ни P-256, ни AES, ни HMAC |
@@ -369,6 +373,21 @@ Pipe.Read("myapp.log").WriteTo(Pipe.To("CONVERT --to json | WRITE errors.json"))
 - Из CBOR и JSON получаются только `Expando`, типизированных сообщений по описанию из них не собрать.
 - Читатель с классом принимает только ту же раскладку. Для другой версии класса нужен вид или `Into<T>`.
 
+## Раскладка образа
+
+| папка | что там |
+|---|---|
+| `\EFI\BOOT` | `BOOTX64.EFI` — ядро |
+| `\bin` | программы: оболочка, лаунчер, `READ`, `WRITE`, `CONVERT`, `KQL`, демо-стадии труб |
+| `\games` | игры вместе с данными: DOOM и WAD, эмуляторы NES и картридж |
+| `\tests` | батарея и её данные |
+| `\config` | `system.env` — что запускать после загрузки и окружение для всего, что запускает ядро; сценарий батареи |
+| `\home` | рабочая папка по умолчанию |
+| `\system` | для системы помимо ядра, пока пусто |
+| `\sharpos` | рантайм CoreCLR, PowerShell |
+
+`system.env` — строки `ИМЯ=значение`: `PATH=\bin;\tests;\games`, `HOME=\home`, `INIT=\bin\LAUNCHER.EXE`. Программа ищется по `PATH`, а куда она ляжет, задаёт `<SharpOsCategory>` в её `.csproj`. Лаунчер открывается на вкладке «Главная»: плитки оболочки, PowerShell и игр.
+
 ## Структура репозитория
 
 - `OS/src/` - ядро и его слои: `Boot`, `Hal`, `Kernel`, `PAL`.
@@ -438,6 +457,7 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 - **[ChaN FatFs](https://elm-chan.org/fsw/ff/)** (BSD-1-clause) - второй ориентир по FAT.
 - **[Cosmos](https://github.com/CosmosOS/Cosmos)** (BSD-3) - сама идея managed-ОС.
 - **[shitty](https://github.com/pg83/shitty)** (Anton Samokhvalov, MIT + GPL-3) - тесты для эмулятора терминала.
+- **[compose-go](https://github.com/compose-spec/compose-go)** (John Barton, MIT; The Compose Specification Authors, Apache-2.0) - формат `.env` и тесты к нему: по ним написан разбор `\config\system.env`.
 
 ## Лицензия
 

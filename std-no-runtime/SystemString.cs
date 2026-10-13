@@ -333,6 +333,21 @@ namespace System
             return SharpOS.Std.NoRuntime.StringQueries.LastIndexOf(this, value, startIndex);
         }
 
+        // BCL (String.Searching.cs): backwards from startIndex over count
+        // characters, the same argument checks (step207, compose-go's template).
+        public int LastIndexOf(char value, int startIndex, int count)
+        {
+            if (Length == 0 && (startIndex == -1 || startIndex == 0))
+                return -1;
+            if ((uint)startIndex >= (uint)Length)
+                throw new ArgumentOutOfRangeException(nameof(startIndex), "Index was out of range. Must be non-negative and less than the size of the collection.");
+            if ((uint)count > (uint)startIndex + 1)
+                throw new ArgumentOutOfRangeException(nameof(count), "Count must be positive and count must refer to a location within the string/array/collection.");
+            for (int i = startIndex; i > startIndex - count; i--)
+                if (this[i] == value) return i;
+            return -1;
+        }
+
         // ---- Transforms (stage 4) ----
 
         public string Substring(int startIndex)

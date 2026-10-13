@@ -514,7 +514,8 @@ namespace OS.Kernel.Diagnostics
                 Console.Write("coreclr_initialize hr=0x");
                 Console.WriteHex((ulong)(uint)hr);
                 Console.WriteLine("");
-                PerfCounters.Report("init");
+                if (Probes.Diagnostics)
+                    PerfCounters.Report("init");
                 if (hr == 0)
                 {
                     Console.WriteLine("=== S_OK — CoreCLR initialized ===");

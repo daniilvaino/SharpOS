@@ -46,6 +46,7 @@ namespace DataApps
             TaskBackendInstaller.Install();
             if (args.Length > 0 && args[0] == "--child") return Child(args);
             if (args.Length > 0 && args[0] == "--perf") return Perf();
+            if (args.Length > 0 && args[0] == "--write-samples") return WriteSamples();
             s_quick = args.Length > 0 && args[0] == "--quick";
             for (int i = 0; i + 1 < args.Length; i++)
             {
@@ -73,6 +74,7 @@ namespace DataApps
             Test("15 test 4 with the wait in Dispose (the old reader)", OldReader);
             Test("16 externalpipe: > keeps the messages, READ gives them back", ExternalPipeFiles);
             Test("17 CBOR there and back", CborRoundTrip);
+            Test("18 the sample files an earlier build wrote", SampleFiles);
 
             // The last stages leave on their own time (slowly under --gc-stress):
             // the counters settle within seconds, not at once.
@@ -112,7 +114,7 @@ namespace DataApps
         // A line through the shell, as typed at its prompt; its exit code.
         private static int Sh(string line)
         {
-            var shell = Process.Start("\\apps\\SHELL.EXE", new[] { "-c", line });
+            var shell = Process.Start("SHELL.EXE", new[] { "-c", line });
             shell.WaitForExit();
             int code = shell.ExitCode;
             shell.Dispose();

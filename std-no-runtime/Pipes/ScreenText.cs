@@ -60,7 +60,12 @@ namespace SharpOS.Std.Pipes
                 return;
             }
 
-            // In the objects' colours (View.ToScreenString): the type cyan, the bytes dim.
+            PrintHex(all);
+        }
+
+        // In the objects' colours (View.ToScreenString): the type cyan, the bytes dim.
+        private static void PrintHex(ReadOnlySpan<byte> all)
+        {
             var line = new StringBuilder();
             line.Append("\u001b[90mSystem.\u001b[1;36mByte\u001b[0m\u001b[90m[").Append(all.Length.ToString()).Append("]");
             for (int i = 0; i < all.Length && i < 16; i++)
@@ -70,7 +75,9 @@ namespace SharpOS.Std.Pipes
             PipeTransport.Print(line.ToString());
         }
 
-        // A character cut short at the end stays for the next piece.
+        // A character cut short at the end stays for the next piece. Only a
+        // real lead byte starts one: C2..F4 (step206 — FF, the end of a CBOR
+        // array, was taken for the start of four bytes and never shown).
         private static int CompleteLength(ReadOnlySpan<byte> s)
         {
             int n = s.Length;
@@ -78,11 +85,14 @@ namespace SharpOS.Std.Pipes
             {
                 byte b = s[n - back];
                 if ((b & 0xC0) == 0x80) continue;            // a continuation byte
-                int need = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
+                int need = b >= 0xC2 && b < 0xE0 ? 2 : b >= 0xE0 && b < 0xF0 ? 3 : b >= 0xF0 && b < 0xF5 ? 4 : 1;
                 return need > back ? n - back : n;
             }
             return n;
         }
+
+        /// <summary>The end of what goes to the screen: a carried piece is shown as it is.</summary>
+        internal static void End() => Flush();
 
         // Valid UTF-8 without control characters but tab, CR and LF.
         private static bool IsText(ReadOnlySpan<byte> s)
@@ -110,7 +120,9 @@ namespace SharpOS.Std.Pipes
         private static void Flush()
         {
             if (s_carryLength == 0) return;
+            int length = s_carryLength;
             s_carryLength = 0;
+            PrintHex(new ReadOnlySpan<byte>(s_carry, 0, length));
         }
     }
 }

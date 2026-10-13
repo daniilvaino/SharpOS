@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using SharpOS.Std.Exchange;
 
 namespace SharpOS.Std.Pipes
@@ -21,16 +22,29 @@ namespace SharpOS.Std.Pipes
     /// lies and of who wrote it. The file is the pipe's description once, then
     /// the blocks as they came:
     ///
-    ///     "SharpOS externalpipe 1\n"   the signature, ASCII
+    ///     "SharpOS externalpipe\n"     the signature, ASCII
+    ///     u32 format (1), u32 the block layout (Region.LayoutVersion)
     ///     u64 root key, u32 n, n bytes of the description (RegionSchema)
-    ///     then per message: u64 length, the block's bytes
+    ///     then per message: u64 length, u32 CRC-32C of the block, the block
     ///
-    /// Little-endian. A reader checks a block against the description as it
-    /// would any writer's: a broken file refuses where it is read.
+    /// Little-endian. Both versions are checked before anything is read
+    /// (step207): a file of another layout refuses by name, not by
+    /// misreading. A block whose checksum differs refuses where it is; a
+    /// whole one is checked against the description by its reader, as any
+    /// writer's is.
     /// </remarks>
     public static unsafe class ExternalPipe
     {
-        public static ReadOnlySpan<byte> Signature => "SharpOS externalpipe 1\n"u8;
+        public static ReadOnlySpan<byte> Signature => "SharpOS externalpipe\n"u8;
+
+        /// <summary>This file format: the header and the records around the blocks.</summary>
+        public const uint FormatVersion = 1;
+
+        // Signature, the two versions, the root key, the description's length.
+        internal static int HeaderFixed => Signature.Length + 4 + 4 + 8 + 4;
+
+        // Per message: the length and the checksum.
+        internal const int RecordPrefix = 12;
 
         // A block longer than this is a broken length, not a message.
         internal const ulong MaxBlock = 1UL << 32;
@@ -38,19 +52,31 @@ namespace SharpOS.Std.Pipes
         public static bool StartsWithSignature(ReadOnlySpan<byte> bytes)
             => bytes.Length >= Signature.Length && bytes.Slice(0, Signature.Length).SequenceEqual(Signature);
 
-        /// <summary>The signature, the root key and the description.</summary>
+        /// <summary>The signature, the versions, the root key and the description.</summary>
         public static byte[] Header(byte[] schema, ulong rootKey)
         {
             int at = Signature.Length;
-            var header = new byte[at + 12 + schema.Length];
+            var header = new byte[HeaderFixed + schema.Length];
             Signature.CopyTo(header);
             fixed (byte* p = header)
             {
-                *(ulong*)(p + at) = rootKey;
-                *(uint*)(p + at + 8) = (uint)schema.Length;
+                *(uint*)(p + at) = FormatVersion;
+                *(uint*)(p + at + 4) = Region.LayoutVersion;
+                *(ulong*)(p + at + 8) = rootKey;
+                *(uint*)(p + at + 16) = (uint)schema.Length;
             }
-            schema.CopyTo(header, at + 12);
+            schema.CopyTo(header, HeaderFixed);
             return header;
+        }
+
+        /// <summary>CRC-32C (Castagnoli) of a block, as written beside it.</summary>
+        public static uint Checksum(byte* data, ulong length)
+        {
+            uint crc = 0xFFFFFFFFu;
+            ulong at = 0;
+            for (; at + 8 <= length; at += 8) crc = BitOperations.Crc32C(crc, *(ulong*)(data + at));
+            for (; at < length; at++) crc = BitOperations.Crc32C(crc, data[at]);
+            return ~crc;
         }
 
         /// <summary>
@@ -62,16 +88,17 @@ namespace SharpOS.Std.Pipes
         public static long Copy(RawPipeReader input, byte[] schema, ulong rootKey, bool header, ExternalPipeSink sink)
         {
             if (header) sink(Header(schema, rootKey), default);
-            ulong length;
-            var prefix = new ReadOnlySpan<byte>(&length, 8);
+            byte* prefix = stackalloc byte[RecordPrefix];
             long count = 0;
             RawRegion region = null;
             while ((region = input.Next(region)) != null)
             {
                 try
                 {
-                    length = region.Length;
-                    sink(prefix, new ReadOnlySpan<byte>(region.Block, checked((int)region.Length)));
+                    *(ulong*)prefix = region.Length;
+                    *(uint*)(prefix + 8) = Checksum(region.Block, region.Length);
+                    sink(new ReadOnlySpan<byte>(prefix, ExternalPipe.RecordPrefix),
+                         new ReadOnlySpan<byte>(region.Block, checked((int)region.Length)));
                 }
                 finally
                 {
@@ -166,6 +193,7 @@ namespace SharpOS.Std.Pipes
             finally
             {
                 if (output != 0) PipeTransport.End(output);
+                else ScreenText.End();
             }
         }
     }
@@ -180,6 +208,9 @@ namespace SharpOS.Std.Pipes
         public byte[] Schema { get; private set; }
         public ulong RootKey { get; private set; }
 
+        /// <summary>The file began with the signature: an externalpipe, whatever else is wrong with it.</summary>
+        public bool SignatureSeen { get; private set; }
+
         /// <summary>Messages read so far.</summary>
         public long Count { get; private set; }
 
@@ -193,13 +224,21 @@ namespace SharpOS.Std.Pipes
         public bool ReadHeader()
         {
             int length = ExternalPipe.Signature.Length;
-            byte* head = stackalloc byte[length + 12];
-            int got = Fill(new Span<byte>(head, length + 12));
+            int fixedSize = ExternalPipe.HeaderFixed;
+            byte* head = stackalloc byte[fixedSize];
+            int got = Fill(new Span<byte>(head, fixedSize));
             if (got == 0) return false;
-            if (got < length + 12 || !ExternalPipe.StartsWithSignature(new ReadOnlySpan<byte>(head, length)))
-                return Fail("not an externalpipe: the signature or the header is missing");
-            RootKey = *(ulong*)(head + length);
-            uint size = *(uint*)(head + length + 8);
+            if (got < length || !ExternalPipe.StartsWithSignature(new ReadOnlySpan<byte>(head, length)))
+                return Fail("not an externalpipe: the signature is missing");
+            SignatureSeen = true;
+            if (got < fixedSize) return Fail("the file ends inside the header");
+            uint format = *(uint*)(head + length), layout = *(uint*)(head + length + 4);
+            if (format != ExternalPipe.FormatVersion)
+                return Fail("an externalpipe of format " + format.ToString() + "; this program reads format " + ExternalPipe.FormatVersion.ToString());
+            if (layout != Region.LayoutVersion)
+                return Fail("blocks of layout " + layout.ToString() + "; this program reads layout " + Region.LayoutVersion.ToString());
+            RootKey = *(ulong*)(head + length + 8);
+            uint size = *(uint*)(head + length + 16);
             if (size == 0 || size > 16u << 20) return Fail("the header gives a description of " + size.ToString() + " bytes");
             var schema = new byte[size];
             if (Fill(schema) != schema.Length) return Fail("the file ends inside the description");
@@ -216,10 +255,12 @@ namespace SharpOS.Std.Pipes
         {
             length = 0;
             if (Complaint != null) return null;
-            ulong size;
-            int got = Fill(new Span<byte>(&size, 8));
+            byte* prefix = stackalloc byte[ExternalPipe.RecordPrefix];
+            int got = Fill(new Span<byte>(prefix, ExternalPipe.RecordPrefix));
             if (got == 0) return null;
-            if (got < 8) return FailNull("the file ends inside the length of message " + (Count + 1).ToString());
+            if (got < ExternalPipe.RecordPrefix) return FailNull("the file ends inside the head of message " + (Count + 1).ToString());
+            ulong size = *(ulong*)prefix;
+            uint checksum = *(uint*)(prefix + 8);
             if (size == 0 || size > ExternalPipe.MaxBlock)
                 return FailNull("message " + (Count + 1).ToString() + " gives a length of " + size.ToString());
             void* block = PipeTransport.Allocate(size);
@@ -237,6 +278,11 @@ namespace SharpOS.Std.Pipes
             {
                 PipeTransport.Free(block);
                 return FailNull("the file ends inside message " + (Count + 1).ToString());
+            }
+            if (ExternalPipe.Checksum((byte*)block, size) != checksum)
+            {
+                PipeTransport.Free(block);
+                return FailNull("message " + (Count + 1).ToString() + ": the checksum differs — the block is damaged");
             }
             Count++;
             length = size;

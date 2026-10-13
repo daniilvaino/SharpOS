@@ -12,23 +12,46 @@
     // flip to true once per change to verify panic/throw paths, then back.
     internal static class Probes
     {
+        // Whether this kernel runs its boot-time tests at all (step207).
+        // run_build.ps1 -NoTests builds with SHARPOS_NO_TESTS: every flag
+        // below that only checks — EH gates, thread and allocator stress,
+        // smoke tests, the hosted census at boot, the kernel's services for
+        // AotTests' pipe tests — is `= Tests` and folds away with it. A flag
+        // that brings something up (interrupts, preemption, the post-EBS
+        // drivers, the hosted runtime itself, the terminal front-end) stays
+        // as it is. A test that did set-up work as a side effect must have
+        // that work moved out of it: Scheduler.Init was one (BootSequence).
+#if SHARPOS_NO_TESTS
+        public const bool Tests = false;
+#else
+        public const bool Tests = true;
+#endif
+
+        // The same build switch for what serves the log rather than the
+        // system: the sampling profiler and its idle thread dumps, the heap
+        // census and allocation sampling, USB descriptor dumps and the serial
+        // echo (two seconds of boot), the GC-statics and RTC dumps, Bench's
+        // profile variable. -NoTests: none of it — SharpOS doing its work and
+        // nothing else.
+        public const bool Diagnostics = Tests;
+
         // Phase 0
         public const bool KeyboardInput = false;
 
         // Phase 1
-        public const bool KernelHeapSmoke = true;
+        public const bool KernelHeapSmoke = Tests;
 
         // Reports whether ILC turned our own Vector128 into instructions.
-        public const bool Simd = true;
+        public const bool Simd = Tests;
 
         // Runs the vendored XML parser against a sample manifest.
-        public const bool XmlManifest = true;
+        public const bool XmlManifest = Tests;
 
         // Phase 2 diagnostics
-        public const bool GcStaticsSummary = true;
+        public const bool GcStaticsSummary = Diagnostics;
 
         // Phase 3
-        public const bool RtcSnapshot = true;        // dump CMOS wall-clock
+        public const bool RtcSnapshot = Diagnostics;        // dump CMOS wall-clock
 
         // Phase F1: SharpOS delivers its own interrupts — legacy PIC masked,
         // local APIC enabled, periodic timer on vector 0x20. Runs only
@@ -84,7 +107,7 @@
         // Which benchmark Bench.dll repeats long enough for the sampling
         // profiler (SHARPOS_BENCH_PROFILE; the [prof] lines of run.Bench).
         // Empty: none, and the variable is not set at all.
-        public const string BenchProfile = "exceptions";
+        public const string BenchProfile = Diagnostics ? "exceptions" : "";
 
         // Per-reservation and per-stub-range chatter from the JIT path
         // ([vm-reserve], [stub-reg]). Both were bring-up proofs left on; the
@@ -118,12 +141,12 @@
         // does Wait return, does Delay take the time it promises, does a
         // cancelled token break a wait. Cheap (~100 ms) and it guards the
         // foundation Terminal.Gui stands on.
-        public const bool Tasks = true;
+        public const bool Tasks = Tests;
 
         // Locks: is compare-and-swap a real instruction, do threads have
         // distinct ids, and does  keep two threads from losing an update.
         // Each of the three fails silently on its own.
-        public const bool Locks = true;
+        public const bool Locks = Tests;
 
         // Hex dump of the interface-dispatch shellcode at install time.
         //
@@ -136,7 +159,7 @@
         // Sampling profiler on the timer tick. On while the question is
         // "where does startup spend its time"; the answer is a [prof] line on
         // the serial port every ten seconds.
-        public const bool SampleProfiler = true;
+        public const bool SampleProfiler = Diagnostics;
 
         // Rate of the local APIC tick. Everything that waits for "the next
         // tick" waits up to 1/TimerHz: the preemption quantum, a thread woken
@@ -155,7 +178,7 @@
         // buffer so a wrap takes microseconds instead of the 300 seconds the
         // real counter needs. Cheap and early — leave it on; QEMU's HPET is
         // 64-bit and cannot reach this code any other way.
-        public const bool HpetWrap = true;
+        public const bool HpetWrap = Tests;
 
         // Dump where every thread is parked once per idle sampling window.
         //
@@ -168,7 +191,7 @@
         //
         // On, this prints each thread's resume address instead. Noisy at a
         // prompt; leave it off unless hunting a hang.
-        public const bool ThreadDumpWhenIdle = true;
+        public const bool ThreadDumpWhenIdle = Diagnostics;
 
         // Isolated check of SharpOSHost_ProtectPages, called directly from the
         // kernel. OFF: it halts the boot (the export is a Panic.Fail stub) and
@@ -183,27 +206,27 @@
         // Phase F3 gate: the timer takes the CPU from a thread that never
         // yields. Enabled only around the probe — the rest of the kernel still
         // assumes cooperative scheduling (unlocked heap, polling drivers).
-        public const bool Preemption = true;
+        public const bool Preemption = Tests;
 
         // Phase F3 gate: allocation under preemption, with collections running
         // on another thread. Exercises the suppression around the allocator and
         // around the collection itself.
-        public const bool PreemptedAlloc = true;
+        public const bool PreemptedAlloc = Tests;
 
         // Phase F2 gate: a collection must find roots on the stacks of threads
         // that are not running. Spawns a worker holding an array in a local,
         // parks it, collects, and has the worker check its own data.
-        public const bool ThreadGcRoots = true;
+        public const bool ThreadGcRoots = Tests;
 
         // Phase F prerequisite: the interrupt path must preserve FP/SIMD state
         // across a handler that returns. On by default — this is a correctness
         // invariant the preemptive timer will lean on, not a curiosity.
-        public const bool FpFaultPreservesXmm = true;
+        public const bool FpFaultPreservesXmm = Tests;
 
         // Phase 4
-        public const bool GcHeapSmoke = true;
-        public const bool GcStress = true;
-        public const bool NativeAotFeatures = true;
+        public const bool GcHeapSmoke = Tests;
+        public const bool GcStress = Tests;
+        public const bool NativeAotFeatures = Tests;
 
         // Terminal engine (vendor/XtermSharp) self-test + rich console front-end.
         // On by default: the engine is new in the image and its failures should be
@@ -214,31 +237,31 @@
         // Tests thread-handoff with GC mid-transfer + OOM deterministic
         // behavior. Separate toggle so threading regressions don't mask
         // early-boot feature probes.
-        public const bool NativeAotFeaturesLate = true;
+        public const bool NativeAotFeaturesLate = Tests;
 
         // Every nested app launch collects the kernel heap once, from the
         // child's first service call, and checks that an object held only by
         // the launching kernel frame (under the child's jump stub) survived.
         // pipe_plan.md item 2, condition (c). One collection per launch.
-        public const bool KernelGcAcrossApp = true;
+        public const bool KernelGcAcrossApp = Tests;
 
         // The exchange heap's properties at boot, and one block owned by every
         // nested launch, which its end must hand back ("[proc] … exchange
         // blocks returned 1"). pipe_plan.md "Подготовить под трубы", 1–2.
-        public const bool ExchangeHeap = true;
+        public const bool ExchangeHeap = Tests;
 
         // The kernel as a region's receiver (pipe_plan.md "Проверить опытом",
         // 1 and 2): publishes RegionToKernel, through which AotTests hands over
         // a region in an exchange block. The kernel prints it by the schema,
         // translates it in place and reads it while worker threads allocate
         // and a third collects ("[region] …").
-        public const bool RegionIntake = true;
+        public const bool RegionIntake = Tests;
 
         // Native pipe tests (pipe spec, "родная труба"): kernel service
         // threads reading and writing the pipes AotTests connects to by name,
         // and the PipeProbe service AotTests uses to start them and read
         // their verdicts ("[pipe] …").
-        public const bool PipeProbe = true;
+        public const bool PipeProbe = Tests;
 
         // Preemption for the launcher and every program it runs (pipe_plan.md
         // item 9). The kernel's critical sections are Preemption.Suppress
@@ -249,35 +272,35 @@
         // never in the kernel's. For telling a kernel race from an app one
         // when something breaks under preemption on hardware.
         public const bool PreemptAppCodeOnly = false;
-        public const bool Cctor = true;
+        public const bool Cctor = Tests;
 
         // EH probe gradient — flip each level on independently. L1+L2+L4
         // are expected to pass today (no throw, no unwinder). L3 throws
         // and currently halts; flipping it green is the Phase 1 closure
         // criterion.
-        public const bool EhTryFinallyNoThrow = true;
-        public const bool EhTryCatchNoThrow = true;
-        public const bool EhTryCatchWithThrow = true;    // step 5.6 GATE: L8 == 801 with real dispatch
-        public const bool EhExceptionShape = true;       // step 1 gate: full Exception + 6 derived types
-        public const bool EhRootWalk = true;              // step 2 gate: .pdata lookup + funclet->ROOT walk
-        public const bool EhDecode = true;                // step 3 gate: ehInfoRVA + varint clause decoder
-        public const bool EhFrameWalk = true;             // step 4 gate: PAL/RegDisplay/SFI + 4-opcode unwind
+        public const bool EhTryFinallyNoThrow = Tests;
+        public const bool EhTryCatchNoThrow = Tests;
+        public const bool EhTryCatchWithThrow = Tests;    // step 5.6 GATE: L8 == 801 with real dispatch
+        public const bool EhExceptionShape = Tests;       // step 1 gate: full Exception + 6 derived types
+        public const bool EhRootWalk = Tests;              // step 2 gate: .pdata lookup + funclet->ROOT walk
+        public const bool EhDecode = Tests;                // step 3 gate: ehInfoRVA + varint clause decoder
+        public const bool EhFrameWalk = Tests;             // step 4 gate: PAL/RegDisplay/SFI + 4-opcode unwind
         public const bool EhIngressThrow = false;         // step 5.5b verified: throw -> 5.1+5.2+5.4+5.5b chain (default off, halts when on)
         public const bool EhCatchFuncletProbe = false;    // step 5.5a verified: RhpCallCatchFunclet end-to-end OK (default off, halts when on)
         public const bool EhCatchFuncletReal = false;    // step 5.5b verified: real REGDISPLAY + fake handler OK (default off, requires EhIngressThrow too)
         public const bool EhRealDispatch = true;         // step 5.6: full real dispatch (DispatchEx + ILC catch funclet) — needed for L8 == 801
-        public const bool EhRethrowChain = true;         // step 6 GATE: L9 == 901 (nested catch with throw;)
-        public const bool EhTryCatchFinally = true;       // step 7 GATE: L10 == 111 (finally runs before catch)
-        public const bool EhFilter = true;                 // step 8 GATE: L11 == 1101 (catch when filter)
-        public const bool EhHwFault = true;                // step 10 GATE: L13 == 3 (null deref → catch)
-        public const bool EhStackTrace = true;             // step 11 GATE: L14 == 1401 (Exception.StackTrace populated)
-        public const bool EhCollidedUnwind = true;         // step 11 GATE: L15 == 1501 (rethrow inside finally — funclet-aware codeOffset)
-        public const bool EhMultiFrameFinally = true;      // Phase 1 polish: L16 == 1616 (caller's finally runs on callee throw)
-        public const bool EhMultiFrameStackTrace = true;   // Phase 1 polish: L17 == 1700+frames (stack trace records each frame)
-        public const bool EhTraceText = true;              // step177: L18 == 1800+frames (StackTrace is text, not the "[trace]" marker)
-        public const bool EhTraceTruncation = true;        // step177: L19 == 1900+dropped (a cut-off trace says so)
-        public const bool EhRethrowAppends = true;         // step177: L20 == 2000+added (throw; keeps appending frames)
-        public const bool EhEnumLive = true;              // step 5.3 probe A: enum clauses on live frame inside try (non-halting)
+        public const bool EhRethrowChain = Tests;         // step 6 GATE: L9 == 901 (nested catch with throw;)
+        public const bool EhTryCatchFinally = Tests;       // step 7 GATE: L10 == 111 (finally runs before catch)
+        public const bool EhFilter = Tests;                 // step 8 GATE: L11 == 1101 (catch when filter)
+        public const bool EhHwFault = Tests;                // step 10 GATE: L13 == 3 (null deref → catch)
+        public const bool EhStackTrace = Tests;             // step 11 GATE: L14 == 1401 (Exception.StackTrace populated)
+        public const bool EhCollidedUnwind = Tests;         // step 11 GATE: L15 == 1501 (rethrow inside finally — funclet-aware codeOffset)
+        public const bool EhMultiFrameFinally = Tests;      // Phase 1 polish: L16 == 1616 (caller's finally runs on callee throw)
+        public const bool EhMultiFrameStackTrace = Tests;   // Phase 1 polish: L17 == 1700+frames (stack trace records each frame)
+        public const bool EhTraceText = Tests;              // step177: L18 == 1800+frames (StackTrace is text, not the "[trace]" marker)
+        public const bool EhTraceTruncation = Tests;        // step177: L19 == 1900+dropped (a cut-off trace says so)
+        public const bool EhRethrowAppends = Tests;         // step177: L20 == 2000+added (throw; keeps appending frames)
+        public const bool EhEnumLive = Tests;              // step 5.3 probe A: enum clauses on live frame inside try (non-halting)
 
         public const bool IdtPanic = false;          // never returns when on
         public const bool ExceptionThrow = false;    // never returns when on (legacy single-throw probe)
@@ -307,7 +330,7 @@
         // collection in Bench cost 10 ms after the census, next to nothing
         // without it (step173). Benchmarks against Windows and Linux are
         // taken with this off; the regression battery needs it on.
-        public const bool HostedRunAtBoot = true;
+        public const bool HostedRunAtBoot = Tests;
 
         // Mute kernel diagnostics while the hosted app owns the screen.
         //
@@ -347,49 +370,49 @@
         // back, restores original gs base. Proves the per-switch primitive
         // works before Phase E4 wires it into a cooperative context
         // switch. Independent of CoreCLR (runs against own X64Asm stubs).
-        public const bool TebFacadeSwap = true;
+        public const bool TebFacadeSwap = Tests;
 
         // Phase E3 — atomic primitives (lock cmpxchg / xchg / mfence).
         // Stack-resident ulong slot, four mini scenarios (hit, miss,
         // xchg, mfence). Regression oracle for the X64Asm shellcode
         // bytes — multi-core stress is E4+ business.
-        public const bool Atomics = true;
+        public const bool Atomics = Tests;
 
         // Phase E4 — cooperative two-thread ping-pong. Wraps current
         // execution as a Thread, spawns T1 and T2 (each yielding N
         // times), drives Scheduler.Yield until both children exit.
         // Asserts iteration counts + boot-thread resume. First real
         // multi-thread artefact in the project — commit milestone.
-        public const bool ThreadPingPong = true;
+        public const bool ThreadPingPong = Tests;
 
         // Phase E5 — Scheduler.Sleep accuracy. Spawns one worker that
         // performs 3 × Sleep(50ms), measures elapsed via HPET around
         // each sleep, asserts [45..80] ms. Lower bound enforces "we
         // actually slept"; upper bound absorbs spin-yield wake latency
         // (no IRQ-driven HPET wake yet).
-        public const bool ThreadSleep = true;
+        public const bool ThreadSleep = Tests;
 
         // Phase E5 — Event.Wait/Set round trip with manual-reset event.
         // Main spawns a waiter, Sleep(30ms), Set, then measures
         // (set -> wake) latency. Asserts < 30 ms.
-        public const bool ThreadEvent = true;
+        public const bool ThreadEvent = Tests;
 
         // Phase E5 — Semaphore Wait + Release(n). Spawns 3 waiters on a
         // 0-count semaphore; Release(2) should wake exactly 2; Release(1)
         // wakes the last. Asserts residualCount == 0.
-        public const bool ThreadSemaphore = true;
+        public const bool ThreadSemaphore = Tests;
 
         // Phase E6 acceptance — 4 worker threads × 10000 Alloc/Free
         // cycles on KernelHeap, with a Yield between write and verify
         // of an own-thread-id pattern. Surfaces any cross-thread
         // bookkeeping corruption around the allocator lock.
-        public const bool AllocStress = true;
+        public const bool AllocStress = Tests;
 
         // Phase E7 acceptance — two Processes launched concurrently,
         // each running a worker through 3 yielding iterations then
         // Process.Exit(code). Asserts state machine, exit codes,
         // distinct PIDs.
-        public const bool ProcessSpawn = true;
+        public const bool ProcessSpawn = Tests;
 
         // Phase B — own 16550 UART (COM1) driver bring-up. Inits the
         // chip directly via PortIo and self-tests via loopback, then
@@ -405,20 +428,20 @@
         // rendered region to serial (headless-verifiable; the painted
         // screen is the eyeball proof under SHARPOS_GUI=1). Permanent
         // regression oracle for the framebuffer text path.
-        public const bool FbRender = true;
+        public const bool FbRender = Tests;
 
         // Phase B#3 — own i8042/PS-2 keyboard bring-up. Non-destructive
         // STATUS presence read + a pure set-1 decoder self-test over a
         // fixed synthetic scancode script (headless-deterministic; real
         // keystroke proof is the interactive shell under SHARPOS_GUI=1).
         // Permanent regression oracle for the keyboard decode path.
-        public const bool Ps2 = true;
+        public const bool Ps2 = Tests;
 
         // Phase B#3 — line editor over the PS/2 decoder. Synthetic-script
         // self-test of the buffer logic (printable insert + Backspace +
         // Enter); headless-deterministic, real typing proof is the
         // interactive shell under SHARPOS_GUI=1.
-        public const bool LineEdit = true;
+        public const bool LineEdit = Tests;
 
 
 
@@ -449,19 +472,19 @@
         // gcInfo blob via CoffMethodGcInfo.TryResolve, dump first bytes.
         // Sanity check that .pdata + UNWIND_INFO walk lands at a plausible
         // varint stream before we write the decoder. Headless-deterministic.
-        public const bool CoffGcInfoDump = true;
+        public const bool CoffGcInfoDump = Tests;
 
         // Step 110 part 6 — synthetic-CONTEXT smoke test for the slot
         // resolver. Builds a fake Context with sentinel values, runs
         // resolver on Marker3 live slots, prints resolved pointer values.
         // Headless-deterministic.
-        public const bool GcInfoResolverSmoke = true;
+        public const bool GcInfoResolverSmoke = Tests;
 
         // Step 110 part 7 — GcContextSpill shellcode smoke. Captures real
         // CONTEXT via shellcode, verifies Rip resolves through .pdata.
         // First exercise of the live-CONTEXT capture path that the precise
         // GC walker will use.
-        public const bool GcContextSpillSmoke = true;
+        public const bool GcContextSpillSmoke = Tests;
 
         // Step 110 part 8 — full precise GC walk + sweep. Holds a sentinel
         // string live across CollectPrecise, verifies it survives (i.e. the
@@ -485,12 +508,12 @@
         // After configuring a HID device, wait a few seconds for reports so a
         // keypress can be seen end to end. Costs boot time and needs someone
         // at the keyboard, so it is off for headless regression runs.
-        public const bool UsbHidPoll = true;
+        public const bool UsbHidPoll = Tests;
 
         // Times a full-screen fill and a full-screen scroll, and prints the
         // page attributes behind the framebuffer. Overwrites the screen, so it
         // runs before anything worth reading is on it.
-        public const bool FbPerf = true;
+        public const bool FbPerf = Tests;
 
         // Largest GOP mode the kernel will switch to. The firmware's own
         // choice is unpredictable and cannot be influenced from outside, so
@@ -506,7 +529,7 @@
         // Creates a file: allocates clusters and edits a directory, so a bug
         // damages the volume rather than one file's contents. Separate switch
         // from FatWrite for exactly that reason.
-        public const bool FatCreate = true;
+        public const bool FatCreate = Tests;
 
         // Writes a pattern to the last sector of the USB stick and reads it
         // back. Safe against the QEMU stick (a copy rebuilt every run) and
@@ -538,7 +561,7 @@
         //
         // 16 rather than every growth: each census is a full heap walk, and by
         // the end of a long run that is not free.
-        public const uint HeapCensusEveryGrowths = 16;
+        public const uint HeapCensusEveryGrowths = Diagnostics ? 16u : 0u;
 
         // Sample every N-th kernel allocation and record the stack above it,
         // so the census's "what" is joined by a "who". 0 turns it off.
@@ -546,12 +569,12 @@
         // 4096 keeps the cost invisible — a stack scan every four thousand
         // allocations, against a run that makes a million and a half — while
         // still giving hundreds of samples between two censuses.
-        public const uint AllocSampleEvery = 4096;
+        public const uint AllocSampleEvery = Diagnostics ? 4096u : 0u;
 
         // Print every interface and endpoint each USB device declares, before
         // deciding what to do with it. The only way to tell "we declined this
         // device" from "we misread its descriptor".
-        public const bool UsbDescriptorDump = true;
+        public const bool UsbDescriptorDump = Diagnostics;
 
         // The deep half of the census: string descriptors (manufacturer,
         // product, serial) and, for every HID interface, its report
@@ -563,7 +586,7 @@
         // The report descriptors are the point. RS-Key declares two HID
         // interfaces whose descriptors are byte-for-byte identical, with no
         // boot protocol, so what they are can be read nowhere else.
-        public const bool UsbCensusDeep = true;
+        public const bool UsbCensusDeep = Diagnostics;
 
         // Mirror the boot log out a USB serial port when the machine has one.
         // Costs one bulk transfer per line, buys a log readable from the other
@@ -580,7 +603,7 @@
         // A serial port needs nothing from the phone's kernel but bytes.
         //
         // One line per burst, so a run that nobody types into stays silent.
-        public const bool UsbSerialEcho = true;
+        public const bool UsbSerialEcho = Diagnostics;
 
         // Treat what arrives on that port as keystrokes: translated to set-1
         // scancodes and fed to the same ring the keyboards feed, so everything
@@ -597,7 +620,7 @@
         // credential, a user gesture or any state on the key — it hands over
         // eight bytes and they must come back. Silent on a machine with no
         // key, which is every machine but the rig with RS-Key plugged in.
-        public const bool CtapHidInit = true;
+        public const bool CtapHidInit = Tests;
 
         // Stop the machine right after printing the USB list. On the test
         // hardware there is no serial, no log (the boot medium is USB and we
@@ -608,7 +631,7 @@
         // First filesystem write: overwrites the head of a staged file in
         // place. On real hardware this writes to the machine's own ESP, so
         // keep it off there until the QEMU image proves it correct.
-        public const bool FatWrite = true;
+        public const bool FatWrite = Tests;
 
         // Traces the key-event path that PSReadLine reads through
         // (SharpOSHost_ReadConsoleInput). Bounded to the first few events so a
@@ -624,6 +647,6 @@
         // The collector's hard places checked under stress at every boot
         // (GcStressProbe): the hardware-fault path, refs into objects, the
         // byref region barrier, kernel threads. Seconds of boot time.
-        public const bool GcStressPaths = true;
+        public const bool GcStressPaths = Tests;
     }
 }

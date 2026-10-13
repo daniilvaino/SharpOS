@@ -48,6 +48,18 @@ namespace OS.Kernel.Process
         public const int ProcessOpSetDirectory = 13;
         // [0] bits to change, [1] their values; [2] answers the settings now.
         public const int ProcessOpSettings = 14;
+        // step207: the environment. [0] a buffer of UTF-16, [1] its size in
+        // chars; [2] answers the block's length ("A=1\0B=2\0").
+        public const int ProcessOpGetEnvironment = 15;
+        // [0] the block, [1] its length in chars: the caller's environment from now on.
+        public const int ProcessOpSetEnvironment = 16;
+        // ProcessOpStart's request and [6] a block, [7] its length: the child's
+        // environment instead of a copy of the caller's.
+        public const int ProcessOpStartWithEnvironment = 17;
+        // The caller's image path, as ProcessOpGetDirectory answers a path:
+        // what MainModule.FileName says (step207) — ManagedDoom looks for its
+        // IWAD beside it.
+        public const int ProcessOpImagePath = 18;
 
         /// <summary>
         /// AppServiceTable.Settings for every app started from now on (step197);
@@ -150,6 +162,32 @@ namespace OS.Kernel.Process
                 return (int)AppServiceStatus.Ok;
             }
 
+            if (op == ProcessOpImagePath)
+            {
+                string image = self?.ImagePath ?? "";
+                request[2] = (ulong)image.Length;
+                if (request[0] != 0 && request[1] >= (ulong)image.Length)
+                    for (int i = 0; i < image.Length; i++) ((byte*)request[0])[i] = (byte)image[i];
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpGetEnvironment)
+            {
+                string[] env = ProcessEnvironment.Of(self);
+                int capacity = (int)System.Math.Min(request[1], (ulong)ProcessEnvironment.MaxChars);
+                request[2] = (ulong)ProcessEnvironment.Encode(env, (char*)request[0], request[0] == 0 ? 0 : capacity);
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpSetEnvironment)
+            {
+                if (self == null) return (int)AppServiceStatus.Unsupported;
+                string[] env = ProcessEnvironment.Decode((char*)request[0], (int)System.Math.Min(request[1], (ulong)ProcessEnvironment.MaxChars + 1));
+                if (env == null) return (int)AppServiceStatus.InvalidParameter;
+                self.Environment = env;
+                return (int)AppServiceStatus.Ok;
+            }
+
             if (op == ProcessOpSettings)
             {
                 Settings = (Settings & ~request[0]) | (request[1] & request[0]);
@@ -234,18 +272,24 @@ namespace OS.Kernel.Process
                 return (int)AppServiceStatus.Ok;
             }
 
-            if (op == ProcessOpStart)
+            if (op == ProcessOpStart || op == ProcessOpStartWithEnvironment)
             {
                 ulong serviceStarted = Ticks();
                 request[5] = 0;
                 char* path = stackalloc char[(int)MaxPathChars];
                 if (!TryReadAsciiPath(request[0], path, MaxPathChars))
                     return (int)AppServiceStatus.InvalidParameter;
+                string[] childEnvironment = null;
+                if (op == ProcessOpStartWithEnvironment)
+                {
+                    childEnvironment = ProcessEnvironment.Decode((char*)request[6], (int)System.Math.Min(request[7], (ulong)ProcessEnvironment.MaxChars + 1));
+                    if (childEnvironment == null) return (int)AppServiceStatus.InvalidParameter;
+                }
                 if (!TryResolveRunAppAbi(path, AppServiceTable.AutoSelectAbiVersion, (uint)AppServiceAbi.Auto, out uint abi, out AppServiceAbi serviceAbi, out AbiResolveSource source))
                     return (int)AppServiceStatus.InvalidParameter;
                 AppServiceStatus started = StartFromPath(path, abi, serviceAbi, source == AbiResolveSource.Request,
                     request[2] != 0 ? (byte*)request[1] : null, (uint)request[2],
-                    (int)request[3], (int)request[4], out AppProcess child);
+                    (int)request[3], (int)request[4], out AppProcess child, childEnvironment);
                 s_sService += Ticks() - serviceStarted;
                 if (started == AppServiceStatus.Ok) request[5] = child.Id;
                 return (int)started;
@@ -283,12 +327,13 @@ namespace OS.Kernel.Process
         /// </summary>
         internal static AppServiceStatus StartFromPath(
             char* path, uint appAbiVersion, AppServiceAbi serviceAbi, bool abiFromRequest,
-            byte* arguments, uint argumentsLength, int inputEnd, int outputEnd, out AppProcess process)
+            byte* arguments, uint argumentsLength, int inputEnd, int outputEnd, out AppProcess process,
+            string[] environment = null)
         {
             ulong pathStarted = Ticks();
             try
             {
-                return StartFromPathCore(path, appAbiVersion, serviceAbi, abiFromRequest, arguments, argumentsLength, inputEnd, outputEnd, out process);
+                return StartFromPathCore(path, appAbiVersion, serviceAbi, abiFromRequest, arguments, argumentsLength, inputEnd, outputEnd, out process, environment);
             }
             finally
             {
@@ -298,7 +343,8 @@ namespace OS.Kernel.Process
 
         private static AppServiceStatus StartFromPathCore(
             char* path, uint appAbiVersion, AppServiceAbi serviceAbi, bool abiFromRequest,
-            byte* arguments, uint argumentsLength, int inputEnd, int outputEnd, out AppProcess process)
+            byte* arguments, uint argumentsLength, int inputEnd, int outputEnd, out AppProcess process,
+            string[] environment)
         {
             process = null;
             BootInfo bootInfo = Platform.GetBootInfo();
@@ -345,7 +391,8 @@ namespace OS.Kernel.Process
                     s_gArgs += g2 - g1;
                     result = StartProcess(new MemoryBlock(file, fileSize), name,
                         appAbiVersion, serviceAbi, abiFromRequest,
-                        AppProcesses.Current?.Id ?? 0, out process, holder, inputEnd, outputEnd);
+                        AppProcesses.Current?.Id ?? 0, out process, holder, inputEnd, outputEnd, environment,
+                        string.FromUtf16Z(path, (int)MaxPathChars));
                     s_gProcess += Ticks() - g2;
                 }
                 StartupData.Clear();   // a start that failed before its build took it
@@ -407,13 +454,18 @@ namespace OS.Kernel.Process
             MemoryBlock image, string name,
             uint appAbiVersion, AppServiceAbi serviceAbi, bool abiFromRequest,
             uint launcherId, out AppProcess process,
-            uint endHolder = 0, int inputEnd = 0, int outputEnd = 0)
+            uint endHolder = 0, int inputEnd = 0, int outputEnd = 0, string[] environment = null,
+            string imagePath = null)
         {
             process = null;
             var proc = new AppProcess
             {
                 Name = name,
-                WorkingDirectory = AppProcesses.Current?.WorkingDirectory ?? "\\",
+                ImagePath = imagePath ?? name,
+                // What the kernel starts by itself begins at home (step207).
+                WorkingDirectory = AppProcesses.Current?.WorkingDirectory
+                                   ?? SharpOS.Std.NoRuntime.EnvironmentBlock.Get(ProcessEnvironment.Boot, "HOME") ?? "\\",
+                Environment = environment ?? ProcessEnvironment.Of(AppProcesses.Current),
                 LauncherId = launcherId,
                 LauncherHolds = true,
                 State = AppProcessState.Running,

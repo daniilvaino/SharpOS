@@ -155,7 +155,7 @@ namespace System.Threading
 
 namespace System
 {
-    public static class Environment
+    public static partial class Environment
     {
         // Single-threaded kernel — everyone is thread 1. Iterator
         // state-machine uses this to decide whether to reuse `this` in
@@ -183,15 +183,19 @@ namespace System
         public static int ProcessorCount => 1;
 
         /// <summary>
-        /// Always the root. There is no per-process current directory here:
-        /// the file system has one namespace and nothing tracks a cursor into
-        /// it, so relative paths are resolved by whoever owns the notion of
-        /// "where I am" — a shell keeps its own.
+        /// The process's working directory (step197): where relative paths
+        /// start, inherited from the process that started it. The kernel keeps
+        /// it (EnvironmentStore); kernel code has none and sees "\".
         /// </summary>
         public static string CurrentDirectory
         {
-            get => "\\";
-            set { }
+            get => SharpOS.Std.NoRuntime.EnvironmentStore.GetDirectory();
+            set
+            {
+                if (value == null) throw new ArgumentNullException(nameof(value));
+                if (value.Length == 0) throw new ArgumentException("The path is empty.", nameof(value));
+                SharpOS.Std.NoRuntime.EnvironmentStore.SetDirectory(value);
+            }
         }
 
         /// <summary>

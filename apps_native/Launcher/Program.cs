@@ -5,6 +5,9 @@
 // written against a library: a tree of the boot volume on the left, what is
 // known about the selection on the right, a menu, and a status line.
 //
+// Two tabs (step207): Home — tiles for the shell, PowerShell and the games in
+// \games, run by Enter or a click; Files — the tree of the whole volume.
+//
 // It is also the first real consumer of the Terminal.Gui port, which is rather
 // the point. A demo exercises what its author thought to exercise; a program
 // somebody uses finds the rest.
@@ -26,7 +29,8 @@ namespace Launcher
 {
     internal static unsafe class AppEntry
     {
-        private const string BootDirectory = "\\apps";
+        // The Files tab starts at the volume's root.
+        private const string BootDirectory = "\\";
 
         // Where the tree is rooted right now. Enter on a folder moves it; the
         // ".." row at the top moves it back.
@@ -84,7 +88,7 @@ namespace Launcher
 
             Toplevel top = Application.Top;
             top.Add(BuildMenu());
-            top.Add(BuildBody());
+            top.Add(BuildTabs());
             top.Add(BuildStatusBar());
 
             LoadRoot();
@@ -121,15 +125,86 @@ namespace Launcher
         }
 
         private static FrameView s_volumeFrame = null!;
+        private static TabView s_tabs = null!;
+        private static TabView.Tab s_filesTab = null!;
+
+        // Home first: what a person sits down to do. Files for the rest.
+        private static View BuildTabs()
+        {
+            s_tabs = new TabView
+            {
+                X = 0,
+                Y = 1,
+                Width = Dim.Fill(),
+                Height = Dim.Fill(1),
+            };
+            s_filesTab = new TabView.Tab("Files", BuildBody());
+            s_tabs.AddTab(new TabView.Tab("Home", BuildHome()), true);
+            s_tabs.AddTab(s_filesTab, false);
+            return s_tabs;
+        }
+
+        // Whether PowerShell has run in this boot: the hosted runtime is
+        // started once, and pwsh's statics survive its exit — a second start
+        // in the same load context fails (step207 reconnaissance).
+        private static bool s_powerShellRan;
+
+        private static View BuildHome()
+        {
+            var home = new View { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
+            int columns = Math.Max(1, (Application.Driver.Cols - 2) / (Tile.TileWidth + 2));
+            List<Tiles.Entry> entries = Tiles.Read();
+            for (int i = 0; i < entries.Count; i++)
+            {
+                Tiles.Entry entry = entries[i];
+                var tile = new Tile(entry.Title, entry.Subtitle)
+                {
+                    X = 2 + (i % columns) * (Tile.TileWidth + 2),
+                    Y = 1 + (i / columns) * (Tile.TileHeight + 1),
+                };
+                tile.Activated += () => RunTile(entry, tile);
+                home.Add(tile);
+            }
+            int rows = (entries.Count + columns - 1) / columns;
+            home.Add(new Label("Enter or a click runs a tile; arrows move; Files lists the volume.")
+            {
+                X = 2,
+                Y = 1 + rows * (Tile.TileHeight + 1),
+            });
+            return home;
+        }
+
+        private static void RunTile(Tiles.Entry entry, Tile tile)
+        {
+            if (!AppHost.FileExists(entry.Path))
+            {
+                MessageBox.ErrorQuery("Not here", entry.Path + " is not on this image.", "OK");
+                Repaint();
+                return;
+            }
+            if (entry.Managed && s_powerShellRan)
+            {
+                MessageBox.ErrorQuery("PowerShell",
+                    "PowerShell has run once in this boot, and its\n"
+                    + "state outlives it: a second start fails.\n\n"
+                    + "Reboot to run it again.", "OK");
+                Repaint();
+                return;
+            }
+            if (entry.Managed) s_powerShellRan = true;
+            RunProgram(entry.Path, entry.Title, entry.Managed);
+            if (entry.Managed) tile.Subtitle = "ran - reboot to run again";
+            tile.SetNeedsDisplay();
+        }
 
         private static View BuildBody()
         {
             var volume = new FrameView("Boot volume")
             {
                 X = 0,
-                Y = 1,
+                Y = 0,
                 Width = Dim.Percent(55),
-                Height = Dim.Fill(1),
+                Height = Dim.Fill(),
             };
 
             // Children are fetched when a folder is opened, not up front: a
@@ -153,9 +228,9 @@ namespace Launcher
             var details = new FrameView("Selected")
             {
                 X = Pos.Percent(55),
-                Y = 1,
+                Y = 0,
                 Width = Dim.Fill(),
-                Height = Dim.Fill(1),
+                Height = Dim.Fill(),
             };
 
             s_name = new Label("") { X = 1, Y = 1, Width = Dim.Fill(1) };
@@ -294,9 +369,10 @@ namespace Launcher
             }
         }
 
-        /// <summary>Enter: open a folder, run an application.</summary>
+        /// <summary>Enter: open a folder, run an application (the Files tab).</summary>
         private static void Activate()
         {
+            if (s_tabs.SelectedTab != s_filesTab) return;
             FileNode node = s_tree.SelectedObject;
             if (node == null) return;
 
@@ -336,8 +412,13 @@ namespace Launcher
             // us needs the screen declared stale by hand.
             if (MessageBox.Query("Run", "Start " + node.Name + "?", "Run", "Cancel") != 0)
                 return;
+            RunProgram(node.Path, node.Name, node.Kind == NodeKind.ManagedApplication);
+        }
 
-            SetStatus("Running " + node.Name + " ...");
+        // A program run and waited for, the screen handed over and taken back.
+        private static void RunProgram(string path, string name, bool managed)
+        {
+            SetStatus("Running " + name + " ...");
             Application.Refresh();
 
             // Step out of the way first. A child that prints lines would
@@ -350,11 +431,9 @@ namespace Launcher
             // address space and jumped to; an assembly is handed to a runtime
             // that already exists. Neither the waiting nor the screen handling
             // differs, so only the call does.
-            bool managed = node.Kind == NodeKind.ManagedApplication;
-
             AppServiceStatus status = managed
-                ? AppHost.TryRunManagedApp(node.Path, out int exitCode)
-                : AppHost.TryRunApp(node.Path, out exitCode);
+                ? AppHost.TryRunManagedApp(path, out int exitCode)
+                : AppHost.TryRunApp(path, out exitCode);
 
             // Take the screen back: wipe what the child left, then declare
             // every cell stale. Nothing on OUR side changed while it ran, so
@@ -364,9 +443,9 @@ namespace Launcher
 
             if (status == AppServiceStatus.Ok)
             {
-                SetStatus(node.Name + " exited with " + exitCode.ToString());
+                SetStatus(name + " exited with " + exitCode.ToString());
                 MessageBox.Query("Finished",
-                    node.Name + " exited with code " + exitCode.ToString() + ".", "OK");
+                    name + " exited with code " + exitCode.ToString() + ".", "OK");
             }
             else if (status == AppServiceStatus.Unsupported)
             {
@@ -391,9 +470,9 @@ namespace Launcher
             }
             else
             {
-                SetStatus("Could not start " + node.Name);
+                SetStatus("Could not start " + name);
                 MessageBox.ErrorQuery("Cannot run",
-                    node.Name + " could not be started (" + status.ToString() + ").", "OK");
+                    name + " could not be started (" + status.ToString() + ").", "OK");
             }
         }
 
@@ -433,8 +512,9 @@ namespace Launcher
         {
             MessageBox.Query("SharpOS launcher",
                 "Terminal.Gui running on SharpOS.\n\n"
-                + "A tree of the boot volume, "
-                + FileTree.PreviewChildren.ToString() + " entries per folder.\n"
+                + "Home: the shell, PowerShell and the games.\n"
+                + "Files: a tree of the boot volume, "
+                + FileTree.PreviewChildren.ToString() + " entries per folder;\n"
                 + "Enter opens a folder or runs an application.", "OK");
             Repaint();
         }

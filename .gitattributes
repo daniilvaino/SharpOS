@@ -6,3 +6,10 @@
 
 # flake.lock — JSON, который правит nix; пусть везде будет LF, как он его пишет.
 flake.lock text eol=lf
+
+# Образцы externalpipe (apps_native/DataTest/esp): байты, которые читает батарея;
+# перевод строк в них — порча, а не нормализация.
+*.pipe binary
+
+# Файлы тестов compose-go/dotenv: байты файла и есть проверка — в LF, как у них.
+std-no-runtime/Formats/Dotenv.Tests/fixtures/*.env -text
