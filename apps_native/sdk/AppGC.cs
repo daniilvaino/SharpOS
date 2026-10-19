@@ -31,6 +31,11 @@ namespace SharpOS.AppSdk
         private static uint s_afterStatics;
 
         public static uint Collections => s_collections;
+
+        // Stopwatch ticks of all collections so far (step208): marking (roots,
+        // statics, the stack walk) and sweeping, which includes giving empty
+        // segments back.
+        public static ulong MarkTicks, SweepTicks;
         public static bool LastWalkOk => s_lastWalkOk;
 
         /// <summary>True when the kernel offered a root walker to borrow.</summary>
@@ -74,6 +79,7 @@ namespace SharpOS.AppSdk
             // threads stay parked, and the walk scans them where they stopped.
             AppPreemption.Suppress();
             uint afterStatics;
+            long markStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
                 GcMark.Begin();
@@ -85,7 +91,10 @@ namespace SharpOS.AppSdk
                 walk((nuint)(nint)(delegate* unmanaged<nuint, void>)&MarkRoot);
                 s_afterStatics = afterStatics;
 
+                long sweepStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                MarkTicks += (ulong)(sweepStarted - markStarted);
                 GcSweep.Run();
+                SweepTicks += (ulong)(System.Diagnostics.Stopwatch.GetTimestamp() - sweepStarted);
             }
             finally
             {
@@ -196,6 +205,12 @@ namespace SharpOS.AppSdk
             s_yield = (delegate* unmanaged<void>)yieldAddress;
         }
 
+        /// <summary>The kernel's depth counter, for a section without a call (the allocator's fast path, step208).</summary>
+        public static uint* DepthPointer => s_depth;
+
+        /// <summary>The kernel's deferred-tick flag: non-zero, leaving the section must call <see cref="Allow"/>.</summary>
+        public static byte* PendingPointer => s_pending;
+
         public static void Suppress()
         {
             if (s_depth != null) (*s_depth)++;
@@ -207,7 +222,13 @@ namespace SharpOS.AppSdk
         {
             if (s_depth != null && *s_depth != 0) (*s_depth)--;
             if (s_depth != null && *s_depth == 0 && s_pending != null && *s_pending != 0 && s_yield != null)
-                s_yield();
+                Yield();
         }
+
+        // Apart (step208): the unmanaged call needs a transition frame, and
+        // inlined into Allow it gave every Allow - two per allocation - eight
+        // pushes and a frame for a switch that is almost never taken.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void Yield() => s_yield();
     }
 }

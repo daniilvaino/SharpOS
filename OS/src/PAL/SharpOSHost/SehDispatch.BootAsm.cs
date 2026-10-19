@@ -5,8 +5,7 @@
 // static ReadOnlySpan<byte> templates (138 + 137 bytes) in .rdata. At
 // runtime EnsureShellcode does a single Span.CopyTo per emitter — no
 // Iced, no allocator. The runtime Iced path from step 116
-// (SehDispatch.Iced.cs) is now superseded; left as dead code until the
-// step 118 cleanup pass.
+// (SehDispatch.Iced.cs) was removed in step208, unused since this one.
 //
 // Compare-gate at runtime keeps byte-identity check against the legacy
 // hand-rolled emitters (still in SehDispatch.cs) until the M5.1
@@ -19,9 +18,8 @@ namespace OS.PAL.SharpOSHost
 {
     internal static unsafe partial class SehDispatch
     {
-        // Capture-context shellcode (138 bytes). Same instruction stream
-        // that runtime EmitCaptureIced produced in step 116 — byte-for-byte
-        // identical with the legacy EmitCapture hand-rolled stream.
+        // Capture-context shellcode (138 bytes). Byte-for-byte identical
+        // with the legacy EmitCapture hand-rolled stream.
         // Win64 entry: rcx = Context*.
         [CompileTimeAsm]
         internal static partial int EmitCaptureCompileTime(byte* dst);
@@ -64,8 +62,7 @@ namespace OS.PAL.SharpOSHost
             a.ret();
         }
 
-        // Restore-context shellcode (137 bytes). Same as runtime
-        // EmitRestoreIced. Win64 entry: rcx = Context*.
+        // Restore-context shellcode (137 bytes). Win64 entry: rcx = Context*.
         [CompileTimeAsm]
         internal static partial int EmitRestoreCompileTime(byte* dst);
 

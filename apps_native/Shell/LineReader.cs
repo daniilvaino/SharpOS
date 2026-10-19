@@ -21,16 +21,18 @@ namespace Shell
     /// </remarks>
     internal sealed class LineReader
     {
-        private const string HistoryPath = "\\sh_history";
         private const int HistoryKept = 500;
 
         private readonly IAutoCompleteHandler _completion;
+        private readonly string _historyPath;
 
         public List<string> History { get; } = new List<string>();
 
-        public LineReader(IAutoCompleteHandler completion)
+        // The history file is the program's own: KQL's prompt (step208) keeps queries, not commands.
+        public LineReader(IAutoCompleteHandler completion, string historyPath = "\\sh_history")
         {
             _completion = completion;
+            _historyPath = historyPath;
             LoadHistory();
         }
 
@@ -98,7 +100,7 @@ namespace Shell
             if (line.Trim().Length == 0) return;
             if (History.Count > 0 && History[History.Count - 1] == line) return;
             History.Add(line);
-            try { System.IO.File.AppendAllText(HistoryPath, line + "\n"); }
+            try { System.IO.File.AppendAllText(_historyPath, line + "\n"); }
             catch (System.IO.IOException) { }   // another shell writing it, or a full volume: memory only
         }
 
@@ -108,8 +110,8 @@ namespace Shell
             string[] lines;
             try
             {
-                if (!System.IO.File.Exists(HistoryPath)) return;
-                lines = Encoding.UTF8.GetString(System.IO.File.ReadAllBytes(HistoryPath)).Split('\n');
+                if (!System.IO.File.Exists(_historyPath)) return;
+                lines = Encoding.UTF8.GetString(System.IO.File.ReadAllBytes(_historyPath)).Split('\n');
             }
             catch (System.IO.IOException) { return; }
 
@@ -126,7 +128,7 @@ namespace Shell
             if (count < 2 * HistoryKept) return;
             var kept = new StringBuilder();
             foreach (string l in History) kept.Append(l).Append('\n');
-            try { System.IO.File.WriteAllText(HistoryPath, kept.ToString()); }
+            try { System.IO.File.WriteAllText(_historyPath, kept.ToString()); }
             catch (System.IO.IOException) { }
         }
     }

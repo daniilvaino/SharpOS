@@ -6,18 +6,23 @@ using SharpOS.Std.Pipes;
 
 namespace PipeApps
 {
-    // READ file [--chunk N] [--bytes] — a file to the standard output
-    // (step197, step206).
+    // READ file [--chunk N] [--bytes | --externalpipe] — a file to the
+    // standard output (step197, step206; the explicit modes step208).
     //
-    // An externalpipe (WRITE's file of messages) gives its messages back, under
-    // the description it was written with: the class, the Expando, what the
+    // Without a mode READ looks at the file's first bytes. An externalpipe
+    // (WRITE's file of messages) gives its messages back, under the
+    // description it was written with: the class, the Expando, what the
     // writer sent. A broken or cut one gives what is whole, says where it
-    // broke, breaks the output and exits with 1.
+    // broke, breaks the output and exits with 1. Any other file goes out as
+    // byte[] messages of N bytes (64 KiB by default; the last one shorter).
     //
-    // Any other file — and any file with --bytes — goes out as byte[] messages
-    // of N bytes (64 KiB by default; the last one shorter). On the screen,
-    // when the output was handed to nobody, a text file shows as text. No
-    // file: a message and exit code 1.
+    // The modes say it instead of the guess: --bytes — bytes, whatever the
+    // file is (an externalpipe too, for CONVERT --from externalpipe to take);
+    // --externalpipe — messages, and a file that is not one is refused
+    // (exit 1, nothing out) rather than sent on as bytes.
+    //
+    // On the screen, when the output was handed to nobody, a text file shows
+    // as text. No file: a message and exit code 1.
     internal static unsafe class AppEntry
     {
         [RuntimeExport("SharpAppEntry")]
@@ -46,7 +51,7 @@ namespace PipeApps
         {
             string path = null;
             int chunk = 64 * 1024;
-            bool bytes = false;
+            bool bytes = false, externalpipe = false;
             for (int i = 0; i < args.Length; i++)
             {
                 if (args[i] == "--chunk" && i + 1 < args.Length)
@@ -54,10 +59,11 @@ namespace PipeApps
                     if (!int.TryParse(args[++i], out chunk) || chunk <= 0) return Usage();
                 }
                 else if (args[i] == "--bytes") bytes = true;
+                else if (args[i] == "--externalpipe") externalpipe = true;
                 else if (path == null) path = args[i];
                 else return Usage();
             }
-            if (path == null) return Usage();
+            if (path == null || (bytes && externalpipe)) return Usage();
 
             try
             {
@@ -94,6 +100,11 @@ namespace PipeApps
                             return 1;
                         }
                         return ExternalPipe.Replay(file, "READ: " + path);
+                    }
+                    if (externalpipe)
+                    {
+                        Console.WriteLine("READ: " + path + ": not an externalpipe (no signature at its start)");
+                        return 1;
                     }
                 }
 
@@ -145,7 +156,7 @@ namespace PipeApps
 
         private static int Usage()
         {
-            Console.WriteLine("usage: READ file [--chunk N] [--bytes]");
+            Console.WriteLine("usage: READ file [--chunk N] [--bytes | --externalpipe]");
             return 2;
         }
     }

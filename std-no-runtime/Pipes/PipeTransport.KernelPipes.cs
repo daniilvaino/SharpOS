@@ -14,6 +14,9 @@ namespace SharpOS.Std.Pipes
 
         public static void* Allocate(ulong size) => ExchangeHeap.Allocate(size, Holder);
 
+        /// <summary>Not zeroed: for a writer of every byte (Copy, step208).</summary>
+        public static void* AllocateUnzeroed(ulong size) => ExchangeHeap.Allocate(size, Holder, zero: false);
+
         public static bool Free(void* block)
             => ExchangeHeap.OwnerOf(block) == Holder && ExchangeHeap.Free(block);
 

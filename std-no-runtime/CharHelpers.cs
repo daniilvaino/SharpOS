@@ -34,17 +34,32 @@ namespace SharpOS.Std.NoRuntime
                 || c == '\f';
         }
 
+        // Partial (step208): ASCII, Latin-1, Greek and Cyrillic — the
+        // alphabets file names here come in; BCL's full Unicode tables
+        // (CharUnicodeInfo) are not ported. Outside these ranges a letter
+        // keeps its case.
         public static char ToUpperInvariant(char c)
         {
-            if (c >= 'a' && c <= 'z')
-                return (char)(c - ('a' - 'A'));
+            if (c < 0x80)
+                return c >= 'a' && c <= 'z' ? (char)(c - ('a' - 'A')) : c;
+            if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return (char)(c - 0x20);       // à..þ, not ÷
+            if (c == 0xFF) return (char)0x178;                                     // ÿ
+            if (c >= 0x3B1 && c <= 0x3C9 && c != 0x3C2) return (char)(c - 0x20);    // α..ω, not final ς
+            if (c == 0x3C2) return (char)0x3A3;                                    // ς → Σ
+            if (c >= 0x430 && c <= 0x44F) return (char)(c - 0x20);                 // а..я
+            if (c >= 0x450 && c <= 0x45F) return (char)(c - 0x50);                 // ѐ..џ (ё)
             return c;
         }
 
         public static char ToLowerInvariant(char c)
         {
-            if (c >= 'A' && c <= 'Z')
-                return (char)(c + ('a' - 'A'));
+            if (c < 0x80)
+                return c >= 'A' && c <= 'Z' ? (char)(c + ('a' - 'A')) : c;
+            if (c >= 0xC0 && c <= 0xDE && c != 0xD7) return (char)(c + 0x20);       // À..Þ, not ×
+            if (c == 0x178) return (char)0xFF;                                     // Ÿ
+            if (c >= 0x391 && c <= 0x3A9 && c != 0x3A2) return (char)(c + 0x20);    // Α..Ω
+            if (c >= 0x410 && c <= 0x42F) return (char)(c + 0x20);                 // А..Я
+            if (c >= 0x400 && c <= 0x40F) return (char)(c + 0x50);                 // Ѐ..Џ (Ё)
             return c;
         }
     }

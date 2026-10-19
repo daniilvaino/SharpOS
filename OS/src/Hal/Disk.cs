@@ -16,5 +16,12 @@ namespace OS.Hal
     {
         public abstract bool Read(ulong sector, uint count, byte* data);
         public abstract bool Write(ulong sector, uint count, byte* data);
+
+        /// <summary>
+        /// The device's own write cache to the medium (step208): a write the
+        /// device acknowledged may still sit in its cache, and a power cut
+        /// loses it. True when there is nothing to flush.
+        /// </summary>
+        public virtual bool Flush() => true;
     }
 }

@@ -9,7 +9,9 @@
 //     as two calls, high surrogate then low, where the original's decoder
 //     throws on the second char.
 //   - ReadDecimal, ReadHalf — neither type exists here.
-//   - The MemoryStream fast path (_isMemoryStream / InternalReadSpan).
+//   - The MemoryStream fast path in InternalReadChars (InternalEmulateRead);
+//     InternalRead's is kept (step208), detected by `is MemoryStream` - no Type
+//     here, and nothing derives from MemoryStream.
 //   - SR resource strings, ThrowHelper — literal messages, plain throws.
 //
 // ReadString still trusts nothing: the length prefix comes from the data, so
@@ -30,6 +32,8 @@ namespace System.IO
         private readonly byte[] _buffer;
         private readonly Encoding _encoding;
         private readonly bool _leaveOpen;
+        private readonly bool _isMemoryStream; // "do we sit on MemoryStream?" for Read/ReadInt32 perf
+        private byte[] _charBytes;             // a short string's bytes, kept between reads
         private bool _disposed;
         private int _pendingLowSurrogate = -1;   // second half of a pair Read() split
 
@@ -53,6 +57,8 @@ namespace System.IO
 
             _stream = input;
             _encoding = encoding;
+            // SharpOS cut: `is`, not `GetType() == typeof(MemoryStream)` (no Type here).
+            _isMemoryStream = input is MemoryStream;
             int minBufferSize = encoding.GetMaxByteCount(1);  // max bytes per one char
             if (minBufferSize < 16)
             {
@@ -315,10 +321,36 @@ namespace System.IO
                 return string.Empty;
             }
 
+            // As the original's MemoryStream path: decoded straight out of the
+            // stream's buffer, one allocation - the string (step208). A short
+            // stream throws before anything is decoded.
+            if (_isMemoryStream)
+            {
+                return _encoding.GetString(((MemoryStream)_stream).InternalReadSpan(stringLength));
+            }
+
+            // A string that fits one chunk: the reader's own buffer, kept, as
+            // the original keeps _charBytes.
+            if (stringLength <= MaxCharBytesSize)
+            {
+                _charBytes ??= new byte[MaxCharBytesSize];
+                int have = 0;
+                while (have < stringLength)
+                {
+                    int got = _stream.Read(_charBytes, have, stringLength - have);
+                    if (got == 0)
+                    {
+                        throw new EndOfStreamException("Unable to read beyond the end of the stream.");
+                    }
+                    have += got;
+                }
+                return _encoding.GetString(new ReadOnlySpan<byte>(_charBytes, 0, stringLength));
+            }
+
             // SharpOS cut: no Decoder to turn each chunk into chars as it
             // arrives. The bytes are gathered in MaxCharBytesSize chunks —
             // never trusting the prefix for an allocation — and decoded once.
-            byte[] bytes = new byte[stringLength < MaxCharBytesSize ? stringLength : MaxCharBytesSize];
+            byte[] bytes = new byte[MaxCharBytesSize];
             int currPos = 0;
             do
             {
@@ -407,12 +439,19 @@ namespace System.IO
 
         private ReadOnlySpan<byte> InternalRead(int numBytes)
         {
-            // SharpOS cut: the MemoryStream shortcut.
-            ThrowIfDisposed();
+            if (_isMemoryStream)
+            {
+                // read directly from MemoryStream buffer
+                return ((MemoryStream)_stream).InternalReadSpan(numBytes);
+            }
+            else
+            {
+                ThrowIfDisposed();
 
-            _stream.ReadExactly(new Span<byte>(_buffer, 0, numBytes));
+                _stream.ReadExactly(new Span<byte>(_buffer, 0, numBytes));
 
-            return _buffer;
+                return _buffer;
+            }
         }
 
         // FillBuffer is not performing well when reading from MemoryStreams as it is using the public Stream interface.

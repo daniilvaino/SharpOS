@@ -77,6 +77,13 @@ namespace OS.Kernel.Process
         // waiters woken.
         public ulong TRunnable, TEntry, TMark0, TMark1, TCodeDone, TEnded, TWoken;
 
+        // Its own start, by phase (HPET ticks, step208): reading the file,
+        // whether from the program cache, the file's size, loading the PE,
+        // building the process, the kernel's low mappings, the rest.
+        public ulong SRead, SLoad, SBuild, SSync, SRest;
+        public uint SFileBytes;
+        public bool SCached;
+
         // The heap's pages (step196): bytes given, and every range given as a
         // (start, bytes) pair — what the process's end gives back.
         public ulong HeapCommitted;

@@ -13,6 +13,9 @@ namespace SharpOS.Std.Pipes
 
         public static void* Allocate(ulong size) => AppHost.ExchangeAllocate(size);
 
+        /// <summary>Not zeroed: for a writer of every byte (Copy, step208).</summary>
+        public static void* AllocateUnzeroed(ulong size) => AppHost.ExchangeAllocateUnzeroed(size);
+
         public static bool Free(void* block) => AppHost.ExchangeFree(block);
 
         public static PipeStatus Create(uint capacity, PipeOverflow overflow, out int writer, out int reader)

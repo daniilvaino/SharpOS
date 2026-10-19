@@ -11,8 +11,13 @@
   <!-- KQL executed: BabyKusto over Kusto.Language. -->
   <Import Project="..\..\vendor\BabyKusto\BabyKusto.props" />
 
+  <!-- The interactive prompt (step208): the shell's line editor. -->
+  <Import Project="..\..\vendor\ReadLine\ReadLine.props" />
+
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="..\PipeGen\StressArgs.cs" />
+    <Compile Include="..\Shell\LineReader.cs" />
+    <Compile Include="..\Shell\ReadLineConsole.cs" />
   </ItemGroup>
 </Project>

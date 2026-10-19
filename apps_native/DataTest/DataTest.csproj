@@ -16,6 +16,15 @@
     <Compile Include="Messages.cs" />
     <Compile Include="JsonValues.cs" />
     <Compile Include="ExternalFiles.cs" />
+    <Compile Include="ShellCommands.cs" />
+    <Compile Include="Folders.cs" />
+    <Compile Include="Grinder.cs" />
+    <Compile Include="GrowRename.cs" />
+    <Compile Include="FileApi.cs" />
+    <Compile Include="Names.cs" />
+    <Compile Include="InPlace.cs" />
+    <Compile Include="Json2DirTest.cs" />
+    <Compile Include="ProgramCacheTest.cs" />
     <Compile Include="..\PipeGen\StressArgs.cs" />
   </ItemGroup>
 </Project>

@@ -75,6 +75,16 @@ namespace DataApps
             Test("16 externalpipe: > keeps the messages, READ gives them back", ExternalPipeFiles);
             Test("17 CBOR there and back", CborRoundTrip);
             Test("18 the sample files an earlier build wrote", SampleFiles);
+            Test("19 the shell's environment commands and $NAME", ShellCommands);
+            Test("20 Tab: the shell's and KQL's completions", Completions);
+            Test("21 directories made and removed, files deleted", Folders);
+            Test("22 the FAT writer under a long run of mixed changes", Grinder);
+            Test("23 a directory past its cluster, renames and moves", GrowRename);
+            Test("24 listings, FileInfo, File.Copy, DriveInfo; ls -l, cp, df", FileApi);
+            Test("25 names as written: case, Cyrillic, past the BMP", Names);
+            Test("26 a file written anywhere: Seek, SetLength, reads on the same stream", InPlace);
+            Test("27 JSON2DIR: a tree from a document; READ's explicit modes", Json2Dir);
+            Test("28 the program cache: kept across other writes, dropped on its own", ProgramCacheKeeps);
 
             // The last stages leave on their own time (slowly under --gc-stress):
             // the counters settle within seconds, not at once.

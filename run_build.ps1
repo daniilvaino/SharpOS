@@ -915,8 +915,14 @@ if ($pwshDist) {
     $pwshEsp = Join-Path $espSharpOSDir "pwsh"
     New-Item -ItemType Directory -Force -Path $pwshEsp | Out-Null
     $staged = 0
+    # The distribution's .exe files stay out: pwsh.exe is the Windows apphost
+    # (hostfxr -> pwsh.dll), createdump.exe a dump tool. The kernel runs
+    # pwsh.dll itself, so neither is ever started here; copies an earlier
+    # build left on the ESP go too.
+    Get-ChildItem -LiteralPath $pwshEsp -Filter *.exe -File -ErrorAction SilentlyContinue | Remove-Item -Force
     foreach ($f in Get-ChildItem -LiteralPath $pwshDist.FullName -File) {
         if ($f.Name -eq "System.Private.CoreLib.dll") { continue }
+        if ($f.Extension -eq ".exe") { continue }
         Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $pwshEsp $f.Name) -Force
         $staged++
     }
@@ -1061,8 +1067,14 @@ try {
         # throwaway copy instead, exercising the storage path without putting
         # the disk we boot from behind two drivers at once.
         $stickImage = if ($UsbOnly) { "esp.img" } else { "usbstick.img" }
+        # cache=unsafe on both disks (step208): the guest's flushes (FLUSH
+        # CACHE, SYNCHRONIZE CACHE - one per closed file) are still sent and
+        # answered, but no longer flush the image file on the host. The first
+        # one after boot flushed the whole freshly built 512 MB image - 2.8 s
+        # under WHPX, the machine standing still while the disk command waited.
+        # The image is rebuilt every run; host-crash durability buys nothing.
         $displayArgs += @(
-            "-drive", "if=none,id=usbstick,format=raw,file=$stickImage",
+            "-drive", "if=none,id=usbstick,format=raw,cache=unsafe,file=$stickImage",
             "-device", "usb-storage,drive=usbstick")
     }
 
@@ -1095,14 +1107,16 @@ try {
     . (Join-Path $repoRoot "tools\New-EspImage.ps1")
     $espImage = Join-Path $qemuWorkDir "esp.img"
     # -NoBuild: the image the last run left, guest's writes included.
+    $checkedImage = $null
     if ($NoBuild -or (New-EspImage -SourceDir (Join-Path $qemuWorkDir "esp") -RawPath $espImage -SizeMb $EspImageSizeMb)) {
         Write-Host "ESP image: $espImage ($EspImageSizeMb MB)"
+        $checkedImage = $espImage
 
         # Under -UsbOnly the image is already attached over USB above; adding
         # it here too would present the same medium twice and let a fallback
         # to SATA hide the very thing being tested.
         if (-not $UsbOnly) {
-            $qemuArgs += @("-drive", "format=raw,file=esp.img")
+            $qemuArgs += @("-drive", "format=raw,cache=unsafe,file=esp.img")
         }
 
         if ($NoPs2 -or $Usb) {
@@ -1134,6 +1148,27 @@ try {
 
     if ($LASTEXITCODE -ne 0) {
         throw "QEMU exited with code $LASTEXITCODE"
+    }
+
+    # The volume the guest wrote, checked from outside (step208): fsck.fat
+    # -n on the image. A spoiled volume fails the run even when every
+    # program in it passed — the writer and the reader share their mistakes.
+    # Only for a real image: VVFAT has no on-disk FAT to check.
+    if ($checkedImage) {
+        . (Join-Path $repoRoot "tools\Test-FatImage.ps1")
+        $fsckLog = Join-Path $repoRoot "last_fsck.log"
+        $clean = Test-FatImage -ImagePath $checkedImage -LogPath $fsckLog
+        if ($null -eq $clean) {
+            Write-Host "[fsck] skipped: no fsck.fat (dosfstools) on the host or in WSL"
+        }
+        elseif ($clean) {
+            Write-Host "[fsck] clean -> $fsckLog"
+        }
+        else {
+            Write-Host "[fsck] THE VOLUME HAS PROBLEMS -> $fsckLog"
+            Get-Content -LiteralPath $fsckLog | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" }
+            throw "fsck.fat found problems on $checkedImage"
+        }
     }
 }
 finally {

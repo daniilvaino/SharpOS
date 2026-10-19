@@ -328,8 +328,11 @@ ThreadPool/Task/Timer на E10-E11.
      `t < oneMicrosecond` навсегда true).
   2. `WaitForMultipleObjects/Ex` n=1 forward к `WaitForSingleObject`
      (раньше no-op `return 0` = WAIT_OBJECT_0 → MRES.Wait busy-spin).
-  3. `WaitForSingleObject` finite timeout (Event/Semaphore/Mutex/
-     Thread): HPET-deadline yield-poll вместо degrade в `Wait()` (inf).
+  3. `WaitForSingleObject` finite timeout: Event и Thread (через
+     `JoinEvent`) — с step208 сон на списке ожидания и таймере сразу
+     (`Event.Wait(timeoutMs)`); Semaphore/Mutex — по-прежнему HPET-deadline
+     yield-poll. Опрос Event с таймаутом не засыпал рядом с занятыми потоками
+     и читал HPET каждый круг (7,7 мкс под WHPX) — съедал переключения труб.
   4. `AddressWait.WaitOnAddress` finite timeout: с step174 — сон на
      бакете и таймере сразу (как `Semaphore.WaitUntil`), не опрос с `Yield`;
      проверка и постановка — под `Suppress`.

@@ -53,6 +53,10 @@ namespace SharpOS.Std.NoRuntime
 
         public static ulong Budget => s_budget;
 
+        // Time in the kernel's page services (Stopwatch ticks, step208): what
+        // a heap that grows and gives back costs per allocation.
+        public static ulong Commits, CommitTicks, Releases, ReleaseTicks;
+
         private static bool EnsureRange()
         {
             if (s_base != 0) return true;
@@ -81,7 +85,11 @@ namespace SharpOS.Std.NoRuntime
                 at = s_cursor;
                 s_cursor += bytes;
             }
-            if (s_commit(at, bytes) != 0)
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+            int committed = s_commit(at, bytes);
+            CommitTicks += (ulong)(System.Diagnostics.Stopwatch.GetTimestamp() - started);
+            Commits++;
+            if (committed != 0)
             {
                 GiveFree(at, bytes);
                 return null;
@@ -95,7 +103,12 @@ namespace SharpOS.Std.NoRuntime
         {
             ulong at = (ulong)block;
             ulong bytes = ((ulong)size + PageSize - 1) & ~(PageSize - 1);
-            if (s_release == null || s_release(at, bytes) != 0) return;
+            if (s_release == null) return;
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+            int released = s_release(at, bytes);
+            ReleaseTicks += (ulong)(System.Diagnostics.Stopwatch.GetTimestamp() - started);
+            Releases++;
+            if (released != 0) return;
             s_committed -= bytes;
             GiveFree(at, bytes);
         }

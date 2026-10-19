@@ -107,6 +107,53 @@ namespace System
             return Concat(converted);
         }
 
+        // BCL (String.Manipulation.cs), with StringBuilder for
+        // ValueStringBuilder. Missing until step208: a call with a sequence
+        // bound to Concat(object) instead and returned the enumerator's
+        // ToString() — Kusto.Language's CompletionItem.BeforeText came out
+        // empty, and every completion with it.
+        public static string Concat(IEnumerable<string> values)
+        {
+            if (values == null) throw new ArgumentNullException(nameof(values));
+            using (IEnumerator<string> en = values.GetEnumerator())
+            {
+                if (!en.MoveNext()) return "";
+                string firstValue = en.Current;
+                if (!en.MoveNext()) return firstValue ?? "";
+
+                var result = new StringBuilder();
+                result.Append(firstValue);
+                do
+                {
+                    result.Append(en.Current);
+                }
+                while (en.MoveNext());
+                return result.ToString();
+            }
+        }
+
+        public static string Concat<T>(IEnumerable<T> values)
+        {
+            if (values == null) throw new ArgumentNullException(nameof(values));
+            using (IEnumerator<T> en = values.GetEnumerator())
+            {
+                if (!en.MoveNext()) return "";
+                T currentValue = en.Current;
+                string firstString = currentValue?.ToString();
+                if (!en.MoveNext()) return firstString ?? "";
+
+                var result = new StringBuilder();
+                result.Append(firstString);
+                do
+                {
+                    currentValue = en.Current;
+                    if (currentValue != null) result.Append(currentValue.ToString());
+                }
+                while (en.MoveNext());
+                return result.ToString();
+            }
+        }
+
         // ---- Join ----
 
         public static string Join(string separator, string[] value)

@@ -57,6 +57,75 @@ namespace SharpOS.Std.NoRuntime
         //   mt[-1] = series count (signed):
         //     positive → regular series, mt[-2..-(count+1)] = GcDescSeries
         //     zero/negative → value-type array series (for T[] with struct refs)
+        /// <summary>
+        /// References per element of an array the marker may walk in parts
+        /// (step208): an array of references (one series over its elements,
+        /// eight-byte elements) or of structs with references (value series);
+        /// 0 for anything else, which is walked whole.
+        /// </summary>
+        public static uint RefsPerItem(GcObject* obj)
+        {
+            GcMethodTable* table = obj->MethodTable;
+            if (!table->HasPointers || table->ComponentSize == 0)
+                return 0;
+            nint* mt = (nint*)table;
+            nint seriesCount = mt[-1];
+            if (seriesCount == 1)
+                return table->ComponentSize == 8 ? 1u : 0u;
+            if (seriesCount < 0 && seriesCount >= -64)
+            {
+                ValSerieItem* valSeries = (ValSerieItem*)(mt - 2) - 1;
+                uint refs = 0;
+                for (nint i = 0; i > seriesCount; i--)
+                    refs += valSeries[i].Nptrs;
+                return refs;
+            }
+            return 0;
+        }
+
+        /// <summary>
+        /// The references of elements [<paramref name="start"/>, <paramref name="end"/>)
+        /// of an array <see cref="RefsPerItem"/> said can be walked in parts.
+        /// </summary>
+        public static void EnumerateArrayItems(GcObject* obj, uint start, uint end, delegate*<nint, void> callback)
+        {
+            nint* mt = (nint*)obj->MethodTable;
+            nint seriesCount = mt[-1];
+            uint stride = obj->MethodTable->ComponentSize;
+            if (seriesCount == 1)
+            {
+                // The one series starts at the first element.
+                GcDescSeries* series = (GcDescSeries*)(mt - 1);
+                nint* slots = (nint*)((nint)obj + series[-1].Offset);
+                for (uint i = start; i < end; i++)
+                {
+                    nint target = slots[i];
+                    if (target != 0)
+                        callback(target);
+                }
+                return;
+            }
+
+            nint offset = mt[-2];
+            ValSerieItem* valSeries = (ValSerieItem*)(mt - 2) - 1;
+            for (uint item = start; item < end; item++)
+            {
+                nint* ptr = (nint*)((nint)obj + offset + (nint)item * stride);
+                for (nint i = 0; i > seriesCount; i--)
+                {
+                    ValSerieItem* valSerieItem = valSeries + i;
+                    for (uint j = 0; j < valSerieItem->Nptrs; j++)
+                    {
+                        nint target = *ptr;
+                        if (target != 0)
+                            callback(target);
+                        ptr++;
+                    }
+                    ptr = (nint*)((nint)ptr + valSerieItem->Skip);
+                }
+            }
+        }
+
         public static void EnumerateObjectReferences(GcObject* obj, delegate*<nint, void> callback)
         {
             if (!obj->MethodTable->HasPointers)

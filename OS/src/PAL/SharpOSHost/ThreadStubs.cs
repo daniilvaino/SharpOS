@@ -215,7 +215,9 @@ namespace OS.PAL.SharpOSHost
                     else while (t.State != ThreadState.Exited) Scheduler.Idle();
                     return WAIT_OBJECT_0;
                 }
-                // Finite: yield-poll until exited or deadline.
+                // Finite: the join event with a deadline (step208), else a poll.
+                if (bind != null && bind.JoinEvent != null)
+                    return bind.JoinEvent.Wait(timeoutMs) || bind.HasExited ? WAIT_OBJECT_0 : WAIT_TIMEOUT;
                 ulong deadlineT = ComputeDeadline(timeoutMs);
                 while (true)
                 {
@@ -242,17 +244,8 @@ namespace OS.PAL.SharpOSHost
                     return WAIT_OBJECT_0;
                 }
                 if (infinite) { e.Wait(); return WAIT_OBJECT_0; }
-                ulong deadlineE = ComputeDeadline(timeoutMs);
-                while (true)
-                {
-                    if (e.IsSet)
-                    {
-                        if (!e.IsManualReset) e.IsSet = false;
-                        return WAIT_OBJECT_0;
-                    }
-                    if (DeadlinePassed(deadlineE)) return WAIT_TIMEOUT;
-                    Scheduler.Idle();
-                }
+                // Asleep until set or the deadline (step208), not a poll.
+                return e.Wait(timeoutMs) ? WAIT_OBJECT_0 : WAIT_TIMEOUT;
             }
 
             if (target is Semaphore s)

@@ -101,6 +101,15 @@ namespace DataApps
                     return 0;
                 }
 
+                // An environment variable's value as a string; "<unset>" when
+                // there is none (test 19).
+                case "getenv":
+                {
+                    using var o = Pipe.Write<string>();
+                    o.Copy(Environment.GetEnvironmentVariable(a2) ?? "<unset>");
+                    return 0;
+                }
+
                 // Lines of text through Pipe.WriteText.
                 case "text":
                 {

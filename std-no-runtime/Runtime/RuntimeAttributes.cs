@@ -63,6 +63,36 @@ namespace System.Runtime.Versioning
     {
         public NonVersionableAttribute() { }
     }
+
+    // The platform attributes (BCL, OSPlatformAttribute.cs), step208: ported
+    // code marks itself with them (json2dir: [assembly: UnsupportedOSPlatform
+    // ("windows")]). Read by nothing here — the platform analyzer is the
+    // compiler's.
+    public abstract class OSPlatformAttribute : Attribute
+    {
+        private protected OSPlatformAttribute(string platformName) => PlatformName = platformName;
+        public string PlatformName { get; }
+    }
+
+    [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Constructor | AttributeTargets.Enum |
+                    AttributeTargets.Event | AttributeTargets.Field | AttributeTargets.Interface | AttributeTargets.Method |
+                    AttributeTargets.Module | AttributeTargets.Property | AttributeTargets.Struct,
+                    AllowMultiple = true, Inherited = false)]
+    public sealed class SupportedOSPlatformAttribute : OSPlatformAttribute
+    {
+        public SupportedOSPlatformAttribute(string platformName) : base(platformName) { }
+    }
+
+    [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Constructor | AttributeTargets.Enum |
+                    AttributeTargets.Event | AttributeTargets.Field | AttributeTargets.Interface | AttributeTargets.Method |
+                    AttributeTargets.Module | AttributeTargets.Property | AttributeTargets.Struct,
+                    AllowMultiple = true, Inherited = false)]
+    public sealed class UnsupportedOSPlatformAttribute : OSPlatformAttribute
+    {
+        public UnsupportedOSPlatformAttribute(string platformName) : base(platformName) { }
+        public UnsupportedOSPlatformAttribute(string platformName, string message) : base(platformName) => Message = message;
+        public string Message { get; }
+    }
 }
 
 namespace System

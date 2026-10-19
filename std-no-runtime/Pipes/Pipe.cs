@@ -291,7 +291,7 @@ namespace SharpOS.Std.Pipes
         /// description travels to the pipe once, here.
         /// </summary>
         public static PipeStatus Connect(string name, out PipeWriter<T> writer, out string error,
-                                         uint capacity = 16, PipeOverflow overflow = PipeOverflow.DropOldest)
+                                         uint capacity = Pipe.NamedCapacity, PipeOverflow overflow = PipeOverflow.DropOldest)
         {
             writer = null;
             ulong key = MessageCatalog.KeyOf(typeof(T));
@@ -324,7 +324,9 @@ namespace SharpOS.Std.Pipes
                 return Answer(PipeStatus.Refused);
             }
             ulong size = layout.Size;
-            byte* block = (byte*)PipeTransport.Allocate(size);
+            // Not zeroed: Write writes every byte of [0, size), and the reader
+            // takes no more than size (step208).
+            byte* block = (byte*)PipeTransport.AllocateUnzeroed(size);
             if (block == null)
             {
                 layout.Forget();
@@ -438,7 +440,7 @@ namespace SharpOS.Std.Pipes
         /// with another type or layout is refused when the two meet (pipe spec Р22).
         /// </summary>
         public static PipeStatus Connect(string name, out PipeReader<T> reader, out string error,
-                                         uint capacity = 16, PipeOverflow overflow = PipeOverflow.DropOldest)
+                                         uint capacity = Pipe.NamedCapacity, PipeOverflow overflow = PipeOverflow.DropOldest)
         {
             reader = null;
             ulong key = MessageCatalog.KeyOf(typeof(T));
@@ -566,7 +568,7 @@ namespace SharpOS.Std.Pipes
         public byte[] Schema { get; private set; }
 
         public static PipeStatus Connect(string name, out RawPipeReader reader, out string error,
-                                         uint capacity = 16, PipeOverflow overflow = PipeOverflow.DropOldest)
+                                         uint capacity = Pipe.NamedCapacity, PipeOverflow overflow = PipeOverflow.DropOldest)
         {
             reader = null;
             PipeStatus status = PipeTransport.Connect(name, PipeRole.Reader, capacity, overflow, null, 0,

@@ -49,18 +49,50 @@ namespace Shell
         public int LastExitCode { get; private set; }
         public string WorkingDirectory => _cwd;
 
+        /// <summary>
+        /// One line: parsed once, refused whole when it holds what this shell
+        /// does not run, then run a command at a time — each command's words
+        /// expanded just before it runs, so <c>export A=1; echo $A</c> sees
+        /// the new value, as in bash (step208).
+        /// </summary>
+        /// <remarks>
+        /// ShellSyntaxTree is a safety analyser: it refuses <c>export</c> and
+        /// <c>unset</c> outright, as commands that change bindings. They are
+        /// renamed before the parse (<see cref="RenameBindingCommands"/>), and
+        /// back in <see cref="Split"/>. The parser runs in
+        /// IsolatedNonInteractive mode, the one that takes <c>$NAME</c>; what
+        /// that mode claims about values is not used — only the syntax is,
+        /// and the values come from this process's environment at run time.
+        /// </remarks>
         public int RunLine(string line)
         {
             // The parser resolves a redirect's target against its working
             // directory (step197): it gets the shell's, or `> out.txt` lands
             // in the root.
-            var parser = new BashParser(new BashParserOptions { WorkingDirectory = _cwd.Replace('\\', '/') });
-            ParsedCommand parsed = parser.Parse(line);
+            string source = RenameBindingCommands(line, out _renamedAt);
+            var parser = new BashParser(new BashParserOptions
+            {
+                WorkingDirectory = _cwd.Replace('\\', '/'),
+                InitialStateMode = BashInitialStateMode.IsolatedNonInteractive,
+            });
+            ParsedCommand parsed = parser.Parse(source);
             if (parsed.IsUnparseable)
             {
                 Write("sh: cannot parse: ");
                 Write(parsed.UnparseableReason ?? line);
                 Write("\n");
+                return LastExitCode = 2;
+            }
+
+            // Everything this shell does not run is refused before anything
+            // runs: half a line run is worse than none.
+            if (FindUnsupported(parsed, out string what, out int at))
+            {
+                Write("sh: not supported: ");
+                Write(what);
+                Write(" (column ");
+                WriteInt(OriginalColumn(at) + 1);
+                Write(")\n");
                 return LastExitCode = 2;
             }
 
@@ -77,8 +109,11 @@ namespace Shell
 
                 bool skip = (clause.Operator == CompoundOperator.AndIf && last != 0)
                          || (clause.Operator == CompoundOperator.OrIf && last == 0);
+                // `env A=1 prog` starts the program with its own environment,
+                // as a pipeline's stage does.
                 if (!skip)
-                    last = end - i > 1 || clause.Redirects.Count > 0 || (HasEnds && (!IsBuiltin(clause) || WritesText(Verb(clause))))
+                    last = end - i > 1 || clause.Redirects.Count > 0 || EnvStartsProgram(clause)
+                           || (HasEnds && (!IsBuiltin(clause) || WritesText(Verb(clause))))
                         ? RunPipeline(clauses, i, end)
                         : RunClause(clause);
                 i = end - 1;
@@ -87,6 +122,291 @@ namespace Shell
 
             return LastExitCode = last;
         }
+
+        // ---- step208: the parse's way in, and what is refused ----
+
+        // Where RenameBindingCommands put "__" in, in the renamed line.
+        private List<int> _renamedAt;
+
+        /// <summary>
+        /// <c>export</c> and <c>unset</c> as commands — a bare word where a
+        /// command starts — become <c>__export</c> and <c>__unset</c>, which
+        /// the parser takes for programs. Found with the parser's own lexer, so
+        /// a quoted "export" or one inside an argument is left alone.
+        /// </summary>
+        private static string RenameBindingCommands(string line, out List<int> renamedAt)
+        {
+            renamedAt = new List<int>();
+            IReadOnlyList<ShellSyntaxTree.Internal.Bash.Lexing.BashToken> tokens =
+                ShellSyntaxTree.Internal.Bash.Lexing.BashLexer.Tokenize(line);
+
+            var built = new StringBuilder();
+            int copied = 0;
+            bool commandPlace = true;
+            foreach (var token in tokens)
+            {
+                switch (token.Kind)
+                {
+                    case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Whitespace:
+                    case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Continuation:
+                    case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Comment:
+                        if (token.IsStatementSeparator) commandPlace = true;
+                        continue;
+                    case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Operator:
+                        string op = token.OperatorText;
+                        commandPlace = op == ";" || op == "|" || op == "&&" || op == "||" || op == "(" || token.IsStatementSeparator;
+                        continue;
+                    case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Word:
+                        if (commandPlace && (token.Value == "export" || token.Value == "unset")
+                            && token.SourceLength == token.Value.Length)
+                        {
+                            built.Append(line, copied, token.SourceStart - copied);
+                            renamedAt.Add(built.Length);
+                            built.Append("__");
+                            copied = token.SourceStart;
+                        }
+                        commandPlace = false;
+                        continue;
+                    default:
+                        commandPlace = false;
+                        continue;
+                }
+            }
+            if (renamedAt.Count == 0) return line;
+            built.Append(line, copied, line.Length - copied);
+            return built.ToString();
+        }
+
+        // A place in the renamed line as a place in the line typed.
+        private int OriginalColumn(int at)
+        {
+            int column = at;
+            if (_renamedAt != null)
+                foreach (int inserted in _renamedAt)
+                    if (inserted < at) column -= at - inserted < 2 ? at - inserted : 2;
+            return column;
+        }
+
+        /// <summary>
+        /// The first thing in the line this shell does not run: what it is and
+        /// where. The syntax tree says which constructs there are; the words
+        /// say which expansions — every word is expanded once here without
+        /// looking anything up, which finds those that cannot be.
+        /// </summary>
+        private static bool FindUnsupported(ParsedCommand parsed, out string what, out int at)
+        {
+            if (FindUnsupportedNode(parsed.Syntax, out what, out at)) return true;
+
+            foreach (Clause clause in parsed.Clauses)
+            {
+                bool verbSeen = false;
+                foreach (ClauseElement element in clause.Elements)
+                {
+                    int start = element.SourceStart ?? 0;
+                    string raw = element.Raw;
+                    if (element.Role == ClauseElementRole.Redirect)
+                    {
+                        string target = RedirectTarget(raw);
+                        start += raw.Length - target.Length;
+                        raw = target;
+                    }
+                    else if (element.Role == ClauseElementRole.Verb && !verbSeen)
+                    {
+                        verbSeen = true;
+                        if (raw.IndexOf('$') >= 0)
+                        {
+                            what = "a command named by a variable";
+                            at = start;
+                            return true;
+                        }
+                        if (element.Value.IndexOf('=') > 0 && raw[0] != '"' && raw[0] != '\'')
+                        {
+                            what = "shell variables — export NAME=value sets an environment variable";
+                            at = start;
+                            return true;
+                        }
+                    }
+                    try { Expand(raw, false); }
+                    catch (UnsupportedExpansion e)
+                    {
+                        what = e.Message;
+                        at = start + e.Offset;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static bool FindUnsupportedNode(ShellSyntaxNode node, out string what, out int at)
+        {
+            what = null;
+            at = node.SourceStart ?? 0;
+            switch (node)
+            {
+                case ShellBlockSyntax block:
+                    foreach (ShellSyntaxNode statement in block.Statements)
+                        if (FindUnsupportedNode(statement, out what, out at)) return true;
+                    return false;
+                case CommandListSyntax list:
+                    foreach (CommandListItemSyntax item in list.Items)
+                        if (FindUnsupportedNode(item.Command, out what, out at)) return true;
+                    return false;
+                case PipelineSyntax pipeline:
+                    foreach (ShellSyntaxNode stage in pipeline.Stages)
+                        if (FindUnsupportedNode(stage, out what, out at)) return true;
+                    return false;
+                case SimpleCommandSyntax command:
+                    if (command.Substitutions.Count > 0)
+                    {
+                        what = "command substitution $(...)";
+                        at = command.Substitutions[0].SourceStart ?? at;
+                        return true;
+                    }
+                    if (command.ExecutionRegions.Count > 0)
+                    {
+                        what = "this construct";
+                        at = command.ExecutionRegions[0].SourceStart ?? at;
+                        return true;
+                    }
+                    return false;
+                case ForEachSyntax:
+                    what = "for loops";
+                    return true;
+                case GroupSyntax:
+                    what = "( ... ) and { ...; } groups";
+                    return true;
+                case CommandSubstitutionSyntax:
+                    what = "command substitution $(...)";
+                    return true;
+                default:
+                    what = "this construct";
+                    return true;
+            }
+        }
+
+        private sealed class UnsupportedExpansion : System.Exception
+        {
+            public readonly int Offset;
+            public UnsupportedExpansion(string what, int offset) : base(what) => Offset = offset;
+        }
+
+        /// <summary>
+        /// A word as the command gets it: quotes removed, <c>\</c> escapes
+        /// taken, <c>$NAME</c> and <c>${NAME}</c> replaced by the environment
+        /// variable's value — empty when it is not set — outside single quotes,
+        /// and <c>~</c> at the start by HOME. No word splitting: a value with
+        /// spaces stays one argument. With <paramref name="lookup"/> false
+        /// nothing is looked up; the word is only checked.
+        /// </summary>
+        /// <exception cref="UnsupportedExpansion">An expansion this shell does not do.</exception>
+        private static string Expand(string raw, bool lookup)
+        {
+            var built = new StringBuilder();
+            bool doubleQuoted = false;
+            for (int i = 0; i < raw.Length; i++)
+            {
+                char c = raw[i];
+                if (c == '\'' && !doubleQuoted)
+                {
+                    int close = raw.IndexOf('\'', i + 1);
+                    if (close < 0) close = raw.Length;
+                    built.Append(raw, i + 1, close - i - 1);
+                    i = close;
+                    continue;
+                }
+                if (c == '"')
+                {
+                    doubleQuoted = !doubleQuoted;
+                    continue;
+                }
+                if (c == '\\' && i + 1 < raw.Length)
+                {
+                    // Inside double quotes a backslash escapes only these.
+                    char next = raw[i + 1];
+                    if (!doubleQuoted || next == '$' || next == '"' || next == '\\' || next == '`')
+                    {
+                        built.Append(next);
+                        i++;
+                    }
+                    else if (next == '\n')
+                    {
+                        i++;
+                    }
+                    else
+                    {
+                        built.Append(c);
+                    }
+                    continue;
+                }
+                if (c == '~' && i == 0 && (raw.Length == 1 || raw[1] == '/'))
+                {
+                    if (lookup) built.Append(System.Environment.GetEnvironmentVariable("HOME") ?? "");
+                    continue;
+                }
+                if (c == '$' && i + 1 < raw.Length)
+                {
+                    char next = raw[i + 1];
+                    string name = null;
+                    int last = i;
+                    if (next == '{')
+                    {
+                        int close = raw.IndexOf('}', i + 2);
+                        if (close < 0 || !IsName(raw.Substring(i + 2, close - i - 2)))
+                            throw new UnsupportedExpansion("${...} other than ${NAME}", i);
+                        name = raw.Substring(i + 2, close - i - 2);
+                        last = close;
+                    }
+                    else if (IsNameStart(next))
+                    {
+                        int j = i + 1;
+                        while (j < raw.Length && IsNameChar(raw[j])) j++;
+                        name = raw.Substring(i + 1, j - i - 1);
+                        last = j - 1;
+                    }
+                    else if ((next >= '0' && next <= '9') || "?#@*!$-".IndexOf(next) >= 0)
+                    {
+                        throw new UnsupportedExpansion("$" + next.ToString() + " (only $NAME and ${NAME})", i);
+                    }
+                    else if (next == '(' || next == '\'' || (next == '"' && !doubleQuoted))
+                    {
+                        throw new UnsupportedExpansion("$" + next.ToString() + "...", i);
+                    }
+
+                    if (name != null)
+                    {
+                        if (lookup) built.Append(System.Environment.GetEnvironmentVariable(name) ?? "");
+                        i = last;
+                        continue;
+                    }
+                }
+                built.Append(c);
+            }
+            return built.ToString();
+        }
+
+        // The target of `> file` / `>> file` as written: the operator and
+        // the blanks after it gone, the word left to expand.
+        private static string RedirectTarget(string raw)
+        {
+            int i = 0;
+            while (i < raw.Length && raw[i] >= '0' && raw[i] <= '9') i++;
+            while (i < raw.Length && (raw[i] == '>' || raw[i] == '<' || raw[i] == '|' || raw[i] == '&')) i++;
+            while (i < raw.Length && (raw[i] == ' ' || raw[i] == '\t')) i++;
+            return raw.Substring(i);
+        }
+
+        /// <summary>A name $NAME can take: a letter or _, then letters, digits and _.</summary>
+        internal static bool IsName(string name)
+        {
+            if (name.Length == 0 || !IsNameStart(name[0])) return false;
+            for (int i = 1; i < name.Length; i++)
+                if (!IsNameChar(name[i])) return false;
+            return true;
+        }
+
+        private static bool IsNameStart(char c) => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+        private static bool IsNameChar(char c) => IsNameStart(c) || (c >= '0' && c <= '9');
 
         /// <summary>
         /// <c>a | b | c</c>: a pipe between each two stages, every stage started
@@ -107,6 +427,8 @@ namespace Shell
         {
             var verbs = new List<string>();
             var arguments = new List<List<string>>();
+            // A stage's own environment (`env A=1 prog`, step208); null: the shell's.
+            var environments = new List<string[]>();
             // A builtin with output may start the pipeline (`echo x > f`,
             // `ls | PIPECNT`): the shell runs it itself, its text going on as
             // a string per line. `cat FILE` there is READ FILE — the file
@@ -122,7 +444,26 @@ namespace Shell
                     Write("sh: an empty stage in a pipeline\n");
                     return 2;
                 }
-                if (IsBuiltin(stage))
+                string[] environment = null;
+                if (verb == "env")
+                {
+                    int envCode = ParseEnv(args, out string program, out List<string> rest, out string[] programEnvironment);
+                    if (envCode != 0) return envCode;
+                    if (program != null)
+                    {
+                        if (IsBuiltinName(program))
+                        {
+                            Write("sh: env starts programs; ");
+                            Write(program);
+                            Write(" is a builtin\n");
+                            return 2;
+                        }
+                        verb = program;
+                        args = rest;
+                        environment = programEnvironment;
+                    }
+                }
+                if (environment == null && IsBuiltinName(verb))
                 {
                     if (!WritesText(verb))
                     {
@@ -154,6 +495,7 @@ namespace Shell
                 }
                 verbs.Add(verb);
                 arguments.Add(args);
+                environments.Add(environment);
 
                 foreach (Redirect redirect in stage.Redirects)
                 {
@@ -168,10 +510,11 @@ namespace Shell
                         Write("sh: the output is already a pipe; `>` cannot redirect it\n");
                         return 2;
                     }
-                    var write = new List<string> { redirect.Target };
+                    var write = new List<string> { Target(redirect, stage) };
                     if (append) write.Add("--append");
                     verbs.Add("WRITE");
                     arguments.Add(write);
+                    environments.Add(null);
                 }
             }
 
@@ -198,7 +541,8 @@ namespace Shell
                 {
                     started.Add(Process.Start(path, arguments[k].ToArray(),
                         k > 0 ? pairs[k - 1].ReadEnd : TakeInput(),
-                        k < count - 1 ? pairs[k].WriteEnd : TakeOutput()));
+                        k < count - 1 ? pairs[k].WriteEnd : TakeOutput(),
+                        environments[k]));
                     names.Add(verbs[k]);
                 }
                 catch (System.InvalidOperationException e)
@@ -275,7 +619,7 @@ namespace Shell
         // The builtins that print and change nothing: they may start a pipeline.
         private static bool WritesText(string verb)
             => verb == "echo" || verb == "pwd" || verb == "ls" || verb == "dir" || verb == "cat" || verb == "type"
-               || verb == "history" || verb == "help";
+               || verb == "history" || verb == "help" || verb == "env" || verb == "which" || verb == "df";
 
         // A builtin as the first stage: its text, gathered, to the pipe as a
         // string per line. The next stage leaving early is 141, as for a program.
@@ -327,7 +671,8 @@ namespace Shell
         /// <summary>The builtins, for help and Tab completion.</summary>
         public static string[] Builtins => new[]
         {
-            "buildinfo", "cat", "cd", "clear", "dir", "echo", "exit", "expect", "help", "history", "ls", "pwd", "type",
+            "buildinfo", "cat", "cd", "clear", "dir", "echo", "env", "exit", "expect", "export", "help", "history", "ls",
+            "mkdir", "mv", "pwd", "rm", "rmdir", "type", "unset", "which", "cp", "df",
         };
 
         /// <summary>The prompt's history (Program.Interactive sets it; a script has none).</summary>
@@ -335,16 +680,18 @@ namespace Shell
 
         private static string Verb(Clause clause) => Split(clause, new List<string>());
 
-        private static bool IsBuiltin(Clause clause)
+        private static bool IsBuiltin(Clause clause) => IsBuiltinName(Verb(clause));
+
+        private static bool IsBuiltinName(string verb)
         {
-            var args = new List<string>();
-            string verb = Split(clause, args);
             foreach (string builtin in Builtins)
                 if (verb == builtin) return true;
             return false;
         }
 
-        // The verb and the arguments of a clause.
+        // The verb and the arguments of a clause, expanded now (step208): from
+        // the words as written, not from the parser's values — those are its
+        // guesses at what a variable holds.
         private static string Split(Clause clause, List<string> args)
         {
             string verb = "";
@@ -355,14 +702,444 @@ namespace Shell
                 // arguments, as in argv.
                 if (element.Role == ClauseElementRole.Verb && verb.Length == 0)
                 {
-                    verb = element.Value;
+                    verb = Expand(element.Raw, true);
+                    if (verb == "__export" || verb == "__unset") verb = verb.Substring(2);
                 }
                 else if (element.Role != ClauseElementRole.Redirect)
                 {
-                    args.Add(element.Value);
+                    args.Add(Expand(element.Raw, true));
                 }
             }
             return verb;
+        }
+
+        // `> $HOME/out.txt`: the target expanded, from the working directory.
+        private string Target(Redirect redirect, Clause clause)
+        {
+            foreach (ClauseElement element in clause.Elements)
+                if (element.Role == ClauseElementRole.Redirect)
+                    return Resolve(Expand(RedirectTarget(element.Raw), true));
+            return redirect.Target;
+        }
+
+        // ---- step208: environment builtins ----
+
+        // `env [NAME=value...] [program args...]`: the NAME=value words
+        // first, the program after them. Null program: env prints.
+        private int ParseEnv(List<string> args, out string program, out List<string> rest, out string[] environment)
+        {
+            program = null;
+            rest = new List<string>();
+            environment = SharpOS.Std.NoRuntime.EnvironmentStore.GetAll();
+            int i = 0;
+            for (; i < args.Count; i++)
+            {
+                string arg = args[i];
+                if (arg.Length > 0 && arg[0] == '-')
+                {
+                    Write("sh: env: options are not supported: ");
+                    Write(arg);
+                    Write("\n");
+                    return 2;
+                }
+                int eq = arg.IndexOf('=');
+                if (eq < 0) break;
+                string name = arg.Substring(0, eq);
+                if (!IsName(name))
+                {
+                    Write("sh: env: not a variable name: ");
+                    Write(name);
+                    Write("\n");
+                    return 2;
+                }
+                environment = SharpOS.Std.NoRuntime.EnvironmentBlock.With(environment, name, arg.Substring(eq + 1));
+            }
+            if (i < args.Count)
+            {
+                program = args[i];
+                for (int k = i + 1; k < args.Count; k++) rest.Add(args[k]);
+            }
+            return 0;
+        }
+
+        private static bool EnvStartsProgram(Clause clause)
+        {
+            var args = new List<string>();
+            if (Split(clause, args) != "env") return false;
+            foreach (string arg in args)
+                if (arg.IndexOf('=') < 0) return true;
+            return false;
+        }
+
+        // env, env NAME=value...: the environment, a NAME=value a line.
+        private int Env(List<string> args)
+        {
+            int code = ParseEnv(args, out string program, out _, out string[] environment);
+            if (code != 0) return code;
+            if (program != null)
+            {
+                // RunLine sends `env ... program` to RunPipeline; here only
+                // when it came another way (`expect 0 env ...`).
+                Write("sh: env starts a program only as a command of its own\n");
+                return 2;
+            }
+            foreach (string entry in environment)
+            {
+                Write(entry);
+                Write("\n");
+            }
+            return 0;
+        }
+
+        // export NAME=value...: set for this shell and what it starts.
+        // Without arguments, the environment. An empty value removes the
+        // variable — the environment is Windows-shaped (step207), where
+        // "NAME=" is no variable at all.
+        private int Export(List<string> args)
+        {
+            if (args.Count == 0) return Env(args);
+            int code = 0;
+            foreach (string arg in args)
+            {
+                int eq = arg.IndexOf('=');
+                string name = eq < 0 ? arg : arg.Substring(0, eq);
+                if (!IsName(name))
+                {
+                    Write("sh: export: not a variable name: ");
+                    Write(name);
+                    Write("\n");
+                    code = 1;
+                    continue;
+                }
+                // `export NAME` exports a shell variable in bash; this shell
+                // has none, so there is nothing to do.
+                if (eq < 0) continue;
+                System.Environment.SetEnvironmentVariable(name, arg.Substring(eq + 1));
+            }
+            return code;
+        }
+
+        private int Unset(List<string> args)
+        {
+            int code = 0;
+            foreach (string name in args)
+            {
+                if (!IsName(name))
+                {
+                    Write("sh: unset: not a variable name: ");
+                    Write(name);
+                    Write("\n");
+                    code = name.Length > 0 && name[0] == '-' ? 2 : 1;
+                    continue;
+                }
+                System.Environment.SetEnvironmentVariable(name, null);
+            }
+            return code;
+        }
+
+        // ---- step208: directories and deleting ----
+
+        // mkdir [-p] DIR...: as in sh — without -p the parent must exist and
+        // the directory must not; with -p every missing one is made.
+        private int MakeDirectory(List<string> args)
+        {
+            bool parents = false;
+            int code = 0;
+            foreach (string arg in args)
+            {
+                if (arg == "-p") { parents = true; continue; }
+                string path = Resolve(arg);
+                try
+                {
+                    if (!parents && System.IO.Directory.Exists(path))
+                    {
+                        Complain("mkdir", path, "exists");
+                        code = 1;
+                        continue;
+                    }
+                    if (!parents && !System.IO.Directory.Exists(System.IO.Directory.ParentOf(path)))
+                    {
+                        Complain("mkdir", path, "no such parent directory");
+                        code = 1;
+                        continue;
+                    }
+                    System.IO.Directory.CreateDirectory(path);
+                }
+                catch (System.Exception e) when (e is System.IO.IOException || e is System.PlatformNotSupportedException)
+                {
+                    Complain("mkdir", path, e.Message);
+                    code = 1;
+                }
+            }
+            return code;
+        }
+
+        // rm [-r] [-f] PATH...: a file; a directory only with -r, with all in
+        // it. -f: a missing path is no error.
+        private int Remove(List<string> args)
+        {
+            bool recursive = false, force = false;
+            int code = 0;
+            foreach (string arg in args)
+            {
+                if (arg.Length > 1 && arg[0] == '-')
+                {
+                    foreach (char c in arg.Substring(1))
+                    {
+                        if (c == 'r' || c == 'R') recursive = true;
+                        else if (c == 'f') force = true;
+                        else { Complain("rm", arg, "unknown option"); return 2; }
+                    }
+                    continue;
+                }
+                string path = Resolve(arg);
+                try
+                {
+                    if (System.IO.Directory.Exists(path))
+                    {
+                        if (!recursive) { Complain("rm", path, "is a directory (rm -r removes it)"); code = 1; continue; }
+                        System.IO.Directory.Delete(path, true);
+                    }
+                    else if (System.IO.File.Exists(path))
+                    {
+                        System.IO.File.Delete(path);
+                    }
+                    else if (!force)
+                    {
+                        Complain("rm", path, "no such file or directory");
+                        code = 1;
+                    }
+                }
+                catch (System.Exception e) when (e is System.IO.IOException || e is System.UnauthorizedAccessException || e is System.PlatformNotSupportedException)
+                {
+                    Complain("rm", path, e.Message);
+                    code = 1;
+                }
+            }
+            return code;
+        }
+
+        // ls -l: "   12345 2026-10-14 13:05  NAME", a directory "<DIR>" in
+        // place of its size; directories first, then files, each by name.
+        private int ListDetails(string path)
+        {
+            if (!System.IO.Directory.Exists(path))
+            {
+                if (System.IO.File.Exists(path)) { DetailLine(new System.IO.FileInfo(path)); return 0; }
+                Write("sh: cannot list ");
+                Write(path);
+                Write("\n");
+                return 1;
+            }
+            string[] dirs = System.IO.Directory.GetDirectories(path);
+            string[] files = System.IO.Directory.GetFiles(path);
+            System.Array.Sort(dirs, string.CompareOrdinal);
+            System.Array.Sort(files, string.CompareOrdinal);
+            foreach (string d in dirs)
+            {
+                var info = new System.IO.DirectoryInfo(d);
+                Write("   <DIR>  ");
+                Write(Stamp(info.LastWriteTime));
+                Write("  ");
+                WritePainted("\u001b[1;34m", info.Name + "\\");
+                Write("\n");
+            }
+            foreach (string f in files) DetailLine(new System.IO.FileInfo(f));
+            return 0;
+        }
+
+        private void DetailLine(System.IO.FileInfo info)
+        {
+            string size = info.Length.ToString();
+            for (int pad = size.Length; pad < 8; pad++) Write(" ");
+            Write(size);
+            Write("  ");
+            Write(Stamp(info.LastWriteTime));
+            Write("  ");
+            if (EndsWith(info.Name, ".EXE")) WritePainted("\u001b[32m", info.Name);
+            else Write(info.Name);
+            Write("\n");
+        }
+
+        private static string Stamp(System.DateTime t)
+            => t.Year.ToString() + "-" + Two(t.Month) + "-" + Two(t.Day) + " " + Two(t.Hour) + ":" + Two(t.Minute);
+
+        private static string Two(int n) => n < 10 ? "0" + n.ToString() : n.ToString();
+
+        // cp [-r] SRC DST, cp [-r] SRC... DIR: as in sh — into DIR when it is
+        // a directory that exists; a directory only with -r, with all in it.
+        private int Copy(List<string> args)
+        {
+            bool recursive = false;
+            var names = new List<string>();
+            foreach (string a in args)
+            {
+                if (a == "-r" || a == "-R") recursive = true;
+                else names.Add(a);
+            }
+            if (names.Count < 2) { Write("sh: usage: cp [-r] SRC DST, or cp [-r] SRC... DIR\n"); return 2; }
+            string last = Resolve(names[names.Count - 1]);
+            bool intoDirectory = System.IO.Directory.Exists(last);
+            if (!intoDirectory && names.Count > 2) { Complain("cp", last, "not a directory"); return 1; }
+            int code = 0;
+            for (int i = 0; i < names.Count - 1; i++)
+            {
+                string from = Resolve(names[i]);
+                string to = intoDirectory ? last + "\\" + LastName(from) : last;
+                try
+                {
+                    if (System.IO.Directory.Exists(from))
+                    {
+                        if (!recursive) { Complain("cp", from, "is a directory (cp -r copies it)"); code = 1; continue; }
+                        CopyTree(from, to);
+                    }
+                    else System.IO.File.Copy(from, to, true);
+                }
+                catch (System.Exception e) when (e is System.IO.IOException || e is System.PlatformNotSupportedException)
+                {
+                    Complain("cp", from, e.Message);
+                    code = 1;
+                }
+            }
+            return code;
+        }
+
+        private static void CopyTree(string from, string to)
+        {
+            System.IO.Directory.CreateDirectory(to);
+            foreach (string f in System.IO.Directory.GetFiles(from)) System.IO.File.Copy(f, to + "\\" + LastName(f), true);
+            foreach (string d in System.IO.Directory.GetDirectories(from)) CopyTree(d, to + "\\" + LastName(d));
+        }
+
+        // df: the volume's size, what is used and what is free.
+        private int DiskFree()
+        {
+            var drive = new System.IO.DriveInfo("\\");
+            try
+            {
+                long total = drive.TotalSize, free = drive.TotalFreeSpace;
+                Write("volume     size      used      free  use%\n");
+                Write("\\    ");
+                Write(Size(total));
+                Write(Size(total - free));
+                Write(Size(free));
+                string percent = (total == 0 ? 0 : (total - free) * 100 / total).ToString() + "%";
+                for (int pad = percent.Length; pad < 6; pad++) Write(" ");
+                Write(percent);
+                Write("\n");
+                return 0;
+            }
+            catch (System.IO.IOException e)
+            {
+                Write("sh: df: ");
+                Write(e.Message);
+                Write("\n");
+                return 1;
+            }
+        }
+
+        // Bytes in K, M or G, right-aligned in ten columns.
+        private static string Size(long bytes)
+        {
+            string text = bytes >= 10L << 30 ? (bytes >> 30).ToString() + "G"
+                        : bytes >= 10L << 20 ? (bytes >> 20).ToString() + "M"
+                        : bytes >= 10L << 10 ? (bytes >> 10).ToString() + "K"
+                        : bytes.ToString();
+            var built = new StringBuilder();
+            for (int pad = text.Length; pad < 10; pad++) built.Append(' ');
+            return built.Append(text).ToString();
+        }
+
+        // mv SRC DST, mv SRC... DIR: as in sh — into DIR when it is a
+        // directory that exists, else a rename; the target must not exist.
+        private int Move(List<string> args)
+        {
+            if (args.Count < 2) { Write("sh: usage: mv SRC DST, or mv SRC... DIR\n"); return 2; }
+            string last = Resolve(args[args.Count - 1]);
+            bool intoDirectory = System.IO.Directory.Exists(last);
+            if (!intoDirectory && args.Count > 2) { Complain("mv", last, "not a directory"); return 1; }
+            int code = 0;
+            for (int i = 0; i < args.Count - 1; i++)
+            {
+                string from = Resolve(args[i]);
+                string to = intoDirectory ? last + "\\" + LastName(from) : last;
+                try
+                {
+                    if (System.IO.Directory.Exists(from)) System.IO.Directory.Move(from, to);
+                    else System.IO.File.Move(from, to);
+                }
+                catch (System.Exception e) when (e is System.IO.IOException || e is System.PlatformNotSupportedException)
+                {
+                    Complain("mv", from, e.Message);
+                    code = 1;
+                }
+            }
+            return code;
+        }
+
+        private static string LastName(string path)
+        {
+            int end = path.Length;
+            while (end > 1 && path[end - 1] == '\\') end--;
+            int start = end;
+            while (start > 0 && path[start - 1] != '\\') start--;
+            return path.Substring(start, end - start);
+        }
+
+        // rmdir DIR...: an empty directory.
+        private int RemoveDirectory(List<string> args)
+        {
+            int code = 0;
+            foreach (string arg in args)
+            {
+                string path = Resolve(arg);
+                try { System.IO.Directory.Delete(path); }
+                catch (System.Exception e) when (e is System.IO.IOException || e is System.PlatformNotSupportedException)
+                {
+                    Complain("rmdir", path, e.Message);
+                    code = 1;
+                }
+            }
+            return code;
+        }
+
+        private void Complain(string command, string path, string what)
+        {
+            Write("sh: ");
+            Write(command);
+            Write(": ");
+            Write(path);
+            Write(": ");
+            Write(what);
+            Write("\n");
+        }
+
+        // which NAME...: what each runs — a builtin, or the program's file.
+        private int Which(List<string> args)
+        {
+            int code = 0;
+            foreach (string name in args)
+            {
+                if (IsBuiltinName(name))
+                {
+                    Write(name);
+                    Write(": shell builtin\n");
+                    continue;
+                }
+                string path = LooksLikePath(name) ? Resolve(name) : Process.FindProgram(name);
+                if (path != null && LooksLikePath(name) && AppHost.FileExistsEx(path) != AppServiceStatus.Ok) path = null;
+                if (path == null)
+                {
+                    Write("sh: which: no ");
+                    Write(name);
+                    Write(LooksLikePath(name) ? "\n" : " along PATH\n");
+                    code = 1;
+                    continue;
+                }
+                Write(path);
+                Write("\n");
+            }
+            return code;
         }
 
         private int RunClause(Clause clause)
@@ -390,6 +1167,16 @@ namespace Shell
             if (verb == "clear") { System.Console.Clear(); return 0; }
             if (verb == "history") return ShowHistory();
             if (verb == "buildinfo") return BuildInfo(args);
+            if (verb == "env") return Env(args);
+            if (verb == "export") return Export(args);
+            if (verb == "unset") return Unset(args);
+            if (verb == "which") return Which(args);
+            if (verb == "mkdir") return MakeDirectory(args);
+            if (verb == "rm") return Remove(args);
+            if (verb == "rmdir") return RemoveDirectory(args);
+            if (verb == "mv") return Move(args);
+            if (verb == "cp") return Copy(args);
+            if (verb == "df") return DiskFree();
 
             return RunProgram(verb, args);
         }
@@ -470,17 +1257,11 @@ namespace Shell
                 return 0;
             }
 
-            string target = args[0];
-            if (target == "..")
-            {
-                int cut = _cwd.LastIndexOf('\\');
-                _cwd = cut <= 0 ? "\\" : _cwd.Substring(0, cut);
-                Process.WorkingDirectory = _cwd;
-                return 0;
-            }
-
-            string resolved = Resolve(target);
-            if (AppHost.FileExistsEx(resolved) != AppServiceStatus.Ok)
+            // Resolve takes "..", "." and trailing separators (step208): the
+            // root is "\" and is always there; anything else must be a
+            // directory — a file was let in before.
+            string resolved = Resolve(args[0]);
+            if (!System.IO.Directory.Exists(resolved))
             {
                 Write("sh: no such directory: ");
                 Write(resolved);
@@ -495,6 +1276,16 @@ namespace Shell
 
         private int List(List<string> args)
         {
+            // ls -l (step208): size, last write and name, a line each.
+            bool details = false;
+            var paths = new List<string>();
+            foreach (string a in args)
+            {
+                if (a == "-l") details = true;
+                else paths.Add(a);
+            }
+            if (details) return ListDetails(paths.Count == 0 ? _cwd : Resolve(paths[0]));
+            args = paths;
             string path = args.Count == 0 ? _cwd : Resolve(args[0]);
 
             byte* name = stackalloc byte[256];
@@ -612,12 +1403,18 @@ namespace Shell
 
         private int Help()
         {
-            Write("builtins: cd pwd ls cat echo clear history buildinfo expect exit help\n");
+            Write("builtins: cd pwd ls cat echo clear history buildinfo expect exit help export unset env which\n");
+            Write("files: mkdir [-p] DIR, rm [-r] [-f] PATH, rmdir DIR, mv SRC DST (or into DIR),\n");
+            Write("       cp [-r] SRC DST (or into DIR), ls -l (size, last write), df (the volume's room)\n");
+            Write("environment: export NAME=value, unset NAME, env lists; env NAME=value PROGRAM args runs it with them;\n");
+            Write("             $NAME and ${NAME} in words and in \"...\", not in '...'; ~ is HOME\n");
+            Write("             ENV names a script the prompt runs first\n");
             Write("buildinfo on|off — programs print their build line at start (on in an autorun battery)\n");
             Write("programs: NAME.EXE by its name, looked for along PATH (" + (System.Environment.GetEnvironmentVariable("PATH") ?? "") + ")\n");
             Write("expect CODE COMMAND — run it, succeed only on that exit code\n");
             Write("a path runs too: .EXE as a program, .DLL on the hosted runtime\n");
             Write("operators: && || ; a | b | c ; > file and >> file at the end of a pipeline\n");
+            Write("not here: shell variables (x=1), $(...), loops, if, functions, X=1 prog\n");
             Write("keys: Up/Down history, Tab completes, Home/End, Ctrl+A/E/U/K/W, Ctrl+L clears,\n");
             Write("      Ctrl+C drops the line, Ctrl+D on an empty line leaves\n");
             // Worth saying out loud: this is bash syntax, so a backslash
@@ -732,7 +1529,8 @@ namespace Shell
             for (int i = 0; i < path.Length; i++)
                 built.Append(path[i] == '/' ? '\\' : path[i]);
 
-            return built.ToString();
+            // ".", ".." and the root taken here (step208), not handed to FAT.
+            return Process.NormalizePath(built.ToString());
         }
 
         // A path has a separator, as in sh: NAME.EXE is looked for along PATH

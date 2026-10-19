@@ -379,7 +379,9 @@ namespace PipeApps
 
         private static void ReaderGoes(string how)
         {
-            var pair = Pipe.Create();
+            // A room of 16, said outright: the test is a writer waiting on a full
+            // queue, and the default room (256 since step208) holds all 100.
+            var pair = Pipe.Create(16);
             // Open until the child has read it: closed before its reader came, it would be lost.
             PipeWriter<Seq> go = Pipe.Write<Seq>("t6.go");
             Process r = Start("PROCTEST.EXE", A("--child", "reader-go", how), input: pair.ReadEnd);
@@ -789,6 +791,27 @@ namespace PipeApps
             kc = Finish(k); Finish(g);
             Check("18: a long that does not fit the int field: KQL fails (exit " + kc.ToString() + "), nothing goes out, the output broken",
                   kc == 1 && passed == 0 && how == PipeStatus.Broken);
+
+            // A project of every column, in order (step208): cut out of the
+            // query, so the rows are PIPEGEN's own LogEntry messages; in
+            // another order it is a projection, and new messages (Expando).
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("where Level == 4 | project Level, Text | take 2"), input: p1.ReadEnd, output: p2.WriteEnd);
+            string identity = "";
+            foreach (View v in p2.ReadEnd.Read()) identity += v.TypeName + " " + (string)v["Text"] + ";";
+            kc = Finish(k); Finish(g);
+            Check("18: project Level, Text over LogEntry: the identity, cut out, LogEntry still (" + identity + ")",
+                  kc == 0 && identity == "PipeApps.LogEntry text 4;PipeApps.LogEntry text 9;");
+
+            p1 = Pipe.Create(); p2 = Pipe.Create();
+            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            k = Start("KQL.EXE", A("where Level == 4 | project Text, Level | take 1"), input: p1.ReadEnd, output: p2.WriteEnd);
+            string swapped = "";
+            foreach (View v in p2.ReadEnd.Read()) swapped += v.TypeName + " " + Keys(v) + ";";
+            kc = Finish(k); Finish(g);
+            Check("18: project Text, Level: another order, new messages (" + swapped + ")",
+                  kc == 0 && swapped == "SharpOS.Std.Pipes.Expando Text,Level;");
 
             p1 = Pipe.Create(); p2 = Pipe.Create();
             g = Start("PIPEGEN.EXE", A("0"), output: p1.WriteEnd);

@@ -64,6 +64,21 @@ namespace OS.Hal
         private static ulong s_foundEntryLba;
         private static uint s_foundEntryOffset;
 
+        // Where the long-name entries of the entry FindIn found lie (step208):
+        // deleting a file must mark them too, or their pieces would be read
+        // as the long name of whatever entry comes next. At most 20 — a
+        // 255-character name.
+        // Fixed buffers, not arrays: FindIn runs on the boot path, and must
+        // not allocate.
+        private const int MaxLfnEntries = 20;
+        private struct LfnPlaces
+        {
+            public fixed ulong Lba[MaxLfnEntries];
+            public fixed uint Offset[MaxLfnEntries];
+            public int Count;
+        }
+        private static LfnPlaces s_foundLfn;
+
         public static bool Mounted => s_mounted;
         public static bool IsFat32 => s_isFat32;
         public static uint BytesPerSector => s_bps;
@@ -291,9 +306,10 @@ namespace OS.Hal
             if (cl != lfnLen) return false;
             for (int i = 0; i < cl; i++)
             {
-                char a = path[cs + i], b = lfn[i];
-                if (a >= 'a' && a <= 'z') a = (char)(a - 32);
-                if (b >= 'a' && b <= 'z') b = (char)(b - 32);
+                // Beyond ASCII too (step208): Отчёт.txt is отчёт.txt, as on
+                // any FAT host.
+                char a = SharpOS.Std.NoRuntime.CharHelpers.ToUpperInvariant(path[cs + i]);
+                char b = SharpOS.Std.NoRuntime.CharHelpers.ToUpperInvariant(lfn[i]);
                 if (a != b) return false;
             }
             return true;
@@ -327,6 +343,9 @@ namespace OS.Hal
             char* lfn = stackalloc char[260];
             int lfnLen = 0;
             char* n83 = stackalloc char[13];   // decoded stored 8.3 ("NAME.EXT")
+            ulong* lfnLba = stackalloc ulong[MaxLfnEntries];
+            uint* lfnOff = stackalloc uint[MaxLfnEntries];
+            int lfnCount = 0;
 
             bool fat16Root = !s_isFat32 && dirCluster == 0;
             uint cluster = fat16Root ? 0 : (dirCluster == 0 ? s_rootClus : dirCluster);
@@ -347,13 +366,19 @@ namespace OS.Hal
                     {
                         byte* ent = s_sec + off;
                         if (ent[0] == 0x00) return false;       // end of dir
-                        if (ent[0] == 0xE5) { lfnLen = 0; continue; }
+                        if (ent[0] == 0xE5) { lfnLen = 0; lfnCount = 0; continue; }
                         if ((ent[11] & 0x0F) == 0x0F)           // LFN fragment
                         {
                             LfnFrag(ent, lfn, ref lfnLen);
+                            if (lfnCount < MaxLfnEntries)
+                            {
+                                lfnLba[lfnCount] = lba;
+                                lfnOff[lfnCount] = off;
+                                lfnCount++;
+                            }
                             continue;
                         }
-                        if ((ent[11] & 0x08) != 0) { lfnLen = 0; continue; } // vol label
+                        if ((ent[11] & 0x08) != 0) { lfnLen = 0; lfnCount = 0; continue; } // vol label
                         // Collision-impossible match: compare the request
                         // ONLY against names this entry actually stores on
                         // disk — its reconstructed LFN (if any) and its
@@ -372,11 +397,18 @@ namespace OS.Hal
                         {
                             s_foundEntryLba = lba;
                             s_foundEntryOffset = off;
+                            for (int i = 0; i < lfnCount; i++)
+                            {
+                                s_foundLfn.Lba[i] = lfnLba[i];
+                                s_foundLfn.Offset[i] = lfnOff[i];
+                            }
+                            s_foundLfn.Count = lfnCount;
                             firstClus = ((uint)RdU16(ent, 20) << 16) | RdU16(ent, 26);
                             size = RdU32(ent, 28);
                             isDir = (ent[11] & 0x10) != 0;
                             return true;
                         }
+                        lfnCount = 0;
                     }
                 }
                 if (fat16Root)
@@ -440,17 +472,20 @@ namespace OS.Hal
             return true;
         }
 
-        // Emit a trimmed 8.3 name ("NAME.EXT") into out[].
-        private static int Name83Out(byte* ent, char* outp, uint cap)
+        private static char Small(char c, bool small) => small && c >= 'A' && c <= 'Z' ? (char)(c + 32) : c;
+
+        // Emit a trimmed 8.3 name ("NAME.EXT") into out[] — in small letters
+        // where the case flags say so (0x08 the name, 0x10 the extension).
+        private static int Name83Out(byte* ent, char* outp, uint cap, byte caseFlags = 0)
         {
             int nl = 8; while (nl > 0 && ent[nl - 1] == (byte)' ') nl--;
             int el = 3; while (el > 0 && ent[8 + el - 1] == (byte)' ') el--;
             int o = 0;
-            for (int i = 0; i < nl && o < cap; i++) outp[o++] = (char)ent[i];
+            for (int i = 0; i < nl && o < cap; i++) outp[o++] = Small((char)ent[i], (caseFlags & 0x08) != 0);
             if (el > 0 && o < cap)
             {
                 outp[o++] = '.';
-                for (int i = 0; i < el && o < cap; i++) outp[o++] = (char)ent[8 + i];
+                for (int i = 0; i < el && o < cap; i++) outp[o++] = Small((char)ent[8 + i], (caseFlags & 0x10) != 0);
             }
             return o;
         }
@@ -589,7 +624,7 @@ namespace OS.Hal
                             o = lfnLen > (int)nameCap ? (int)nameCap : lfnLen;
                             for (int i = 0; i < o; i++) nameOut[i] = lfn[i];
                         }
-                        else o = Name83Out(ent, nameOut, nameCap);
+                        else o = Name83Out(ent, nameOut, nameCap, ent[12]);
                         nameLen = (uint)o;
                         uint sz = (uint)ent[28]
                                 | ((uint)ent[29] << 8)

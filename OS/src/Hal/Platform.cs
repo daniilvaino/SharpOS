@@ -242,6 +242,10 @@ namespace OS.Hal
             if (!s_initialized)
                 return;
 
+            // What the volume holds, to the medium before the power goes
+            // (step208): a stick acknowledges writes it still has in its cache.
+            Fat32.FlushForShutdown();
+
             if (!HasCapability(PlatformCapabilities.Shutdown))
             {
                 Halt();

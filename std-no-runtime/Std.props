@@ -68,7 +68,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\TimeSpan.cs" Link="std\Bcl\TimeSpan.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Tuple.cs" Link="std\Bcl\Tuple.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\ArrayPool.cs" Link="std\Buffers\ArrayPool.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\ConfigurableArrayPool.cs" Link="std\Buffers\ConfigurableArrayPool.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\SpanAction.cs" Link="std\Buffers\SpanAction.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Utilities.cs" Link="std\Buffers\Utilities.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Char.Statics.cs" Link="std\Char.Statics.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)CharHelpers.cs" Link="std\CharHelpers.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ComponentModel.cs" Link="std\ComponentModel.cs" />

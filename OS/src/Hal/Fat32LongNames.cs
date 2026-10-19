@@ -12,14 +12,16 @@ namespace OS.Hal
     // as VFAT requires, so a reader that checks it finds the pair.
     //
     // The entries go into one run of free slots inside one cluster of the
-    // directory; the directory is not grown (as for short names).
+    // directory; a directory with no such run grows by a cluster (step208).
     internal static unsafe partial class Fat32
     {
         private const int MaxLongName = 255;
 
         private static bool TryCreateLongEntry(uint parentCluster, string path, int nameStart, int nameLength,
-                                               out ulong entryLba, out uint entryOffset)
+                                               out ulong entryLba, out uint entryOffset,
+                                               uint firstCluster = 0, byte attributes = AttrArchive)
         {
+            s_cursorValid = false;
             entryLba = 0;
             entryOffset = 0;
             if (nameLength == 0 || nameLength > MaxLongName) return false;
@@ -37,30 +39,36 @@ namespace OS.Hal
             int pieces = (nameLength + 12) / 13;
             uint need = (uint)pieces + 1;
             uint perCluster = ClusterBytes / 32;
-            uint cluster = parentCluster == 0 ? s_rootClus : parentCluster;
-            uint guard = 0;
-            while (cluster >= 2 && guard++ < 1_000_000)
+            // No free run long enough: the directory grows by a cluster
+            // (step208), and the search runs again.
+            for (int attempt = 0; attempt < 2; attempt++)
             {
-                if (!s_disk.Read(ClusterLba(cluster), s_spc, s_bulk)) return false;
-                uint run = 0;
-                for (uint i = 0; i < perCluster; i++)
+                uint cluster = parentCluster == 0 ? s_rootClus : parentCluster;
+                uint guard = 0;
+                while (cluster >= 2 && guard++ < 1_000_000)
                 {
-                    byte first = s_bulk[i * 32];
-                    if (first != 0x00 && first != 0xE5) { run = 0; continue; }
-                    if (++run < need) continue;
+                    if (!s_disk.Read(ClusterLba(cluster), s_spc, s_bulk)) return false;
+                    uint run = 0;
+                    for (uint i = 0; i < perCluster; i++)
+                    {
+                        byte first = s_bulk[i * 32];
+                        if (first != 0x00 && first != 0xE5) { run = 0; continue; }
+                        if (++run < need) continue;
 
-                    uint at = i + 1 - need;
-                    for (int k = pieces; k >= 1; k--, at++)
-                        FillLongEntry(s_bulk + at * 32, path, nameStart, nameLength, k, k == pieces, checksum);
-                    FillEntry(s_bulk + at * 32, alias, 0, 0);
-                    if (!s_disk.Write(ClusterLba(cluster), s_spc, s_bulk)) return false;
-                    entryLba = ClusterLba(cluster) + at * 32 / s_bps;
-                    entryOffset = at * 32 % s_bps;
-                    return true;
+                        uint at = i + 1 - need;
+                        for (int k = pieces; k >= 1; k--, at++)
+                            FillLongEntry(s_bulk + at * 32, path, nameStart, nameLength, k, k == pieces, checksum);
+                        FillEntry(s_bulk + at * 32, alias, firstCluster, 0, attributes);
+                        if (!s_disk.Write(ClusterLba(cluster), s_spc, s_bulk)) return false;
+                        entryLba = ClusterLba(cluster) + at * 32 / s_bps;
+                        entryOffset = at * 32 % s_bps;
+                        return true;
+                    }
+                    uint next = FatNext(cluster);
+                    if (next == 0) break;
+                    cluster = next;
                 }
-                uint next = FatNext(cluster);
-                if (next == 0) break;
-                cluster = next;
+                if (attempt == 0 && !TryGrowDirectory(parentCluster)) return false;
             }
             return false;
         }
@@ -112,6 +120,12 @@ namespace OS.Hal
             for (int i = dot + 1; dot >= 0 && i < nameLength && extLength < 3; i++)
                 if (TryUpper(path[nameStart + i], out byte c) && c != (byte)'~') ext[extLength++] = c;
 
+            // Every name the directory holds, once (step208). Looking each
+            // candidate up anew walked the whole directory once per number:
+            // 300 names that share their first six letters took five minutes.
+            System.Collections.Generic.HashSet<string> taken = NamesIn(parentCluster);
+            if (taken == null) return false;
+
             char* text = stackalloc char[13];
             for (int n = 1; n < 1_000_000; n++)
             {
@@ -125,9 +139,49 @@ namespace OS.Hal
 
                 int length = Name83Out(alias, text, 13);
                 string candidate = new string(new System.ReadOnlySpan<char>(text, length));
-                if (!FindIn(parentCluster, candidate, 0, candidate.Length, out _, out _, out _)) return true;
+                if (!taken.Contains(candidate)) return true;
             }
             return false;
+        }
+
+        // The names in a directory — short and long, upper-cased, as FindIn
+        // would match them; null on a disk error.
+        private static System.Collections.Generic.HashSet<string> NamesIn(uint dirCluster)
+        {
+            var names = new System.Collections.Generic.HashSet<string>();
+            char* lfn = stackalloc char[260];
+            char* n83 = stackalloc char[13];
+            int lfnLen = 0;
+            uint cluster = dirCluster == 0 ? s_rootClus : dirCluster;
+            uint guard = 0;
+            while (cluster >= 2 && guard++ < 1_000_000)
+            {
+                ulong lba = ClusterLba(cluster);
+                for (uint s = 0; s < s_spc; s++)
+                {
+                    if (!ReadAbs(lba + s)) return null;
+                    for (uint off = 0; off < s_bps; off += 32)
+                    {
+                        byte* ent = s_sec + off;
+                        if (ent[0] == 0x00) return names;
+                        if (ent[0] == 0xE5) { lfnLen = 0; continue; }
+                        if ((ent[11] & 0x0F) == 0x0F) { LfnFrag(ent, lfn, ref lfnLen); continue; }
+                        if ((ent[11] & 0x08) != 0) { lfnLen = 0; continue; }
+                        names.Add(Upper(n83, Name83Out(ent, n83, 13)));
+                        if (lfnLen > 0) names.Add(Upper(lfn, lfnLen));
+                        lfnLen = 0;
+                    }
+                }
+                cluster = FatNext(cluster);
+            }
+            return names;
+        }
+
+        private static string Upper(char* text, int length)
+        {
+            var built = new char[length];
+            for (int i = 0; i < length; i++) built[i] = SharpOS.Std.NoRuntime.CharHelpers.ToUpperInvariant(text[i]);
+            return new string(built);
         }
     }
 }

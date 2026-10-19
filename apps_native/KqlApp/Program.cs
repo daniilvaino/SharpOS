@@ -8,6 +8,7 @@ using System.Threading;
 using BabyKusto.Core;
 using BabyKusto.Core.Evaluation;
 using Kusto.Language;
+using Kusto.Language.Editor;
 using Kusto.Language.Symbols;
 using Kusto.Language.Syntax;
 using SharpOS.AppSdk;
@@ -21,6 +22,11 @@ namespace PipeApps
     // (BabyKusto) runs over them as they arrive.
     //
     //   PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'
+    //
+    // Without a query (step208) KQL waits for the input's type, then asks for
+    // the query at a prompt that names it — Tab completes against its
+    // columns. KQL --complete TEXT is the shell's Tab inside `KQL 'TEXT`:
+    // the same completions, without the columns.
     //
     // A query that starts with an operator applies to Input; one that names
     // Input itself, or starts with print, let, datatable or range, is taken as
@@ -106,15 +112,19 @@ namespace PipeApps
 
         private static int Run(string[] args)
         {
-            if (args.Length == 0)
+            if (args.Length == 2 && args[0] == "--complete") return CompleteOnly(args[1]);
+            bool interactive = args.Length == 0 && PipeTransport.StandardEnd(0) != 0;
+            if (args.Length == 0 && !interactive)
             {
                 Console.WriteLine("KQL 'query': runs the query over the messages on the input (the table " + TableName + ")");
                 Console.WriteLine("  PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'");
+                Console.WriteLine("  PIPEGEN 100 | KQL      asks for the query once the input's type is known; Tab completes");
                 return 2;
             }
-            string query = Query(string.Join(" ", args));
             try
             {
+                if (interactive) return Interactive();
+                string query = Query(string.Join(" ", args));
                 Plan plan = Plan.Of(query);
                 return plan.ReadsInput ? OverInput(query, plan) : Alone(query);
             }
@@ -139,23 +149,52 @@ namespace PipeApps
             s_start = Stopwatch.GetTimestamp();
             RawPipeReader input = Pipe.Read();
             RawRegion first = null;
+            try
+            {
+                Columns columns = Declared(input, ref first);
+                return OverInput(query, plan, input, columns, ref first);
+            }
+            finally
+            {
+                first?.Dispose();
+                input.Dispose();
+            }
+        }
+
+        // The type the writer declared, before any message (step205): the
+        // query is bound to it, and a wrong one fails before a byte of data
+        // is read — on an empty input too.
+        private static Columns Declared(RawPipeReader input, ref RawRegion first)
+        {
+            PipeTransport.WaitSchema(input.Handle);
+            Columns columns = Columns.Declared(input);
+            if (columns.Sources.Length == 0)
+            {
+                // A writer that never declared a type, or an older kernel:
+                // the first message is all there is to go by.
+                first = input.Next();
+                if (first != null) columns = Columns.Of(first.Root);
+            }
+            s_declared = Stopwatch.GetTimestamp();
+            s_firstBound = s_declared;
+            return columns;
+        }
+
+        private static int OverInput(string query, Plan plan, RawPipeReader input, Columns columns, ref RawRegion first)
+        {
             PipeTable source = null;
             try
             {
-                // The type the writer declared, before any message (step205):
-                // the query is bound to it, and a wrong one fails before a
-                // byte of data is read — on an empty input too.
-                PipeTransport.WaitSchema(input.Handle);
-                Columns columns = Columns.Declared(input);
-                if (columns.Sources.Length == 0)
+                // A project that names every column it gets, in order, changes
+                // nothing; left in, it would turn the rows into new messages.
+                // Cut out, `project Level, Weight, Name` over that type sends
+                // the input's blocks on, of the input's type (step208).
+                string identity = WithoutIdentityProjects(query, columns.Bag ? columns.Symbol().WithIsOpen(true) : columns.Symbol());
+                if (!ReferenceEquals(identity, query))
                 {
-                    // A writer that never declared a type, or an older kernel:
-                    // the first message is all there is to go by.
-                    first = input.Next();
-                    if (first != null) columns = Columns.Of(first.Root);
+                    query = identity;
+                    plan = Plan.Of(query);
                 }
-                s_declared = Stopwatch.GetTimestamp();
-                s_firstBound = s_declared;
 
                 // Over Expandos the table is open: the first binding finds the
                 // entries the query names, which become columns of their own
@@ -217,9 +256,178 @@ namespace PipeApps
             }
             finally
             {
-                first?.Dispose();
                 source?.Close();
+            }
+        }
+
+        // The query without its identity projects: `| project A, B, C` where
+        // A, B, C are the columns of what reaches it, in that order, by name
+        // alone. Found on the bound tree — what reaches a project is the
+        // result type of the expression before its bar — so the same project
+        // after a summarize is judged by the summarize's columns. A query
+        // that does not bind is left as it is: its error is reported on the
+        // text as written.
+        private static string WithoutIdentityProjects(string query, TableSymbol schema)
+        {
+            KustoCode code = KustoCode.ParseAndAnalyze(query, GlobalState.Default.WithDatabase(new DatabaseSymbol("db", schema)));
+            if (code.GetDiagnostics().Count != 0) return query;
+            var starts = new List<int>();
+            var ends = new List<int>();
+            code.Syntax.WalkElements(e =>
+            {
+                if (e is PipeExpression pipe && pipe.Operator is ProjectOperator project
+                    && pipe.Expression.ResultType is TableSymbol before && IsIdentity(project, before))
+                {
+                    starts.Add(pipe.Bar.TextStart);
+                    ends.Add(project.End);
+                }
+            });
+            // From the end backwards: a cut leaves the places before it where they were.
+            while (starts.Count > 0)
+            {
+                int last = 0;
+                for (int i = 1; i < starts.Count; i++) if (starts[i] > starts[last]) last = i;
+                query = query.Remove(starts[last], ends[last] - starts[last]);
+                starts.RemoveAt(last);
+                ends.RemoveAt(last);
+            }
+            return query;
+        }
+
+        private static bool IsIdentity(ProjectOperator project, TableSymbol before)
+        {
+            if (project.Expressions.Count != before.Columns.Count) return false;
+            for (int i = 0; i < project.Expressions.Count; i++)
+                if (project.Expressions[i].Element is not NameReference name || name.SimpleName != before.Columns[i].Name)
+                    return false;
+            return true;
+        }
+
+        // `… | KQL` (step208): the query typed after the input's type is
+        // known — the prompt names it, Tab completes against its columns.
+        // Nothing is read before Enter: a query that does not bind is said
+        // so and asked again. An empty line, Ctrl+C or Ctrl+D leaves without
+        // reading — the writer finds its output broken (141), as when a
+        // stage after it leaves. One query per input: the messages it reads
+        // are gone.
+        private static int Interactive()
+        {
+            RawPipeReader input = Pipe.Read();
+            RawRegion first = null;
+            try
+            {
+                Columns columns = Declared(input, ref first);
+                GlobalState globals = CompletionGlobals(columns, out TableSymbol schema);
+                string prompt = "kql (" + (columns.TypeName ?? "?") + ")> ";
+                var reader = new Shell.LineReader(new KqlCompletion(globals), "\\kql_history");
+                while (true)
+                {
+                    string line = reader.Read(prompt, prompt.Length);
+                    if (line == null || line.Trim().Length == 0) return 0;
+                    string query = Query(line);
+                    if (!Analyze(query, schema, out _, null)) continue;
+                    Plan plan = Plan.Of(query);
+                    s_start = Stopwatch.GetTimestamp();
+                    s_declared = s_firstBound = s_start;
+                    return plan.ReadsInput ? OverInput(query, plan, input, columns, ref first) : Alone(query);
+                }
+            }
+            finally
+            {
+                first?.Dispose();
                 input.Dispose();
+            }
+        }
+
+        // KQL --complete TEXT (step208): what Tab offers for the end of TEXT
+        // in a shell line, `… | KQL 'TEXT`. The input's type is not known
+        // there — the line has not run — so Input is an open table with no
+        // columns: operators, functions and keywords, no column names. To
+        // the output as strings: where the completed word starts in TEXT,
+        // then the candidates.
+        //
+        // With an input (`PIPEGEN 0 | KQL --complete 'where Le'`) the
+        // completions are the interactive prompt's: against the declared
+        // type's columns. That is how the battery checks them — the prompt
+        // itself reads the keyboard.
+        private static int CompleteOnly(string text)
+        {
+            GlobalState globals;
+            if (PipeTransport.StandardEnd(0) != 0)
+            {
+                RawPipeReader input = Pipe.Read();
+                RawRegion first = null;
+                try { globals = CompletionGlobals(Declared(input, ref first), out _); }
+                finally
+                {
+                    first?.Dispose();
+                    input.Dispose();
+                }
+            }
+            else
+            {
+                globals = GlobalState.Default.WithDatabase(
+                    new DatabaseSymbol("db", new TableSymbol(TableName).WithIsOpen(true)));
+            }
+            List<string> candidates = Candidates(text, globals, out int start);
+            using PipeWriter<string> output = Pipe.Write<string>();
+            output.Copy(start.ToString());
+            foreach (string c in candidates) output.Copy(c);
+            return 0;
+        }
+
+        // Input with the declared columns; over Expandos an open table.
+        private static GlobalState CompletionGlobals(Columns columns, out TableSymbol schema)
+        {
+            schema = columns.Symbol();
+            if (columns.Bag) schema = schema.WithIsOpen(true);
+            return GlobalState.Default.WithDatabase(new DatabaseSymbol("db", schema));
+        }
+
+        // The completions Kusto.Language offers at the end of the query text
+        // (as typed, Input not named), those that start with the word being
+        // typed; start: where that word begins in text.
+        internal static List<string> Candidates(string text, GlobalState globals, out int start)
+        {
+            string query = Query(text);
+            int shift = query.Length - text.Length;
+            CompletionInfo info = new KustoCodeService(query, globals).GetCompletionItems(query.Length);
+            start = info.EditStart - shift;
+            var found = new List<string>();
+            if (start < 0 || start > text.Length) { start = text.Length; return found; }
+            string typed = text.Substring(start);
+            foreach (CompletionItem item in info.Items)
+            {
+                string match = item.MatchText ?? item.DisplayText;
+                if (match == null || !match.StartsWith(typed, StringComparison.OrdinalIgnoreCase)) continue;
+                // The text before the cursor's place: "abs(", "where ",
+                // "Level " — the rest the user types. Punctuation Kusto offers
+                // too ("(", "[", "@") is no word to complete.
+                string apply = item.BeforeText;
+                if (apply == null || apply.Length == 0 || !(char.IsLetterOrDigit(apply[0]) || apply[0] == '_')) continue;
+                if (!found.Contains(apply)) found.Add(apply);
+            }
+            return found;
+        }
+
+        // Tab at the prompt: the editor replaces what follows the last
+        // separator; Kusto's word starts there or later (after "count(").
+        private sealed class KqlCompletion : IAutoCompleteHandler
+        {
+            private readonly GlobalState _globals;
+
+            public KqlCompletion(GlobalState globals) => _globals = globals;
+
+            public char[] Separators { get; set; } = { ' ', '|', '(', ')', ',', '=', '<', '>', '!', '+', '-', '*', '/', '[', ']', '"', '\'' };
+
+            public string[] GetSuggestions(string text, int index)
+            {
+                List<string> candidates = Candidates(text, _globals, out int start);
+                if (start < index) return null;
+                string head = text.Substring(index, start - index);
+                var result = new string[candidates.Count];
+                for (int i = 0; i < result.Length; i++) result[i] = head + candidates[i];
+                return result;
             }
         }
 
@@ -809,6 +1017,7 @@ namespace PipeApps
             public Source[] Sources;
             public bool Bag;      // an Expando per message: the one column Value
             public bool Row;      // the hidden row number, last
+            public string TypeName;   // the declared type, short (the interactive prompt)
 
             // A type of fields: every column is a field of the message.
             public bool Typed => !Bag && Sources.Length > 0 && Sources[0].Field != null;
@@ -838,7 +1047,7 @@ namespace PipeApps
             public static Columns Of(View root)
             {
                 TypeShape shape = root.Shape;
-                if (shape != null) return Of(shape);
+                if (shape != null) return Named(Of(shape), shape);
                 // A boxed number or bool: the value itself.
                 ColumnKind kind = root.Kind switch
                 {
@@ -857,7 +1066,19 @@ namespace PipeApps
                 RegionShapes shapes = schema == null ? null : RegionShapes.Parse(schema, out _);
                 TypeShape root = shapes == null ? null : shapes[rootKey];
                 if (root == null) return new Columns { Sources = new Source[0] };
-                return Of(root);
+                return Named(Of(root), root);
+            }
+
+            // The type's name without its namespace: what the prompt shows.
+            private static Columns Named(Columns columns, TypeShape shape)
+            {
+                string name = shape.Name;
+                if (name != null)
+                {
+                    int dot = name.LastIndexOf('.');
+                    columns.TypeName = dot >= 0 ? name.Substring(dot + 1) : name;
+                }
+                return columns;
             }
 
             private static Columns Of(TypeShape shape)

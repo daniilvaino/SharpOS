@@ -419,6 +419,58 @@ namespace OS.Hal
             public override bool Write(ulong sector, uint count, byte* p)
                 => ReadOrWrite(sector, (ushort)count, p, true);
 
+            // FLUSH CACHE EXT (0xEA, step208): no data, the drive answers when
+            // its cache is on the medium — which can take a while, hence the
+            // long deadline. An ATAPI port has nothing written to flush.
+            public override bool Flush()
+            {
+                if (PortType == SATAPortType.ATAPI) return true;
+                OS.Kernel.Threading.Preemption.Suppress();
+                try { return FlushCore(); }
+                finally { OS.Kernel.Threading.Preemption.Allow(); }
+            }
+
+            private bool FlushCore()
+            {
+                DisableInterrupts(Controller, Port);
+                int Slot = FindSlot();
+                if (Slot == -1) return false;
+
+                HBACommandHeader* hdr = (HBACommandHeader*)Port->CommandListBase;
+                hdr += Slot;
+                hdr->CommandFISLength = (byte)(sizeof(FIS_REG_H2D) / sizeof(uint));
+                hdr->Write = false;
+                hdr->ClearBusy = true;
+                hdr->PRDTLength = 0;
+
+                HBACommandTable* table = (HBACommandTable*)hdr->CommandTableBaseAddress;
+                byte* zt = (byte*)table;
+                for (ulong z = 0; z < (ulong)sizeof(HBACommandTable); z++) zt[z] = 0;
+
+                FIS_REG_H2D* FIS = (FIS_REG_H2D*)table->CommandFIS;
+                FIS->FISType = 0x27;
+                FIS->PMC = 1 << 7;                 // CommandControl=1
+                FIS->Command = 0xEA;               // FLUSH CACHE EXT
+                FIS->DeviceRegister = 1 << 6;
+
+                ulong dl = Deadline(2000); long sp = FallbackSpins;
+                while ((Rd(&Port->TaskFileData) & (0x80 | 0x08)) != 0)
+                    if (Expired(dl, ref sp)) return false;
+
+                Port->CommandIssue = (uint)(1 << Slot);
+
+                dl = Deadline(30000); sp = FallbackSpins;
+                while (true)
+                {
+                    if ((Rd(&Port->CommandIssue) & (1 << Slot)) == 0) break;
+                    if ((Rd(&Port->InterruptStatus) & (1 << 30)) != 0) return false;
+                    if (Expired(dl, ref sp)) return false;
+                }
+                bool ok = (Rd(&Port->InterruptStatus) & (1 << 30)) == 0;
+                DisableInterrupts(Controller, Port);
+                return ok;
+            }
+
             // Serialised against thread switches for its whole duration,
             // including the waits.
             //

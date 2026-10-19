@@ -269,6 +269,7 @@ namespace OS.Hal.Idt
                 if (interrupted != null) interrupted.InterruptDepth++;
 
                 OS.Hal.Apic.LocalApic.OnTimerTick();
+                OS.Kernel.Threading.Scheduler.NoteTick();
 
                 // If the tick lands while the scheduler owns its queues or
                 // the raw CoopSwitch stub is between stacks/GS bases, do only

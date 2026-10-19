@@ -572,10 +572,29 @@ namespace OS.Kernel.Threading
             OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.SchedSwitches);
             SwapExceptionChain(curr, next);
             SwapPreemptionDepth(curr, next);
+            s_coopStarted = OS.Kernel.Diagnostics.PerfCounters.Now();
             X64Asm.CoopSwitch(curr.ContextBlock, next.ContextBlock);
+            // Timed from the thread that left to this one going on (step208):
+            // around the call it would include everything the others ran.
+            if (s_coopStarted != 0)
+            {
+                OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                    OS.Kernel.Diagnostics.PerfCounter.SchedCoops, OS.Kernel.Diagnostics.PerfCounter.SchedCoopTicks, s_coopStarted);
+                s_coopStarted = 0;
+            }
             s_switching = false;
             // CoopSwitch returns here when SOMEBODY switches back to curr.
         }
+
+        private static ulong s_coopStarted;
+
+        // Cleared by every timer tick; set when the timers are drained. Zero to
+        // start with, so the first yield drains (no initializer: this runs
+        // before the image's statics are set up).
+        private static volatile byte s_drainedSinceTick;
+
+        /// <summary>The timer interrupt's mark that a tick passed (step208).</summary>
+        public static void NoteTick() => s_drainedSinceTick = 0;
 
         // The suppression depth belongs to the thread (step196). A thread that
         // yields inside a critical section — a SpinYieldLock waiting for its
@@ -662,8 +681,19 @@ namespace OS.Kernel.Threading
             // 10⁵+ yields so the elision matters.
             if (!TimerQueue.HasPending) return;
             if (Hpet.FrequencyHz == 0) return;
+            // Once a tick, not once a yield (step208). Under WHPX the HPET read
+            // leaves the guest for QEMU — 7.7 µs a read, measured — and a yield
+            // made it whenever anything slept: most of the ~13 µs a switch
+            // between two processes cost. A sleeper is now noticed by the first
+            // yield after the tick past its deadline, at most a tick late (1 ms).
+            // Without a local APIC timer there are no ticks: read every time.
+            if (s_drainedSinceTick != 0 && OS.Hal.Apic.LocalApic.IsEnabled) return;
+            s_drainedSinceTick = 1;
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
             ulong now = Hpet.ReadCounter();
             TimerQueue.DrainExpired(now);
+            OS.Kernel.Diagnostics.PerfCounters.CountTimed(
+                OS.Kernel.Diagnostics.PerfCounter.SchedDrains, OS.Kernel.Diagnostics.PerfCounter.SchedDrainTicks, started);
         }
 
         // Terminate the current thread. Marks it Exited; does NOT re-

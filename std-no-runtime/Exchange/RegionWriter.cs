@@ -31,13 +31,48 @@ namespace SharpOS.Std.Exchange
         private int _targetCount;
 
         // Objects seen in this message: address → record index, valid where
-        // the stamp is the current epoch. An open table of _seenSize slots.
-        private Chunked<ulong> _seenAt = new Chunked<ulong>(128);
-        private Chunked<int> _seenIndex = new Chunked<int>(128);
-        private Chunked<uint> _seenEpoch = new Chunked<uint>(128);
+        // the stamp is the current epoch. An open table of _seenSize slots,
+        // one entry of 16 bytes a slot (step208): it was three tables -
+        // address, index, stamp - and a probe touched three cache lines,
+        // which with addresses spread by the hash were three misses; finding
+        // and then inserting probed twice. 45 % of laying out 30 000 objects.
+        private struct Seen
+        {
+            public ulong At;
+            public int Index;
+            public uint Epoch;
+        }
+
+        private Chunked<Seen> _seen = new Chunked<Seen>(128);
         private int _seenSize = 128;
         private int _seenShift = 64 - 7;
+        private int _hashCount;
         private uint _epoch;
+
+        // The shadow map (step208): the same answer by address instead of by
+        // hash. A page covers 64 KiB of addresses, a slot each 16 bytes - an
+        // object is 16-aligned and never shorter, so no two share one. The
+        // objects of a graph mostly lie in the heap in the order the walk
+        // meets them, so the slots it reads follow one another, where the
+        // hash sent every probe to a random place in a megabyte (38 % of a
+        // layout, a cache miss each). Pages are made as addresses need them
+        // and kept for later messages - the epoch says which slots are this
+        // message's. Past MaxPages, addresses go to the hash table: a graph
+        // scattered over a large heap must not cost megabytes of map.
+        private struct Shadow
+        {
+            public int Index;
+            public uint Epoch;
+        }
+
+        private const int PageShift = 16;
+        private const int PageSlots = 1 << (PageShift - 4);
+        private const int MaxPages = 128;
+        private ulong[] _pageKeys = new ulong[256];       // key + 1; 0 is empty
+        private Shadow[][] _pages = new Shadow[256][];
+        private int _pageCount;
+        private ulong _lastPageKey = ulong.MaxValue;
+        private Shadow[] _lastPage;
         private ulong _lastTable;
         private TypePlan _lastPlan;
 
@@ -72,9 +107,12 @@ namespace SharpOS.Std.Exchange
                 return false;
             }
             _root = root;
+            _hashCount = 0;
             if (++_epoch == 0)
             {
-                _seenEpoch.Clear(_seenSize);
+                _seen.Clear(_seenSize);
+                for (int i = 0; i < _pages.Length; i++)
+                    if (_pages[i] != null) System.Array.Clear(_pages[i], 0, PageSlots);
                 _epoch = 1;
             }
 
@@ -124,7 +162,9 @@ namespace SharpOS.Std.Exchange
                 byte* record = at + _offsets[i];
                 *(ulong*)record = 0;
                 byte* payload = record + Region.HeaderSize;
-                SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy(payload, (void*)obj, plan.PayloadSize(obj));
+                // The payload's size is what Lay advanced the cursor by.
+                ulong next = i + 1 < _count ? _offsets[i + 1] : Size;
+                SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy(payload, (void*)obj, next - _offsets[i] - Region.HeaderSize);
                 *(ulong*)payload = plan.Key;
 
                 // Slots in the order Lay took them; a null stays the zero it was copied as.
@@ -172,10 +212,10 @@ namespace SharpOS.Std.Exchange
         private bool Follow(ulong target, ref ulong cursor)
         {
             if (target == 0) return true;
-            int index = Find(target);
+            int index = Find(target, out int empty);
             if (index < 0)
             {
-                index = Add(target, ref cursor);
+                index = Add(target, ref cursor, empty);
                 if (index < 0) return false;
             }
             _targets.Ensure(_targetCount + 1);
@@ -183,7 +223,8 @@ namespace SharpOS.Std.Exchange
             return true;
         }
 
-        private int Add(ulong obj, ref ulong cursor)
+        // `empty`: the free slot Find stopped at, or -1.
+        private int Add(ulong obj, ref ulong cursor, int empty = -1)
         {
             ulong table = *(ulong*)obj & ~1UL;
             // Neighbours are mostly of one type (an array's elements): the
@@ -212,55 +253,103 @@ namespace SharpOS.Std.Exchange
             _offsets[index] = cursor;
             _plans[index] = AddressOf(plan);
             cursor += Region.HeaderSize + plan.PayloadSize(obj);
-            Insert(obj, index);
+            Insert(obj, index, empty);
             return index;
         }
 
         private int Slot(ulong address) => (int)(((address >> 3) * 0x9E3779B97F4A7C15UL) >> _seenShift);
 
-        private int Find(ulong address)
+        // The shadow page of an address, made when missing; null past
+        // MaxPages (the address is the hash table's).
+        private Shadow[] PageOf(ulong address)
         {
+            ulong key = address >> PageShift;
+            if (key == _lastPageKey) return _lastPage;
+            int mask = _pageKeys.Length - 1;
+            int at = (int)((key * 0x9E3779B97F4A7C15UL) >> 32) & mask;
+            while (_pageKeys[at] != 0 && _pageKeys[at] != key + 1) at = (at + 1) & mask;
+            Shadow[] page = _pages[at];
+            if (_pageKeys[at] == 0)
+            {
+                if (_pageCount >= MaxPages) return null;   // not cached: the next address may have a page
+                page = new Shadow[PageSlots];
+                _pageKeys[at] = key + 1;
+                _pages[at] = page;
+                _pageCount++;
+            }
+            _lastPageKey = key;
+            _lastPage = page;
+            return page;
+        }
+
+        // The record index, or -1 with the free slot the probe stopped at
+        // (-2: the address is the shadow map's).
+        private int Find(ulong address, out int empty)
+        {
+            Shadow[] page = PageOf(address);
+            if (page != null)
+            {
+                ref Shadow sh = ref page[(int)(address >> 4) & (PageSlots - 1)];
+                empty = -2;
+                return sh.Epoch == _epoch ? sh.Index : -1;
+            }
+
             int mask = _seenSize - 1;
             for (int at = Slot(address); ; at = (at + 1) & mask)
             {
-                if (_seenEpoch[at] != _epoch) return -1;
-                if (_seenAt[at] == address) return _seenIndex[at];
+                ref Seen e = ref _seen[at];
+                if (e.Epoch != _epoch) { empty = at; return -1; }
+                if (e.At == address) { empty = -1; return e.Index; }
             }
         }
 
-        private void Insert(ulong address, int index)
+        // Into `empty` when Find gave one and the table has not grown since.
+        private void Insert(ulong address, int index, int empty)
         {
-            if (2 * _count > _seenSize) Grow();
-            int mask = _seenSize - 1;
-            int at = Slot(address);
-            while (_seenEpoch[at] == _epoch) at = (at + 1) & mask;
-            _seenAt[at] = address;
-            _seenIndex[at] = index;
-            _seenEpoch[at] = _epoch;
+            Shadow[] page = PageOf(address);
+            if (page != null)
+            {
+                ref Shadow sh = ref page[(int)(address >> 4) & (PageSlots - 1)];
+                sh.Index = index;
+                sh.Epoch = _epoch;
+                return;
+            }
+
+            if (2 * ++_hashCount > _seenSize)
+            {
+                Grow();
+                empty = -1;
+            }
+            int at = empty;
+            if (at < 0)
+            {
+                int mask = _seenSize - 1;
+                at = Slot(address);
+                while (_seen[at].Epoch == _epoch) at = (at + 1) & mask;
+            }
+            ref Seen e = ref _seen[at];
+            e.At = address;
+            e.Index = index;
+            e.Epoch = _epoch;
         }
 
         // Twice the room; only this message's entries move.
         private void Grow()
         {
-            Chunked<ulong> oldAt = _seenAt;
-            Chunked<int> oldIndex = _seenIndex;
-            Chunked<uint> oldEpoch = _seenEpoch;
+            Chunked<Seen> old = _seen;
             int oldSize = _seenSize;
             int size = oldSize * 2;
-            _seenAt = new Chunked<ulong>(size);
-            _seenIndex = new Chunked<int>(size);
-            _seenEpoch = new Chunked<uint>(size);
+            _seen = new Chunked<Seen>(size);
             _seenSize = size;
             _seenShift--;
             int mask = size - 1;
             for (int i = 0; i < oldSize; i++)
             {
-                if (oldEpoch[i] != _epoch) continue;
-                int at = Slot(oldAt[i]);
-                while (_seenEpoch[at] == _epoch) at = (at + 1) & mask;
-                _seenAt[at] = oldAt[i];
-                _seenIndex[at] = oldIndex[i];
-                _seenEpoch[at] = _epoch;
+                ref Seen o = ref old[i];
+                if (o.Epoch != _epoch) continue;
+                int at = Slot(o.At);
+                while (_seen[at].Epoch == _epoch) at = (at + 1) & mask;
+                _seen[at] = o;
             }
         }
 

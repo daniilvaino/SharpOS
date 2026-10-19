@@ -10,11 +10,14 @@ namespace SharpOS.Std.Exchange
     /// reader (or writer, for the reverse); not for two threads at once.
     /// </summary>
     /// <remarks>
-    /// Three passes for a translation. The first finds every record's plan by
+    /// Two passes for a translation. The first finds every record's plan by
     /// its key and its bounds, and marks where records start in a bitmap (a
-    /// bit per 8 bytes of the block). The second checks every reference
-    /// against the bitmap. Only the third writes — a refusal leaves the block
-    /// exactly as it came.
+    /// bit per 8 bytes of the block). The second checks each record's
+    /// references against the bitmap and translates the record at once, while
+    /// it is still in the cache (step208; it was a pass to check and another to
+    /// write, and a block larger than the cache came from memory twice). A
+    /// refusal still leaves the block exactly as it came: the records already
+    /// translated are turned back.
     /// </remarks>
     public sealed unsafe class RegionReader
     {
@@ -77,15 +80,23 @@ namespace SharpOS.Std.Exchange
 
             // Each reference is the table word of a record: a forged offset
             // would otherwise become a pointer into the middle of an object,
-            // or out of the region.
-            for (int i = 0; i < _count; i++)
-                if (!CheckTargets(_records[i], PlanAt(i), size, out ulong bad))
-                    return Refuse($"reference {bad} in record at {_records[i] - (ulong)at - Region.HeaderSize} is not a record");
-
+            // or out of the region. A record's own references are offsets
+            // until it is translated, whatever was done to the others.
             for (int i = 0; i < _count; i++)
             {
-                Shift(_records[i], PlanAt(i), (ulong)at, add: true);
-                *(ulong*)_records[i] = PlanAt(i).Table;
+                ulong record = _records[i];
+                TypePlan plan = PlanAt(i);
+                if (!CheckTargets(record, plan, size, out ulong bad))
+                {
+                    for (int j = 0; j < i; j++)
+                    {
+                        Shift(_records[j], PlanAt(j), (ulong)at, add: false);
+                        *(ulong*)_records[j] = PlanAt(j).Key;
+                    }
+                    return Refuse($"reference {bad} in record at {record - (ulong)at - Region.HeaderSize} is not a record");
+                }
+                Shift(record, plan, (ulong)at, add: true);
+                *(ulong*)record = plan.Table;
             }
 
             ulong rootAt = (ulong)at + Region.HeaderSize;
@@ -114,14 +125,22 @@ namespace SharpOS.Std.Exchange
                 _lastTable = table;
                 _lastTablePlan = plan;
                 if (!CheckInside(objectAt, plan, low + Region.HeaderSize, high, out ulong bad))
+                {
+                    // The records already turned back, translated again: the
+                    // block is the caller's as it was.
+                    for (int j = 0; j < _count; j++)
+                    {
+                        Shift(_records[j], PlanAt(j), low, add: true);
+                        *(ulong*)_records[j] = PlanAt(j).Table;
+                    }
                     return Refuse($"record at {cursor} refers outside the block (0x{bad:x})");
+                }
                 Note(objectAt, plan);
-                cursor += Region.HeaderSize + plan.PayloadSize(objectAt);
-            }
-            for (int i = 0; i < _count; i++)
-            {
-                Shift(_records[i], PlanAt(i), low, add: false);
-                *(ulong*)_records[i] = PlanAt(i).Key;
+                // The payload's size before its table word becomes a key.
+                ulong payload = plan.PayloadSize(objectAt);
+                Shift(objectAt, plan, low, add: false);
+                *(ulong*)objectAt = plan.Key;
+                cursor += Region.HeaderSize + payload;
             }
             return true;
         }

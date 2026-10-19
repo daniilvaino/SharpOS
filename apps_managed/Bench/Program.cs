@@ -28,6 +28,19 @@ Measure("jit", Jit);
 Measure("tasks", Tasks);
 Measure("output", Output);
 
+// PIPEPERF's baseline (step195/208): BinaryWriter + BinaryReader over a reused
+// MemoryStream, the same three graphs. The same DLL on the desktop and on
+// SharpOS's CoreCLR says what this costs on one runtime under the two; the
+// NativeAOT std's own numbers come from PIPEPERF. Warmed first so the timed
+// round runs tiered-up code on both.
+BinaryGraphs.WarmUp();
+Measure("binary.small", BinaryGraphs.Small);
+Measure("binary.holder", BinaryGraphs.Holder);
+Measure("binary.bag", BinaryGraphs.Bag);
+BinaryGraphs.BigWarmUp();
+Measure("binary.big", BinaryGraphs.Big);
+SharpOS.Micro.MicroBench.Run();
+
 // One benchmark again, long enough for the kernel's sampling profiler to see
 // it: 100 samples a second get three or four points out of the 36 ms the
 // regular exceptions benchmark takes. Chosen by the kernel through the
@@ -236,3 +249,123 @@ static long Output()
 
 static void Report(string name, long value)
     => Console.WriteLine($"[perf] bench.{name}={value}");
+
+// The graphs and calls of PIPEPERF's Baseline, one operation a message
+// written and read back.
+static class BinaryGraphs
+{
+    private sealed class SmallMessage { public int A; public int B; public string S = ""; }
+    private sealed class Item { public int X; public int Y; }
+    private sealed class HolderMessage { public int Id; public Item[] Items = Array.Empty<Item>(); }
+
+    private static readonly MemoryStream s_stream = new MemoryStream();
+    private static readonly BinaryWriter s_writer = new BinaryWriter(s_stream);
+    private static readonly BinaryReader s_reader = new BinaryReader(s_stream);
+
+    private static readonly SmallMessage s_small = new SmallMessage { A = 1, B = 2, S = "small" };
+    private static readonly HolderMessage s_holder = MakeHolder();
+    private static readonly Dictionary<string, object> s_bag = MakeBag();
+
+    private static HolderMessage MakeHolder()
+    {
+        var h = new HolderMessage { Id = 7, Items = new Item[100] };
+        for (int i = 0; i < 100; i++) h.Items[i] = new Item { X = i, Y = i * 2 };
+        return h;
+    }
+
+    private static Dictionary<string, object> MakeBag()
+    {
+        var bag = new Dictionary<string, object>();
+        for (int i = 0; i < 8; i++)
+        {
+            if ((i & 1) == 0) bag["k" + i] = i;
+            else bag["k" + i] = "v" + i;
+        }
+        return bag;
+    }
+
+    // The large message, BigGraph.cs as PIPEPERF has it (step208).
+    private static readonly SharpOS.Micro.BigRecord[] s_big = SharpOS.Micro.BigGraph.Build();
+
+    public static void BigWarmUp()
+    {
+        for (int round = 0; round < 3; round++) Big();
+    }
+
+    public static long Big()
+    {
+        const int Count = 20;
+        for (int n = 0; n < Count; n++)
+        {
+            s_stream.Position = 0;
+            SharpOS.Micro.BigGraph.Write(s_writer, s_big);
+            s_stream.Position = 0;
+            GC.KeepAlive(SharpOS.Micro.BigGraph.Read(s_reader));
+        }
+        return Count;
+    }
+
+    public static void WarmUp()
+    {
+        for (int round = 0; round < 3; round++) { Small(); Holder(); Bag(); }
+    }
+
+    public static long Small()
+    {
+        const int Count = 200_000;
+        for (int i = 0; i < Count; i++)
+        {
+            s_stream.Position = 0;
+            s_writer.Write(s_small.A); s_writer.Write(s_small.B); s_writer.Write(s_small.S);
+            s_stream.Position = 0;
+            var back = new SmallMessage { A = s_reader.ReadInt32(), B = s_reader.ReadInt32(), S = s_reader.ReadString() };
+            GC.KeepAlive(back);
+        }
+        return Count;
+    }
+
+    public static long Holder()
+    {
+        const int Count = 2_000;
+        for (int n = 0; n < Count; n++)
+        {
+            s_stream.Position = 0;
+            s_writer.Write(s_holder.Id);
+            s_writer.Write(s_holder.Items.Length);
+            foreach (Item it in s_holder.Items) { s_writer.Write(it.X); s_writer.Write(it.Y); }
+            s_stream.Position = 0;
+            var h = new HolderMessage { Id = s_reader.ReadInt32() };
+            h.Items = new Item[s_reader.ReadInt32()];
+            for (int i = 0; i < h.Items.Length; i++) h.Items[i] = new Item { X = s_reader.ReadInt32(), Y = s_reader.ReadInt32() };
+            GC.KeepAlive(h);
+        }
+        return Count;
+    }
+
+    public static long Bag()
+    {
+        const int Count = 20_000;
+        for (int n = 0; n < Count; n++)
+        {
+            s_stream.Position = 0;
+            s_writer.Write(s_bag.Count);
+            foreach (var pair in s_bag)
+            {
+                s_writer.Write(pair.Key);
+                if (pair.Value is int v) { s_writer.Write((byte)0); s_writer.Write(v); }
+                else { s_writer.Write((byte)1); s_writer.Write((string)pair.Value); }
+            }
+            s_stream.Position = 0;
+            var x = new Dictionary<string, object>();
+            int count = s_reader.ReadInt32();
+            for (int i = 0; i < count; i++)
+            {
+                string key = s_reader.ReadString();
+                if (s_reader.ReadByte() == 0) x[key] = s_reader.ReadInt32();
+                else x[key] = s_reader.ReadString();
+            }
+            GC.KeepAlive(x);
+        }
+        return Count;
+    }
+}

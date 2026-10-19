@@ -302,6 +302,30 @@
         // (EndOfStream / Broken). A reader binds a query to the type before
         // the first message. Zero: an older kernel.
         public ulong PipeWaitSchemaAddress;
+
+        // int FileManage(int op, byte* asciiPath, ulong* result) (step208):
+        // op 1 deletes a file, 2 makes a directory (its parent must exist),
+        // 3 removes an empty directory, 4 says what the path is — result[0]
+        // 1 a file, 2 a directory, result[1] its size, result[2] when it was
+        // last written (FAT date << 16 | FAT time); 5 renames or moves to the
+        // path whose address comes in result[0]; 6 the volume's size and free
+        // bytes in result[0] and result[1] (the path is not read). result
+        // holds four numbers. For ops 1-3 result[0]
+        // is the file system's own reason (Fat32.Change*, negated), which
+        // the status alone does not tell apart. Zero: an older kernel.
+        public ulong FileManageAddress;
+
+        // int FileControl(int handle, int op, long value, long* result)
+        // (step208): 1 moves the position to value, 2 says the position,
+        // 3 the length, 4 cuts or grows a file open for writing to value
+        // bytes. FileOpen takes mode 3 with it — read and written in place,
+        // the content kept. Zero: an older kernel.
+        public ulong FileControlAddress;
+
+        // void* ExchangeAllocateUnzeroed(ulong size) (step208): as
+        // ExchangeAllocate, the payload not zeroed — for a writer of every
+        // byte (a pipe's Copy). Zero: an older kernel; use ExchangeAllocate.
+        public ulong ExchangeAllocateUnzeroedAddress;
     }
 
     /// <summary>

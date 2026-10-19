@@ -14,5 +14,8 @@
     <Compile Include="Mixed.cs" />
     <Compile Include="Upper.cs" />
     <Compile Include="Edits.cs" />
+    <Compile Include="Micro.cs" />
+    <Compile Include="BigGraph.cs" />
+    <Compile Include="Ipc.cs" />
   </ItemGroup>
 </Project>

@@ -22,6 +22,13 @@ namespace OS.Hal
     {
         public const int OpenRead = 0, OpenWrite = 1, OpenAppend = 2;
 
+        /// <summary>
+        /// step208: read and written where the position is — the content kept,
+        /// the file made when there is none. What FileStream's Open and
+        /// OpenOrCreate with write access take.
+        /// </summary>
+        public const int OpenUpdate = 3;
+
         private sealed class OpenFile
         {
             public bool Writing;
@@ -42,6 +49,12 @@ namespace OS.Hal
             public uint RunStart;
             public uint RunClusters;
             public uint RunFill;
+
+            // step208: where the next write (and, for a writer, read) goes —
+            // past the end, the gap fills with zeros; and whether the run
+            // holds bytes the disk does not have yet.
+            public uint WritePos;
+            public bool RunDirty;
         }
 
         private static System.Collections.Generic.List<OpenFile> s_open;
@@ -63,7 +76,8 @@ namespace OS.Hal
             try
             {
                 OpenFile f = Find(handle);
-                return f == null || f.Writing ? -1 : ReadLocked(f, dst, cap);
+                if (f == null) return -1;
+                return f.Writing ? ReadWriterLocked(f, dst, cap) : ReadLocked(f, dst, cap);
             }
             finally { Leave(); }
         }
@@ -76,8 +90,8 @@ namespace OS.Hal
             {
                 OpenFile f = Find(handle);
                 if (f == null || !f.Writing) return false;
-                WriteGeneration++;
-                return WriteLocked(f, src, length);
+                FileChanged(f.First);
+                return WriteAtLocked(f, src, length);
             }
             finally { Leave(); }
         }
@@ -100,12 +114,14 @@ namespace OS.Hal
                 if (f == null) return false;
                 s_open[handle - 1] = null;
                 if (!f.Writing) return true;
-                WriteGeneration++;
+                FileChanged(f.First);
                 bool ok = FlushRun(f);
                 ok &= FlushFatCache();
                 ok &= UpdateEntry(f);
                 if (f.Run != null) OS.Kernel.Memory.NativeArena.FreeLarge(f.Run, BulkBytes);
                 f.Run = null;
+                // What the program wrote, to the medium (step208).
+                FlushDevice();
                 return ok;
             }
             finally { Leave(); }
@@ -121,6 +137,7 @@ namespace OS.Hal
             bool exists = Resolve(path, out uint first, out uint size, out bool isDir);
             if (exists && isDir) return -2;
 
+            if (mode < OpenRead || mode > OpenUpdate) return -2;
             if (mode == OpenRead)
             {
                 if (!exists) return -1;
@@ -137,15 +154,20 @@ namespace OS.Hal
             f.Writing = true;
             f.Run = (byte*)OS.Kernel.Memory.NativeArena.Allocate(BulkBytes);
             if (f.Run == null) return -3;
-            WriteGeneration++;
+            if (exists) FileChanged(first);
 
             if (exists)
             {
                 f.EntryLba = s_foundEntryLba;
                 f.EntryOffset = s_foundEntryOffset;
-                if (mode == OpenAppend && size != 0 && first >= 2)
+                if ((mode == OpenAppend || mode == OpenUpdate) && size != 0 && first >= 2)
                 {
                     if (!PrepareAppend(f, first, size)) return Fail(f, -4);
+                    f.WritePos = mode == OpenAppend ? size : 0;
+                }
+                else if (mode == OpenUpdate)
+                {
+                    f.EntryLba = s_foundEntryLba;   // empty: nothing to keep, nothing to cut
                 }
                 else
                 {
@@ -162,9 +184,9 @@ namespace OS.Hal
                 if (!TrySplitParent(path, out uint parentCluster, out int nameStart, out int nameLength))
                     return Fail(f, -1);
                 byte* name83 = stackalloc byte[11];
-                if (TryMake83(path, nameStart, nameLength, name83))
+                if (TryMake83(path, nameStart, nameLength, name83, out byte caseFlags))
                 {
-                    if (!TryWriteDirectoryEntry(parentCluster, name83, 0, 0, out f.EntryLba, out f.EntryOffset))
+                    if (!TryWriteDirectoryEntry(parentCluster, name83, 0, 0, out f.EntryLba, out f.EntryOffset, AttrArchive, caseFlags))
                         return Fail(f, -3);
                 }
                 else if (!TryCreateLongEntry(parentCluster, path, nameStart, nameLength, out f.EntryLba, out f.EntryOffset))
@@ -202,6 +224,179 @@ namespace OS.Hal
             }
             s_open.Add(f);
             return s_open.Count;
+        }
+
+        /// <summary>
+        /// Moves the handle's position (step208); the new position, or -1. A
+        /// writer may go past the end — the next write fills the gap with zeros.
+        /// </summary>
+        public static long Seek(int handle, long position)
+        {
+            Enter();
+            try
+            {
+                OpenFile f = Find(handle);
+                if (f == null || position < 0 || position > uint.MaxValue) return -1;
+                if (f.Writing) { f.WritePos = (uint)position; return position; }
+                f.Position = (uint)position;
+                f.Cluster = position >= f.Size ? 0 : ClusterAt(f.First, (uint)position);
+                return position;
+            }
+            finally { Leave(); }
+        }
+
+        /// <summary>The handle's position: where the next read or write goes.</summary>
+        public static long PositionOf(int handle)
+        {
+            Enter();
+            try { OpenFile f = Find(handle); return f == null ? -1 : f.Writing ? f.WritePos : f.Position; }
+            finally { Leave(); }
+        }
+
+        /// <summary>
+        /// A writer's file cut or grown to <paramref name="length"/> bytes
+        /// (step208): cut, its clusters past the length go back; grown, the new
+        /// bytes are zeros. The position stays where it was.
+        /// </summary>
+        public static bool SetLength(int handle, long length)
+        {
+            Enter();
+            try
+            {
+                OpenFile f = Find(handle);
+                if (f == null || !f.Writing || length < 0 || length > uint.MaxValue) return false;
+                FileChanged(f.First);
+                return SetLengthLocked(f, (uint)length);
+            }
+            finally { Leave(); }
+        }
+
+        // The cluster that holds byte `position` of a chain; 0 past its end.
+        private static uint ClusterAt(uint first, uint position)
+        {
+            uint c = first;
+            for (uint i = position / ClusterBytes; i > 0 && c >= 2; i--) c = FatNext(c);
+            return c >= 2 ? c : 0;
+        }
+
+        // A write at the position: past the end the gap first fills with
+        // zeros; at the end it is an append (the staging run); inside, the
+        // clusters it covers are rewritten on the disk, and the run — which
+        // may hold a copy of the last one — is loaded again.
+        private static bool WriteAtLocked(OpenFile f, byte* src, int length)
+        {
+            if (length <= 0) return true;
+            if (f.WritePos > f.Size && !Grow(f, f.WritePos)) return false;
+            if (f.WritePos == f.Size)
+            {
+                bool ok = WriteLocked(f, src, length);
+                f.WritePos = f.Size;
+                return ok;
+            }
+            uint inside = (uint)length < f.Size - f.WritePos ? (uint)length : f.Size - f.WritePos;
+            if (!FlushRun(f)) return false;
+            if (!Overwrite(f.First, f.WritePos, src, inside)) return false;
+            f.WritePos += inside;
+            if (!PrepareAppend(f, f.First, f.Size)) return false;
+            if ((uint)length == inside) return true;
+            bool rest = WriteLocked(f, src + inside, length - (int)inside);
+            f.WritePos = f.Size;
+            return rest;
+        }
+
+        // Zeros from the end of the file to `size`, through the staging run.
+        private static bool Grow(OpenFile f, uint size)
+        {
+            byte* zeros = stackalloc byte[512];
+            for (int i = 0; i < 512; i++) zeros[i] = 0;
+            while (f.Size < size)
+            {
+                uint n = size - f.Size < 512 ? size - f.Size : 512;
+                if (!WriteLocked(f, zeros, (int)n)) return false;
+            }
+            return true;
+        }
+
+        // Bytes rewritten where they lie, a cluster at a time (read, change,
+        // write back).
+        private static bool Overwrite(uint first, uint position, byte* src, uint count)
+        {
+            uint cb = ClusterBytes;
+            uint cluster = ClusterAt(first, position);
+            while (count > 0)
+            {
+                if (cluster < 2) { LastFailure = "a write inside the file past its chain"; return false; }
+                uint inCluster = position % cb;
+                uint n = cb - inCluster < count ? cb - inCluster : count;
+                ulong lba = ClusterLba(cluster);
+                if (!s_disk.Read(lba, s_spc, s_bulk)) return false;
+                System.Runtime.CompilerServices.Unsafe.CopyBlock(s_bulk + inCluster, src, n);
+                if (!s_disk.Write(lba, s_spc, s_bulk)) { LastFailure = "disk write of cluster " + cluster.ToString(); return false; }
+                src += n;
+                position += n;
+                count -= n;
+                cluster = FatNext(cluster);
+            }
+            return true;
+        }
+
+        // Reading a writer's file: what the run holds goes to the disk first,
+        // then a read at the position as for a reader.
+        private static int ReadWriterLocked(OpenFile f, byte* dst, int cap)
+        {
+            if (!FlushRun(f)) return -1;
+            f.Position = f.WritePos;
+            f.Cluster = f.WritePos >= f.Size ? 0 : ClusterAt(f.First, f.WritePos);
+            int got = ReadLocked(f, dst, cap);
+            if (got > 0) f.WritePos += (uint)got;
+            return got;
+        }
+
+        private static bool SetLengthLocked(OpenFile f, uint length)
+        {
+            if (!FlushRun(f)) return false;
+            if (length == f.Size) return true;
+            if (length > f.Size)
+            {
+                uint position = f.WritePos;
+                bool grown = Grow(f, length);
+                f.WritePos = position;
+                return grown && FlushRun(f) && FlushFatCache() && UpdateEntry(f);
+            }
+
+            uint cb = ClusterBytes;
+            if (length == 0)
+            {
+                if (f.First >= 2 && !FreeChainDeferred(f.First)) return false;
+                f.First = 0;
+                f.Last = 0;
+            }
+            else
+            {
+                uint keep = (length + cb - 1) / cb;
+                uint last = ClusterAt(f.First, (keep - 1) * cb);
+                if (last < 2) return false;
+                uint next = FatNext(last);
+                if (!FatSetDeferred(last, FatEndOfChain | 0x7)) return false;
+                if (next >= 2 && !FreeChainDeferred(next)) return false;
+                f.Last = last;
+                // The last cluster's bytes past the new end become zeros: a
+                // file grown again later must read zeros there, not what was cut.
+                uint tail = length % cb;
+                if (tail != 0)
+                {
+                    ulong lba = ClusterLba(last);
+                    if (!s_disk.Read(lba, s_spc, s_bulk)) return false;
+                    for (uint i = tail; i < cb; i++) s_bulk[i] = 0;
+                    if (!s_disk.Write(lba, s_spc, s_bulk)) return false;
+                }
+            }
+            f.Size = length;
+            f.RunClusters = 0;
+            f.RunFill = 0;
+            f.RunDirty = false;
+            if (length != 0 && !PrepareAppend(f, f.First, f.Size)) return false;
+            return FlushFatCache() && UpdateEntry(f);
         }
 
         // ---- reading ----
@@ -247,22 +442,9 @@ namespace OS.Hal
         public static string LastFailure;
 
         // FSInfo keeps a free-cluster count and a next-free hint that tools
-        // trust (mtools, Windows). Not kept up to date here: the first change
-        // of the FAT after mounting marks both unknown (0xFFFFFFFF, as the
-        // FAT32 specification allows), and the tools count again. A stale
-        // count reported a full volume as 165 MB free.
+        // trust (mtools, Windows). Kept since step208 — Fat32FsInfo.cs; a
+        // stale count once reported a full volume as 165 MB free.
         private static ulong s_fsInfoLba;
-        private static bool s_fsInfoUnknown;
-
-        private static void FreeCountUnknown()
-        {
-            if (s_fsInfoUnknown || s_fsInfoLba == 0) return;
-            s_fsInfoUnknown = true;
-            if (!ReadAbs(s_fsInfoLba)) return;
-            if (RdU32(s_sec, 0) != 0x41615252u || RdU32(s_sec, 484) != 0x61417272u) return;
-            for (int i = 488; i < 496; i++) s_sec[i] = 0xFF;
-            s_disk.Write(s_fsInfoLba, 1, s_sec);
-        }
 
         private static bool WriteLocked(OpenFile f, byte* src, int length)
         {
@@ -293,6 +475,7 @@ namespace OS.Hal
                 System.Runtime.CompilerServices.Unsafe.CopyBlock(f.Run + f.RunFill, src, n);
                 f.RunFill += n;
                 f.Size += n;
+                f.RunDirty = true;
                 src += n;
                 length -= (int)n;
             }
@@ -304,6 +487,10 @@ namespace OS.Hal
         private static bool FlushRun(OpenFile f)
         {
             if (f.RunClusters == 0) return true;
+            // A run loaded to be written on (PrepareAppend) and not written to
+            // is what the disk has already.
+            if (!f.RunDirty) return true;
+            f.RunDirty = false;
             uint bytes = f.RunClusters * ClusterBytes;
             for (uint i = f.RunFill; i < bytes; i++) f.Run[i] = 0;
             System.Runtime.CompilerServices.Unsafe.CopyBlock(s_bulk, f.Run, bytes);
@@ -342,6 +529,9 @@ namespace OS.Hal
             f.First = first;
             f.Size = size;
             f.Last = c;
+            f.RunClusters = 0;
+            f.RunFill = 0;
+            f.RunDirty = false;
             uint tail = size % cb;
             if (tail != 0)
             {
@@ -375,7 +565,6 @@ namespace OS.Hal
                 if (value == 0)
                 {
                     s_allocationHint = c + 1;
-                    FreeCountUnknown();
                     return c;
                 }
                 c++;
@@ -401,6 +590,7 @@ namespace OS.Hal
             uint offset = (uint)(byteOffset % s_bps);
             uint existing = RdU32(s_fatCache, (int)offset);
             uint merged = (existing & 0xF0000000u) | (value & 0x0FFFFFFFu);
+            FatEntryChanged(existing & 0x0FFFFFFFu, value & 0x0FFFFFFFu);
             s_fatCache[offset] = (byte)merged;
             s_fatCache[offset + 1] = (byte)(merged >> 8);
             s_fatCache[offset + 2] = (byte)(merged >> 16);
@@ -422,7 +612,6 @@ namespace OS.Hal
 
         private static bool FreeChainDeferred(uint cluster)
         {
-            FreeCountUnknown();
             uint guard = 0;
             while (cluster >= 2 && cluster < s_clusterCount && guard++ < 0x10000000u)
             {
@@ -435,12 +624,17 @@ namespace OS.Hal
             return true;
         }
 
-        // The entry's first cluster and size, as the file now has them.
+        // The entry's first cluster and size, as the file now has them, and
+        // the time it was written (step208: it kept its creation time).
         private static bool UpdateEntry(OpenFile f)
         {
             if (f.EntryLba == 0) return false;
             if (!s_disk.Read(f.EntryLba, 1, s_sec)) return false;
             byte* e = s_sec + f.EntryOffset;
+            PackTimestamp(out ushort date, out ushort time);
+            e[18] = (byte)date; e[19] = (byte)(date >> 8);    // last access
+            e[22] = (byte)time; e[23] = (byte)(time >> 8);    // modified
+            e[24] = (byte)date; e[25] = (byte)(date >> 8);
             e[20] = (byte)(f.First >> 16);
             e[21] = (byte)(f.First >> 24);
             e[26] = (byte)f.First;

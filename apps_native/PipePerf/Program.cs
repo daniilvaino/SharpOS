@@ -29,6 +29,13 @@ namespace PipeApps
         public Item[] Items;
     }
 
+    // The large message (step208): BigGraph.cs, shared with Bench.
+    [Message]
+    public sealed class BigBatch
+    {
+        public SharpOS.Micro.BigRecord[] Items;
+    }
+
     // PIPEPERF.EXE — where a message's time goes (step195): each phase of the
     // lower layer apart, the whole path, and the same graphs by hand through
     // BinaryWriter and BinaryReader. Three graphs: an object with two numbers
@@ -52,6 +59,8 @@ namespace PipeApps
 
         private static int Main() => Run(AppHost.Arguments);
 
+        private static ulong Us(ulong ticks) => ticks * 1_000_000 / (ulong)System.Diagnostics.Stopwatch.Frequency;
+
         private static int s_passed;
         private static int s_failed;
 
@@ -64,7 +73,41 @@ namespace PipeApps
         private static int Run(string[] args)
         {
             TaskBackendInstaller.Install();
+            // --micro (step208): the pieces of a BinaryWriter round trip, the
+            // same file Bench runs on CoreCLR. Exit 0.
+            if (args.Length > 0 && args[0] == "--micro")
+            {
+                SharpOS.Micro.MicroBench.CounterNames = new[]
+                {
+                    "gcs", "allocs", "refills", "reused", "probes", "mark_us", "sweep_us", "commits", "commit_us", "releases", "release_us",
+                };
+                SharpOS.Micro.MicroBench.Counters = () => new ulong[]
+                {
+                    AppGC.Collections, SharpOS.Std.NoRuntime.GcHeap.AllocCount, SharpOS.Std.NoRuntime.GcHeap.ContextRefills,
+                    SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount, SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount,
+                    Us(AppGC.MarkTicks), Us(AppGC.SweepTicks),
+                    SharpOS.Std.NoRuntime.GcMemorySource.Commits, Us(SharpOS.Std.NoRuntime.GcMemorySource.CommitTicks),
+                    SharpOS.Std.NoRuntime.GcMemorySource.Releases, Us(SharpOS.Std.NoRuntime.GcMemorySource.ReleaseTicks),
+                };
+                SharpOS.Micro.MicroBench.Run();
+                return 0;
+            }
             MessageCatalog.Ensure();
+            // --profile PHASE (step208): one phase of the large message, over
+            // and over for a few seconds, for the kernel's sampler (on in test
+            // builds): its [prof] lines for this run say where that phase goes.
+            if (args.Length > 1 && args[0] == "--profile")
+                return Profile(args[1]);
+            if (args.Length > 0 && args[0] == "--ipc")
+            {
+                s_ipcSmallOnly = args.Length > 2 && args[2] == "small";
+                if (args.Length > 3) s_ipcSmallCount = int.Parse(args[3]);
+                return Ipc(args.Length > 1 ? (uint)int.Parse(args[1]) : 16u);
+            }
+            if (args.Length > 1 && args[0] == "--ipc-threads")
+                return IpcThreads((uint)int.Parse(args[1]), args.Length > 2 ? int.Parse(args[2]) : 20000);
+            if (args.Length > 3 && args[0] == "--ipc-child")
+                return IpcChild(args[1], args[2], int.Parse(args[3]));
             Console.WriteLine("[pipeperf] begin");
 
             Small small = new Small { A = 1, B = 2, S = "small" };
@@ -85,11 +128,78 @@ namespace PipeApps
             Baseline("holder", 200, holderObjects, WriteHolder, ReadHolder, holder);
             Baseline("expando", 1000, bagObjects, WriteBag, ReadBag, bag);
 
+            // 5000 records, 30 001 objects, about 1.5 MB a message (step208).
+            var big = new BigBatch { Items = SharpOS.Micro.BigGraph.Build() };
+            int bigObjects = Phases("big", big, 20);
+            Baseline("big", 20, bigObjects, (w, b) => SharpOS.Micro.BigGraph.Write(w, b.Items),
+                     r => new BigBatch { Items = SharpOS.Micro.BigGraph.Read(r) }, big);
+
             UpperPaths();
             Tests();
 
             Console.WriteLine("[pipeperf] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
             return s_passed;
+        }
+
+        // ---- one phase for the sampler ----
+
+        private static int Profile(string phase)
+        {
+            var big = new BigBatch { Items = SharpOS.Micro.BigGraph.Build() };
+            Region.Plan plan = Region.Lay(big, out string complaint);
+            if (plan == null) { Console.WriteLine("[profile] not laid out: " + complaint); return 1; }
+            ulong size = plan.Size;
+            byte* template = (byte*)PipeTransport.Allocate(size);
+            byte* work = (byte*)PipeTransport.Allocate(size);
+            Region.Write(plan, template);
+            var layout = new RegionWriter();
+            var translate = new RegionReader();
+            layout.Lay(big);
+            var stream = new MemoryStream();
+            var writer = new BinaryWriter(stream);
+            var reader = new BinaryReader(stream);
+
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            int rounds = 0;
+            while (clock.ElapsedMilliseconds < 3000)
+            {
+                switch (phase)
+                {
+                    case "lay": layout.Lay(big); break;
+                    case "write": layout.Write(work); break;
+                    case "resolve":
+                        SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy(work, template, size);
+                        translate.Resolve(work, size, out _);
+                        break;
+                    case "release":
+                        SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy(work, template, size);
+                        translate.Resolve(work, size, out _);
+                        translate.Release(work, size);
+                        break;
+                    case "toheap":
+                        if (rounds == 0)
+                        {
+                            SharpOS.Std.NoRuntime.MemoryPrimitives.Memcpy(work, template, size);
+                            translate.Resolve(work, size, out _);
+                        }
+                        Region.ToHeap(work, size);
+                        break;
+                    case "bw":
+                        stream.Position = 0;
+                        SharpOS.Micro.BigGraph.Write(writer, big.Items);
+                        stream.Position = 0;
+                        SharpOS.Micro.BigGraph.Read(reader);
+                        break;
+                    default:
+                        Console.WriteLine("[profile] phases: lay write resolve release toheap bw");
+                        return 2;
+                }
+                rounds++;
+            }
+            Console.WriteLine("[profile] " + phase + " rounds=" + rounds.ToString() + " ms=" + clock.ElapsedMilliseconds.ToString());
+            PipeTransport.Free(template);
+            PipeTransport.Free(work);
+            return 0;
         }
 
         // ---- the lower layer, phase by phase ----

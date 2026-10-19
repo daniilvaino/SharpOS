@@ -91,13 +91,11 @@ namespace SharpOS.AppSdk
             get
             {
                 ulong* request = stackalloc ulong[4];
-                byte* buffer = stackalloc byte[260];
+                byte* buffer = stackalloc byte[780];
                 request[0] = (ulong)buffer;
-                request[1] = 260;
-                if (Call(OpImagePath, request) != AppServiceStatus.Ok || request[2] > 260) return "";
-                var chars = new char[(int)request[2]];
-                for (int i = 0; i < chars.Length; i++) chars[i] = (char)buffer[i];
-                return new string(chars);
+                request[1] = 780;
+                if (Call(OpImagePath, request) != AppServiceStatus.Ok || request[2] > 780) return "";
+                return System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(buffer, (int)request[2]));
             }
         }
 
@@ -117,6 +115,35 @@ namespace SharpOS.AppSdk
                 if (cwd.Length == 0 || cwd[cwd.Length - 1] != '\\') built.Append('\\');
             }
             for (int i = 0; i < path.Length; i++) built.Append(path[i] == '/' ? '\\' : path[i]);
+            return NormalizePath(built.ToString());
+        }
+
+        /// <summary>
+        /// A full path with "." and ".." taken (step208), the way
+        /// Path.GetFullPath does: "\bin\..\home\." is "\home", ".." above the
+        /// root stays at the root, doubled and trailing separators go. Before,
+        /// ".." reached the file system as a name — and the root has no ".."
+        /// entry, so "cd ../" from \bin led to \bin\.. and nowhere after.
+        /// </summary>
+        public static string NormalizePath(string full)
+        {
+            var parts = new System.Collections.Generic.List<string>();
+            int start = 0;
+            for (int i = 0; i <= full.Length; i++)
+            {
+                if (i < full.Length && full[i] != '\\' && full[i] != '/') continue;
+                int length = i - start;
+                if (length == 1 && full[start] == '.') { }
+                else if (length == 2 && full[start] == '.' && full[start + 1] == '.')
+                {
+                    if (parts.Count > 0) parts.RemoveAt(parts.Count - 1);
+                }
+                else if (length > 0) parts.Add(full.Substring(start, length));
+                start = i + 1;
+            }
+            if (parts.Count == 0) return "\\";
+            var built = new System.Text.StringBuilder();
+            foreach (string part in parts) built.Append('\\').Append(part);
             return built.ToString();
         }
 
@@ -156,6 +183,19 @@ namespace SharpOS.AppSdk
             if (Call(9, request) == AppServiceStatus.Ok)
                 for (int i = 0; i < 3; i++) pages[i] = request[i + 1];
             return pages;
+        }
+
+        /// <summary>The kernel's program cache: [0] starts it served, [1] starts that read the file.</summary>
+        public static ulong[] ProgramCacheCounts()
+        {
+            ulong* request = stackalloc ulong[9];
+            var counts = new ulong[2];
+            if (Call(20, request) == AppServiceStatus.Ok)
+            {
+                counts[0] = request[0];
+                counts[1] = request[1];
+            }
+            return counts;
         }
 
         /// <summary>Objects the kernel's heap ever allocated, read into a caller's buffer: no allocation of its own.</summary>
@@ -207,12 +247,10 @@ namespace SharpOS.AppSdk
             if (!Available) throw new InvalidOperationException("this kernel does not start processes");
 
             string full = FullPath(path);
-            byte[] pathBytes = new byte[full.Length + 1];
-            for (int i = 0; i < full.Length; i++)
-            {
-                if (full[i] > 0x7F) throw new ArgumentException("the path is not ASCII", nameof(path));
-                pathBytes[i] = (byte)full[i];
-            }
+            // UTF-8 (step208; before, ASCII only).
+            byte[] encoded = System.Text.Encoding.UTF8.GetBytes(full);
+            byte[] pathBytes = new byte[encoded.Length + 1];
+            Array.Copy(encoded, pathBytes, encoded.Length);
             byte[] list = EncodeArguments(arguments);
 
             // The ends are spent now and given back if the start fails.
@@ -359,8 +397,14 @@ namespace SharpOS.AppSdk
             {
                 if (directory.Length == 0) continue;
                 string dir = directory.Replace('/', '\\');
-                string candidate = (dir[dir.Length - 1] == '\\' ? dir : dir + "\\") + name + (extension ? "" : ".EXE");
-                if (AppHost.FileExistsEx(candidate) == AppServiceStatus.Ok) return candidate;
+                string folder = dir[dir.Length - 1] == '\\' ? dir : dir + "\\";
+                string file = name + (extension ? "" : ".EXE");
+                if (AppHost.FileExistsEx(folder + file) != AppServiceStatus.Ok) continue;
+                // The name as the directory holds it (step208), not as typed:
+                // `which pipegen` said \bin\pipegen.EXE.
+                foreach (System.IO.Directory.Entry e in System.IO.Directory.Entries(NormalizePath(folder)))
+                    if (!e.IsDirectory && string.Equals(e.Name, file, StringComparison.OrdinalIgnoreCase)) return folder + e.Name;
+                return folder + file;
             }
             return null;
         }

@@ -600,6 +600,44 @@ namespace AotTests
             catch (System.IO.EndOfStreamException) { forgedRefused = true; }
             Check("BinaryReader refuses a forged string length", forgedRefused);
 
+            // ArrayPool pools (step208): one Shared, a returned array rented
+            // again, bucket sizes; a reference T goes through shared generic
+            // code and its own static.
+            var bytePool = System.Buffers.ArrayPool<byte>.Shared;
+            byte[] rented = bytePool.Rent(10);
+            bytePool.Return(rented);
+            byte[] again = bytePool.Rent(16);
+            Check("ArrayPool<byte>.Shared: one pool, length 16 for 10, the returned array rented again",
+                  ReferenceEquals(bytePool, System.Buffers.ArrayPool<byte>.Shared) && rented.Length == 16
+                  && ReferenceEquals(rented, again) && bytePool.Rent(0).Length == 0);
+            bytePool.Return(again);
+            var stringPool = System.Buffers.ArrayPool<string>.Shared;
+            string[] names = stringPool.Rent(100);
+            stringPool.Return(names, clearArray: true);
+            Check("ArrayPool<string>.Shared: one pool, its own, pools too",
+                  ReferenceEquals(stringPool, System.Buffers.ArrayPool<string>.Shared) && !ReferenceEquals(stringPool, bytePool)
+                  && names.Length == 128 && ReferenceEquals(names, stringPool.Rent(128)));
+
+            // MemoryStream's span overloads (step208): a write past the end
+            // after a Seek leaves zeros between, as the original's.
+            var gap = new System.IO.MemoryStream();
+            gap.WriteByte(1);
+            gap.Position = 4;
+            gap.Write(new ReadOnlySpan<byte>(new byte[] { 9, 8 }));
+            byte[] gapBytes = gap.ToArray();
+            Span<byte> head = stackalloc byte[3];
+            gap.Position = 0;
+            int got = gap.Read(head);
+            Check("MemoryStream: span write past the end zero-fills, span read, ReadByte",
+                  gapBytes.Length == 6 && gapBytes[0] == 1 && gapBytes[1] == 0 && gapBytes[3] == 0 && gapBytes[4] == 9 && gapBytes[5] == 8
+                  && got == 3 && head[0] == 1 && head[2] == 0 && gap.ReadByte() == 0 && gap.ReadByte() == 9);
+            gap.Position = 5;
+            bool pastEnd = false;
+            try { new System.IO.BinaryReader(gap).ReadInt32(); }
+            catch (System.IO.EndOfStreamException) { pastEnd = true; }
+            Check("BinaryReader over MemoryStream: ReadInt32 past the end throws, position at the end",
+                  pastEnd && gap.Position == 6 && gap.ReadByte() == -1);
+
             // The shared generator project reaches every image (pipe_plan.md
             // "Подготовить под трубы", item 4).
             Check("shared generator ran for this image", SharpOS.Generated.ImageInfo.AssemblyName == "AotTests");

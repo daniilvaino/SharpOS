@@ -1,68 +1,35 @@
-﻿// A pool that does not pool.
-//
-// Shaped after dotnet/runtime v8.0 (MIT),
+// System.Buffers.ArrayPool<T> — ported from dotnet/runtime v8.0 (MIT),
 //   src/libraries/System.Private.CoreLib/src/System/Buffers/ArrayPool.cs
-// but with the buckets and the thread-local cache left out.
 //
-// This is under the canonical name deliberately, and it is not a stand-in: the
-// ArrayPool contract says Rent returns an array of AT LEAST the requested
-// length and Return hands one back — it never promises the same array comes
-// back, nor that renting is cheap. Allocating each time and dropping what is
-// returned satisfies all of it. What is lost is the performance the type
-// exists for, so consumers that rent in a tight loop will feel it.
+// SharpOS cut: Shared is a ConfigurableArrayPool, not the original's
+// TlsOverPerCoreLockedStacksArrayPool — that one keeps a per-thread cache in
+// [ThreadStatic] fields, which do not work here (limits, ThreadStatic). The
+// configurable pool is the original's own, buckets under a lock, and what
+// Create() hands out there too.
 //
-// Keeping the name matters more than keeping the speed here: library code
-// written against ArrayPool<T> compiles and behaves correctly, which is the
-// whole point of the naming rule.
+// Until step208 this was a pool that did not pool: Rent allocated, Return
+// dropped, and Shared made a new pool object on every access, because a
+// static field was believed to break (that limit closed long before). Every
+// BinaryWriter.Write(int) over a stream without span overloads cost three
+// allocations, and BinaryWriter ran 10-20 times slower than on the host.
 
 namespace System.Buffers
 {
-    public sealed class ArrayPool<T>
+    public abstract class ArrayPool<T>
     {
-        // A property rather than a static field: a static field holding a new
-        // object gives this type a class constructor, and the check ILC emits
-        // for one does not work here (limits §1). Each access allocates a small
-        // object, which is nothing beside the arrays it hands out.
-        public static ArrayPool<T> Shared => new ArrayPool<T>();
+        // Store the shared ArrayPool in a field of its derived sealed type so the Jit can "see" the exact type
+        // when the Shared property is inlined which will allow it to devirtualize calls made on it.
+        private static readonly ConfigurableArrayPool<T> s_shared = new ConfigurableArrayPool<T>();
 
-        /// <summary>A pool of one's own.</summary>
-        /// <remarks>
-        /// The BCL's Create hands back a pool that does not share its buffers
-        /// with anyone else's. This one is the same object Shared is, because
-        /// this pool keeps nothing between calls - Rent allocates and Return
-        /// drops. The distinction Create exists to make therefore does not
-        /// exist here, and the method is present so that code written against
-        /// the real one compiles rather than so that it behaves differently.
-        /// </remarks>
-        public static ArrayPool<T> Create() => new ArrayPool<T>();
+        public static ArrayPool<T> Shared => s_shared;
 
-        public static ArrayPool<T> Create(int maxArrayLength, int maxArraysPerBucket)
-        {
-            _ = maxArrayLength;
-            _ = maxArraysPerBucket;
-            return new ArrayPool<T>();
-        }
+        public static ArrayPool<T> Create() => new ConfigurableArrayPool<T>();
 
-        public T[] Rent(int minimumLength)
-        {
-            if (minimumLength < 0)
-                throw new ArgumentOutOfRangeException(nameof(minimumLength));
+        public static ArrayPool<T> Create(int maxArrayLength, int maxArraysPerBucket) =>
+            new ConfigurableArrayPool<T>(maxArrayLength, maxArraysPerBucket);
 
-            return new T[minimumLength];
-        }
+        public abstract T[] Rent(int minimumLength);
 
-        /// <summary>
-        /// Hands an array back. Nothing is kept, so the array is collectable
-        /// from here on — a caller that keeps using it after returning it is
-        /// making the same mistake it would with a real pool.
-        /// </summary>
-        public void Return(T[] array, bool clearArray = false)
-        {
-            if (array == null)
-                throw new ArgumentNullException(nameof(array));
-
-            if (clearArray)
-                Array.Clear(array, 0, array.Length);
-        }
+        public abstract void Return(T[] array, bool clearArray = false);
     }
 }

@@ -309,8 +309,13 @@
             ulong deadline = Deadline(timeoutMs);
             ulong started = timeoutMs != 0 ? OS.Kernel.Diagnostics.PerfCounters.Now() : 0;
             int spins = 0;
+            // A backstop for a clock that never moves, not the deadline: at a
+            // flat 50 million turns a 5-second wait ended after 2.8 under WHPX,
+            // and a longer one could never be asked for (step208).
+            long cap = System.Math.Max(50_000_000L, timeoutMs * 20_000L);
+            if (cap > int.MaxValue) cap = int.MaxValue;
 
-            for (; spins < 50_000_000; spins++)
+            for (; spins < cap; spins++)
             {
                 ulong slot = _eventRing + _eventDequeue * (ulong)TrbSize;
                 uint control = Read32(slot + 12);

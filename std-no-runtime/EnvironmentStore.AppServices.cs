@@ -62,29 +62,25 @@ namespace SharpOS.Std.NoRuntime
         public static string GetDirectory()
         {
             if (!Available) return "\\";
+            // UTF-8 (step208; before, a byte a character): up to three bytes each.
             ulong* request = stackalloc ulong[4];
-            byte* buffer = stackalloc byte[MaxPath];
+            byte* buffer = stackalloc byte[MaxPath * 3];
             request[0] = (ulong)buffer;
-            request[1] = MaxPath;
-            if (Call(OpGetDirectory, request) != AppServiceStatus.Ok || request[2] > MaxPath || request[2] == 0) return "\\";
-            var chars = new char[(int)request[2]];
-            for (int i = 0; i < chars.Length; i++) chars[i] = (char)buffer[i];
-            return new string(chars);
+            request[1] = MaxPath * 3;
+            if (Call(OpGetDirectory, request) != AppServiceStatus.Ok || request[2] > MaxPath * 3 || request[2] == 0) return "\\";
+            return System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(buffer, (int)request[2]));
         }
 
         public static void SetDirectory(string path)
         {
             if (!Available) throw new PlatformNotSupportedException("this kernel keeps no working directory");
             if (path.Length >= MaxPath) throw new ArgumentException("the path is longer than " + (MaxPath - 1).ToString() + " characters", nameof(path));
-            byte* ascii = stackalloc byte[path.Length + 1];
-            for (int i = 0; i < path.Length; i++)
-            {
-                if (path[i] > 0x7F) throw new ArgumentException("the path is not ASCII", nameof(path));
-                ascii[i] = (byte)path[i];
-            }
-            ascii[path.Length] = 0;
+            int length = System.Text.Encoding.UTF8.GetByteCount(path);
+            byte* encoded = stackalloc byte[length + 1];
+            System.Text.Encoding.UTF8.GetBytes(path, new Span<byte>(encoded, length));
+            encoded[length] = 0;
             ulong* request = stackalloc ulong[4];
-            request[0] = (ulong)ascii;
+            request[0] = (ulong)encoded;
             if (Call(OpSetDirectory, request) != AppServiceStatus.Ok)
                 throw new InvalidOperationException("the working directory cannot be set");
         }

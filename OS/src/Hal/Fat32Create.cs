@@ -28,7 +28,7 @@ namespace OS.Hal
                 return false;
 
             byte* name83 = stackalloc byte[11];
-            if (!TryMake83(path, nameStart, nameLength, name83)) return false;
+            if (!TryMake83(path, nameStart, nameLength, name83, out byte caseFlags)) return false;
 
             uint clusterBytes = s_bps * s_spc;
             uint needed = (sizeBytes + clusterBytes - 1) / clusterBytes;
@@ -36,7 +36,7 @@ namespace OS.Hal
 
             if (!TryAllocateChain(needed, out uint firstCluster)) return false;
 
-            if (!TryWriteDirectoryEntry(parentCluster, name83, firstCluster, sizeBytes))
+            if (!TryWriteDirectoryEntry(parentCluster, name83, firstCluster, sizeBytes, out _, out _, AttrArchive, caseFlags))
             {
                 FreeChain(firstCluster);
                 return false;
@@ -83,8 +83,15 @@ namespace OS.Hal
         // Pack "NAME.EXT" into the 11-byte on-disk field. Anything that does
         // not fit is refused: silently truncating would create a file under a
         // name the caller never asked for.
-        private static bool TryMake83(string path, int start, int length, byte* out83)
+        //
+        // The field holds capitals; a name or an extension all in small
+        // letters says so in the entry's byte 12 (0x08 the name, 0x10 the
+        // extension — what Windows and Linux write and read), step208: before,
+        // a.txt came back as A.TXT. A part in mixed case (ReadMe.txt) cannot
+        // be said that way and is refused here — it takes a long name.
+        private static bool TryMake83(string path, int start, int length, byte* out83, out byte caseFlags)
         {
+            caseFlags = 0;
             for (int i = 0; i < 11; i++) out83[i] = 0x20;
 
             int dot = -1;
@@ -105,7 +112,24 @@ namespace OS.Hal
                 if (!TryUpper(path[start + dot + 1 + i], out byte c)) return false;
                 out83[8 + i] = c;
             }
+            int baseCase = CaseOf(path, start, baseLen), extCase = CaseOf(path, start + dot + 1, extLen);
+            if (baseCase < 0 || extCase < 0) return false;
+            if (baseCase == 1) caseFlags |= 0x08;
+            if (extCase == 1 && extLen > 0) caseFlags |= 0x10;
             return true;
+        }
+
+        // 1 all its letters small, 0 none small, -1 both.
+        private static int CaseOf(string path, int start, int length)
+        {
+            bool small = false, capital = false;
+            for (int i = 0; i < length; i++)
+            {
+                char c = path[start + i];
+                if (c >= 'a' && c <= 'z') small = true;
+                else if (c >= 'A' && c <= 'Z') capital = true;
+            }
+            return small && capital ? -1 : small ? 1 : 0;
         }
 
         private static bool TryUpper(char ch, out byte value)
@@ -148,6 +172,7 @@ namespace OS.Hal
             // overwritten with our value.
             uint existing = RdU32(s_fatCache, (int)offset);
             uint merged = (existing & 0xF0000000u) | (value & 0x0FFFFFFFu);
+            FatEntryChanged(existing & 0x0FFFFFFFu, value & 0x0FFFFFFFu);
             s_fatCache[offset] = (byte)merged;
             s_fatCache[offset + 1] = (byte)(merged >> 8);
             s_fatCache[offset + 2] = (byte)(merged >> 16);
@@ -185,7 +210,6 @@ namespace OS.Hal
 
         private static bool TryAllocateChain(uint count, out uint firstCluster)
         {
-            FreeCountUnknown();
             if (TryAllocateContiguous(count, out firstCluster)) return true;
             return TryAllocateScattered(count, out firstCluster);
         }
@@ -302,41 +326,102 @@ namespace OS.Hal
         // its size there when it closes.
         private static bool TryWriteDirectoryEntry(uint dirCluster, byte* name83,
                                                    uint firstCluster, uint size,
-                                                   out ulong entryLba, out uint entryOffset)
+                                                   out ulong entryLba, out uint entryOffset,
+                                                   byte attributes = AttrArchive, byte caseFlags = 0)
         {
+            // A directory that changes under the enumeration cursor would
+            // resume it at the wrong entry.
+            s_cursorValid = false;
             entryLba = 0;
             entryOffset = 0;
-            uint cluster = dirCluster == 0 ? s_rootClus : dirCluster;
-            uint guard = 0;
 
-            while (cluster >= 2 && guard++ < 1_000_000)
+            // A full directory grows by a cluster (step208), and the search
+            // runs again — it finds the new one, all free.
+            for (int attempt = 0; attempt < 2; attempt++)
             {
-                ulong lba = ClusterLba(cluster);
-                for (uint s = 0; s < s_spc; s++)
+                uint cluster = dirCluster == 0 ? s_rootClus : dirCluster;
+                uint guard = 0;
+                while (cluster >= 2 && guard++ < 1_000_000)
                 {
-                    if (!s_disk.Read(lba + s, 1, s_sec)) return false;
-
-                    for (uint offset = 0; offset < s_bps; offset += 32)
+                    ulong lba = ClusterLba(cluster);
+                    for (uint s = 0; s < s_spc; s++)
                     {
-                        byte first = s_sec[offset];
-                        if (first != 0x00 && first != 0xE5) continue;
+                        if (!s_disk.Read(lba + s, 1, s_sec)) return false;
 
-                        FillEntry(s_sec + offset, name83, firstCluster, size);
-                        entryLba = lba + s;
-                        entryOffset = offset;
-                        return s_disk.Write(lba + s, 1, s_sec);
+                        for (uint offset = 0; offset < s_bps; offset += 32)
+                        {
+                            byte first = s_sec[offset];
+                            if (first != 0x00 && first != 0xE5) continue;
+
+                            FillEntry(s_sec + offset, name83, firstCluster, size, attributes, caseFlags);
+                            entryLba = lba + s;
+                            entryOffset = offset;
+                            return s_disk.Write(lba + s, 1, s_sec);
+                        }
                     }
-                }
 
-                uint next = FatNext(cluster);
-                if (next == 0) break;      // no room and no more clusters
-                cluster = next;
+                    uint next = FatNext(cluster);
+                    if (next == 0) break;
+                    cluster = next;
+                }
+                if (attempt == 0 && !TryGrowDirectory(dirCluster)) return false;
+            }
+            return false;
+        }
+
+        // FAT's limit on a directory: 65 536 entries of 32 bytes (2 MiB).
+        private const uint MaxDirectoryBytes = 65536 * 32;
+
+        /// <summary>
+        /// One more cluster at the end of the directory's chain (step208):
+        /// zeroed — all entries free, the first one the end of the list — so
+        /// a reader that runs past the old clusters stops at once. False at
+        /// FAT's size limit or on a full volume.
+        /// </summary>
+        private static bool TryGrowDirectory(uint dirCluster)
+        {
+            uint last = dirCluster == 0 ? s_rootClus : dirCluster;
+            uint clusters = 1;
+            uint guard = 0;
+            while (guard++ < 1_000_000)
+            {
+                uint next = FatNext(last);
+                if (next == 0) break;
+                last = next;
+                clusters++;
+            }
+            if ((ulong)(clusters + 1) * ClusterBytes > MaxDirectoryBytes) return false;
+
+            // An entry that starts with 0x00 ends the directory: nothing after
+            // it is read. The last cluster's free tail is such entries — left
+            // as they are, the cluster added after them, and everything put
+            // there, would be invisible (a long name that did not fit in the
+            // two slots left at the end went on past them, and the listing,
+            // the lookup and the emptiness check all stopped short). They
+            // become free entries (0xE5) instead: the end moves to the new
+            // cluster.
+            ulong lastLba = ClusterLba(last);
+            for (uint s = 0; s < s_spc; s++)
+            {
+                if (!s_disk.Read(lastLba + s, 1, s_sec)) return false;
+                bool changed = false;
+                for (uint offset = 0; offset < s_bps; offset += 32)
+                {
+                    if (s_sec[offset] != 0x00) continue;
+                    s_sec[offset] = 0xE5;
+                    changed = true;
+                }
+                if (changed && !s_disk.Write(lastLba + s, 1, s_sec)) return false;
             }
 
-            // Growing the directory would mean allocating and chaining another
-            // cluster into it; not needed while directories have free slots,
-            // and pretending otherwise would silently drop the file.
-            return false;
+            if (!TryAllocateChain(1, out uint added)) return false;
+            uint link = added;
+            if (!TryReadWriteFat(last, true, ref link))
+            {
+                FreeChain(added);
+                return false;
+            }
+            return true;
         }
 
         // FAT packs a date as year-since-1980 / month / day and a time as
@@ -354,12 +439,14 @@ namespace OS.Hal
             time = (ushort)((now.Hour << 11) | (now.Minute << 5) | (now.Second / 2));
         }
 
-        private static void FillEntry(byte* entry, byte* name83, uint firstCluster, uint size)
+        private static void FillEntry(byte* entry, byte* name83, uint firstCluster, uint size,
+                                      byte attributes = AttrArchive, byte caseFlags = 0)
         {
             for (int i = 0; i < 32; i++) entry[i] = 0;
             for (int i = 0; i < 11; i++) entry[i] = name83[i];
 
-            entry[11] = AttrArchive;
+            entry[11] = attributes;
+            entry[12] = caseFlags;
 
             // A zeroed date field means month 0 / day 0, which FAT does not
             // allow and a host fsck flags. Use the RTC when it is up, and

@@ -60,6 +60,26 @@ namespace OS.Kernel.Process
         // what MainModule.FileName says (step207) — ManagedDoom looks for its
         // IWAD beside it.
         public const int ProcessOpImagePath = 18;
+        // step208: the kernel's wall clock — [0] DateTime.UtcNow.Ticks (the
+        // RTC read at boot, carried by the HPET). An app takes it once and
+        // runs on its own counter from there. Unsupported before the clock
+        // is up.
+        public const int ProcessOpWallClock = 19;
+        // step208: the program cache — [0] starts served from it, [1] starts
+        // that read the file.
+        public const int ProcessOpProgramCache = 20;
+
+        // A path answered in UTF-8 (step208; before, a byte a char): written
+        // when it fits the caller's buffer; its length in bytes either way.
+        private static ulong Utf8Answer(string text, ulong buffer, ulong capacity)
+        {
+            fixed (char* p = text)
+            {
+                uint needed = Utf8Encode(p, (uint)text.Length, null, 0);
+                if (buffer != 0 && capacity >= needed) Utf8Encode(p, (uint)text.Length, (byte*)buffer, (uint)capacity);
+                return needed;
+            }
+        }
 
         /// <summary>
         /// AppServiceTable.Settings for every app started from now on (step197);
@@ -147,9 +167,7 @@ namespace OS.Kernel.Process
             if (op == ProcessOpGetDirectory)
             {
                 string cwd = self?.WorkingDirectory ?? "\\";
-                request[2] = (ulong)cwd.Length;
-                if (request[0] != 0 && request[1] >= (ulong)cwd.Length)
-                    for (int i = 0; i < cwd.Length; i++) ((byte*)request[0])[i] = (byte)cwd[i];
+                request[2] = Utf8Answer(cwd, request[0], request[1]);
                 return (int)AppServiceStatus.Ok;
             }
 
@@ -157,17 +175,29 @@ namespace OS.Kernel.Process
             {
                 if (self == null) return (int)AppServiceStatus.Unsupported;
                 char* path = stackalloc char[(int)MaxPathChars];
-                if (!TryReadAsciiPath(request[0], path, MaxPathChars)) return (int)AppServiceStatus.InvalidParameter;
+                if (!TryReadUtf8Path(request[0], path, MaxPathChars)) return (int)AppServiceStatus.InvalidParameter;
                 self.WorkingDirectory = string.FromUtf16Z(path, (int)MaxPathChars);
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpProgramCache)
+            {
+                request[0] = ProgramCache.Hits;
+                request[1] = ProgramCache.Misses;
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpWallClock)
+            {
+                if (!System.DateTime.Clock.IsRealClock) return (int)AppServiceStatus.Unsupported;
+                request[0] = (ulong)System.DateTime.UtcNow.Ticks;
                 return (int)AppServiceStatus.Ok;
             }
 
             if (op == ProcessOpImagePath)
             {
                 string image = self?.ImagePath ?? "";
-                request[2] = (ulong)image.Length;
-                if (request[0] != 0 && request[1] >= (ulong)image.Length)
-                    for (int i = 0; i < image.Length; i++) ((byte*)request[0])[i] = (byte)image[i];
+                request[2] = Utf8Answer(image, request[0], request[1]);
                 return (int)AppServiceStatus.Ok;
             }
 
@@ -277,7 +307,7 @@ namespace OS.Kernel.Process
                 ulong serviceStarted = Ticks();
                 request[5] = 0;
                 char* path = stackalloc char[(int)MaxPathChars];
-                if (!TryReadAsciiPath(request[0], path, MaxPathChars))
+                if (!TryReadUtf8Path(request[0], path, MaxPathChars))
                     return (int)AppServiceStatus.InvalidParameter;
                 string[] childEnvironment = null;
                 if (op == ProcessOpStartWithEnvironment)
@@ -354,10 +384,11 @@ namespace OS.Kernel.Process
             void* file = null;
             uint fileSize = 0;
             ulong t0 = Ticks();
-            bool cached = ProgramCache.TryTake(string.FromUtf16Z(path, (int)MaxPathChars), out file, out fileSize, out AppServiceStatus read);
+            bool cached = ProgramCache.TryTake(string.FromUtf16Z(path, (int)MaxPathChars), out file, out fileSize, out AppServiceStatus read, out bool fromCache);
             if (!cached)
                 read = MapBootFileStatus(bootInfo.FileReadAll(path, &file, &fileSize));
-            s_tRead += Ticks() - t0;
+            ulong readTicks = Ticks() - t0;
+            s_tRead += readTicks;
             if (read != AppServiceStatus.Ok)
                 return read;
 
@@ -394,6 +425,12 @@ namespace OS.Kernel.Process
                         AppProcesses.Current?.Id ?? 0, out process, holder, inputEnd, outputEnd, environment,
                         string.FromUtf16Z(path, (int)MaxPathChars));
                     s_gProcess += Ticks() - g2;
+                    if (process != null)
+                    {
+                        process.SRead = readTicks;
+                        process.SCached = fromCache;
+                        process.SFileBytes = fileSize;
+                    }
                 }
                 StartupData.Clear();   // a start that failed before its build took it
             }
@@ -498,6 +535,7 @@ namespace OS.Kernel.Process
                 bool loaded = global::OS.Kernel.Pe.PeLoader.TryLoad(image, AppProcesses.ImageBaseForSlot(slot), out proc.Image, out int stage);
                 ulong t1 = Ticks();
                 s_tLoad += t1 - t0;
+                proc.SLoad = t1 - t0;
                 if (!loaded)
                 {
                     DebugLog.Begin(LogLevel.Warn);
@@ -538,6 +576,7 @@ namespace OS.Kernel.Process
                         AppProcesses.StackTopForSlot(slot), out proc.Built);
                 ulong t2 = Ticks();
                 s_tBuild += t2 - t1;
+                proc.SBuild = t2 - t1;
                 if (!built)
                 {
                     result = FailedAtStep(4);
@@ -596,6 +635,8 @@ namespace OS.Kernel.Process
                     OS.Kernel.Memory.ExchangeHeap.Allocate(64, proc.Id);
 
                 proc.TRunnable = Ticks();
+                proc.SSync = t4 - t3;
+                proc.SRest = (t3 - t2) + (proc.TRunnable - t4);
                 Scheduler.MakeRunnable(main);
                 s_tRest += Ticks() - t4;
                 s_starts++;
@@ -707,6 +748,7 @@ namespace OS.Kernel.Process
 
             proc.TEnded = Ticks();
             NoteLife(proc);
+            if (OS.Kernel.Diagnostics.Probes.ProcessStartLog) LogStart(proc);
             Preemption.Suppress();
             proc.ExitedWord = 1;
             bool forget = !proc.LauncherHolds;
@@ -718,6 +760,36 @@ namespace OS.Kernel.Process
             // What it started and still held: records of those that ended go,
             // the running ones free theirs when they end.
             AppProcesses.OnLauncherEnded(proc.Id);
+        }
+
+        // One line per process to COM1 (step208): where its own start went.
+        // The sums above answer "on average"; a slow start of one program in
+        // a session is only seen here. COM1 only: the screen is the app's.
+        private static void LogStart(AppProcess p)
+        {
+            if (p.TRunnable == 0 || p.TEntry == 0) return;
+            // No file: the image was handed over (the shell the kernel starts).
+            string line = "[start] " + p.Name
+                + (p.SFileBytes == 0 ? " image given" : " " + (p.SFileBytes / 1024) + " KiB " + (p.SCached ? "cached" : "from disk"))
+                + ": read " + Ms(p.SRead)
+                + ", load " + Ms(p.SLoad) + ", build " + Ms(p.SBuild) + ", sync " + Ms(p.SSync)
+                + ", rest " + Ms(p.SRest) + "; to entry " + Ms(p.TEntry - p.TRunnable)
+                + (p.TMark0 != 0 ? ", runtime " + Ms(p.TMark0 - p.TEntry) : "")
+                + (p.TMark1 != 0 && p.TCodeDone > p.TMark1 ? ", code " + Ms(p.TCodeDone - p.TMark1) : "")
+                + " ms\n";
+            // Whole, or another thread's line lands in the middle of it.
+            Preemption.Suppress();
+            Serial.WriteString(line);
+            Preemption.Allow();
+        }
+
+        // Milliseconds with one decimal.
+        private static string Ms(ulong ticks)
+        {
+            ulong hz = OS.Hal.Timer.Hpet.FrequencyHz;
+            if (hz == 0) return "?";
+            ulong tenths = ticks * 10_000 / hz;
+            return (tenths / 10).ToString() + "." + (tenths % 10).ToString();
         }
 
         // A complete life only (it reached its code and set up its runtime);

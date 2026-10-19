@@ -130,6 +130,14 @@ namespace OS.Kernel.Diagnostics
         ThreadSpawns,
         ThreadSpawnTicks,
 
+        // Inside Scheduler.Yield (step208): expired timers drained (each reads
+        // the HPET when anything sleeps) and their time; the context switch
+        // itself (CoopSwitch: registers, FPU state, the GS base) and its time.
+        SchedDrains,
+        SchedDrainTicks,
+        SchedCoops,
+        SchedCoopTicks,
+
         Count,
     }
 
@@ -427,6 +435,8 @@ namespace OS.Kernel.Diagnostics
             Timed(scope, "sched.halt", ref delta, PerfCounter.IdleHalts, PerfCounter.IdleHaltTicks);
             Line(scope, "sched.sleeps", Get(ref delta, PerfCounter.Sleeps));
             Timed(scope, "sched.spawn", ref delta, PerfCounter.ThreadSpawns, PerfCounter.ThreadSpawnTicks);
+            Timed(scope, "sched.drain", ref delta, PerfCounter.SchedDrains, PerfCounter.SchedDrainTicks);
+            Timed(scope, "sched.coop", ref delta, PerfCounter.SchedCoops, PerfCounter.SchedCoopTicks);
             Timed(scope, "wait.address", ref delta, PerfCounter.AddressWaits, PerfCounter.AddressWaitTicks);
             Line(scope, "wait.wakes", Get(ref delta, PerfCounter.AddressWakes));
 

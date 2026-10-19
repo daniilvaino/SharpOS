@@ -328,6 +328,8 @@ namespace OS.Kernel.Process
             table.PreemptionPendingAddress = (ulong)OS.Kernel.Threading.Preemption.PendingAddress;
             table.YieldAddress = (ulong)(nint)(delegate* unmanaged<void>)&AppYield;
             table.FileOpenAddress = (ulong)(nint)(delegate* unmanaged<ulong, int, int*, int>)&FileOpen;
+            table.FileManageAddress = (ulong)(nint)(delegate* unmanaged<int, ulong, ulong*, int>)&FileManage;
+            table.FileControlAddress = (ulong)(nint)(delegate* unmanaged<int, int, long, long*, int>)&FileControl;
             table.FileReadAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, int, int*, int>)&FileRead;
             table.FileWriteAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, int, int>)&FileWrite;
             table.FileCloseAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&FileClose;
@@ -345,6 +347,7 @@ namespace OS.Kernel.Process
             if (serviceAbi != AppServiceAbi.SystemV)
             {
                 table.ExchangeAllocateAddress = (ulong)(nint)(delegate* unmanaged<ulong, void*>)&AppExchangeAllocate;
+                table.ExchangeAllocateUnzeroedAddress = (ulong)(nint)(delegate* unmanaged<ulong, void*>)&AppExchangeAllocateUnzeroed;
                 table.ExchangeFreeAddress = (ulong)(nint)(delegate* unmanaged<void*, uint>)&AppExchangeFree;
                 table.PipeCreateAddress = (ulong)(nint)(delegate* unmanaged<uint, uint, int*, int>)&OS.Kernel.Pipes.PipeServices.Create;
                 table.PipeConnectAddress = (ulong)(nint)(delegate* unmanaged<ulong*, int>)&OS.Kernel.Pipes.PipeServices.Connect;
@@ -1017,7 +1020,7 @@ namespace OS.Kernel.Process
                 return (uint)AppServiceStatus.InvalidParameter;
 
             char* pathBuffer = stackalloc char[(int)MaxPathChars];
-            if (!TryReadAsciiPath(request->PathAddress, pathBuffer, MaxPathChars))
+            if (!TryReadUtf8Path(request->PathAddress, pathBuffer, MaxPathChars))
                 return (uint)AppServiceStatus.InvalidParameter;
 
             BootInfo bootInfo = Platform.GetBootInfo();
@@ -1040,7 +1043,7 @@ namespace OS.Kernel.Process
                 return (uint)AppServiceStatus.InvalidParameter;
 
             char* pathBuffer = stackalloc char[(int)MaxPathChars];
-            if (!TryReadAsciiPath(request->PathAddress, pathBuffer, MaxPathChars))
+            if (!TryReadUtf8Path(request->PathAddress, pathBuffer, MaxPathChars))
                 return (uint)AppServiceStatus.InvalidParameter;
 
             BootInfo bootInfo = Platform.GetBootInfo();
@@ -1071,7 +1074,7 @@ namespace OS.Kernel.Process
                 return (uint)AppServiceStatus.InvalidParameter;
 
             char* pathBuffer = stackalloc char[(int)MaxPathChars];
-            if (!TryReadAsciiPath(request->DirectoryPathAddress, pathBuffer, MaxPathChars))
+            if (!TryReadUtf8Path(request->DirectoryPathAddress, pathBuffer, MaxPathChars))
                 return (uint)AppServiceStatus.InvalidParameter;
 
             BootInfo bootInfo = Platform.GetBootInfo();
@@ -1094,14 +1097,14 @@ namespace OS.Kernel.Process
             if (mappedStatus != AppServiceStatus.Ok)
                 return (uint)mappedStatus;
 
-            AppServiceStatus copyStatus = TryWriteAsciiName(
+            AppServiceStatus copyStatus = TryWriteUtf8Name(
                 nameBufferUtf16,
                 nameLengthUtf16,
                 (byte*)request->NameBufferAddress,
                 request->NameBufferCapacity,
-                out uint asciiNameLength);
+                out uint nameBytes);
 
-            request->NameLength = asciiNameLength;
+            request->NameLength = nameBytes;
             if (copyStatus != AppServiceStatus.Ok)
                 return (uint)copyStatus;
 
@@ -1317,6 +1320,13 @@ namespace OS.Kernel.Process
         }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void* AppExchangeAllocateUnzeroed(ulong size)
+        {
+            uint generation = global::OS.Kernel.Threading.Scheduler.Current?.AppGeneration ?? 0;
+            return generation == 0 ? null : OS.Kernel.Memory.ExchangeHeap.Allocate(size, generation, zero: false);
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static uint AppExchangeFree(void* block)
         {
             uint generation = global::OS.Kernel.Threading.Scheduler.Current?.AppGeneration ?? 0;
@@ -1392,7 +1402,7 @@ namespace OS.Kernel.Process
                 return (uint)AppServiceStatus.Unsupported;
 
             char* pathBuffer = stackalloc char[(int)MaxPathChars];
-            if (!TryReadAsciiPath(request->PathAddress, pathBuffer, MaxPathChars))
+            if (!TryReadUtf8Path(request->PathAddress, pathBuffer, MaxPathChars))
                 return (uint)AppServiceStatus.InvalidParameter;
 
             string path = string.FromUtf16Z(pathBuffer, (int)MaxPathChars);
@@ -1456,7 +1466,7 @@ namespace OS.Kernel.Process
                 return (uint)AppServiceStatus.InvalidParameter;
 
             char* pathBuffer = stackalloc char[(int)MaxPathChars];
-            if (!TryReadAsciiPath(request->PathAddress, pathBuffer, MaxPathChars))
+            if (!TryReadUtf8Path(request->PathAddress, pathBuffer, MaxPathChars))
                 return (uint)AppServiceStatus.InvalidParameter;
 
             if (!TryResolveRunAppAbi(
@@ -1470,7 +1480,11 @@ namespace OS.Kernel.Process
                 return (uint)AppServiceStatus.InvalidParameter;
             }
 
-            LogRunAppAbiSelection(abiSource, appAbiVersion, serviceAbi);
+            // No line here: before the image is read the choice is a stand-in
+            // (V1, win64), replaced by the image's manifest in StartFromPath,
+            // which says so itself when it matters — no manifest, or an ABI
+            // other than the current one. Printing the stand-in read as a
+            // fallback that never happened (step208).
 
             // A start, then a wait: the child is a process of its own, and the
             // caller merely waits for it (step194). Arguments are read now,
@@ -1499,27 +1513,89 @@ namespace OS.Kernel.Process
             return (uint)AppServiceStatus.Ok;
         }
 
-        private static bool TryReadAsciiPath(ulong pathAddress, char* destination, uint destinationChars)
+        // A path from a program, NUL-terminated UTF-8 (step208; before, a
+        // byte a char — the same for ASCII, and nothing else got through),
+        // decoded into UTF-16 with its NUL. False for an empty path, one that
+        // does not fit, or bytes that are not UTF-8.
+        private static bool TryReadUtf8Path(ulong pathAddress, char* destination, uint destinationChars)
         {
             if (pathAddress == 0 || destination == null || destinationChars < 2)
                 return false;
 
             byte* source = (byte*)pathAddress;
-            uint i = 0;
-            for (; i < destinationChars - 1; i++)
+            uint i = 0, o = 0;
+            while (true)
             {
-                byte value = source[i];
-                if (value == 0)
+                uint b = source[i];
+                if (b == 0)
                 {
-                    destination[i] = '\0';
-                    return i != 0;
+                    destination[o] = '\0';
+                    return o != 0;
                 }
-
-                destination[i] = (char)value;
+                uint codePoint;
+                int extra;
+                if (b < 0x80) { codePoint = b; extra = 0; }
+                else if ((b & 0xE0) == 0xC0) { codePoint = b & 0x1F; extra = 1; }
+                else if ((b & 0xF0) == 0xE0) { codePoint = b & 0x0F; extra = 2; }
+                else if ((b & 0xF8) == 0xF0) { codePoint = b & 0x07; extra = 3; }
+                else return false;
+                for (int k = 1; k <= extra; k++)
+                {
+                    uint c = source[i + (uint)k];
+                    if ((c & 0xC0) != 0x80) return false;
+                    codePoint = (codePoint << 6) | (c & 0x3F);
+                }
+                i += (uint)extra + 1;
+                if (codePoint >= 0x10000)
+                {
+                    if (o + 2 >= destinationChars) return false;
+                    codePoint -= 0x10000;
+                    destination[o++] = (char)(0xD800 + (codePoint >> 10));
+                    destination[o++] = (char)(0xDC00 + (codePoint & 0x3FF));
+                }
+                else
+                {
+                    if (o + 1 >= destinationChars) return false;
+                    destination[o++] = (char)codePoint;
+                }
             }
+        }
 
-            destination[destinationChars - 1] = '\0';
-            return false;
+        // UTF-16 to UTF-8 (step208): the bytes written, without the NUL — or,
+        // when `destination` is null or too small, the bytes it would take.
+        internal static uint Utf8Encode(char* source, uint length, byte* destination, uint capacity)
+        {
+            uint n = 0;
+            for (uint i = 0; i < length; i++)
+            {
+                uint c = source[i];
+                if (c >= 0xD800 && c <= 0xDBFF && i + 1 < length && source[i + 1] >= 0xDC00 && source[i + 1] <= 0xDFFF)
+                {
+                    c = 0x10000 + ((c - 0xD800) << 10) + (source[i + 1] - 0xDC00u);
+                    i++;
+                }
+                int count = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+                if (destination != null && n + (uint)count <= capacity)
+                {
+                    if (count == 1) destination[n] = (byte)c;
+                    else if (count == 2) { destination[n] = (byte)(0xC0 | (c >> 6)); destination[n + 1] = (byte)(0x80 | (c & 0x3F)); }
+                    else if (count == 3)
+                    {
+                        destination[n] = (byte)(0xE0 | (c >> 12));
+                        destination[n + 1] = (byte)(0x80 | ((c >> 6) & 0x3F));
+                        destination[n + 2] = (byte)(0x80 | (c & 0x3F));
+                    }
+                    else
+                    {
+                        destination[n] = (byte)(0xF0 | (c >> 18));
+                        destination[n + 1] = (byte)(0x80 | ((c >> 12) & 0x3F));
+                        destination[n + 2] = (byte)(0x80 | ((c >> 6) & 0x3F));
+                        destination[n + 3] = (byte)(0x80 | (c & 0x3F));
+                    }
+                }
+                n += (uint)count;
+            }
+            return n;
         }
 
         private static bool TryResolveRunAppAbi(
@@ -1584,60 +1660,25 @@ namespace OS.Kernel.Process
             return false;
         }
 
-        private static void LogRunAppAbiSelection(AbiResolveSource source, uint appAbiVersion, AppServiceAbi serviceAbi)
-        {
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write("runapp abi source=");
-            UiText.Write(AbiResolveSourceName(source));
-            UiText.Write(" app=");
-            UiText.WriteUInt(appAbiVersion);
-            UiText.Write(" service=");
-            UiText.Write(ServiceAbiName(serviceAbi));
-            DebugLog.EndLine();
-        }
-
-        private static string AbiResolveSourceName(AbiResolveSource source)
-        {
-            switch (source)
-            {
-                case AbiResolveSource.Request: return "request";
-                case AbiResolveSource.ImageManifest: return "image-manifest";
-                case AbiResolveSource.Fallback: return "fallback";
-                default: return "fallback";
-            }
-        }
-
-        private static string ServiceAbiName(AppServiceAbi serviceAbi)
-        {
-            switch (serviceAbi)
-            {
-                case AppServiceAbi.WindowsX64: return "win64";
-                case AppServiceAbi.SystemV: return "sysv";
-                default: return "unknown";
-            }
-        }
-
-        private static AppServiceStatus TryWriteAsciiName(
+        private static AppServiceStatus TryWriteUtf8Name(
             char* source,
             uint sourceLength,
             byte* destination,
             uint destinationCapacity,
             out uint outputLength)
         {
-            outputLength = sourceLength;
+            // UTF-8 (step208; before, '?' for every non-ASCII character).
+            outputLength = 0;
             if (source == null || destination == null || destinationCapacity == 0)
                 return AppServiceStatus.InvalidParameter;
 
-            if (sourceLength + 1 > destinationCapacity)
+            uint needed = Utf8Encode(source, sourceLength, null, 0);
+            outputLength = needed;
+            if (needed + 1 > destinationCapacity)
                 return AppServiceStatus.BufferTooSmall;
 
-            for (uint i = 0; i < sourceLength; i++)
-            {
-                char value = source[i];
-                destination[i] = value <= 0x7F ? (byte)value : (byte)'?';
-            }
-
-            destination[sourceLength] = 0;
+            Utf8Encode(source, sourceLength, destination, destinationCapacity);
+            destination[needed] = 0;
             return AppServiceStatus.Ok;
         }
 

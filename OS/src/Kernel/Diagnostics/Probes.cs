@@ -541,6 +541,15 @@
         // a QEMU run, never in anything that ships to hardware.
         public const bool UsbStorageWrite = false;
 
+        // Sends the stick a command block with a wrong signature, then reads
+        // sector 0 twice: proves BOT reset recovery (step208). Writes nothing;
+        // the refusal is what the specification requires of every device.
+        public const bool UsbStorageRecovery = Tests;
+
+        // A line per ended process to COM1: its start by phase, and whether
+        // the program came from the cache (step208).
+        public const bool ProcessStartLog = true;
+
         // Reset the sampler's tables after each periodic report, so every
         // report describes the last window instead of the whole boot.
         //

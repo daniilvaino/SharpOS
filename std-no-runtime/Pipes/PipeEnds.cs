@@ -110,8 +110,27 @@ namespace SharpOS.Std.Pipes
 
     public static partial class Pipe
     {
+        /// <summary>
+        /// Messages a pipe made by <see cref="Create"/> holds unless told
+        /// otherwise: 256 (step208). One CPU switches between writer and reader
+        /// each time the queue fills, and a process switch measured ~27 µs: at
+        /// 16 a small message between two processes cost 3.7 µs, at 256 0.53, at
+        /// 4096 0.30 (0.26 within one process). Bytes stay bounded by the
+        /// kernel's 4 MiB a queue; an app writer at the limit waits.
+        /// </summary>
+        public const uint DefaultCapacity = 256;
+
+        /// <summary>
+        /// The same for a pipe connected by name: 16, as before. There the room
+        /// is part of the meaning: a writer that closes before any reader came
+        /// loses what it wrote, and one with more to write than fits waits for
+        /// the reader instead (PROCTEST 3) - at 256, forty messages fitted, the
+        /// writer closed, and the reader waited for good.
+        /// </summary>
+        public const uint NamedCapacity = 16;
+
         /// <summary>A new pipe without a type: its write end and read end (pipe spec Р27).</summary>
-        public static PipePair Create(uint capacity = 16, PipeOverflow overflow = PipeOverflow.DropOldest)
+        public static PipePair Create(uint capacity = Pipe.DefaultCapacity, PipeOverflow overflow = PipeOverflow.DropOldest)
         {
             PipeStatus status = PipeTransport.Create(capacity, overflow, out int writer, out int reader);
             if (status != PipeStatus.Ok) throw new PipeException(status, "a new pipe: " + Explain(status));

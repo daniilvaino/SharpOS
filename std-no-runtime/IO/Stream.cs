@@ -5,8 +5,9 @@
 // Cuts vs original:
 //   - BeginRead/EndRead/BeginWrite/EndWrite; ReadAsync/WriteAsync/FlushAsync
 //     exist (step198) but their base versions complete synchronously.
-//   - CopyTo/CopyToAsync, timeouts, CanTimeout, synchronized
-//     wrapper, TextReader/TextWriter integration.
+//   - CopyToAsync, timeouts, CanTimeout, synchronized wrapper,
+//     TextReader/TextWriter integration. CopyTo is back (step208), with a
+//     plain buffer for ArrayPool's.
 // Kept: the sync byte[] Read/Write/Seek core + ReadExactly (net7+) that
 // ported app code (ManagedDoom WAD/save readers) actually calls.
 
@@ -72,6 +73,23 @@ namespace System.IO
         public abstract long Position { get; set; }
 
         public abstract int Read(byte[] buffer, int offset, int count);
+
+        // BCL's default buffer: under the large-object threshold (85 000 bytes).
+        private const int DefaultCopyBufferSize = 81920;
+
+        public void CopyTo(Stream destination) => CopyTo(destination, DefaultCopyBufferSize);
+
+        public virtual void CopyTo(Stream destination, int bufferSize)
+        {
+            if (destination == null) throw new ArgumentNullException(nameof(destination));
+            if (bufferSize <= 0) throw new ArgumentOutOfRangeException(nameof(bufferSize));
+            if (!CanRead) throw new NotSupportedException("Stream does not support reading.");
+            if (!destination.CanWrite) throw new NotSupportedException("Stream does not support writing.");
+            byte[] buffer = new byte[bufferSize];
+            int bytesRead;
+            while ((bytesRead = Read(buffer, 0, buffer.Length)) != 0)
+                destination.Write(buffer, 0, bytesRead);
+        }
         public abstract long Seek(long offset, SeekOrigin origin);
         public abstract void Write(byte[] buffer, int offset, int count);
         public abstract void Flush();

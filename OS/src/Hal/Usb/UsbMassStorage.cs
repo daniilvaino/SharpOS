@@ -169,9 +169,54 @@
             return TryCommand(cb, 10, (void*)s_dataBuffer, bytes, dataIn: false);
         }
 
-        // Command / data / status, the three phases of BOT.
+        // SYNCHRONIZE CACHE (10), opcode 0x35 (step208): the stick's cache to
+        // its flash, all of it (LBA 0, count 0). No data phase.
+        public static bool SynchronizeCache()
+        {
+            if (!s_present) return false;
+            byte* cb = stackalloc byte[16];
+            for (int i = 0; i < 16; i++) cb[i] = 0;
+            cb[0] = 0x35;
+            return TryCommand(cb, 10, null, 0, dataIn: false);
+        }
+
+        // A command, and once more if it failed in a way that took a reset
+        // recovery: the reset is what makes a second attempt meaningful. A
+        // refusal in the status block (check condition) is an answer, not a
+        // lost channel, and is not repeated.
         private static bool TryCommand(byte* commandBlock, byte commandLength,
                                        void* data, uint dataLength, bool dataIn)
+        {
+            ulong recoveries = s_recoveries;
+            if (TryCommandOnce(commandBlock, commandLength, data, dataLength, dataIn)) return true;
+            if (s_recoveries == recoveries) return false;
+            bool again = TryCommandOnce(commandBlock, commandLength, data, dataLength, dataIn);
+            if (again) s_retriesPassed++;
+            return again;
+        }
+
+        private static ulong s_failures;
+        private static ulong s_recoveries;
+        private static ulong s_retriesPassed;
+        public static ulong Failures => s_failures;
+        public static ulong Recoveries => s_recoveries;
+        public static ulong RetriesPassed => s_retriesPassed;
+
+        // Phases, for the log line.
+        private const int PhaseCommand = 1, PhaseData = 2, PhaseStatus = 3, PhaseReply = 4;
+
+        // Command / data / status, the three phases of BOT, and recovery as
+        // the specification orders it (BOT 1.0, 5.3 and 6.6):
+        //   a STALL on the data pipe - clear it, the status block still comes;
+        //   a STALL on the status read - clear the IN pipe, read it once more;
+        //   anything else - a timeout, a status block that is not one, a tag
+        //   from another command, phase error - is Reset Recovery.
+        // Before step208 every failure just returned false: the endpoint stayed
+        // halted, an abandoned TRB stayed queued, and each later command timed
+        // out or took its neighbour's reply. The disk looked empty and every
+        // access waited five seconds, until reboot.
+        private static bool TryCommandOnce(byte* commandBlock, byte commandLength,
+                                           void* data, uint dataLength, bool dataIn)
         {
             uint tag = s_tag++;
 
@@ -186,22 +231,128 @@
             for (int i = 0; i < commandLength && i < 16; i++) cbw[15 + i] = commandBlock[i];
 
             if (!s_hc.TryBulkTransfer(s_slot, false, (void*)s_cmdBuffer, CbwLength, out _))
-                return false;
+                return Fail(commandBlock[0], PhaseCommand, s_hc.LastCompletionCode, reset: true);
 
             if (dataLength > 0 && data != null)
             {
                 if (!s_hc.TryBulkTransfer(s_slot, dataIn, data, dataLength, out _))
-                    return false;
+                {
+                    uint code = s_hc.LastCompletionCode;
+                    if (code != CodeStall)
+                        return Fail(commandBlock[0], PhaseData, code, reset: true);
+                    Note(commandBlock[0], PhaseData, code);
+                    if (!TryClearHalt(dataIn)) return Fail(commandBlock[0], PhaseData, code, reset: true);
+                }
             }
 
             byte* csw = (byte*)(s_cmdBuffer + 64);
-            for (int i = 0; i < CswLength; i++) csw[i] = 0;
-            if (!s_hc.TryBulkTransfer(s_slot, true, (void*)(s_cmdBuffer + 64), CswLength, out _))
-                return false;
+            if (!TryReadStatus(csw, StatusTimeout(commandBlock[0])))
+            {
+                uint code = s_hc.LastCompletionCode;
+                if (code != CodeStall || !TryClearHalt(true) || !TryReadStatus(csw, StatusTimeout(commandBlock[0])))
+                    return Fail(commandBlock[0], PhaseStatus, s_hc.LastCompletionCode, reset: true);
+            }
 
-            if (Get32(csw, 0) != CswSignature) return false;
-            if (Get32(csw, 4) != tag) return false;        // reply to another request
-            return csw[12] == 0;                           // 0 = command passed
+            // Not a status block, or the reply to another command: the two
+            // sides disagree about where they are.
+            if (Get32(csw, 0) != CswSignature || Get32(csw, 4) != tag || csw[12] > 1)
+                return Fail(commandBlock[0], PhaseReply, csw[12], reset: true);
+            return csw[12] == 0;                           // 0 = passed, 1 = refused
+        }
+
+        /// <summary>
+        /// A command block with a wrong signature, for the boot probe: the
+        /// device must refuse it (QEMU stalls the OUT pipe), and the way back
+        /// is a full reset recovery. True when the refusal came and recovery
+        /// ran; whether the stick then works is for the probe's next read.
+        /// </summary>
+        public static bool ProvokeResetRecovery()
+        {
+            if (!s_present) return false;
+            byte* cbw = (byte*)s_cmdBuffer;
+            for (int i = 0; i < CbwLength; i++) cbw[i] = 0;
+            Put32(cbw, 0, 0x0BADC0DE);
+            Put32(cbw, 4, s_tag++);
+            cbw[14] = 6;                                   // TEST UNIT READY
+
+            ulong recoveries = s_recoveries;
+            if (s_hc.TryBulkTransfer(s_slot, false, (void*)s_cmdBuffer, CbwLength, out _))
+            {
+                // Taken without complaint: the device now waits to send a
+                // status block for a command it never ran. Read it, or be
+                // out of step - that, too, is recovery's job.
+                byte* csw = (byte*)(s_cmdBuffer + 64);
+                if (!TryReadStatus(csw, 5000)) Fail(0x00, PhaseStatus, s_hc.LastCompletionCode, reset: true);
+                else ResetRecovery();
+            }
+            else Fail(0x00, PhaseCommand, s_hc.LastCompletionCode, reset: true);
+            return s_recoveries != recoveries;
+        }
+
+        // xHCI completion code of a STALL.
+        private const uint CodeStall = 6;
+
+        private static bool TryReadStatus(byte* csw, uint timeoutMs)
+        {
+            for (int i = 0; i < CswLength; i++) csw[i] = 0;
+            return s_hc.TryBulkTransfer(s_slot, true, csw, CswLength, timeoutMs, out _);
+        }
+
+        // How long a status block may take. SYNCHRONIZE CACHE answers only once
+        // the medium has everything: a stick's flash, or under QEMU the host
+        // flushing the image file - measured past 2.8 s under WHPX after the
+        // battery's writes, where the old flat limit gave up, lost step with
+        // the device, and every later command failed until reboot (step208).
+        // Linux allows a flush a minute.
+        private static uint StatusTimeout(byte opcode) => opcode == 0x35 ? 60_000u : 5000u;
+
+        // Both halves of a halted pipe: the controller's endpoint, then the
+        // device's halt feature (CLEAR_FEATURE ENDPOINT_HALT, which also
+        // resets its data toggle to match the controller's).
+        private static bool TryClearHalt(bool directionIn)
+        {
+            bool host = s_hc.TryResetBulkEndpoint(s_slot, directionIn);
+            bool device = s_hc.TryControlOut(s_slot, 0x02, 0x01, 0, s_hc.BulkAddress(s_slot, directionIn));
+            return host && device;
+        }
+
+        // Reset Recovery (BOT 5.3.4): the class reset, which puts the device
+        // back to waiting for a command block, then both pipes cleared.
+        private static void ResetRecovery()
+        {
+            s_recoveries++;
+            bool reset = s_hc.TryControlOut(s_slot, 0x21, 0xFF, 0, s_hc.MassStorageInterface(s_slot));
+            bool inPipe = TryClearHalt(true);
+            bool outPipe = TryClearHalt(false);
+            Serial.WriteString("[usbmsd] reset recovery: class reset ");
+            Serial.WriteString(reset ? "ok" : "FAILED");
+            Serial.WriteString(", in pipe ");
+            Serial.WriteString(inPipe ? "ok" : "FAILED");
+            Serial.WriteString(", out pipe ");
+            Serial.WriteString(outPipe ? "ok\n" : "FAILED\n");
+        }
+
+        private static bool Fail(byte opcode, int phase, uint code, bool reset)
+        {
+            Note(opcode, phase, code);
+            if (reset) ResetRecovery();
+            return false;
+        }
+
+        // To COM1 only: a line on the screen would land in the middle of
+        // whatever the shell is drawing.
+        private static void Note(byte opcode, int phase, uint code)
+        {
+            s_failures++;
+            Serial.WriteString("[usbmsd] scsi 0x");
+            Serial.WriteHex(opcode, 2);
+            Serial.WriteString(phase == PhaseCommand ? " failed sending the command"
+                             : phase == PhaseData ? " failed moving data"
+                             : phase == PhaseStatus ? " failed reading status"
+                             : " got a bad status block");
+            Serial.WriteString(phase == PhaseReply ? ", status 0x" : ", xhci code 0x");
+            Serial.WriteHex(code, 2);
+            Serial.WriteString(code == 0 && phase != PhaseReply ? " (no event, timeout)\n" : "\n");
         }
 
         private static void Put32(byte* p, int offset, uint value)
@@ -244,6 +395,13 @@
         {
             OS.Kernel.Threading.Preemption.Suppress();
             try { return UsbMassStorage.Write(sector, count, data); }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
+
+        public override bool Flush()
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try { return UsbMassStorage.SynchronizeCache(); }
             finally { OS.Kernel.Threading.Preemption.Allow(); }
         }
     }

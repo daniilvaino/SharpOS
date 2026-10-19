@@ -109,6 +109,9 @@
                     s_services->ExchangeArenaSpan, (uint*)s_services->ExchangePageTable);
             SharpOS.Std.NoRuntime.GcHeap.s_enterCritical = &AppPreemption.Suppress;
             SharpOS.Std.NoRuntime.GcHeap.s_leaveCritical = &AppPreemption.Allow;
+            // The allocator's fast path bumps the same counter in place (step208).
+            SharpOS.Std.NoRuntime.GcHeap.s_preemptionPending = AppPreemption.PendingPointer;
+            SharpOS.Std.NoRuntime.GcHeap.s_preemptionDepth = AppPreemption.DepthPointer;
             SharpOS.Std.NoRuntime.GcStress.HeapBroken = &OnHeapBroken;
 
             // Every object on this heap has its type in this image, so the
@@ -156,13 +159,22 @@
                 // registration came to send nothing at all while the button
                 // that started it reported success.
                 //
-                // Monotonic, not correct: the epoch is MinValue plus uptime,
-                // because nothing hands an application the real date. That is
-                // deliberate - year one plus twenty minutes is obviously not a
-                // date, where a plausible wrong one would be believed. Anything
-                // that measures an interval works; anything that wants today
-                // still needs a service that does not exist yet.
-                System.DateTime.Clock.Install(&UtcTicks);
+                // Monotonic, and since step208 correct too: the kernel's wall
+                // clock (ProcessOpWallClock, 19 — the RTC read at boot,
+                // carried by the HPET) is asked once, and the difference to
+                // this counter is added to every reading after. A kernel
+                // without the service leaves MinValue plus uptime — year one
+                // plus twenty minutes is obviously not a date, where a
+                // plausible wrong one would be believed.
+                if (s_services->ProcessAddress != 0)
+                {
+                    ulong* request = stackalloc ulong[9];
+                    for (int i = 0; i < 9; i++) request[i] = 0;
+                    var status = (AppServiceStatus)((delegate* unmanaged<int, ulong*, int>)s_services->ProcessAddress)(19, request);
+                    if (status == AppServiceStatus.Ok && request[0] != 0)
+                        s_wallClockOffset = (long)request[0] - UtcTicks();
+                }
+                System.DateTime.Clock.Install(&WallTicks);
             }
 
             // Materialize the app image's GCStaticRegion (lazy `static readonly`
@@ -237,6 +249,12 @@
         /// a few hours in and multiplying by ten million overflows long long
         /// before that.
         /// </remarks>
+        // The kernel's date minus this counter at start (step208); 0 from a
+        // kernel that does not say the date.
+        private static long s_wallClockOffset;
+
+        private static long WallTicks() => UtcTicks() + s_wallClockOffset;
+
         private static long UtcTicks()
         {
             ulong hz = System.Diagnostics.Stopwatch.s_frequencyHz;

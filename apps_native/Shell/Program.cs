@@ -49,6 +49,20 @@ namespace Shell
                 return executor.RunLine(args[1]);
             }
 
+            // SHELL.EXE --complete LINE (step208): what Tab at the end of LINE
+            // offers, a string each, to the output — the battery's way to the
+            // completion, which at the prompt reads the keyboard.
+            if (args.Length == 2 && args[0] == "--complete")
+            {
+                var completion = new Completion(new Executor());
+                string line = args[1];
+                int index = line.LastIndexOfAny(completion.Separators) + 1;
+                string[] found = completion.GetSuggestions(line, index) ?? new string[0];
+                using var output = SharpOS.Std.Pipes.Pipe.Write<string>();
+                foreach (string s in found) output.Copy(s);
+                return 0;
+            }
+
             return args.Length >= 1 ? RunScript(Process.ResolvePath(args[0])) : Interactive();
         }
 
@@ -109,7 +123,38 @@ namespace Shell
             return failed == 0 ? 0 : 1;
         }
 
-        private static int Interactive() => Interactive(new Executor());
+        private static int Interactive()
+        {
+            var executor = new Executor();
+            RunStartup(executor);
+            return Interactive(executor);
+        }
+
+        // ENV (step208, as POSIX sh has it): a script the prompt runs first,
+        // its lines quietly — what it is for is export lines. Not for `sh -c`
+        // or a script: those get only what they were started with.
+        private static void RunStartup(Executor executor)
+        {
+            string path = System.Environment.GetEnvironmentVariable("ENV");
+            if (string.IsNullOrEmpty(path)) return;
+            path = Process.ResolvePath(path);
+
+            byte* buffer = stackalloc byte[MaxScriptBytes];
+            if (AppHost.TryReadFile(path, buffer, MaxScriptBytes, out uint length) != AppServiceStatus.Ok)
+            {
+                AppHost.WriteString("[sh] ENV: cannot read ");
+                AppHost.WriteString(path);
+                AppHost.WriteString("\n");
+                return;
+            }
+            uint index = 0;
+            while (index < length && !executor.ExitRequested)
+            {
+                string line = NextLine(buffer, length, ref index);
+                if (line.Length == 0 || line[0] == '#') continue;
+                executor.RunLine(line);
+            }
+        }
 
         // Takes the executor rather than making one, so a script that ends in
         // `shell` hands over its working directory and last exit code instead

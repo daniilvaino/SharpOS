@@ -7,4 +7,9 @@
     <RootNamespace>SharpOS.Bench</RootNamespace>
     <AssemblyName>Bench</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- PIPEPERF's micro benchmarks (step208): one file, two runtimes. -->
+    <Compile Include="..\..\apps_native\PipePerf\Micro.cs" Link="Micro.cs" />
+    <Compile Include="..\..\apps_native\PipePerf\BigGraph.cs" Link="BigGraph.cs" />
+  </ItemGroup>
 </Project>

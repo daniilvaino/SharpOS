@@ -1011,8 +1011,38 @@ namespace OS.Kernel.Diagnostics
             Console.WriteHex(sector[511]);
             Console.WriteLine(sector[510] == 0x55 && sector[511] == 0xAA ? " PASS" : " FAIL");
 
+            if (Probes.UsbStorageRecovery)
+                VerifyRecovery();
+
             if (Probes.UsbStorageWrite)
                 VerifyWrite();
+        }
+
+        // A command the stick must refuse, then sector 0 again (step208): the
+        // read only works if reset recovery brought both pipes and both
+        // sides' idea of the next command back in step. Before it, one
+        // refusal ended the stick's life until reboot.
+        private static void VerifyRecovery()
+        {
+            bool recovered = UsbMassStorage.ProvokeResetRecovery();
+            byte* sector = stackalloc byte[512];
+            for (int i = 0; i < 512; i++) sector[i] = 0;
+            bool read = UsbMassStorage.Read(0, 1, sector)
+                     && sector[510] == 0x55 && sector[511] == 0xAA;
+            bool again = read && UsbMassStorage.Read(0, 1, sector)
+                     && sector[510] == 0x55 && sector[511] == 0xAA;
+
+            Console.Write("[umsd] recovery after a refused command: recovered=");
+            Console.Write(recovered ? "Y" : "N");
+            Console.Write(" read=");
+            Console.Write(read ? "Y" : "N");
+            Console.Write(" again=");
+            Console.Write(again ? "Y" : "N");
+            Console.Write(" failures=");
+            Console.WriteULong(UsbMassStorage.Failures);
+            Console.Write(" recoveries=");
+            Console.WriteULong(UsbMassStorage.Recoveries);
+            Console.WriteLine(recovered && read && again ? " PASS" : " FAIL");
         }
 
         // Write a pattern and read it back from the last sector of the stick.

@@ -17,6 +17,11 @@
         /// <summary>One bulk transfer in either direction, start to finish.</summary>
         public bool TryBulkTransfer(uint slotId, bool directionIn,
                                            void* buffer, uint length, out uint residue)
+            => TryBulkTransfer(slotId, directionIn, buffer, length, 5000, out residue);
+
+        /// <summary>The same, with its own deadline: a status block can be seconds away.</summary>
+        public bool TryBulkTransfer(uint slotId, bool directionIn,
+                                           void* buffer, uint length, uint timeoutMs, out uint residue)
         {
             residue = 0;
             int di = IndexOfSlot(slotId);
@@ -28,8 +33,8 @@
             // before it reached here — so every caller that asked how much of
             // its buffer was real was told "all of it" whatever happened.
             return directionIn
-                ? TryBulkOn(slotId, ref d.BulkIn, buffer, length, 5000, out residue)
-                : TryBulkOn(slotId, ref d.BulkOut, buffer, length, 5000, out residue);
+                ? TryBulkOn(slotId, ref d.BulkIn, buffer, length, timeoutMs, out residue)
+                : TryBulkOn(slotId, ref d.BulkOut, buffer, length, timeoutMs, out residue);
         }
 
         /// <summary>

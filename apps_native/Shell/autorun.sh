@@ -63,7 +63,9 @@
 # --quick leaves out the 100 MiB file and the 64 MiB copy, which the full run
 # makes. DATATEST --perf prints the [perf197] measurements. Tests 16-17
 # (step206): `> file` of objects keeps them as an externalpipe and READ gives
-# them back; CBOR there and back.
+# them back; CBOR there and back. Test 19 (step208): export, unset, env,
+# which, $NAME in words and quotes, and the lines the shell refuses whole;
+# test 20 the completions Tab offers (SHELL --complete, KQL --complete).
 #
 # KQL (step200, streaming since step201): KQL 'query' runs the query over the
 # messages on its input (the table Input) as they come. `where Level == 4`
@@ -83,15 +85,15 @@
 expect 0 AOTTESTS.EXE --pipe-writer-dies normal
 expect 134 AOTTESTS.EXE --pipe-writer-dies crash
 expect 0 AOTTESTS.EXE --pipe-stress 2
-expect 303 AOTTESTS.EXE
-expect 303 AOTTESTS.EXE
+expect 307 AOTTESTS.EXE
+expect 307 AOTTESTS.EXE
 expect 0  BENCHAOT.EXE
 expect 3 AOTTESTS.EXE --echo-args 'two words' третий
 expect 2 AOTTESTS.EXE --untranslated-interface1
 expect 2 AOTTESTS.EXE --untranslated-interface2
 expect 2 AOTTESTS.EXE --untranslated-interface3
 expect 1 AOTTESTS.EXE --untranslated-interface4
-expect 303 AOTTESTS.EXE --gc-stress 16 4
+expect 307 AOTTESTS.EXE --gc-stress 16 4
 expect 0 AOTTESTS.EXE --gc-stress 1 1 --pipe-stress 1
 expect 23 AOTTESTS.EXE --gc-stress 1 1 --dynamic
 PIPEGEN 5
@@ -99,12 +101,12 @@ PIPEGEN 1000 | PIPEFILT 3 | PIPECNT
 PIPEGEN 20 | KQL 'where Level == 4'
 PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level | sort by Level asc'
 expect 2 KQL.EXE 'where Levl > 1'
-expect 83 PROCTEST.EXE
-expect 78 PROCTEST.EXE --gc-stress 16
-expect 19 PIPEPERF.EXE
+expect 85 PROCTEST.EXE
+expect 80 PROCTEST.EXE --gc-stress 16
+expect 20 PIPEPERF.EXE
 expect 64 JSONTEST.EXE
-expect 73 DATATEST.EXE
-expect 70 DATATEST.EXE --gc-stress 16 --quick
+expect 212 DATATEST.EXE
+expect 209 DATATEST.EXE --gc-stress 16 --quick
 expect 10 GVMTEST.EXE
 expect 7 KQLTEST.EXE
 expect 9 KQLBABY.EXE

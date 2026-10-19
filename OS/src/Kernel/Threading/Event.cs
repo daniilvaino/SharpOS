@@ -61,6 +61,73 @@
             // When we return, Set woke us. Wait.Next was nulled at wake time.
         }
 
+        /// <summary>
+        /// Waits at most <paramref name="timeoutMs"/> ms; true when signalled
+        /// (consuming it on auto-reset), false on the deadline (step208).
+        /// </summary>
+        /// <remarks>
+        /// The thread sleeps on the wait list and on the timer queue at once
+        /// (separate links), and whichever comes first wakes it. Before, a
+        /// timed wait was a loop of "check, read the HPET, yield": the waiter
+        /// never slept, and every turn cost a clock read that under WHPX leaves
+        /// the guest (7.7 µs) - one of CoreCLR's background threads in such a
+        /// wait took the CPU between two processes trading pipe messages.
+        /// </remarks>
+        public bool Wait(uint timeoutMs)
+        {
+            if (timeoutMs == 0xFFFFFFFFu) { Wait(); return true; }
+
+            Preemption.Suppress();
+            if (IsSet)
+            {
+                if (!IsManualReset) IsSet = false;
+                Preemption.Allow();
+                return true;
+            }
+
+            Thread? curr = Scheduler.Current;
+            ulong freq = OS.Hal.Timer.Hpet.FrequencyHz;
+            if (timeoutMs == 0 || curr == null || freq == 0)
+            {
+                Preemption.Allow();
+                return false;
+            }
+
+            curr.Wait.Next = _waitHead;
+            curr.Wait.Kind = WaitKind.Event;
+            _waitHead = curr;
+            curr.State = ThreadState.Waiting;
+            ulong ticksPerMs = freq / 1000UL;
+            if (ticksPerMs == 0UL) ticksPerMs = 1UL;
+            TimerQueue.Schedule(curr, OS.Hal.Timer.Hpet.ReadCounter() + (ulong)timeoutMs * ticksPerMs);
+
+            Preemption.Allow();
+            Scheduler.Yield();
+
+            // Set takes a waiter off the list; still on it, the timer woke us.
+            Preemption.Suppress();
+            bool timedOut = Unlink(curr);
+            if (!timedOut) TimerQueue.Cancel(curr);
+            Preemption.Allow();
+            return !timedOut;
+        }
+
+        // Under suppression: takes t off the wait list; false when it is not on it.
+        private bool Unlink(Thread t)
+        {
+            Thread? prev = null;
+            for (Thread? cur = _waitHead; cur != null; prev = cur, cur = cur.Wait.Next)
+            {
+                if (cur != t) continue;
+                if (prev == null) _waitHead = cur.Wait.Next;
+                else prev.Wait.Next = cur.Wait.Next;
+                cur.Wait.Next = null;
+                cur.Wait.Kind = WaitKind.None;
+                return true;
+            }
+            return false;
+        }
+
         // Signal the event. Manual-reset: wake ALL waiters, IsSet stays
         // true. Auto-reset: wake one waiter (if any), IsSet stays false;
         // if no waiter, IsSet becomes true (latched for the next Wait).

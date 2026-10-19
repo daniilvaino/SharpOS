@@ -9,10 +9,15 @@ namespace OS.Kernel.Process
     /// file, so one buffer serves any number of starts, in turn or at once.
     /// </summary>
     /// <remarks>
-    /// Keyed by path, upper-cased (FAT names do not tell case). A write to
-    /// the volume drops the whole cache (a size check would miss a file
-    /// rewritten in place) — except a sector write into a file opened for
-    /// such writes, the boot log's: that file is never kept. At most <see cref="LimitBytes"/>;
+    /// Keyed by path, upper-cased (FAT names do not tell case). A copy is
+    /// used while the path leads to the same first cluster and size and the
+    /// volume's journal of changes names no write into that file since
+    /// (step208; a size check alone would miss a file rewritten in place). A
+    /// sector write from outside any file, or a journal outrun, counts as a
+    /// change to every file. Before step208 any write dropped the whole
+    /// cache, and the shell's history line after each command meant an
+    /// interactive start never hit it. A file opened for sector writes, the
+    /// boot log's, is never kept. At most <see cref="LimitBytes"/>;
     /// the least recently started program goes first, never one a start is
     /// reading. Only once the kernel's own file system is mounted: before
     /// that the firmware reads files, into memory the arena does not own.
@@ -29,12 +34,13 @@ namespace OS.Kernel.Process
             public uint Size;
             public ulong LastUse;
             public int Users;
+            public uint First;          // the file's first cluster
+            public ulong Generation;    // Fat32.ContentGeneration it was last known unchanged at
         }
 
         private static readonly System.Collections.Generic.List<Entry> s_entries = new System.Collections.Generic.List<Entry>();
         private static ulong s_bytes;
         private static ulong s_clock;
-        private static ulong s_generation;
         private static ulong s_hits, s_misses;
 
         /// <summary>Pages the cache holds: the kernel's books leave them out, as they do its heap.</summary>
@@ -48,29 +54,45 @@ namespace OS.Kernel.Process
         /// it. The caller gives it back with <see cref="Return"/>. False when
         /// the cache is not in use: the caller reads and frees as before.
         /// </summary>
-        public static bool TryTake(string path, out void* buffer, out uint size, out AppServiceStatus status)
+        public static bool TryTake(string path, out void* buffer, out uint size, out AppServiceStatus status, out bool hit)
         {
             buffer = null;
             size = 0;
             status = AppServiceStatus.Ok;
+            hit = false;
             if (Fs.Current == null || path == null) return false;
 
             string key = path.ToUpperInvariant();
+            bool located = Fat32.Locate(path, out uint first, out uint locatedSize);
             Preemption.Suppress();
-            DropIfWritten();
-            Entry hit = Find(key);
-            if (hit != null)
-            {
-                hit.Users++;
-                hit.LastUse = ++s_clock;
-                s_hits++;
-                buffer = hit.Buffer;
-                size = hit.Size;
-            }
+            Entry kept = located ? Find(key) : null;
+            if (kept != null) kept.Users++;          // held while it is checked
             Preemption.Allow();
-            if (hit != null) return true;
 
-            ulong generation = Fat32.WriteGeneration;
+            // Kept only while the path leads to the same clusters, the same
+            // size, and nothing wrote into that file since it was read.
+            if (kept != null)
+            {
+                ulong seen = kept.Generation;
+                if (kept.First == first && kept.Size == locatedSize && !Fat32.ChangedSince(first, ref seen))
+                {
+                    Preemption.Suppress();
+                    if (seen > kept.Generation) kept.Generation = seen;
+                    kept.LastUse = ++s_clock;
+                    s_hits++;
+                    Preemption.Allow();
+                    buffer = kept.Buffer;
+                    size = kept.Size;
+                    hit = true;
+                    return true;
+                }
+                Preemption.Suppress();
+                kept.Key = null;                      // stale: freed when its last start is done
+                Preemption.Allow();
+                Return(kept.Buffer);
+            }
+
+            ulong generation = Fat32.ContentGeneration;
             int probe = Fs.Current.ReadFile(path, null, 0, out uint fileSize);
             if (probe < 0 || fileSize == 0) { status = AppServiceStatus.NotFound; return true; }
             void* file = OS.Kernel.Memory.NativeArena.Allocate(fileSize);
@@ -82,15 +104,19 @@ namespace OS.Kernel.Process
                 return true;
             }
 
-            bool sectorWritten = Fat32.IsSectorWritten(key);   // takes the volume's lock: not under suppression
-            var entry = new Entry { Key = key, Buffer = file, Size = fileSize, Users = 1 };
+            // These take the volume's lock: not under suppression.
+            bool sectorWritten = Fat32.IsSectorWritten(key);
+            bool same = located && Fat32.Locate(path, out uint firstAfter, out uint sizeAfter)
+                        && firstAfter == first && sizeAfter == fileSize
+                        && !Fat32.ChangedSince(first, ref generation);
+            var entry = new Entry { Key = key, Buffer = file, Size = fileSize, Users = 1, First = first, Generation = generation };
             Preemption.Suppress();
             s_misses++;
             entry.LastUse = ++s_clock;
-            // A file read while the volume was written to, a second copy of
-            // one read meanwhile, or one too small to give back is not kept
-            // for others: no key, freed when its start is done.
-            if (generation != Fat32.WriteGeneration || Find(key) != null || !Cacheable(fileSize) || sectorWritten)
+            // A file that changed while it was read, a second copy of one
+            // read meanwhile, or one too small to give back is not kept for
+            // others: no key, freed when its start is done.
+            if (!same || Find(key) != null || !Cacheable(fileSize) || sectorWritten)
                 entry.Key = null;
             s_entries.Add(entry);
             s_bytes += PagedBytes(fileSize);
@@ -141,17 +167,6 @@ namespace OS.Kernel.Process
                         oldest = i;
                 if (oldest < 0) return;
                 Remove(oldest);
-            }
-        }
-
-        private static void DropIfWritten()
-        {
-            if (s_generation == Fat32.WriteGeneration) return;
-            s_generation = Fat32.WriteGeneration;
-            for (int i = s_entries.Count - 1; i >= 0; i--)
-            {
-                if (s_entries[i].Users == 0) Remove(i);
-                else s_entries[i].Key = null;   // in use: never found again, freed on Return
             }
         }
 

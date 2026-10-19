@@ -88,6 +88,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)FileEntry.cs"            Link="sdk\FileEntry.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)SystemConsole.cs"        Link="sdk\SystemConsole.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FileSystemInfo.AppHost.cs" Link="sdk\FileSystemInfo.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ProcessStub.cs"          Link="sdk\ProcessStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Process.cs"              Link="sdk\Process.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppFile.cs"              Link="sdk\AppFile.cs" />

@@ -32,7 +32,11 @@ namespace SharpOS.Std.NoRuntime
                 return null;
 
             uint size = mt->BaseSize;
-            void* obj = GcHeap.AllocateObject(size, mt);
+            void* obj = GcHeap.TryAllocateFast(size, mt, 0);
+            if (obj != null)
+                return obj;
+
+            obj = GcHeap.AllocateObject(size, mt);
             if (obj == null)
                 throw GcHeap.OutOfMemory();
 
@@ -64,7 +68,11 @@ namespace SharpOS.Std.NoRuntime
             }
 
             // Length field lives at offset 8 (sizeof(MethodTable*) on x64).
-            void* obj = GcHeap.AllocateArray((uint)size64, mt, numElements);
+            void* obj = GcHeap.TryAllocateFast((uint)size64, mt, numElements);
+            if (obj != null)
+                return obj;
+
+            obj = GcHeap.AllocateArray((uint)size64, mt, numElements);
             if (obj == null)
                 throw GcHeap.OutOfMemory();
 

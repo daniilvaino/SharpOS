@@ -615,7 +615,7 @@ namespace SharpOS.Std.NoRuntime
 
             if (s_enterCritical != null) s_enterCritical();
             s_inAllocator = true;
-            void* allocated = AllocateRawCore(size);
+            void* allocated = AllocateFromContext(size);
             WriteHeader(allocated, methodTable, length, hasLength);
             s_inAllocator = false;
             if (s_leaveCritical != null) s_leaveCritical();
@@ -652,7 +652,7 @@ namespace SharpOS.Std.NoRuntime
                 if (s_enterCritical != null) s_enterCritical();
                 s_inAllocator = true;
                 s_growAfterCollect = true;
-                allocated = AllocateRawCore(size);
+                allocated = AllocateFromContext(size);
                 s_growAfterCollect = false;
                 WriteHeader(allocated, methodTable, length, hasLength);
                 s_inAllocator = false;
@@ -680,6 +680,197 @@ namespace SharpOS.Std.NoRuntime
             *(void**)allocated = methodTable;
             if (hasLength)
                 *(int*)((byte*)allocated + 8) = length;
+        }
+
+        // ---- the allocation context (step208) ----
+        //
+        // A run of zeroed memory, [s_allocPtr, s_allocLimit), handed out by
+        // moving the pointer: the shape of NativeAOT's and CoreCLR's
+        // allocation context. Before it every object, however small, went
+        // through the free list - split a block, write the remainder's
+        // marker, re-bucket it, look up the segment, zero in a loop - 28 ns
+        // where CoreCLR spends 3-7.
+        //
+        // The run is always walkable: a free marker covers whatever of it is
+        // still unused, moved forward by every allocation. So the heap walks
+        // (sweep, mark overflow, census, verify) need to know nothing about
+        // it. Only the sweep must: it rebuilds the free list from what it
+        // walks, the marker included, so BeginFreelistRebuild drops the run -
+        // otherwise its bytes would be handed out twice.
+        //
+        // One run, not one per thread: allocation runs with preemption
+        // suppressed, as before, and [ThreadStatic] does not work here.
+        private static nint s_allocPtr;
+        private static nint s_allocLimit;
+        private static GcSegmentHeader* s_allocSeg;
+
+        // Larger objects take the old path: a run is refilled for them alone.
+        private const uint ContextMaxObject = 2048;
+        // A fresh run out of the segment's untouched end, and the most a run
+        // takes of one free block (the rest stays on the free list).
+        private const uint ContextChunk = 32 * 1024;
+
+        private static ulong s_contextRefills;
+        /// <summary>Times the allocation context took a new run.</summary>
+        public static ulong ContextRefills => s_contextRefills;
+
+        private static void* AllocateFromContext(uint size)
+        {
+            uint aligned = (size + (ObjectAlignment - 1)) & ~(ObjectAlignment - 1);
+            if (aligned > ContextMaxObject)
+                return AllocateRawCore(size);
+            if ((ulong)(s_allocLimit - s_allocPtr) < aligned && !RefillContext(aligned))
+                return AllocateRawCore(size);   // no run to be had: the old path grows or fails
+
+            nint result = s_allocPtr;
+            nint next = result + (nint)aligned;
+            s_allocPtr = next;
+            if (next < s_allocLimit)
+                CoverWithFreeMarker(next, (uint)(s_allocLimit - next));
+
+            // The run was zeroed when taken; what is not zero is the marker
+            // this object took the place of (method table, length).
+            *(ulong*)result = 0;
+            *(ulong*)(result + 8) = 0;
+
+            s_allocCount++;
+            s_allocBytes += aligned;
+            SetObjectStart(s_allocSeg, result, true);
+            return (void*)result;
+        }
+
+        // Under the critical section. The run being left keeps its marker and
+        // goes back to the free list at the next sweep.
+        private static bool RefillContext(uint aligned)
+        {
+            GcSweep.EnsureInit();
+
+            nint chunk = TakeFreeRun(aligned, out uint chunkBytes);
+            if (chunk == 0)
+            {
+                GcSegmentHeader* seg = s_currentSegment;
+                if (seg == null) return false;
+                nint available = (seg->End - seg->Current) & ~(nint)(ObjectAlignment - 1);
+                if (available < (nint)aligned) return false;
+                chunkBytes = available > ContextChunk ? ContextChunk : (uint)available;
+                chunk = seg->Current;
+                seg->Current += (nint)chunkBytes;
+            }
+
+            MemoryPrimitives.Memset((void*)chunk, 0, chunkBytes);
+            s_allocSeg = FindSegmentContaining(chunk);
+            s_allocPtr = chunk;
+            s_allocLimit = chunk + (nint)chunkBytes;
+            CoverWithFreeMarker(chunk, chunkBytes);
+            s_contextRefills++;
+            return true;
+        }
+
+        // A free block of at least `aligned` bytes, whole up to ContextChunk.
+        private static nint TakeFreeRun(uint aligned, out uint taken)
+        {
+            taken = 0;
+            uint want = aligned < MinFreeBlockSize ? MinFreeBlockSize : aligned;
+            nint* heads = BucketHeads();
+            int own = BucketOf(want);
+            for (int b = own; b < FreeBucketCount; b++)
+            {
+                if (heads[b] == 0) continue;
+                void* block = TakeFromBucket(b, heads, want, b == own ? MaxSameBucketProbes : 1, ContextChunk, out taken);
+                if (block != null) return (nint)block;
+            }
+            return 0;
+        }
+
+        // The unused rest of the run as one free block, so a walk steps over it.
+        private static void CoverWithFreeMarker(nint at, uint bytes)
+        {
+            GcObject* marker = (GcObject*)at;
+            marker->RawMethodTable = GcSweep.FreeObjectMt;
+            marker->Length = bytes - 12;      // ComputeSize == bytes
+        }
+
+        // ---- the fast path (step208) ----
+        //
+        // RhpNewFast and RhpNewArray try this first: the context's pointer
+        // moved, the header and the object-start bit written, inside a
+        // critical section that is the host's counter bumped in place - no
+        // call. Through Allocate the same object cost five calls, two of them
+        // through function pointers, and 17 ns where CoreCLR spends 5-7.
+        //
+        // Only where nothing else must see the allocation: no "allowed?" hook
+        // (the kernel's, which counts allocations inside interrupts), no
+        // stress collection, no sampling profiler. The kernel installs the
+        // hook, so it stays on Allocate.
+
+        /// <summary>The host's preemption depth: the fast path's section. Null: no fast path.</summary>
+        public static uint* s_preemptionDepth;
+        /// <summary>The host's deferred-tick flag: set, leaving the section goes through <see cref="s_leaveCritical"/>.</summary>
+        public static byte* s_preemptionPending;
+
+        /// <summary>
+        /// An object of <paramref name="size"/> bytes with its method table and,
+        /// for an array, its length; null when the fast path cannot serve it and
+        /// the caller must take the full path.
+        /// </summary>
+        public static void* TryAllocateFast(uint size, void* methodTable, int length)
+        {
+            uint* depth = s_preemptionDepth;
+            if (depth == null || s_allocationAllowed != null || GcStress.Every != 0 || GC.AllocSampleEvery != 0)
+                return null;
+
+            uint aligned = (size + (ObjectAlignment - 1)) & ~(ObjectAlignment - 1);
+            (*depth)++;
+            nint result = s_allocPtr;
+            nint next = result + (nint)aligned;
+            if (next > s_allocLimit || aligned > ContextMaxObject)
+            {
+                LeaveFast(depth);
+                return null;
+            }
+
+            s_allocPtr = next;
+            if (next < s_allocLimit)
+                CoverWithFreeMarker(next, (uint)(s_allocLimit - next));
+
+            // Zeroed when the run was taken, but for the marker this object
+            // replaces: its method table goes over the first, the length (or
+            // zero) over the second.
+            *(void**)result = methodTable;
+            *(ulong*)(result + 8) = (uint)length;
+
+            s_allocCount++;
+            s_allocBytes += aligned;
+            GcSegmentHeader* seg = s_allocSeg;
+            nint index = (result - seg->ObjectStart) >> 4;
+            seg->Starts[index >> 3] |= (byte)(1 << (int)(index & 7));
+
+            LeaveFast(depth);
+            return (void*)result;
+        }
+
+        private static void LeaveFast(uint* depth)
+        {
+            if (--(*depth) == 0 && s_preemptionPending != null && *s_preemptionPending != 0)
+                TakeDeferredTick();
+        }
+
+        // The tick that came during the section: back in, and out through the
+        // host's own leave, which takes it.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void TakeDeferredTick()
+        {
+            (*s_preemptionDepth)++;
+            if (s_leaveCritical != null) s_leaveCritical();
+            else (*s_preemptionDepth)--;
+        }
+
+        /// <summary>Drops the allocation context: called before the free list is rebuilt.</summary>
+        private static void ResetAllocationContext()
+        {
+            s_allocPtr = 0;
+            s_allocLimit = 0;
+            s_allocSeg = null;
         }
 
         private static void* AllocateRawCore(uint size)
@@ -741,11 +932,8 @@ namespace SharpOS.Std.NoRuntime
 
             SetObjectStart(FindSegmentContaining((nint)result), (nint)result, true);
 
-            // Zero the region in 8-byte chunks (aligned is always 16-multiple).
-            ulong* p = (ulong*)result;
-            uint qwords = aligned >> 3;
-            for (uint i = 0; i < qwords; i++)
-                p[i] = 0;
+            // Zero the region (aligned is always a 16-multiple).
+            MemoryPrimitives.Memset(result, 0, aligned);
 
             return result;
         }
@@ -813,7 +1001,14 @@ namespace SharpOS.Std.NoRuntime
 
         // First-fit inside one bucket, walking at most `maxProbes` entries.
         private static void* TakeFromBucket(int bucket, nint* heads, uint aligned, int maxProbes)
+            => TakeFromBucket(bucket, heads, aligned, maxProbes, 0, out _);
+
+        // As above; with `maxTake` the block is taken whole, up to that many
+        // bytes (the allocation context's run, step208), and `taken` says how
+        // much. Without it, exactly `aligned`, counted as an allocation.
+        private static void* TakeFromBucket(int bucket, nint* heads, uint aligned, int maxProbes, uint maxTake, out uint taken)
         {
+            taken = 0;
             GcMethodTable* freeMt = GcSweep.FreeObjectMt;
             nint prev = 0;
             nint cur = heads[bucket];
@@ -837,9 +1032,12 @@ namespace SharpOS.Std.NoRuntime
                         *(nint*)(prev + FreeNextOffset) = nextNode;
                     s_freelistNodes--;
 
+                    uint take = maxTake == 0 ? aligned : (blockAligned < maxTake ? blockAligned : maxTake);
+                    taken = take;
+
                     // remaining is a multiple of ObjectAlignment (both blockAligned
-                    // and aligned are), so it is either 0 or >= 16.
-                    uint remaining = blockAligned - aligned;
+                    // and take are), so it is either 0 or >= 16.
+                    uint remaining = blockAligned - take;
                     if (remaining >= ObjectAlignment)
                     {
                         // ALWAYS turn a non-empty remainder into a walkable free
@@ -854,7 +1052,7 @@ namespace SharpOS.Std.NoRuntime
                         // is only ADDED to the freelist (next-pointer @+12, needs
                         // >= MinFreeBlockSize=32 so the pointer fits) when large
                         // enough; smaller ones stay walkable-but-unreused.
-                        nint tailPtr = cur + (nint)aligned;
+                        nint tailPtr = cur + (nint)take;
                         GcObject* tail = (GcObject*)tailPtr;
                         tail->RawMethodTable = freeMt;
                         tail->Length = remaining - 12;      // ComputeSize == remaining
@@ -870,8 +1068,11 @@ namespace SharpOS.Std.NoRuntime
                         }
                     }
 
-                    s_allocCount++;
-                    s_allocBytes += aligned;
+                    if (maxTake == 0)
+                    {
+                        s_allocCount++;
+                        s_allocBytes += aligned;
+                    }
                     s_freelistReuseCount++;
                     return (void*)cur;
                 }
@@ -892,6 +1093,9 @@ namespace SharpOS.Std.NoRuntime
         /// </remarks>
         public static void BeginFreelistRebuild()
         {
+            // The allocation context's run is about to be walked as a free
+            // block and linked again: it must not be handed out twice.
+            ResetAllocationContext();
             nint* heads = BucketHeads();
             for (int b = 0; b < FreeBucketCount; b++) heads[b] = 0;
             s_freelistNodes = 0;
@@ -1142,6 +1346,18 @@ namespace SharpOS.Std.NoRuntime
         /// sweep found no live object in it. Never the first segment nor the
         /// one being bumped into. Its free blocks were not linked.
         /// </summary>
+        /// <remarks>
+        /// An ordinary segment goes to the spares instead (step208), its pages
+        /// kept. An app collects when its page budget runs out, so every one
+        /// handed back was asked for again before the next collection: a
+        /// million small objects gave back and took again ~60 MiB per
+        /// collection, 18 ns an allocation in the kernel's page services. A
+        /// spare is the next segment the heap grows by; a request the budget
+        /// refuses - a large object - gives all spares back first and asks
+        /// again (AllocateSegment). Keeping them on the free list instead left
+        /// a large object no pages at all: OutOfMemory with the budget full
+        /// of empty segments.
+        /// </remarks>
         internal static bool TryReleaseSegment(GcSegmentHeader* seg, GcSegmentHeader* previous)
         {
             if (!GcMemorySource.CanRelease || seg == s_firstSegment || seg == s_currentSegment || previous == null)
@@ -1149,9 +1365,36 @@ namespace SharpOS.Std.NoRuntime
             previous->Next = seg->Next;
             if (s_lastFound == seg) s_lastFound = null;
             s_segmentCount--;
+            if ((ulong)(seg->End - seg->Start) == DefaultSegmentSize)
+            {
+                seg->Next = s_spareSegments;
+                s_spareSegments = seg;
+                s_spareCount++;
+                return true;
+            }
             s_releasedSegments++;
             GcMemorySource.ReleaseBlock((void*)seg->Start, (uint)(seg->End - seg->Start));
             return true;
+        }
+
+        // Empty ordinary segments, pages kept, linked through Next; outside the
+        // segment list, so no walk sees them.
+        private static GcSegmentHeader* s_spareSegments;
+        private static uint s_spareCount;
+
+        /// <summary>Empty segments kept for the heap's next growth.</summary>
+        public static uint SpareSegments => s_spareCount;
+
+        private static void ReleaseSpares()
+        {
+            while (s_spareSegments != null)
+            {
+                GcSegmentHeader* seg = s_spareSegments;
+                s_spareSegments = seg->Next;
+                s_spareCount--;
+                s_releasedSegments++;
+                GcMemorySource.ReleaseBlock((void*)seg->Start, (uint)(seg->End - seg->Start));
+            }
         }
 
         private static ulong s_releasedSegments;
@@ -1161,7 +1404,27 @@ namespace SharpOS.Std.NoRuntime
 
         private static GcSegmentHeader* AllocateSegment(uint totalSize)
         {
-            byte* block = (byte*)GcMemorySource.AllocateBlock(totalSize);
+            byte* block;
+            if (totalSize == DefaultSegmentSize && s_spareSegments != null)
+            {
+                // A spare: its pages are ours already. The header is laid out
+                // again below; what the dead left in it is zeroed by whoever
+                // hands it out (the context's run, AllocateRawCore).
+                GcSegmentHeader* spare = s_spareSegments;
+                s_spareSegments = spare->Next;
+                s_spareCount--;
+                block = (byte*)spare->Start;
+            }
+            else
+            {
+                block = (byte*)GcMemorySource.AllocateBlock(totalSize);
+                if (block == null && s_spareSegments != null)
+                {
+                    // The budget is held by empty segments: give them back, ask again.
+                    ReleaseSpares();
+                    block = (byte*)GcMemorySource.AllocateBlock(totalSize);
+                }
+            }
             if (block == null)
                 return null;
 

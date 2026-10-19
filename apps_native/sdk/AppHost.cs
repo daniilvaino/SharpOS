@@ -4,6 +4,8 @@
     {
         private const int MaxTempTextChars = 512;
         private const int MaxTempPathChars = 260;
+        // A path goes to the kernel in UTF-8 (step208): up to three bytes a character.
+        private const int MaxTempPathBytes = MaxTempPathChars * 3;
 
         public static void WriteString(byte* text)
         {
@@ -338,8 +340,8 @@
 
         public static AppServiceStatus FileExistsEx(string path)
         {
-            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
-            if (!TryEncodeAscii(path, pathBuffer, MaxTempPathChars + 1, out _))
+            byte* pathBuffer = stackalloc byte[MaxTempPathBytes + 1];
+            if (!TryEncodePath(path, pathBuffer, MaxTempPathBytes + 1, out _))
                 return AppServiceStatus.InvalidParameter;
 
             return FileExistsEx(pathBuffer);
@@ -372,8 +374,8 @@
 
         public static AppServiceStatus TryReadFile(string path, byte* buffer, uint bufferCapacity, out uint bytesRead)
         {
-            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
-            if (!TryEncodeAscii(path, pathBuffer, MaxTempPathChars + 1, out _))
+            byte* pathBuffer = stackalloc byte[MaxTempPathBytes + 1];
+            if (!TryEncodePath(path, pathBuffer, MaxTempPathBytes + 1, out _))
             {
                 bytesRead = 0;
                 return AppServiceStatus.InvalidParameter;
@@ -481,8 +483,8 @@
             uint nameBufferCapacity,
             out FileEntry entry)
         {
-            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
-            if (!TryEncodeAscii(directoryPath, pathBuffer, MaxTempPathChars + 1, out _))
+            byte* pathBuffer = stackalloc byte[MaxTempPathBytes + 1];
+            if (!TryEncodePath(directoryPath, pathBuffer, MaxTempPathBytes + 1, out _))
             {
                 entry = default;
                 return AppServiceStatus.InvalidParameter;
@@ -586,8 +588,8 @@
             AppServiceAbi serviceAbi,
             out int exitCode)
         {
-            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
-            if (!TryEncodeAscii(path, pathBuffer, MaxTempPathChars + 1, out _))
+            byte* pathBuffer = stackalloc byte[MaxTempPathBytes + 1];
+            if (!TryEncodePath(path, pathBuffer, MaxTempPathBytes + 1, out _))
             {
                 exitCode = 0;
                 return AppServiceStatus.InvalidParameter;
@@ -615,8 +617,8 @@
             if (!KernelTakesArguments)
                 return AppServiceStatus.Unsupported;
 
-            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
-            if (!TryEncodeAscii(path, pathBuffer, MaxTempPathChars + 1, out _))
+            byte* pathBuffer = stackalloc byte[MaxTempPathBytes + 1];
+            if (!TryEncodePath(path, pathBuffer, MaxTempPathBytes + 1, out _))
                 return AppServiceStatus.InvalidParameter;
 
             int total = 0;
@@ -651,6 +653,18 @@
             if (services == null || services->ExchangeAllocateAddress == 0)
                 return null;
             return ((delegate* unmanaged<ulong, void*>)services->ExchangeAllocateAddress)(size);
+        }
+
+        /// <summary>
+        /// As <see cref="ExchangeAllocate"/>, the payload not zeroed (step208): for
+        /// a writer of every byte. An older kernel: zeroed after all.
+        /// </summary>
+        public static void* ExchangeAllocateUnzeroed(ulong size)
+        {
+            AppServiceTable* services = AppRuntime.Services;
+            if (services == null || services->ExchangeAllocateUnzeroedAddress == 0)
+                return ExchangeAllocate(size);
+            return ((delegate* unmanaged<ulong, void*>)services->ExchangeAllocateUnzeroedAddress)(size);
         }
 
         /// <summary>Gives a block back; false when it is not a live block of this run.</summary>
@@ -787,8 +801,8 @@
 
         public static AppServiceStatus TryRunManagedApp(string path, out int exitCode)
         {
-            byte* pathBuffer = stackalloc byte[MaxTempPathChars + 1];
-            if (!TryEncodeAscii(path, pathBuffer, MaxTempPathChars + 1, out _))
+            byte* pathBuffer = stackalloc byte[MaxTempPathBytes + 1];
+            if (!TryEncodePath(path, pathBuffer, MaxTempPathBytes + 1, out _))
             {
                 exitCode = 0;
                 return AppServiceStatus.InvalidParameter;
@@ -832,27 +846,22 @@
             return true;
         }
 
-        public static bool TryEncodeAscii(string text, byte* destination, int destinationCapacity, out uint bytesWritten)
+        /// <summary>
+        /// A path as the kernel takes it (step208): UTF-8 and a NUL. Before,
+        /// every character past ASCII became '?', and Отчёт.txt was a file
+        /// nobody could open.
+        /// </summary>
+        public static bool TryEncodePath(string text, byte* destination, int destinationCapacity, out uint bytesWritten)
         {
             bytesWritten = 0;
             if (destination == null || destinationCapacity <= 0 || text == null)
                 return false;
-
-            int textLength = text.Length;
-            if (textLength + 1 > destinationCapacity)
+            int needed = System.Text.Encoding.UTF8.GetByteCount(text);
+            if (needed + 1 > destinationCapacity)
                 return false;
-
-            fixed (char* source = text)
-            {
-                for (int i = 0; i < textLength; i++)
-                {
-                    char value = source[i];
-                    destination[i] = value <= 0x7F ? (byte)value : (byte)'?';
-                }
-            }
-
-            destination[textLength] = 0;
-            bytesWritten = (uint)textLength;
+            int written = System.Text.Encoding.UTF8.GetBytes(text, new System.Span<byte>(destination, needed));
+            destination[written] = 0;
+            bytesWritten = (uint)written;
             return true;
         }
 

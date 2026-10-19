@@ -24,6 +24,35 @@ namespace System
             AppHost.WriteString("\n");
         }
 
+        /// <summary>
+        /// The error stream (step208): the kernel's error port (COM4), or the
+        /// console when the kernel has no such service.
+        /// </summary>
+        public static System.IO.TextWriter Error => s_error ??= new ErrorWriter();
+        private static System.IO.TextWriter s_error;
+
+        /// <summary>
+        /// The standard input as bytes (step208): a pipe's byte[] messages, or
+        /// its strings as UTF-8 text (SharpOS.Std.Pipes.Pipe.ReadBytes). With
+        /// no input handed over, a stream that ends at once — the keyboard is
+        /// ReadKey's. Opened once, as the pipe's standard end is.
+        /// </summary>
+        public static System.IO.Stream OpenStandardInput() => SharpOS.Std.Pipes.Pipe.ReadBytes();
+
+        private sealed class ErrorWriter : System.IO.TextWriter
+        {
+            public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+            public override void Write(char value) => Write(value.ToString());
+            public override void Write(string value)
+            {
+                if (string.IsNullOrEmpty(value)) return;
+                if (AppHost.HasErrorStream) AppHost.WriteError(value);
+                else AppHost.WriteString(value);
+            }
+            public override void WriteLine(string value) => Write((value ?? "") + "\n");
+            public override void WriteLine() => Write("\n");
+        }
+
         // BCL's object overloads. Ported code reaches for these without
         // thinking — Console.WriteLine(e) in a catch block is the common one —
         // and the alternative is a compile error at a call site nobody wants to

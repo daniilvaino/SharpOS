@@ -18,21 +18,16 @@ namespace OS.Hal
         private static int s_lockOwner;
         private static int s_lockDepth;
 
-        /// <summary>
-        /// Grows with every write to the volume that may change a file read
-        /// from it (step196). A sector write inside a file opened for sector
-        /// writes (TryOpenLinear: the boot log, a write per line) does not
-        /// count — only that file changed, and <see cref="IsSectorWritten"/>
-        /// names it.
-        /// </summary>
-        public static ulong WriteGeneration;
-
         // Files opened for sector writes: their upper-cased paths and sector runs.
         // Made on first use: the volume mounts early, statics with initializers come later.
         private static System.Collections.Generic.List<string> s_linearPaths;
         private static System.Collections.Generic.List<ulong> s_linearRuns;
 
-        /// <summary>Whether the file was opened for sector writes: its content changes without <see cref="WriteGeneration"/>.</summary>
+        /// <summary>
+        /// Whether the file was opened for sector writes (TryOpenLinear: the
+        /// boot log, a write per line): its content changes without a note in
+        /// the journal of changes (<see cref="ChangedSince"/>).
+        /// </summary>
         public static bool IsSectorWritten(string upperPath)
         {
             Enter();
@@ -51,7 +46,78 @@ namespace OS.Hal
 
         private static void Wrote(ulong lba, uint count)
         {
-            if (!InSectorWrittenFile(lba, count)) WriteGeneration++;
+            if (InSectorWrittenFile(lba, count)) return;
+            ContentChanged(AnyFile);
+        }
+
+        // Whose content changed, by first cluster (step208): the last
+        // ChangedRing changes, numbered by ContentGeneration. The program
+        // cache asks about its own files only - before it, every write to the
+        // volume dropped the whole cache, and the shell writes its history
+        // after every line, so an interactive KQL read its 5.8 MB anew on
+        // every start. A sector write from outside a file names no file: it
+        // stands for all of them.
+        private const int ChangedRing = 256;
+        private const uint AnyFile = 0;
+        private static ulong s_contentGeneration;
+        private static uint[] s_changedFirst;
+
+        // Under the lock. A file with no clusters yet (0) is new or empty: no
+        // copy of it can be kept, and a deleted file's clusters are noted when
+        // it is deleted, before anything can reuse them.
+        private static void ContentChanged(uint first)
+        {
+            s_changedFirst ??= new uint[ChangedRing];
+            s_contentGeneration++;
+            s_changedFirst[(int)(s_contentGeneration % ChangedRing)] = first;
+        }
+
+        private static void FileChanged(uint first)
+        {
+            if (first != AnyFile) ContentChanged(first);
+        }
+
+        // The file at the path, noted as changed (it is about to be).
+        private static void PathChanged(string path)
+        {
+            if (path != null && Resolve(path, out uint first, out _, out bool isDir) && !isDir) FileChanged(first);
+        }
+
+        /// <summary>Where content changes stand now: pass it to <see cref="ChangedSince"/> later.</summary>
+        public static ulong ContentGeneration
+        {
+            get { Enter(); try { return s_contentGeneration; } finally { Leave(); } }
+        }
+
+        /// <summary>
+        /// Whether the file starting at <paramref name="first"/> may have changed
+        /// since <paramref name="generation"/>; when not, <paramref name="generation"/>
+        /// moves to now. Older than the journal reaches is "may have".
+        /// </summary>
+        public static bool ChangedSince(uint first, ref ulong generation)
+        {
+            Enter();
+            try
+            {
+                ulong now = s_contentGeneration;
+                if (generation > now || now - generation > ChangedRing) return true;
+                for (ulong g = generation + 1; g <= now; g++)
+                {
+                    uint c = s_changedFirst[(int)(g % ChangedRing)];
+                    if (c == AnyFile || c == first) return true;
+                }
+                generation = now;
+                return false;
+            }
+            finally { Leave(); }
+        }
+
+        /// <summary>A file's first cluster and size; false for a directory or nothing.</summary>
+        public static bool Locate(string path, out uint first, out uint size)
+        {
+            Enter();
+            try { return Resolve(path, out first, out size, out bool isDir) && !isDir && s_isFat32; }
+            finally { Leave(); }
         }
 
         private static void Enter()
@@ -80,7 +146,19 @@ namespace OS.Hal
         public static bool Mount(Disk disk)
         {
             Enter();
-            try { return MountLocked(disk); }
+            try
+            {
+                bool before = s_mounted;
+                bool ok = MountLocked(disk);
+                if (ok && !before)
+                {
+                    // Single sectors cached from here on (step208), then the
+                    // free-cluster count, once.
+                    s_disk = CachedDisk.Over(s_disk, s_bps);
+                    if (s_isFat32) ReadFsInfo();
+                }
+                return ok;
+            }
             finally { Leave(); }
         }
 
@@ -173,7 +251,7 @@ namespace OS.Hal
         public static int WriteFileInPlace(string path, byte* src, int len)
         {
             Enter();
-            try { WriteGeneration++; return WriteFileInPlaceLocked(path, src, len); }
+            try { PathChanged(path); return WriteFileInPlaceLocked(path, src, len); }
             finally { Leave(); }
         }
 
@@ -187,7 +265,7 @@ namespace OS.Hal
         public static bool TryCreateFile(string path, uint sizeBytes)
         {
             Enter();
-            try { WriteGeneration++; return TryCreateFileLocked(path, sizeBytes); }
+            try { PathChanged(path); return TryCreateFileLocked(path, sizeBytes); }
             finally { Leave(); }
         }
     }

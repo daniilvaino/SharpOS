@@ -75,6 +75,8 @@ namespace System.Text
         // hidden: the callers that exist (System.Formats.Cbor) convert short
         // keys and text strings, and an honest extra allocation beats a
         // hand-rolled second decoder that can disagree with the first.
+        // UTF8Encoding overrides them (step208): its one encoder and one
+        // decoder work on spans, and its string overloads go through them.
 
         public virtual int GetByteCount(ReadOnlySpan<char> chars)
             => GetByteCount(StringOf(chars));
@@ -266,12 +268,42 @@ namespace System.Text
             _throwOnInvalidBytes = throwOnInvalidBytes;
         }
 
+        // --- decode -----------------------------------------------------
+        //
+        // One decoder, over spans (step208). The string and span overloads
+        // all come here: before, the span ones went through a string and the
+        // string one through a char[] — three allocations for a five-byte
+        // BinaryReader.ReadString, where the BCL makes one.
+
         public override string GetString(ReadOnlySpan<byte> bytes)
         {
+            // Counted first (strict mode throws here), then decoded straight
+            // into the one string this call allocates.
+            int count = Decode(bytes, default, write: false);
+            if (count == 0) return "";
+            string result = SharpOS.Std.NoRuntime.StringRuntime.FastAllocateString(count);
+            unsafe
+            {
+                fixed (char* p = result)
+                    Decode(bytes, new Span<char>(p, count), write: true);
+            }
+            return result;
+        }
+
+        public override int GetCharCount(ReadOnlySpan<byte> bytes) => Decode(bytes, default, write: false);
+
+        public override int GetChars(ReadOnlySpan<byte> source, Span<char> destination)
+        {
+            // A byte decodes to at most one char: room for that many needs no count.
+            if (destination.Length < source.Length && Decode(source, default, write: false) > destination.Length)
+                throw new ArgumentException("Destination too short.", nameof(destination));
+            return Decode(source, destination, write: true);
+        }
+
+        // Chars the bytes decode to; written to `chars` when `write`.
+        private int Decode(ReadOnlySpan<byte> bytes, Span<char> chars, bool write)
+        {
             int n = bytes.Length;
-            // Worst case: one char per byte (ASCII). Surrogate pairs consume
-            // 4 input bytes -> 2 chars, still <= n chars.
-            char[] chars = new char[n];
             int ci = 0;
             int i = 0;
             while (i < n)
@@ -279,7 +311,8 @@ namespace System.Text
                 byte b0 = bytes[i];
                 if (b0 < 0x80)
                 {
-                    chars[ci++] = (char)b0;
+                    if (write) chars[ci] = (char)b0;
+                    ci++;
                     i += 1;
                     continue;
                 }
@@ -293,9 +326,9 @@ namespace System.Text
                 if ((b0 & 0xE0) == 0xC0) { need = 2; cp = b0 & 0x1F; }
                 else if ((b0 & 0xF0) == 0xE0) { need = 3; cp = b0 & 0x0F; }
                 else if ((b0 & 0xF8) == 0xF0) { need = 4; cp = b0 & 0x07; }
-                else { if (!Bad(ref ci, chars)) return Throw(); i += 1; continue; }
+                else { Bad(chars, ref ci, write); i += 1; continue; }
 
-                if (i + need > n) { if (!Bad(ref ci, chars)) return Throw(); i += 1; continue; }
+                if (i + need > n) { Bad(chars, ref ci, write); i += 1; continue; }
 
                 bool ok = true;
                 for (int k = 1; k < need; k++)
@@ -317,38 +350,65 @@ namespace System.Text
                     else if (cp > 0x10FFFF) ok = false;
                 }
 
-                if (!ok) { if (!Bad(ref ci, chars)) return Throw(); i += 1; continue; }
+                if (!ok) { Bad(chars, ref ci, write); i += 1; continue; }
 
                 if (cp < 0x10000)
                 {
-                    chars[ci++] = (char)cp;
+                    if (write) chars[ci] = (char)cp;
+                    ci++;
                 }
                 else
                 {
                     cp -= 0x10000;
-                    chars[ci++] = (char)(0xD800 + (cp >> 10));
-                    chars[ci++] = (char)(0xDC00 + (cp & 0x3FF));
+                    if (write)
+                    {
+                        chars[ci] = (char)(0xD800 + (cp >> 10));
+                        chars[ci + 1] = (char)(0xDC00 + (cp & 0x3FF));
+                    }
+                    ci += 2;
                 }
                 i += need;
             }
-            return new string(chars, 0, ci);
-
-            // Writes the replacement character and says whether decoding may
-            // continue; false means the strict decoder has to give up.
-            bool Bad(ref int at, char[] buffer)
-            {
-                if (_throwOnInvalidBytes) return false;
-                buffer[at++] = '�';
-                return true;
-            }
-
-            // BCL: the strict decoder's DecoderExceptionFallback throws DecoderFallbackException
-            // (an ArgumentException). Callers - System.Formats.Cbor, System.Text.Json - catch
-            // exactly that type to rewrap it.
-            string Throw() => throw new DecoderFallbackException("Unable to translate bytes to the target code page: invalid UTF-8 byte sequence.");
+            return ci;
         }
 
-        public override int GetByteCount(string s)
+        // The replacement character, or - strict - the BCL's
+        // DecoderExceptionFallback: DecoderFallbackException (an
+        // ArgumentException). Callers - System.Formats.Cbor, System.Text.Json -
+        // catch exactly that type to rewrap it.
+        private void Bad(Span<char> chars, ref int at, bool write)
+        {
+            if (_throwOnInvalidBytes)
+                throw new DecoderFallbackException("Unable to translate bytes to the target code page: invalid UTF-8 byte sequence.");
+            if (write) chars[at] = '�';
+            at++;
+        }
+
+        // --- encode -----------------------------------------------------
+
+        public override int GetByteCount(string s) => CountBytes(s.AsSpan());
+
+        public override int GetByteCount(ReadOnlySpan<char> chars) => CountBytes(chars);
+
+        public override byte[] GetBytes(string s)
+        {
+            ReadOnlySpan<char> chars = s.AsSpan();
+            byte[] bytes = new byte[CountBytes(chars)];
+            Encode(chars, bytes);
+            return bytes;
+        }
+
+        public override int GetBytes(ReadOnlySpan<char> source, Span<byte> destination)
+        {
+            // Three bytes a char is the most a char can take (a pair is four
+            // for two): room for that needs no count. Strict mode still
+            // throws on a lone surrogate, from Encode.
+            if (destination.Length < source.Length * 3 && CountBytes(source) > destination.Length)
+                throw new ArgumentException("Destination too short.", nameof(destination));
+            return Encode(source, destination);
+        }
+
+        private int CountBytes(ReadOnlySpan<char> s)
         {
             int count = 0;
             for (int i = 0; i < s.Length; i++)
@@ -363,22 +423,8 @@ namespace System.Text
             return count;
         }
 
-        // A high surrogate at i with a low surrogate right after it.
-        private static bool IsPairAt(string s, int i)
-            => s[i] >= 0xD800 && s[i] <= 0xDBFF && i + 1 < s.Length && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF;
-
-        // BCL: an unpaired surrogate is invalid UTF-16. The strict encoder
-        // (throwOnInvalidBytes: true -> EncoderExceptionFallback) throws
-        // EncoderFallbackException; the default one writes U+FFFD instead.
-        private void ThrowIfStrict(char c, int index)
+        private int Encode(ReadOnlySpan<char> s, Span<byte> bytes)
         {
-            if (_throwOnInvalidBytes)
-                throw new EncoderFallbackException("Unable to translate Unicode character \\u" + ((int)c).ToString("X4") + " at index " + index.ToString() + " to specified code page.");
-        }
-
-        public override byte[] GetBytes(string s)
-        {
-            byte[] bytes = new byte[GetByteCount(s)];
             int bi = 0;
             for (int i = 0; i < s.Length; i++)
             {
@@ -404,14 +450,31 @@ namespace System.Text
                 }
                 else
                 {
-                    // An unpaired surrogate becomes U+FFFD (GetByteCount threw already in strict mode).
-                    if (c >= 0xD800 && c <= 0xDFFF) c = (char)0xFFFD;
+                    // An unpaired surrogate becomes U+FFFD; strict mode throws.
+                    if (c >= 0xD800 && c <= 0xDFFF)
+                    {
+                        ThrowIfStrict(c, i);
+                        c = (char)0xFFFD;
+                    }
                     bytes[bi++] = (byte)(0xE0 | (c >> 12));
                     bytes[bi++] = (byte)(0x80 | ((c >> 6) & 0x3F));
                     bytes[bi++] = (byte)(0x80 | (c & 0x3F));
                 }
             }
-            return bytes;
+            return bi;
+        }
+
+        // A high surrogate at i with a low surrogate right after it.
+        private static bool IsPairAt(ReadOnlySpan<char> s, int i)
+            => s[i] >= 0xD800 && s[i] <= 0xDBFF && i + 1 < s.Length && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF;
+
+        // BCL: an unpaired surrogate is invalid UTF-16. The strict encoder
+        // (throwOnInvalidBytes: true -> EncoderExceptionFallback) throws
+        // EncoderFallbackException; the default one writes U+FFFD instead.
+        private void ThrowIfStrict(char c, int index)
+        {
+            if (_throwOnInvalidBytes)
+                throw new EncoderFallbackException("Unable to translate Unicode character \\u" + ((int)c).ToString("X4") + " at index " + index.ToString() + " to specified code page.");
         }
     }
 }

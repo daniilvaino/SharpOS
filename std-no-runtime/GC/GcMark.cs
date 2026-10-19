@@ -23,12 +23,32 @@ namespace SharpOS.Std.NoRuntime
     [StructLayout(LayoutKind.Sequential, Size = GcMark.StackCapacity * 8)]
     internal struct GcMarkStackStorage { }
 
+    // Arrays being walked in parts: (array, next element), step208.
+    [StructLayout(LayoutKind.Sequential, Size = GcMark.PartCapacity * 16)]
+    internal struct GcMarkPartStorage { }
+
     internal static unsafe class GcMark
     {
         public const int StackCapacity = 4096;  // 4K entries × 8 bytes = 32 KB in .bss
 
         private static GcMarkStackStorage s_stack;
         private static int s_count;
+
+        // An array with more elements than a slice is not pushed whole: it
+        // waits here, and the next slice of its children goes on the stack
+        // only when the stack is empty (step208). Pushed whole, an array of
+        // 5000 references overflowed the 4096 entries on every collection
+        // that found it alive, and each overflow walked the whole heap again
+        // (GcMark.RecoverOverflow, 7.5 % of a pipe's ToHeap of 30 000
+        // objects). CoreCLR marks large arrays in parts for the same reason.
+        public const int PartCapacity = 256;
+        private const uint SliceReferences = 1024;
+        private static GcMarkPartStorage s_parts;
+        private static int s_partCount;
+        private static ulong s_partsWalked;
+
+        /// <summary>Slices of arrays marked in parts, ever.</summary>
+        public static ulong PartsWalked => s_partsWalked;
 
         // Diagnostics
         private static uint s_markedCount;
@@ -72,6 +92,7 @@ namespace SharpOS.Std.NoRuntime
             if (GcStress.VerifyHeap)
                 GcStress.Check(1);
             s_count = 0;
+            s_partCount = 0;
             s_markedCount = 0;
             s_droppedCount = 0;
             s_overflow = false;
@@ -127,8 +148,13 @@ namespace SharpOS.Std.NoRuntime
 
         private static void Drain()
         {
-            while (s_count > 0)
+            while (s_count > 0 || s_partCount > 0)
             {
+                if (s_count == 0)
+                {
+                    NextSlice();
+                    continue;
+                }
                 nint ptr = Pop();
                 GcObject* obj = (GcObject*)ptr;
 
@@ -189,7 +215,47 @@ namespace SharpOS.Std.NoRuntime
                 obj->Mark();
                 s_markedCount++;
 
-                GcObject.EnumerateObjectReferences(obj, &Push);
+                if (!TryPushInParts(obj))
+                    GcObject.EnumerateObjectReferences(obj, &Push);
+            }
+        }
+
+        // A wide array goes to the parts; false when it is narrow, of another
+        // shape, or the parts are full (then whole, as before).
+        private static bool TryPushInParts(GcObject* obj)
+        {
+            if (s_partCount >= PartCapacity) return false;
+            uint refs = GcObject.RefsPerItem(obj);
+            if (refs == 0 || (ulong)obj->Length * refs <= SliceReferences) return false;
+            fixed (GcMarkPartStorage* basePtr = &s_parts)
+            {
+                nint* slots = (nint*)basePtr;
+                slots[s_partCount * 2] = (nint)obj;
+                slots[s_partCount * 2 + 1] = 0;
+            }
+            s_partCount++;
+            return true;
+        }
+
+        // The next slice of the last array in parts: at most SliceReferences
+        // children onto an empty stack, which holds four times that.
+        private static void NextSlice()
+        {
+            fixed (GcMarkPartStorage* basePtr = &s_parts)
+            {
+                nint* slots = (nint*)basePtr;
+                int top = s_partCount - 1;
+                GcObject* obj = (GcObject*)slots[top * 2];
+                uint start = (uint)slots[top * 2 + 1];
+                uint refs = GcObject.RefsPerItem(obj);
+                uint perSlice = SliceReferences / refs;
+                if (perSlice == 0) perSlice = 1;
+                uint length = obj->Length;
+                uint end = length - start > perSlice ? start + perSlice : length;
+                if (end >= length) s_partCount--;
+                else slots[top * 2 + 1] = (nint)end;
+                s_partsWalked++;
+                GcObject.EnumerateArrayItems(obj, start, end, &Push);
             }
         }
 

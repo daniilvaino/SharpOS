@@ -121,20 +121,20 @@ namespace SharpOS.Std.Exchange
         /// </remarks>
         public static object ToHeap(byte* at, ulong size)
         {
+            // Three passes, not four (step208): the copies' holder grows as
+            // they are made instead of a pass counting them first. Every pass
+            // asks a record's plan, and neighbours are mostly of one type: the
+            // last plan answers before the table is asked (as RegionWriter.Lay
+            // does) - it was 14.5 % of a ToHeap of 30 000 objects.
             ulong low = (ulong)at;
-            int count = 0;
-            for (ulong cursor = 0; cursor < size; count++)
-            {
-                ulong objectAt = low + cursor + HeaderSize;
-                cursor += HeaderSize + PlanOf(objectAt).PayloadSize(objectAt);
-            }
-
-            var copies = new Chunked<object>(count);
+            var plans = new PlanCache();
+            var copies = new Chunked<object>(64);
             int n = 0;
             for (ulong cursor = 0; cursor < size; n++)
             {
                 ulong objectAt = low + cursor + HeaderSize;
-                TypePlan plan = PlanOf(objectAt);
+                TypePlan plan = plans.Of(objectAt);
+                copies.Ensure(n + 1);
                 copies[n] = Allocate(objectAt, plan);
                 *(ulong*)(objectAt - HeaderSize) = AddressOf(copies[n]);
                 cursor += HeaderSize + plan.PayloadSize(objectAt);
@@ -143,7 +143,7 @@ namespace SharpOS.Std.Exchange
             for (ulong cursor = 0; cursor < size;)
             {
                 ulong objectAt = low + cursor + HeaderSize;
-                TypePlan plan = PlanOf(objectAt);
+                TypePlan plan = plans.Of(objectAt);
                 ulong payload = plan.PayloadSize(objectAt);
                 CopyInto(*(ulong*)(objectAt - HeaderSize), objectAt, plan, payload, low, low + size);
                 cursor += HeaderSize + payload;
@@ -153,9 +153,25 @@ namespace SharpOS.Std.Exchange
             {
                 ulong objectAt = low + cursor + HeaderSize;
                 *(ulong*)(objectAt - HeaderSize) = 0;
-                cursor += HeaderSize + PlanOf(objectAt).PayloadSize(objectAt);
+                cursor += HeaderSize + plans.Of(objectAt).PayloadSize(objectAt);
             }
-            return count == 0 ? null : copies[0];
+            return n == 0 ? null : copies[0];
+        }
+
+        // PlanOf with the last answer kept.
+        private struct PlanCache
+        {
+            private ulong _table;
+            private TypePlan _plan;
+
+            public TypePlan Of(ulong objectAt)
+            {
+                ulong table = *(ulong*)objectAt & ~1UL;
+                if (table == _table && _plan != null) return _plan;
+                _plan = PlanOf(objectAt);
+                _table = table;
+                return _plan;
+            }
         }
 
         /// <summary>
@@ -211,9 +227,13 @@ namespace SharpOS.Std.Exchange
         {
             var mt = (SharpOS.Std.NoRuntime.GcMethodTable*)plan.Table;
             uint full = (uint)(plan.PayloadSize(objectAt) + 8);
-            void* raw = plan.HasComponents
-                ? SharpOS.Std.NoRuntime.GcHeap.AllocateArray(full, mt, *(int*)(objectAt + 8))
-                : SharpOS.Std.NoRuntime.GcHeap.AllocateObject(full, mt);
+            int length = plan.HasComponents ? *(int*)(objectAt + 8) : 0;
+            // The allocator's fast path first, as `new` takes it (step208).
+            void* raw = SharpOS.Std.NoRuntime.GcHeap.TryAllocateFast(full, mt, length);
+            if (raw == null)
+                raw = plan.HasComponents
+                    ? SharpOS.Std.NoRuntime.GcHeap.AllocateArray(full, mt, length)
+                    : SharpOS.Std.NoRuntime.GcHeap.AllocateObject(full, mt);
             if (raw == null) throw new OutOfMemoryException();
             nint address = (nint)raw;
             return System.Runtime.CompilerServices.Unsafe.As<nint, object>(ref address);
