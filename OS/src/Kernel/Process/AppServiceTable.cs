@@ -387,6 +387,12 @@
         // ExchangeAllocate, the payload not zeroed — for a writer of every
         // byte (a pipe's Copy). Zero: an older kernel; use ExchangeAllocate.
         public ulong ExchangeAllocateUnzeroedAddress;
+
+        // nint* ThreadWords() (step209): the running thread's words
+        // (ThreadArea), [1] the app's thread-static storage. A plain stub, not
+        // a service: no transition, called by every [ThreadStatic] access.
+        // Zero: an older kernel; thread statics throw.
+        public ulong ThreadWordsAddress;
     }
 
     /// <summary>

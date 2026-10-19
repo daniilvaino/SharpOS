@@ -3,9 +3,9 @@
 //
 // SharpOS cut: Shared is a ConfigurableArrayPool, not the original's
 // TlsOverPerCoreLockedStacksArrayPool — that one keeps a per-thread cache in
-// [ThreadStatic] fields, which do not work here (limits, ThreadStatic). The
-// configurable pool is the original's own, buckets under a lock, and what
-// Create() hands out there too.
+// [ThreadStatic] fields (working since step209; the port, with its per-core
+// stacks and trimming, is not done). The configurable pool is the original's
+// own, buckets under a lock, and what Create() hands out there too.
 //
 // Until step208 this was a pool that did not pool: Rent allocated, Return
 // dropped, and Shared made a new pool object on every access, because a

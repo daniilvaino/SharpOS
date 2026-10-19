@@ -45,9 +45,7 @@ namespace Kusto.Language.Parsing
         }
 
         // Sanitiy check recursive call depth to catch run-away parsing/scanning on deeply nested function calls, etc
-        // SharpOS cut: [ThreadStatic] removed — the app tier has no thread statics
-        // yet (Internal.Runtime.ThreadStatics, donext). One counter for all threads:
-        // exact while one thread parses, as KQL does in our programs.
+        [ThreadStatic]
         private static int s_callDepth;
         private const int MaxCallDepth = 30;
 

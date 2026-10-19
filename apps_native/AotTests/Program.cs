@@ -353,6 +353,7 @@ namespace AotTests
             CheckThreadsAndTasks();
             CheckPreemption();
             CheckCollectorPaths();
+            CheckThreadStatics();
             CheckClockWrap();
             CheckClockAdvances();
             CheckStackTraceText();

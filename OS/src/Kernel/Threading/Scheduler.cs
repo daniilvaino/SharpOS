@@ -121,8 +121,14 @@ namespace OS.Kernel.Threading
                 Teb = null,
                 Entry = null,
             };
+            ThreadArea.Init(ctx, (ulong)sTop, (ulong)sBase);
             s_current = t;
             RegisterThread(t);
+
+            // From here gs is the running thread's TEB, and [ThreadStatic]
+            // works in the kernel.
+            if (!ThreadArea.Activate(t))
+                Log.Write(LogLevel.Warn, "[sched] thread area not active: no exec buffer for the gs stubs");
             return true;
         }
 
@@ -190,7 +196,7 @@ namespace OS.Kernel.Threading
 
             // ContextBlock: SavedRsp at offset 0; FXSAVE template snapshot.
             *(ulong*)ctx = (ulong)initRsp;
-            *(ulong*)(ctx + 8) = 0;
+            ThreadArea.Init(ctx, (ulong)stackTop, (ulong)stack);
             X64Asm.Fxsave(ctx + FxsaveAreaOffset);
 
             Thread t = new Thread
@@ -433,15 +439,14 @@ namespace OS.Kernel.Threading
             // NT_TIB StackBase/StackLimit semantics).
             ulong stackTop  = (ulong)t.StackTop;
             ulong stackBase = (ulong)t.StackBase;
-            byte* teb = CoreClrTeb.Allocate(stackTop, stackBase);
+            byte* teb = CoreClrTeb.Allocate(stackTop, stackBase, ThreadArea.Words(t));
             if (teb != null)
             {
                 t.Teb = teb;
                 *(ulong*)(t.ContextBlock + 0x08) = (ulong)teb;
             }
-            // teb == null -> ContextBlock+0x08 stays 0 (CoopSwitch skips
-            // gs swap). Acceptable for non-CoreCLR kernel threads where
-            // we don't need CoreCLR thread_local isolation.
+            // teb == null -> the thread keeps its ThreadArea TEB: own words,
+            // no CoreCLR thread_local block.
 
             return t;
         }

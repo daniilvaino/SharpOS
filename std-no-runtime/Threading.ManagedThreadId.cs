@@ -11,14 +11,10 @@
 // and mutual exclusion silently becomes no exclusion at all — the worst kind of
 // defect, since the code reads as correct and the lock appears to work.
 //
-// The first attempt stored the id in a [ThreadStatic]. That does not work here:
-// ILC compiles a thread-static into a call through Internal.Runtime.ThreadStatics,
-// which neither tier's runtime has, and the build fails with the type named.
-// Failing at link time is the good outcome — a thread-static that quietly
-// resolved to one shared slot would have reintroduced the exact bug above.
-//
-// So the id comes from whoever actually knows: the scheduler owns the threads
-// and can name the one running. Same seam as ThreadBackend, for the same reason.
+// The id comes from whoever actually knows: the scheduler owns the threads and
+// can name the one running. Same seam as ThreadBackend, for the same reason.
+// (A [ThreadStatic] did not build before step209; it would work now, but the
+// scheduler's answer needs no storage and no first-access allocation.)
 
 namespace System.Threading
 {

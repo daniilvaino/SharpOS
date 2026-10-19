@@ -699,7 +699,8 @@ namespace SharpOS.Std.NoRuntime
         // otherwise its bytes would be handed out twice.
         //
         // One run, not one per thread: allocation runs with preemption
-        // suppressed, as before, and [ThreadStatic] does not work here.
+        // suppressed, as before, and a thread static is a call away (ThreadStatics),
+        // dearer than the critical section it would save.
         private static nint s_allocPtr;
         private static nint s_allocLimit;
         private static GcSegmentHeader* s_allocSeg;

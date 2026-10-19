@@ -24,10 +24,10 @@ namespace System.Threading
 
     public class SynchronizationContext
     {
-        // Process-wide rather than per thread: thread-statics do not work in
-        // this environment (see Threading.ManagedThreadId.cs). That matters
-        // only for code installing a different context on different threads,
-        // which nothing here does — stated rather than hidden.
+        // Process-wide rather than per thread, as written before thread statics
+        // worked (step209). That matters only for code installing a different
+        // context on different threads, which nothing here does — stated
+        // rather than hidden.
         private static SynchronizationContext? s_current;
 
         public SynchronizationContext() { }

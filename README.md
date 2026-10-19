@@ -201,6 +201,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `Task.Run`, `Task.Delay` | ✅ | ✅ | ✅ | на пуле потоков; потоки приложения умирают вместе с ним |
 | `ThreadPool.QueueUserWorkItem` | ⏳ | ⏳ | ✅ | |
 | `lock` (`Monitor.Enter` / `Exit`) | ✅ | ✅ | ✅ | `Pulse` / `Wait` намеренно не реализованы |
+| `[ThreadStatic]` | 🟡 | 🟡 | ✅ | с step209; каждое обращение — вызов, а не встроенный TLS; изнутри разделяемого обобщённого кода (через словарь) — исключение. В ядре — после `Scheduler.Init` |
 | `Interlocked.CompareExchange` | ✅ | 🟡 | ✅ | в std это заглушка без `LOCK`, верна только для одного потока; ядро вызывает настоящий `LOCK CMPXCHG` напрямую |
 | `Event` / `Semaphore` / `Mutex` | ✅ | ⏳ | ✅ | |
 | Кооперативные `Yield()` / `Sleep(ms)` | ✅ | ✅ | ✅ | в приложениях через `AppThreads.Sleep` |

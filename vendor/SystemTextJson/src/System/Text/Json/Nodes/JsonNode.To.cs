@@ -7,8 +7,9 @@ namespace System.Text.Json.Nodes
 {
     // SharpOS cut: the JsonSerializerOptions parameter of ToJsonString and WriteTo
     // (the serializer is not ported; output is what default options give), and
-    // Utf8JsonWriterCache (a [ThreadStatic] writer cache — no thread statics on
-    // the app tier): each call writes into its own ArrayBufferWriter.
+    // Utf8JsonWriterCache (a [ThreadStatic] writer cache — cut when thread
+    // statics did not build; they do since step209, the cache is not ported
+    // yet): each call writes into its own ArrayBufferWriter.
     public abstract partial class JsonNode
     {
         // SharpOS: JsonSerializerOptions.BufferSizeDefault.

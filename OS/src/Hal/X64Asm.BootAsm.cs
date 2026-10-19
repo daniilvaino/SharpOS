@@ -124,6 +124,21 @@ namespace OS.Hal
             a.ret();
         }
 
+        // The running thread's words (ThreadArea): its TLS slot array is at
+        // gs:[0x58], the words' address in slot 62.
+        [CompileTimeAsm]
+        private static partial int EmitThreadWordsBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitThreadWordsBootAsm))]
+        private static void EmitThreadWordsBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            // mov rax, gs:[0x58] — absolute disp32 through SIB, raw like the
+            // mov-imm32 forms above.
+            a.db(0x65, 0x48, 0x8B, 0x04, 0x25, 0x58, 0x00, 0x00, 0x00);
+            a.mov(rax, __qword_ptr[rax + 0x1F0]);
+            a.ret();
+        }
+
         // Read an arbitrary MSR. Win64: RCX = index (rdmsr reads ECX), result
         // in EDX:EAX which we join into RAX.
         [CompileTimeAsm]

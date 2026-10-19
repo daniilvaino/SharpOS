@@ -1,4 +1,4 @@
-﻿# Что дальше
+# Что дальше
 
 Только несделанное: фронты, долги и находки, которым ещё не нашлось шага.
 Сделанное отсюда **удаляется** — оно живёт в `done/stepNN.md` и в
@@ -23,6 +23,15 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
 2. **`Convert.From/ToBase64String`, `From/ToHexString`** — обёртки над `Base64Encoder`/`Base64Decoder`, которые уже в std.
 3. **Бросающие `DateTime.Parse`/`ParseExact`, `TimeSpan.Parse`/`ParseExact`; `Version.Parse`.**
 4. **`Regex`** (`System.Text.RegularExpressions`). Самый большой и самый нужный: из-за него вырезаны `matches regex` и `extract()` в BabyKusto, а разбор `.env` (`Formats/Dotenv`) заменяет регулярки compose-go ручным сканированием. Сначала интерпретатор (`RegexInterpreter`), без компилятора и генератора исходников.
+   Порт из `dotnet-runtime-sharpos`: 35 тыс. строк, без компиляторов
+   (`RegexCompiler`, `LWCG`, `AssemblyCompiler` — Reflection.Emit; BCL и сам
+   уходит в интерпретатор без динамического кода) и без `Symbolic`
+   (NonBacktracking) — ≈19 тыс. Не хватает в std (сверка 2026-10-08):
+   `Hashtable` (имена групп), `CharUnicodeInfo.GetUnicodeCategory` с таблицами
+   (`\w`), `SearchValues<char>`/`<string>`, `ConcurrentDictionary`,
+   `WeakReference<T>` (слабые ссылки в сборщике), `Environment.TickCount64`,
+   `string.Create<TState>`, `IndexOfAnyInRange`, `Volatile`,
+   `System.Threading.Lock` — порты, полезные и без Regex.
 5. Позже: `Enum.Parse` (нужны метаданные перечислений), `Uri`, `IPAddress`, `DateTimeOffset`, `BigInteger`, `Half`; XML в std (сейчас TurboXml только в ядре, для манифестов).
 
 ## Полный проход перед правкой — только перед сжатием
@@ -66,7 +75,7 @@ summarize n = count() by Level'`. Дальше:
 - **Слияние стадий** (`KQL | KQL`, `where | where`): каждая стадия сейчас —
   свой процесс и своё связывание.
 - **Вырезано** (`SharpOS cut:`): `matches regex`, `extract()` (нет Regex —
-  см. «Потоковые статики» ниже), `url_decode`/`url_encode_component` (нет
+  см. «Разборщики BCL»), `url_decode`/`url_encode_component` (нет
   `System.Uri`: порт тянет `Rune`, `SearchValues`, `UriParser`, `IriHelper`).
 - VIEWFILT → FILTER (`KQL 'where …'` или обёртка).
 - **Скорость:** главный тормоз найден, он не в KQL — `KernelHeap` (раздел
@@ -112,14 +121,6 @@ Kusto.Language (правка чужого парсера), `evaluate` в BabyKus
 строятся). Кэш — словарь под замком на каждый вызов: если GVM окажется
 горячим, — кэш без замка, как `TypeLoaderExports` в CoreLib.
 
-## Математика по процессору
-
-`LibmPatcher` переписывает точки входа SharpLibm по CPUID: SSE4.1 —
-floor/ceil/trunc/rint/nearbyint на `roundsd`, FMA3 при AVX-состоянии
-(step199) — `fma`/`fmaf` на `vfmadd`. Дальше — что ещё выгодно переключать
-(ветки CORE-MATH, которые без аппаратного FMA считают его программно, и
-прочие инструкции по CPUID), с замером до и после.
-
 ## Лишние живые потоки в первые секунды после загрузки
 
 В первые секунды работы оболочки живых потоков (`Process.KernelStats()[6]`)
@@ -143,25 +144,16 @@ autorun первым, проваливает проверку ресурсов; 
 
 ## Потоковые статики (`[ThreadStatic]`)
 
-В приложениях нет `Internal.Runtime.ThreadStatics` — ILC требует его для
-`[ThreadStatic]`. Обошли вырезом в Kusto (`ForwardParser.s_callDepth` — один
-счётчик на все потоки). Нужно: секция TLS-индексов ILC, блок статиков на
-поток в планировщике, `GetThreadStaticBaseForType`.
+Работают с step209 (limits §1). Осталось:
 
-Попутно — Regex: в std приложений и ядра его нет (работает только на
-CoreCLR-ярусе, step107). `System.Text.RegularExpressions` из
-`dotnet-runtime-sharpos`: 35 тыс. строк, без компиляторов (`RegexCompiler`,
-`LWCG`, `AssemblyCompiler` — Reflection.Emit; BCL и сам уходит в интерпретатор
-без динамического кода) и без `Symbolic` (NonBacktracking, ≈10 тыс.) —
-≈19 тыс. Чего нет в std (беглая сверка 2026-10-08):
-`Hashtable` (имена групп, публичный API — нужен), `CharUnicodeInfo.
-GetUnicodeCategory` с таблицами (`\w`), `SearchValues<char>`/`<string>`
-(оптимизации поиска, разбор), `ConcurrentDictionary` (кэш статических
-методов), `WeakReference<T>` (кэш замен — нужна поддержка слабых ссылок в
-сборщике), мелочь: `Environment.TickCount64`, `string.Create<TState>`,
-`IndexOfAnyInRange`, `Volatile`, `System.Threading.Lock`. Всё это — порты
-BCL, полезные и без Regex. Kusto и BabyKusto Regex почти не требуют:
-`matches regex` и `extract` без него вырезаются.
+- **Из разделяемого обобщённого кода** — ячейка словаря «индекс потокового
+  статика» (`GenericVirtualMethods`), сейчас исключение при встрече.
+- **Порты, которые ждали их:** `TlsOverPerCoreLockedStacksArrayPool` для
+  `ArrayPool.Shared`, `Utf8JsonWriterCache` в System.Text.Json,
+  `SynchronizationContext.Current` на поток.
+- **Цена обращения** — вызов функции. Если окажется на горячем пути:
+  встроенный TLS (`.tls` и `_tls_index` приложения, ячейка в массиве слотов
+  потока — TEB и массив у каждого потока уже есть).
 
 ## Долги шага 197
 
@@ -264,68 +256,6 @@ UTF-8 и отдаёт движку терминала **по символу**, �
   но сначала — источник сегментов не из `KernelHeap`, а страницами.
 - **Остальное, что не возвращается**: стеки потоков ядра и хостовых CoreCLR,
   C-куча CoreCLR (`free` — no-op), файлы `FileOpen`, `ActiveCatches`.
-- **Разметка сборщика приложения при переполнении стека пометки**
-  (`dropped=82853` в PIPEPERF): повторные проходы по куче и
-  `FindSegmentContaining` на каждый кандидат. Под WHPX PIPEPERF — 0,5 с, под TCG
-  от 4,7 до 25 с (step205), так что это цена эмулятора, но стек пометки на
-  4096 записей для графов в 100 000 объектов мал и под ускорением.
-
-**Куча приложений** — дальнейшие этапы прежнего плана (склейка и корзины
-сделаны в step178, ленивый источник — step196): `alloc_context` (bump-область
-без общих структур и без запрета вытеснения на каждое выделение, `gcinterface.h`)
-и поколения (`[appgc] collect #1 swept=968481 kept=541` — 99,94 % мусора;
-нужен барьер записи и карточная таблица, отдельная супер-задача).
-
-## Вернуть ядру точную сборку — консервативная была обходом бага
-
-Сейчас два сборщика ведут себя по-разному. **Приложение** собирает точно и без
-запасного пути: `AppGC.Collect` отказывается работать, если ядро не одолжило
-обходчик. **Ядро** собирает консервативно: хук в `BootSequence.cs:236` указывает
-на `KernelGC.CollectConservative`, туда же приходит отказ выделения
-(`GcHeap.cs:236`). Это spill всех регистров плюс `GcRoots.ScanStack` — каждое
-слово стека как кандидат в указатели. Точный `CollectPrecise` есть и работает,
-но зовут его только пробы.
-
-**Почему так вышло.** Комментарий над `CollectConservative`
-(`KernelGC.cs:158`) объясняет выбор: точный обходчик «does not reliably recover
-a root that lives in a callee-saved register at the collect callsite
-(write-barrier probe: local `h` kept in rbx got swept)».
-
-Корень, живущий в регистре **на точке вызова**, — это ровно та запись, которая
-лежит в наборе живых слотов точки безопасности. А таблицу точек безопасности
-декодер до step175 **пропускал не читая** (см. SYM-006 и
-`done/step175.md`). То есть тогдашний вывод «точный обход ненадёжен» был на
-деле «точный обход читает половину формата», и консервативная сборка — не
-осознанный выбор в пользу надёжности, а обход этого бага.
-
-**Что сделать.** Переставить хук на `CollectPrecise` и прогнать пробу
-write-barrier — ту самую, что когда-то и забраковала точный путь. Правка на
-одну строку, ценность — в прогоне.
-
-**Зачем.** Консервативный обход удерживает мусор по совпадению (любое слово
-стека, похожее на указатель) и тем растит паузу и кучу; при вытеснении и
-нескольких ядрах это только хуже. И пока в ядре живут оба пути, `ScanStack`
-остаётся в горячем коде со всей своей угадайкой.
-
-**Осторожно:** если проба снова падает, значит остался ещё один непрочитанный
-кусок формата, и это интереснее самой правки. Не списывать на «консервативный
-надёжнее» — именно так симптом и прожил столько времени.
-
-## Сборка мусора — цена паузы при вытеснении
-
-Замер из пробы step155: за 100 мс проходит около 16 сборок при куче, выросшей
-за прогон двадцать раз («heap grow pages: 65» × 19). То есть одна сборка — это
-единицы-десятки миллисекунд и растёт вместе с кучей.
-
-На одном ядре остановка мира сводится к запрету вытеснения на время сборки
-(`Preemption.Suppress`). Значит **вся длительность сборки — это задержка
-отклика**: пока она идёт, переключить нельзя никого. Для проб это незаметно,
-для интерактивной работы под глобально включённым вытеснением — уже нет.
-
-Варианты, по возрастанию цены: не собирать так часто (сейчас проба зовёт сборку
-в цикле намеренно); собирать инкрементально; поколенческая куча. Ни один не
-нужен сегодня — записано, чтобы при включении вытеснения по умолчанию это не
-стало открытием.
 
 ## Вытеснение управляемого кода (CoreCLR)
 
@@ -374,10 +304,6 @@ write-barrier — ту самую, что когда-то и забракова�
 - **Цена сброса на флешке.** Сброс идёт после каждого закрытого файла и каждой
   правки каталога (за прогон батареи — 2 200). Под QEMU с `cache=unsafe` бесплатно;
   на стенде замерить, при нужде — сбрасывать реже (по времени, при выключении).
-- **Команда USB-диска держит вытеснение.** `UsbDisk` подавляет вытеснение на всю
-  команду, ожидание — опрос кольца событий. Сброс кэша ждёт статуса до 60 с, и всё
-  это время машина стоит (step208: 2,8 с под QEMU до `cache=unsafe`). Нужно
-  ожидание с отдачей процессора, хотя бы для статуса сброса.
 - **Кэш данных и отложенная запись.** Кэш — только одиночные секторы
   (каталоги, FAT), запись сквозная. Данные идут мимо. Отложенная запись требует
   порядка записи и точек сброса, иначе после сбоя том в состоянии, которого не
@@ -438,88 +364,94 @@ Linux и Windows — в том, что перед ней:
   приём сборки прямо в SharpOS. Первый шаг — напечатать расширенные
   возможности xHCI на ноутбуке и ПК: есть ли DbC вообще.
 
-## Сеть: Windows IL целиком, одним комплектом
+## Асинхронный ввод-вывод и сеть
 
-**Решено НЕ ходить через fake-epoll и НЕ изобретать SocketAsyncEngine для
-SharpOS.** epoll — Linux-historical wart (readiness-multiplexer вокруг
-slow `select`), для новой ОС никакой пользы не несёт: stateful kernel
-объект, ET/LT семантика, thundering herd, лишний syscall round-trip. На
-оси, которая контролирует scheduler и net-стек end-to-end, async I/O
-выражается прямо через cooperative park/unpark — без multiplexer'а.
+Цель и критерии этапов — `plan.md`, «Текущее направление». Здесь — как.
 
-Windows-side путь (IOCP) на проде .NET'а **дозревший и стабильный**.
-Хотим взять его целиком, не выкусывая отдельные компоненты:
+**Где мы сейчас.** Весь ввод-вывод синхронный и останавливает машину:
+- служба `FileRead` → FAT32 под одной блокировкой на всю систему
+  (`Fat32.Lock.cs`) → `CachedDisk` → AHCI;
+- в AHCI прерывания порта выключены, одна команда в одном слоте, опрос
+  `CommandIssue` с подавленным вытеснением (`Ahci.cs`);
+- USB-диск так же опрашивает кольцо событий xHCI; сброс кэша ждёт статуса до
+  60 с, и всё это время машина стоит.
 
-### Что переключаем (в одном комплекте, не по частям)
+Прерываний от устройств нет: только таймер локального APIC (вектор 0x20); IOAPIC
+лишь считается в MADT, MSI нет. `Iocp`/`IocpBridge` — LIFO-семафор для пула
+потоков CoreCLR, а не порт завершения. PAL `ReadFile`/`WriteFile` синхронные.
+Сети нет. Проба `Socket ctor (TCP)` выключена.
 
-1. **ThreadPool IOCP-сторона** — Windows-side `PortableThreadPool` с
-   IOCP-bound completion threads. Сейчас у нас Unix-shaped, без
-   completion port'а.
-2. **OverlappedData / NativeOverlapped** — Windows-only managed типы в
-   CoreLib (`g_pOverlappedDataClass`), runtime path в CoreCLR для
-   аллокации pinned overlapped'ов и delivery callback'ов.
-3. **ThreadPool.BindHandle / UnsafeQueueNativeOverlapped** — public API
-   которое Sockets BCL зовёт для регистрации FD в pool'е.
-4. **CoreCLR IO thread bridge** — `g_IOCompletionPort`,
-   `ThreadpoolMgr::CompletionPortThreadStart`, сейчас Unix-no-op'ы.
-5. **System.Net.Sockets.dll (Windows IL)** — overlapped-based
-   `SocketAsyncEventArgs`, `WSARecv`/`WSASend`, `CancelIoEx` пути.
-   Заменяет epoll-based SocketAsyncEngine.
-6. **PAL: ws2_32 + IOCP shims** — `WSAStartup`/`WSACleanup`/
-   `WSASocketW`/`WSARecv`/`WSASend`/`closesocket`/`bind`/`listen`/
-   `accept`/`getaddrinfo`/`ioctlsocket`/`WSAGetLastError`/
-   `CreateIoCompletionPort`/`GetQueuedCompletionStatus(Ex)`/
-   `PostQueuedCompletionStatus`/`BindIoCompletionCallback`/
-   `CancelIoEx`. ~25 функций.
-7. **IOCP-эмуляция в kernel** — in-process completion queue (нашими
-   coop-нитями обслуживается естественно), привязка NIC ISR completion
-   → packet → IOCP entry → unblock waiting completion thread.
+**1. Прерывания устройств (MSI).**
+- Обход списка возможностей PCI; MSI и MSI-X; векторы с 0x30; таблица
+  обработчиков в IDT; EOI. IOAPIC не нужен: AHCI, xHCI и сетевые карты QEMU и
+  стенда умеют MSI. Нет MSI — опрос, как сейчас, и строка об этом в логе.
+- AHCI: прерывания порта (`PxIE`: D2H, SDB, ошибки); обработчик отмечает
+  завершённые слоты и будит ждущих.
+- xHCI: interrupter 0 (`IMAN`, `IMOD`); обработчик будит ждущих кольцо событий.
+- В логе: `[irq] ahci msi vector=… count=N`, `[irq] xhci …`.
 
-### Почему именно "в комплекте"
+**2. Драйверы ждут, а не крутятся.**
+- AHCI: подать команду → `Event.Wait(timeout)` до прерывания, без
+  `Preemption.Suppress` на время команды; очередь к порту — мьютекс ядра.
+- USB BOT: то же на событиях xHCI.
+- Блокировка FAT32: ждущий спит (`SpinYieldLock` → мьютекс ядра).
+- Проверка:
+  - `PIPEPERF --ipc-threads` рядом с чтением: время растёт не больше чем в 2 раза;
+  - `sched.halt` > 0 во время одного только чтения;
+  - `[start]` для `KQL.EXE` с диска при выключенном `ProgramCache`.
 
-Граница "только сетка" режется по ThreadPool/Overlapped — это **не
-модуль, это runtime contract**. Если переключить только Sockets.dll, то
-первый же `ThreadPool.BindHandle` упадёт `MissingMethodException` (в
-нашей Unix-IL CoreLib его нет). Если переключить только Sockets+CoreLib
-— на load не найдут `CreateIoCompletionPort` (PAL пуст). Точки разреза
-нет. Делать одной волной.
+**3. Очередь команд AHCI.** До 32 слотов, завершения по `PxCI`/`PxSACT`; NCQ
+(`READ/WRITE FPDMA QUEUED`), где поддерживается. Запрос драйвера: сектор,
+число, буфер, событие завершения.
 
-### Side benefit
+**4. Порт завершения ядра.**
+- `CompletionPort`: очередь пакетов (ключ, байты, статус, адрес overlapped),
+  привязка дескриптора, `Post`, `Get(timeout)`, `GetMany(n)`; пробуждение LIFO.
+- Порт — ресурс процесса: уходит с процессом вместе с невзятыми пакетами.
+- Тесты в AOTTESTS: post/get, таймаут, LIFO, много ждущих, конец процесса с
+  ждущими и с полной очередью. `IocpBridge` — поверх нового порта.
 
-После этого появляется **весь Windows-side async I/O** — не только
-Sockets: pipes, file overlapped, console async. Это даёт IOCP-backend
-для всего `System.IO.Pipelines` / `FileStream` async path. Стоимость
-делится на больший surface.
+**5. Асинхронные операции ФС.**
+- Рабочие потоки ввода-вывода в ядре (2–4): `ReadAsync(handle, offset, buffer,
+  key)` → синхронная операция FAT в работнике → пакет в порт. Асинхронность
+  внутри FAT — позже, если понадобится.
+- Службы в хвосте ABI (версия не меняется): чтение и запись по смещению,
+  асинхронные чтение и запись, порт (`Create`, `Bind`, `Get`, `Post`).
+- SDK/std: `FileStream.ReadAsync`/`WriteAsync`, `RandomAccess` поверх порта и
+  нашего `async`/`await`.
+- DATATEST: параллельные `ReadAsync`, закрытие посреди, ошибки диска, конец
+  процесса с запросами в работе.
 
-### Стоимость и порядок
+**6. CoreCLR: overlapped и порт.** PAL: `CreateFileW` с
+`FILE_FLAG_OVERLAPPED`, `ReadFile`/`WriteFile` с `OVERLAPPED`,
+`CreateIoCompletionPort`, `GetQueuedCompletionStatus(Ex)`,
+`PostQueuedCompletionStatus`, `CancelIoEx`, `GetOverlappedResult`. Выяснить,
+какие пути нынешней Unix-IL CoreLib дойдут до overlapped.
 
-Порядок — как этапы, не step-номера (номера присваиваются в момент
-коммита, заранее не фиксируются).
+**7. Сеть — Windows IL одним комплектом.** Ни fake-epoll, ни своего
+`SocketAsyncEngine`: путь IOCP в .NET зрелый, берём его целиком. Разреза нет:
+только Windows-IL `Sockets.dll` упадёт на первом `ThreadPool.BindHandle` (его
+нет в Unix-IL CoreLib), а Sockets вместе с CoreLib не найдут
+`CreateIoCompletionPort` в PAL. Комплект:
+- Windows-IL CoreLib, Sockets, Primitives — ветка в сборке форка;
+- сторона IOCP у пула потоков: `OverlappedData`/`NativeOverlapped`,
+  `BindHandle`, `UnsafeQueueNativeOverlapped`, `g_IOCompletionPort` и потоки
+  завершений в CoreCLR;
+- PAL ws2_32 (~25 функций, только ABI) поверх сокетов ядра на порту этапа 4.
 
-- Этап 0 (подготовка): собрать Windows-IL варианты CoreLib + Sockets
-  + Primitives в нашем fork'е (build/clr_sharpos.ps1 — добавить ветку).
-- Этап 1: ws2_32 PAL stubs (~25 функций, без логики, только ABI).
-- Этап 2: IOCP emulation в нашем kernel (Windows-shaped completion
-  queue, привязка к coop-scheduler).
-- Этап 3: CoreCLR side — `g_IOCompletionPort` activation,
-  CompletionPortThread bring-up, OverlappedData allocation path.
-- Этап 4: ThreadPool.BindHandle / UnsafeQueueNativeOverlapped public
-  API working, simple ping pong test (no network).
-- Этап 5: Sockets BCL Windows-IL поверх — `Socket ctor (TCP)` зелёная,
-  sync send/recv working.
-- Этап 6: async send/recv через `SocketAsyncEventArgs` → IOCP →
-  completion thread.
+Чего в комплекте нет:
+- драйвер сетевой карты: в QEMU virtio-net или e1000 (с MSI); у ноутбука стенда
+  RJ45 нет — USB-сеть CDC-NCM/ECM через наш USB-стек (телефон стенда умеет быть
+  такой картой);
+- стек TCP/IP, DHCP, DNS — взять готовый (MIT/BSD/Apache; кандидатов сравнить
+  отдельно), не писать свой.
 
-Реалистично: 1.5-2 недели сосредоточенной работы. Не "просто переключить
-dll".
+Порядок: кадры туда и обратно (ARP, ICMP) → UDP/TCP → сокеты ядра на порту →
+ws2_32 PAL → Windows-IL Sockets → `HttpClient`. Попутно появляется весь
+Windows-side async I/O: трубы, файлы, консоль.
 
-### Статус
-
-Сетевой комплект не начат. Проба `Socket ctor (TCP)` пропускается
-(отключена в Probes.cs / probe list). План — `plan.md` §11: сперва прерывания
-устройств, драйверы без опроса и порт завершения ядра (этапы 1–6), сеть —
-этап 7; «IOCP-эмуляция в kernel» отсюда — его этап 4. Своего драйвера сетевой
-карты и стека TCP/IP пока нет — это тоже этап 7.
+**Зависимости.** 1 → 2 — главный выигрыш: машина перестаёт стоять, ABI не
+меняется. 3 — после 2, от остального не зависит. 4 — до 5, 6, 7.
 
 ---
 
@@ -668,6 +600,11 @@ MinimalRuntime обязана явно ответить «нужен ли тот
 кучи уже есть), продвижение выживших. Отдельная большая работа — для ядра и
 приложений сразу, общая std.
 
+Пауза: на одном ядре сборка идёт под запретом вытеснения, и вся её
+длительность — задержка отклика (проба step155: ~16 сборок за 100 мс, куча
+растёт, сборка — единицы-десятки мс). Станет видно, когда вытеснение включится
+везде. Дешевле поколений — собирать реже или инкрементально.
+
 ## Модель процессора QEMU по умолчанию
 
 `run_build.ps1` даёт `-cpu qemu64,+nx`: CPUID без SSE4/AVX/BMI, и JIT CoreCLR
@@ -687,20 +624,6 @@ heap init failed` (первый `HeapCommit`). С `EPYC-Rome,-pdpe1gb` — ра�
 страницы. Не сходится: образ приложения в тот же слот загрузился. На железе с
 такой прошивкой не запустится ни одно приложение. Начать с того, чем
 отображение образа отличается от `HeapCommit`.
-
-## BinaryReader/BinaryWriter — дубли в двух приложениях
-
-Шим `System.IO.BinaryReader` лежит теперь в двух копиях: `apps_native/TriCNES/Compat/`
-и `apps_native/Fami/Compat/` (там же появился `BinaryWriter` — сохранёнки Fami
-вшиты в ядро эмулятора, вырезать нельзя). Третий порт сделает копию третьей.
-
-В std класть нельзя как есть: `System.*` держим за полностью BCL-совместимыми
-типами, а обрубок без `ReadString` и Encoding-конструкторов сломается не там,
-где причина, а много дальше. Честный путь — сначала `Encoding`, потом
-настоящий порт `BinaryReader`/`BinaryWriter` из dotnet/runtime, потом снести
-обе копии.
-
-До тех пор дубли — осознанная плата, а не недосмотр.
 
 ## Атомарный `Interlocked.CompareExchange` по ссылке
 
@@ -738,26 +661,21 @@ heap init failed` (первый `HeapCommit`). С `EPYC-Rome,-pdpe1gb` — ра�
 атомарен, и имя об этом не говорит; в комментарии у него теперь сказано прямо.
 Чинить его отдельно смысла нет — он чинится вместе с `CompareExchange`.
 
-## libm форка CoreCLR → SharpLibm
+## Математика: SharpLibm
 
-На hosted-ярусе `Math` идёт в `lm_*` из `pal/sharpos/crt_imp_stubs.cpp` —
-самописные ряды: `sin`/`cos` ~1e-9, `log` ~1e-11, `pow` через `exp(y·log x)`
-(`[Math]::Pow(24,3)` = `13824.0000130741`). Ядро и приложения с step198 на
-SharpLibm — правильно округлённой.
-
-Фикс: собрать SharpLibm в ядро с `SharpLibmExports=true` (C-имена `sin`,
-`pow`, … — `[RuntimeExport]`) и убрать `lm_*` из форка: CoreCLR линкуется в
-образ ядра статически и подхватит экспорты. Новая низкоуровневая логика — в
-C#, а не в C++ форка. Цена — +650 КБ образа (экспорт корнит все функции);
-сверить, что имена не сталкиваются с другими экспортами ядра.
-
-## SharpLibm: хвосты
-
-- Ошибки порта CoreMathSharp (~80, `// SharpLibm fix:`) отправить автору.
-- SharpLibm-tests: `math_accuracy` (Zimmermann) и остальные наборы из
-  `fetch_suites.sh`, помеченные «not yet».
-- Флаги исключений, режимы округления, errno — для вызывающих из C через
-  экспорты (CLI фиксирует к ближайшему, `Math` они не нужны).
+- **Hosted-ярус ещё на libm форка.** `Math` CoreCLR идёт в `lm_*` из
+  `pal/sharpos/crt_imp_stubs.cpp` — самописные ряды: `sin`/`cos` ~1e-9, `log`
+  ~1e-11, `pow` через `exp(y·log x)` (`[Math]::Pow(24,3)` = `13824.0000130741`).
+  Фикс: SharpLibm в ядро с `SharpLibmExports=true` (C-имена через
+  `[RuntimeExport]`), `lm_*` из форка убрать. Цена — +650 КБ образа; сверить,
+  что имена не сталкиваются с другими экспортами ядра.
+- **Переключение по CPUID.** `LibmPatcher` уже ставит `roundsd` (SSE4.1) и
+  `vfmadd` (FMA3). Дальше — ветки CORE-MATH, которые без аппаратного FMA
+  считают его программно, с замером до и после.
+- **Хвосты:** ошибки порта CoreMathSharp (~80, `// SharpLibm fix:`) — автору;
+  SharpLibm-tests: `math_accuracy` (Zimmermann) и наборы `fetch_suites.sh`,
+  помеченные «not yet»; флаги исключений, режимы округления, errno — для
+  вызывающих из C.
 
 ## Запуск сборок подряд: нужна изоляция через контексты загрузки
 
@@ -836,19 +754,6 @@ step144 и вскрыли её. Следствие не только в тест
 **Таблица замков перестраивается при переполнении** — записи без владельца и без
 ждущих выбрасываются. Работает, но при четырёх тысячах живых замков паникует;
 на SMP понадобится нормальное освобождение по `DeleteCriticalSection`.
-
-## Номер версии ABI: решить и записать
-
-Версия таблицы служб заморожена на 3. Решить надо один вопрос: **изменилась ли
-форма чтения** после переезда манифеста внутрь PE. Если старое ядро,
-встретив новое приложение, прочтёт таблицу так же (а похоже, что так: хвост
-растёт с конца, незаполненная служба читается нулём, наличие проверяется
-адресом, а не номером) — номер 3 остаётся, и это надо **записать как решение**, иначе
-пункт вернётся сюда ещё раз. Если нет — поднимать одним шагом с правкой формы.
-
-Разбор манифеста трогать не надо: он принимает диапазон версий, а не
-перечисление, и это уже оплачено — перечисление откатывалось к V1 молча, то есть
-«служб просто нет» без единого сообщения.
 
 ## net10 не встаёт с первого захода
 

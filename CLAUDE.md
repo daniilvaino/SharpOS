@@ -14,7 +14,9 @@ SharpOS — **experimental unikernel целиком на C#**, собирает�
 
 1. **C# intrinsics** — `[RuntimeExport]`, `[UnmanagedCallersOnly]`, `delegate* unmanaged`, `fixed`, unsafe pointer arithmetic.
 2. **Byte-array shellcode** — C# emitter пишет машинные инструкции байт-за-байтом в exec-stub buffer, аллоцированный UEFI через `AllocatePool(EfiLoaderCode)` (гарантированно исполнимый даже под W^X). Паттерн: `[RuntimeExport]` managed wrapper с Panic.Fail fallback, + patcher перезаписывает первые N байт тела шеллкодом при kernel boot. Примеры: `InterfaceDispatchBridge` (195 байт), `ByRefAssignRefPatcher` (15 байт), `Cr3Accessor`, `GcStackSpill`, `JumpStub`.
-3. **Build-time codegen в PowerShell** — если MSVC-линкер требует C-ABI символ (`__security_cookie` и пр.), генерим `.c` ephemerally внутри `build_*.ps1`, компилим, линкуем. **Не коммитим в репо.**
+3. **Codegen во время сборки** — если линкеру нужен C-ABI символ данных (`__security_cookie` и пр.), его даёт `CoffStub.Generator` по `[CoffDataSymbol]`: COFF-объект из C#, без `.c` и без `cl.exe` (`generators/CoffStub.Generator/`).
+
+**Границы с CoreCLR.** `SharpOSHost_*` — C ABI со стабильными кодами статуса; исключения через неё не ходят. PAL — только форма ABI, логика — в C# ядра. CoreCLR линкуется в образ ядра статически. Запасная реализация `SharpOSHost_*` в форке — только `weak` или объявление: сильная подменяется до линковки (урок step114). Модель размотки — `.pdata`/Windows x64.
 
 ### Инвариант 2 — Naming discipline
 
@@ -25,9 +27,10 @@ SharpOS — **experimental unikernel целиком на C#**, собирает�
 ## Где что смотреть
 
 - **`docs/nativeaot-nostd-kernel-limits.md`** — живой реестр известных ограничений NoStdLib среды: что работает, что нет, workarounds, причины. **Читать перед любой нетривиальной задачей.**
-- **`plan.md`** — супер-задачи проекта (SUPER-1…SUPER-12) с критериями готовности.
-- **`done/stepNN.md`** — разбор завершённых шагов с архитектурой, трассами ошибок, файлами. Последний на сегодня: `done/step201.md` (умный Expando, правки на месте, KQL потоком). Процессы и трубы — `done/step194..197.md`, SharpLibm — `done/step198.md`. Базовая прошивка проекта собрана в `done/step041..step090` (EH/GC/threading/CoreCLR-host), последующие — bring-up конкретных подсистем.
-- **`OS/src/Boot/BootSequence.cs`** — single source of truth для kernel boot ordering. Phase0…Phase5 с явными pre/post conditions. `Kernel.cs` — пустой shell, делегирует сюда. См. `docs/boot-order.md`.
+- **`docs/coreclr-hosted-limits.md`** — то же для CoreCLR-hosted яруса. **`limits.md`** — сводка сломанного по всем ярусам; **`docs/open-symptoms.md`** — симптомы без разобранной причины.
+- **`plan.md`** — цели проекта и текущее направление. **`donext.md`** — что делать дальше и как: фронты с ближайшим действием и долги с поводом.
+- **`done/stepNN.md`** — разбор завершённых шагов: архитектура, трассы ошибок, файлы. Последний — наибольший номер в `done/`. Базовая прошивка (EH/GC/threading/CoreCLR-host) — `done/step041..step090`, дальше — bring-up подсистем.
+- **`OS/src/Boot/BootSequence.cs`** — single source of truth для kernel boot ordering. Phase0…Phase5 с явными pre/post conditions. `OS/src/Kernel/Kernel.cs` — пустой shell, делегирует сюда. См. `docs/boot-order.md`.
 - **`OS/src/Kernel/Diagnostics/Probes.cs`** — central registry compile-time `const bool` toggles для всех boot-time probes/smoke-тестов. Отключённые probes elim'ятся ILC'ом.
 - **`gc-experiment/dotnet-runtime/src/coreclr/nativeaot/`** — снимок NativeAOT runtime'а для reference при порте helpers.
 - **`gc-experiment/dotnet-runtime/src/libraries/System.Private.CoreLib/src/`** — snapshot BCL для копирования коллекций.
@@ -39,10 +42,10 @@ SharpOS — **experimental unikernel целиком на C#**, собирает�
 **Воровать из dotnet/runtime, не изобретать.** Копируем реализацию как можно ближе к оригиналу. Обрезаем:
 
 - Serialization attrs / `[Serializable]` / `ISerializable` / `IDeserializationCallback`.
-- Non-generic `IDictionary` (нет у нас в стабах). Non-generic `IList`/`ICollection` — есть с step115, можно оставить.
 - `_version` bump + concurrent-mod detection — можно оставить (почти cost-free), можно выкинуть.
 - `ctor(IEnumerable<T>)` — только если callsite нужен.
-- `Array.Sort` — есть c step115 (introsort: quicksort+insertion+heapsort fallback), все основные overloads. `Array.Copy` — есть давно. `Array.BinarySearch` — пока нет.
+
+Non-generic `IDictionary`/`IList`/`ICollection`, `Array.Sort`/`Copy`/`BinarySearch` в std есть — оставлять.
 
 `ArgumentException` / `InvalidOperationException` / прочие — **бросаем по-настоящему**. EH работает (Phase D landed step90, FH3+FH4 personality, HW-fault → managed exception, stack traces). Halt() оставляем только для unrecoverable kernel paths (`Panic.Fail`-class), не для BCL throw-spots.
 
@@ -64,8 +67,9 @@ SharpOS — **experimental unikernel целиком на C#**, собирает�
 1. Выбрать один из трёх механизмов инварианта 1.
 2. Если нужен линкер-символ — [RuntimeExport] wrapper + patcher (см. `InterfaceDispatchStub` / `ByRefAssignRefStub`).
 3. Если нужно сгенерить ASM байты:
-   - **Короткий стаб (десятки байт), горячий путь, заранее известная форма** — byte emitter в C#, данные inlined в метод (НЕ `static readonly byte[]` — см. ниже ловушку).
-   - **Полноценная x64 инструкция / последовательность с register-операндами / сложный addressing** — `Iced.Intel.Assembler` (step 115; `using Iced.Intel; new Assembler(64); a.mov(rax, rcx); a.Assemble(writer, rip);`). Iced ↔ encoder-only baked-in. **Caveat:** `NO_EVEX` — AVX-512 трогать нельзя (см. `vendor/Iced/PROVENANCE.md`, там же почему). Managed-делегаты внутри Iced работают с step131, обходных путей больше нет.
+   - **Форма известна при сборке (основной путь)** — `[CompileTimeAsm]` + тело `[CompileTimeAsmBody]` на `Iced.Intel.Assembler`. BootAsm.Generator исполняет тело при сборке и кладёт байты в образ как `ReadOnlySpan<byte>`; во время выполнения — одно копирование, без Iced и без аллокатора, годится и до кучи. Пример — `SehDispatch.BootAsm.cs`.
+   - **Форма зависит от данных времени выполнения** (адреса, переходники служб процесса) — `Iced.Intel.Assembler` во время выполнения (`new Assembler(64); a.mov(rax, rcx); a.Assemble(writer, rip);`).
+   - Iced — только кодировщик. **`NO_EVEX`:** AVX-512 трогать нельзя (почему — `vendor/Iced/PROVENANCE.md`).
 
 ### Для функциональности, которой нет ни у нас, ни в BCL
 
@@ -117,10 +121,6 @@ heap init, exec-стабы), статиков
 
 Подробности и три части решения — `docs/nativeaot-nostd-kernel-limits.md` §1.
 
-(Раздел до 2026-09-25 гласил «запрещено в любой форме» и разошёлся с
-limits-таблицей на несколько месяцев. Расхождение стоило лишней осторожности:
-код писался под несуществующее ограничение.)
-
 ### Roslyn iterator / state-machine rewriter нужен типы по имени
 
 `yield return` / `async-await` требуют от Roslyn найти ctor'ы конкретных типов по сигнатуре через `.Single()`. Без них компилятор крашит с `Sequence contains no elements`. Нужны: `Interlocked.CompareExchange`, `Environment.CurrentManagedThreadId`, `InvalidOperationException(string)`. Работает и для `yield` (`std-no-runtime/Threading.cs`), и для `async/await` (`Threading.Tasks.Await.cs`, step160): построитель и машина состояний — структуры, поэтому всё общее состояние держится за одной ссылкой, иначе возобновляется копия.
@@ -131,7 +131,7 @@ limits-таблицей на несколько месяцев. Расхожде
 
 ### Managed GC (non-moving mark-sweep) работает
 
-`new object()`, `new T[n]`, `new string(...)` идут через [RuntimeExport]-ed allocators (`RhpNewFast` / `RhpNewArray` / `RhNewString`) → `GcHeap.AllocateRaw`. Сборка — mark-and-sweep. Корни со стека находит **точный** обход по `gcInfo` от ILC (step110, по умолчанию); консервативный путь через register-spill trampoline (`GcStackSpill`) остался для ранней загрузки и для `CollectConservative`. Живёт в `std-no-runtime/GC/`.
+`new object()`, `new T[n]`, `new string(...)` идут через [RuntimeExport]-ed allocators (`RhpNewFast` / `RhpNewArray` / `RhNewString`) → `GcHeap.AllocateRaw`. Сборка — mark-and-sweep. Корни со стека находит **точный** обход по `gcInfo` от ILC: `KernelGC.Collect` берёт его, как только обходчик готов, а до того — консервативный через register-spill (`GcStackSpill`). Быстрый путь выделения — контекст со сдвигом указателя (`GcHeap.TryAllocateFast`). Живёт в `std-no-runtime/GC/`.
 
 ### EH работает — `throw`/`catch`/`finally`/filter/HW-fault полный конвейер
 
@@ -148,7 +148,7 @@ Phase D закрыта (step 90 done/step081 + последующие). Сего
 
 - Каждый значимый шаг завершается коммитом с сообщением `step NN: <one-liner>` + multi-line body с разбиением по подсистемам.
 - Перед коммитом — `done/stepNN.md` с полным writeup: контекст, архитектура, lessons learned, файлы, что откладываем, next step.
-- Формат co-author trailer — `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` (для коммитов сделанных мной).
+- Co-author trailer — строка `Co-Authored-By:` текущей модели, которую даёт среда (для коммитов, сделанных мной).
 - User пушит сам — я не делаю `git push`.
 
 ### Ритуал перед коммитом — не пропускать

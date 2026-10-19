@@ -710,7 +710,9 @@ namespace OS.Kernel.Diagnostics
             ulong syntheticStackBase  = (sp + 0x8000UL) & ~0xFFFUL;
             ulong syntheticStackLimit = (sp - 0x8000UL) & ~0xFFFUL;
 
-            byte* teb = OS.Kernel.Threading.CoreClrTeb.Allocate(syntheticStackBase, syntheticStackLimit);
+            var mainThread = OS.Kernel.Threading.Scheduler.Current;
+            nint* words = mainThread != null ? OS.Kernel.Threading.ThreadArea.Words(mainThread) : null;
+            byte* teb = OS.Kernel.Threading.CoreClrTeb.Allocate(syntheticStackBase, syntheticStackLimit, words);
             if (teb == null)
             {
                 Console.WriteLine("  CoreClrTeb.Allocate failed");
@@ -767,7 +769,6 @@ namespace OS.Kernel.Diagnostics
             // Phase E9.b: record TEB on the main thread so CoopSwitch
             // back to main also restores gs base. ContextBlock layout
             // has Teb at offset 0x08 (see X64Asm.CoopSwitch).
-            var mainThread = OS.Kernel.Threading.Scheduler.Current;
             if (mainThread != null && mainThread.ContextBlock != null)
             {
                 mainThread.Teb = teb;

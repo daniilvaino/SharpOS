@@ -163,8 +163,17 @@ namespace SharpOS.Std.NoRuntime
             return false;
         }
 
+        /// <summary>
+        /// Roots the tier keeps outside the registered slots: the kernel's
+        /// threads' thread-static storage (ThreadArea). Marked with the statics.
+        /// </summary>
+        public static delegate*<void> ExtraRoots;
+
         public static void MarkStaticRootsOnly()
         {
+            if (ExtraRoots != null)
+                ExtraRoots();
+
             fixed (GcRootsStorage* basePtr = &s_slots)
             {
                 nint** slots = (nint**)basePtr;

@@ -83,11 +83,26 @@ namespace OS.Kernel.Threading
             return true;
         }
 
+        // A fresh tls_block at `dst` for a thread that has no CoreCLR TEB
+        // (ThreadArea): to CoreCLR such a thread then looks like any native
+        // thread it has not met — GetThread() null — instead of faulting on a
+        // null slot or reading another thread's block. False when the
+        // template is not found yet or does not fit.
+        public static bool CopyTemplate(byte* dst, uint capacity)
+        {
+            if (!EnsureTemplate() || s_tlsBlockSize > capacity) return false;
+            for (uint i = 0; i < s_tlsRawSize; i++) dst[i] = s_templateSrc[i];
+            for (uint i = s_tlsRawSize; i < s_tlsBlockSize; i++) dst[i] = 0;
+            return true;
+        }
+
         // Allocate a fresh TEB + slots + tls_block for one thread.
         // `stackBase` = TOP of stack (HIGH addr), `stackLimit` = BOTTOM
-        // (LOW addr). Returns the TEB pointer (suitable for
-        // IA32_GS_BASE), or null on allocation failure.
-        public static byte* Allocate(ulong stackBase, ulong stackLimit)
+        // (LOW addr). `words`: the thread's ThreadArea words, kept in the
+        // same slot as in its ThreadArea TEB so its thread statics stay put.
+        // Returns the TEB pointer (suitable for IA32_GS_BASE), or null on
+        // allocation failure.
+        public static byte* Allocate(ulong stackBase, ulong stackLimit, nint* words)
         {
             if (!EnsureTemplate()) return null;
 
@@ -108,6 +123,7 @@ namespace OS.Kernel.Threading
 
             // slots[0] -> per-thread tls_block.
             *(ulong*)(slots + 0) = (ulong)tlsBlock;
+            ((ulong*)slots)[ThreadArea.WordsSlot] = (ulong)words;
 
             return teb;
         }

@@ -1501,6 +1501,11 @@ namespace OS.PAL.SharpOSHost
             {
                 if (!FrameChainAvailable)
                     return false;
+                // A thread born before the TLS template was readable has no
+                // block in slot 0, and CoreCLR would fault reading it.
+                OS.Kernel.Threading.Thread? current = OS.Kernel.Threading.Scheduler.Current;
+                if (current != null && !OS.Kernel.Threading.ThreadArea.HasClrTls(current))
+                    return false;
                 fp = (ulong)SharpOSHost_GetCurrentFrame();
             }
             // Empty chain or FRAME_TOP sentinel — nothing to do.

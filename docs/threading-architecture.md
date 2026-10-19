@@ -605,7 +605,7 @@ one-day landing like Phase D.
   in spike) reopen rationale.
 - `work/PAL/D1-D20 FINALIZED/Deferred_Decisions.md` — D6/D8 deferred
   status, reopen here.
-- `plan.md` — overall DAG + Phase E section + decision-points table.
+- `plan.md` — project goals; `donext.md` — what to do next.
 - `docs/eh-model.md` — Phase D EH architecture (predecessor doc style).
 - `docs/coreclr-hosted-limits.md` §5 (threading) — currently-failing
   cohort that Phase E unblocks (Socket/RNG/SHA256 already catchable

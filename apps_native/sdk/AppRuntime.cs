@@ -193,6 +193,16 @@
                 Fatal("app GC statics not materialized");
             }
 
+            // [ThreadStatic]: the running thread's words come from a kernel
+            // stub (ThreadArea); [1] is ours. Cleared first — a thread can come
+            // to this process with a previous program's storage in it.
+            if (s_services->ThreadWordsAddress != 0)
+            {
+                var words = (delegate*<nint*>)(nint)s_services->ThreadWordsAddress;
+                words()[1] = 0;
+                Internal.Runtime.ThreadStatics.Install(words, 1);
+            }
+
             // Route GC.Collect() to our own collector. Last, because it marks
             // from the static roots the step above just materialised — before
             // that there is nothing to keep alive and nothing to sweep.

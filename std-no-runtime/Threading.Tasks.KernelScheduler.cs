@@ -44,9 +44,8 @@ namespace OS.Kernel.Threading
             if (AddressWait.Init())
                 ThreadBackend.InstallWaits(&AddressWait.WaitOnAddress, &AddressWait.WakeByAddressAll);
 
-            // Thread identity, which Monitor needs and thread-statics cannot
-            // give us here: the scheduler owns the threads, so it is the one
-            // that can name the running one.
+            // Thread identity, which Monitor needs: the scheduler owns the
+            // threads, so it is the one that can name the running one.
             ManagedThreadIds.Install(&CurrentThreadId);
 
             // Monitor's side tables, built here rather than on first lock:

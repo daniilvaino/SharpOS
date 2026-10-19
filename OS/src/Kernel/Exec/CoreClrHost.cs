@@ -153,7 +153,7 @@ namespace OS.Kernel.Exec
                     bottom = (ulong)s_bigStack;
                     top = bottom + s_bigStackSize;
                 }
-                byte* teb = OS.Kernel.Threading.CoreClrTeb.Allocate(top, bottom);
+                byte* teb = OS.Kernel.Threading.CoreClrTeb.Allocate(top, bottom, OS.Kernel.Threading.ThreadArea.Words(self));
                 if (teb == null)
                 {
                     Log.Write(LogLevel.Warn, "[clr] no TEB for the calling thread — refusing to run");

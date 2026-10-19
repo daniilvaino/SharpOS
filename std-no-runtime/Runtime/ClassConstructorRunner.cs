@@ -62,6 +62,17 @@ namespace System.Runtime.CompilerServices
             return nonGcStaticBase;
         }
 
+        // The thread-static flavor (step209): a type with [ThreadStatic] fields
+        // and a cctor. Same signature as dotnet/runtime's.
+        private static unsafe object CheckStaticClassConstructionReturnThreadStaticBase(
+            Internal.Runtime.CompilerHelpers.TypeManagerSlot* pModuleData, int typeTlsIndex,
+            StaticClassConstructionContext* context)
+        {
+            object threadStaticBase = Internal.Runtime.ThreadStatics.GetThreadStaticBaseForType(pModuleData, typeTlsIndex);
+            CheckStaticClassConstruction(ref *context);
+            return threadStaticBase;
+        }
+
         // Race-aware initializer. State machine on context.initialized:
         //   0 → 2 (winner — runs cctor) → 1 (done)
         //   0 → blocked (loser — spin until winner reaches 1)

@@ -559,6 +559,9 @@ namespace OS.Boot
             if (Probes.ThreadPingPong)
                 OS.Kernel.Threading.ThreadPingPongProbe.Run();
 
+            if (Probes.ThreadStatics)
+                OS.Kernel.Threading.ThreadStaticProbe.Run();
+
             // Runs right after: it needs threads working, and it answers a
             // question the ping-pong probe cannot — whether a collection can
             // see the roots of a thread that is not running.

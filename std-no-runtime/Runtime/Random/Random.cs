@@ -457,23 +457,23 @@ namespace System
             Debug.Assert(result >= 0.0 && result < 1.0, $"Expected 0.0 <= {result} < 1.0");
         }
 
-        // SharpOS cut: the [ThreadStatic] XoshiroImpl per thread (no thread
-        // statics on the app tier). One generator for the process instead, each
-        // call under a lock — the "locking around all accesses" alternative the
-        // upstream comment weighs and rejects for scalability only.
         private sealed class ThreadSafeRandom : Random
         {
-            private static readonly object s_lock = new object();
-            private static XoshiroImpl? s_random;
+            /// <summary>Per-thread instance.</summary>
+            [ThreadStatic]
+            private static XoshiroImpl? t_random;
 
             public ThreadSafeRandom() : base(isThreadSafeRandom: true) { }
 
-            private static XoshiroImpl LocalRandom => s_random ??= new XoshiroImpl();
+            /// <summary>Get the thread-local instance of the random implementation.</summary>
+            private static XoshiroImpl LocalRandom => t_random ?? Create();
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            private static XoshiroImpl Create() => t_random = new();
 
             public override int Next()
             {
-                int result;
-                lock (s_lock) result = LocalRandom.Next();
+                int result = LocalRandom.Next();
                 AssertInRange(result, 0, int.MaxValue);
                 return result;
             }
@@ -482,8 +482,7 @@ namespace System
             {
                 ArgumentOutOfRangeException.ThrowIfNegative(maxValue);
 
-                int result;
-                lock (s_lock) result = LocalRandom.Next(maxValue);
+                int result = LocalRandom.Next(maxValue);
                 AssertInRange(result, 0, maxValue);
                 return result;
             }
@@ -495,16 +494,14 @@ namespace System
                     ThrowMinMaxValueSwapped();
                 }
 
-                int result;
-                lock (s_lock) result = LocalRandom.Next(minValue, maxValue);
+                int result = LocalRandom.Next(minValue, maxValue);
                 AssertInRange(result, minValue, maxValue);
                 return result;
             }
 
             public override long NextInt64()
             {
-                long result;
-                lock (s_lock) result = LocalRandom.NextInt64();
+                long result = LocalRandom.NextInt64();
                 AssertInRange(result, 0, long.MaxValue);
                 return result;
             }
@@ -513,8 +510,7 @@ namespace System
             {
                 ArgumentOutOfRangeException.ThrowIfNegative(maxValue);
 
-                long result;
-                lock (s_lock) result = LocalRandom.NextInt64(maxValue);
+                long result = LocalRandom.NextInt64(maxValue);
                 AssertInRange(result, 0, maxValue);
                 return result;
             }
@@ -526,24 +522,21 @@ namespace System
                     ThrowMinMaxValueSwapped();
                 }
 
-                long result;
-                lock (s_lock) result = LocalRandom.NextInt64(minValue, maxValue);
+                long result = LocalRandom.NextInt64(minValue, maxValue);
                 AssertInRange(result, minValue, maxValue);
                 return result;
             }
 
             public override float NextSingle()
             {
-                float result;
-                lock (s_lock) result = LocalRandom.NextSingle();
+                float result = LocalRandom.NextSingle();
                 AssertInRange(result);
                 return result;
             }
 
             public override double NextDouble()
             {
-                double result;
-                lock (s_lock) result = LocalRandom.NextDouble();
+                double result = LocalRandom.NextDouble();
                 AssertInRange(result);
                 return result;
             }
@@ -555,13 +548,10 @@ namespace System
                     throw new ArgumentNullException(nameof(buffer));
                 }
 
-                lock (s_lock) LocalRandom.NextBytes(buffer);
+                LocalRandom.NextBytes(buffer);
             }
 
-            public override void NextBytes(Span<byte> buffer)
-            {
-                lock (s_lock) LocalRandom.NextBytes(buffer);
-            }
+            public override void NextBytes(Span<byte> buffer) => LocalRandom.NextBytes(buffer);
 
             protected override double Sample() => throw new NotSupportedException();
         }

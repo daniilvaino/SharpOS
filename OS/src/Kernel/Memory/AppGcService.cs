@@ -41,6 +41,7 @@ namespace OS.Kernel.Memory
             if (KernelGcPreciseWalk.Tracing) OS.Hal.Console.WriteLine("[walk-trace] ---- app collection, current thread");
             KernelGcPreciseWalk.RunFromCurrentFrame(markRoot);
             KernelGC.MarkOtherThreadStacks(markRoot);
+            OS.Kernel.Threading.ThreadArea.MarkAppWords(markRoot);
             if (KernelGcPreciseWalk.Tracing) KernelGcPreciseWalk.TraceWalks--;
             KernelGcPreciseWalk.Tracing = false;
             if (!Quiet)

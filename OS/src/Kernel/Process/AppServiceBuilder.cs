@@ -348,6 +348,7 @@ namespace OS.Kernel.Process
             {
                 table.ExchangeAllocateAddress = (ulong)(nint)(delegate* unmanaged<ulong, void*>)&AppExchangeAllocate;
                 table.ExchangeAllocateUnzeroedAddress = (ulong)(nint)(delegate* unmanaged<ulong, void*>)&AppExchangeAllocateUnzeroed;
+                table.ThreadWordsAddress = (ulong)OS.Hal.X64Asm.ThreadWordsStub();
                 table.ExchangeFreeAddress = (ulong)(nint)(delegate* unmanaged<void*, uint>)&AppExchangeFree;
                 table.PipeCreateAddress = (ulong)(nint)(delegate* unmanaged<uint, uint, int*, int>)&OS.Kernel.Pipes.PipeServices.Create;
                 table.PipeConnectAddress = (ulong)(nint)(delegate* unmanaged<ulong*, int>)&OS.Kernel.Pipes.PipeServices.Connect;
@@ -1237,9 +1238,8 @@ namespace OS.Kernel.Process
 
         // Sleeping is half of what a thread is for here: a background loop that
         // polls without sleeping is the spin we spent step157 removing.
-        // Which thread is asking. An app cannot answer this for itself:
-        // thread-statics need runtime support neither tier has, and the
-        // scheduler that owns the threads lives here. Monitor is the caller
+        // Which thread is asking. The scheduler that owns the threads lives
+        // here, so it is the one that can name them. Monitor is the caller
         // that matters — without distinct ids a reentrant lock lets every
         // thread straight through.
         private static uint CurrentThreadId()

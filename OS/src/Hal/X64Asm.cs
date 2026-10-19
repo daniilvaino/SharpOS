@@ -81,6 +81,9 @@
         private const uint WriteCr4Offset       = 0x520;
         private const uint XgetbvOffset         = 0x530;
         private const uint XstateMinBuffer      = 0x540;
+        // The running thread's words (ThreadArea, [ThreadStatic]): 17 bytes.
+        private const uint ThreadWordsOffset    = 0x540;
+        private const uint ThreadWordsMinBuffer = 0x560;
 
         private const uint CmpXchg64Offset       = 0x1A0;
         private const uint Xchg64Offset          = 0x1C0;
@@ -258,6 +261,26 @@
             }
             s_writeGsBaseMsr(value);
             return true;
+        }
+
+        private static void* s_threadWords;
+
+        /// <summary>
+        /// A stub returning the running thread's words (ThreadArea): called
+        /// as a function pointer by thread statics in the kernel and in apps.
+        /// Null without the exec buffer.
+        /// </summary>
+        public static void* ThreadWordsStub()
+        {
+            if (s_threadWords == null)
+            {
+                if (s_execBuffer == null || s_execBufferSize < ThreadWordsMinBuffer)
+                    return null;
+                byte* p = (byte*)s_execBuffer + ThreadWordsOffset;
+                EmitThreadWordsBootAsm(p);
+                s_threadWords = p;
+            }
+            return s_threadWords;
         }
 
         // Read IA32_GS_BASE — used to capture the current gs base before

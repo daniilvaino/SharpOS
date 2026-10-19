@@ -45,6 +45,27 @@ class C { public static T X; static C() { X = new T(); } }   // ok
 
 В пределах одного метода ILC видит что инициализация уже произошла, не вставляет cctor-check. Полезная лазейка для случаев когда хочется избежать static field вообще.
 
+### 🟡 `[ThreadStatic]` (step209)
+
+Работает в ядре и в приложениях. Проверки: проба ядра `thread-static probe`,
+пять строк `thread static:` в AOTTESTS (своё значение у потока, ссылка
+переживает сборку, обобщённый тип, тип с конструктором класса, второй поток
+начинает с нуля) и `Random.Shared on two threads`.
+
+- ILC собирает с `--noinlinetls`: каждое обращение — вызов
+  `Internal.Runtime.ThreadStatics.GetThreadStaticBaseForType` (порт BCL), а не
+  родной TLS образа (`.tls`, `_tls_index`), которого у приложения нет.
+- Хранилище потока — `object[][]` в куче своего яруса; ссылка на него — слово
+  потока в `ThreadArea` (страница контекста), найденное через `gs`. Ядро
+  размечает слова ядра (`GcRoots.ExtraRoots`), приложение — свои
+  (`AppGcService`).
+- У каждого потока теперь свой TEB и своя копия `.tls` ядра. До step209 TEB был
+  только у потоков CoreCLR, остальные жили со старым `GS`, и обход SEH на них
+  читал `thread_local` чужого потока CoreCLR.
+- Не сделано: обращение изнутри разделяемого обобщённого кода (ячейка словаря,
+  §2 GVM) — исключение при встрече. В ядре — только после `Scheduler.Init`
+  (раньше бросает `InvalidOperationException`).
+
 ---
 
 ## 2. Generics
@@ -588,7 +609,7 @@ done/step141.md).
 | `System.Text.Encoding` (`ASCII`/`Unicode`/`BigEndianUnicode`/`UTF8`/`Latin1`) | **Partial** (step 133, `std/.../Text/Encoding.cs`). Есть `GetString(ReadOnlySpan<byte>/byte[])` + `GetBytes(string)` + `GetByteCount`. Вырезано: Encoder/Decoder-fallback (invalid → `?`/U+FFFD, не throw; исключение — строгий `UTF8Encoding(…, throwOnInvalidBytes: true)`: бросает `DecoderFallbackException`/`EncoderFallbackException`, как BCL), `EncodingProvider`/`GetEncoding(name)`/code-page registry, preamble/BOM, streaming `GetEncoder`/`GetDecoder`. Static-факторки (`Encoding.ASCII` и пр.) — factory property (свежий инстанс на вызов, stateless), НЕ кешированное static-поле (cctor-trap §1) |
 | `Dictionary<K,V>` порядок перечисления | Порядок **вставки**, как в BCL (step 164). До этого хранилищем был `LowLevelDictionary` — цепочки в корзинах, перечисление в порядке хеша; `TreeView` из Terminal.Gui рисует корневые узлы в порядке перечислителя, и отсортированный список выходил перемешанным. Порт хранилища из dotnet/runtime v8.0: корзины индексов над плотным массивом записей, знаковое кодирование free-list, пересборка цепочек при росте (`Bcl/Dictionary.Storage.cs`) |
 | `System.Runtime.Intrinsics.Vector128/256` | **Работает** (step 165). Порт из dotnet/runtime v8.0 в наш std; ILC узнаёт интринсики **по пространству имён и имени типа**, поэтому это единственное место, где правило именования уступает — имя и есть механизм. Три условия, каждое стоило прогона: `[Intrinsic]` обязан висеть и на ТИПЕ (иначе структура раскладывается как два `ulong`), сигнатуры обязаны совпадать с оригиналом дословно (перегрузка под `ushort` там, где в CoreLib `Equals<T>`, никогда не станет инструкцией), и ILC подменяет каждый член отдельно (операторы `-`/`~` без атрибута остались managed). Запасные пути сравнений/вычитания ОТКАЗЫВАЮТ, а не считают: не зная знаковости элемента, они бы гадали. `Vector256.IsHardwareAccelerated` = false — AVX не в целевом наборе ILC. Состояние AVX с step199 сохраняется прерываниями (XSAVE, на процессорах с AVX), так что включить целевой набор можно; кооперативное переключение — FXSAVE, чего по Win64 ABI достаточно |
-| `ArrayPool<T>` | **Пулит** (step208): порт BCL, `Shared` — `ConfigurableArrayPool` (корзины под `lock`), а не `TlsOverPerCoreLockedStacksArrayPool` — тому нужен `[ThreadStatic]`. До step208 не хранил ничего, и `BinaryWriter` над `MemoryStream` шёл в 10–20 раз медленнее хоста. Массив из `Rent` — с прежним содержимым, как в BCL |
+| `ArrayPool<T>` | **Пулит** (step208): порт BCL, `Shared` — `ConfigurableArrayPool` (корзины под `lock`), а не `TlsOverPerCoreLockedStacksArrayPool` (его кэш на `[ThreadStatic]`, работающем с step209; порт не сделан). До step208 не хранил ничего, и `BinaryWriter` над `MemoryStream` шёл в 10–20 раз медленнее хоста. Массив из `Rent` — с прежним содержимым, как в BCL |
 | `typeof(T)` / `System.Type` | **Работает в приложениях с step175, в ядре нет.** Тип — это указатель на MethodTable, `==` сравнивает указатели; два объекта, описывающих один тип, равны, не будучи одним объектом — на этом держится равенство `record`. Нужны три вещи разом: `Type.GetTypeFromHandle` (`apps_native/sdk/MinimalRuntime.cs`), `Internal.Runtime.CompilerHelpers.LdTokenHelpers` (ILC ищет по имени в системном модуле) и `IsExternalInit` (без него не компилируется ни один `init`-аксессор, а значит и ни одна запись). Отражения нет и не будет без метаданных: ни `Name`, ни членов, ни `Type.GetType(string)`. В ядре `Type` остался пустой заглушкой — `typeof` там не используется |
 | `record` / `init`-аксессоры | **Работают в приложениях с step175.** Следствие строки выше: компилятор генерирует `EqualityContract => typeof(X)` и сравнение типов. До step175 попытка собрать любую запись давала `CS0656 GetTypeFromHandle`/`op_Equality`, а `init` — `CS0518 IsExternalInit`. Первый потребитель — `vendor/ShellSyntaxTree`, построенный на записях целиком |
 | `Enum.IsDefined(Type, object)` | **Заглушка: всегда `true`** (`apps_native/sdk/MinimalRuntime.cs`, step175). Правдивый ответ требует списка объявленных значений, то есть метаданных перечисления, которых ILC нам не эмиттит. Из трёх способов быть неправым выбран наименее плохой: бросок уронил бы каждого вызывающего, `false` отверг бы корректные данные, `true` верен для любого значения, которое программа сама же и построила. Неверен для значения, подделанного приведением или прочитанного извне — и этого не заметит |

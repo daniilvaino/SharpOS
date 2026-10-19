@@ -385,6 +385,10 @@
         // multi-thread artefact in the project — commit milestone.
         public const bool ThreadPingPong = Tests;
 
+        // [ThreadStatic] in the kernel (step209): own value per thread, a
+        // reference held only there survives a collection.
+        public const bool ThreadStatics = Tests;
+
         // Phase E5 — Scheduler.Sleep accuracy. Spawns one worker that
         // performs 3 × Sleep(50ms), measures elapsed via HPET around
         // each sleep, asserts [45..80] ms. Lower bound enforces "we

@@ -238,6 +238,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Buffer.cs" Link="std\Runtime\Buffer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ByReference.cs" Link="std\Runtime\ByReference.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ClassConstructorRunner.cs" Link="std\Runtime\ClassConstructorRunner.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ThreadStatics.cs" Link="std\Runtime\ThreadStatics.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CodeAnalysisAttributes.cs" Link="std\Runtime\CodeAnalysisAttributes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerFeatures.cs" Link="std\Runtime\CompilerFeatures.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\DecimalConstantAttribute.cs" Link="std\Runtime\CompilerServices\DecimalConstantAttribute.cs" />

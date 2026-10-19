@@ -155,9 +155,13 @@
        Combined with GcStaticsInit (app-side GCStaticRegion materialization in
        AppRuntime.Initialize) this makes lazy static patterns work in apps,
        same as the kernel (limits doc §1). -->
+  <!-- -noinlinetls: [ThreadStatic] through Internal.Runtime.ThreadStatics
+       (std), not the image's native TLS (.tls, _tls_index), which an app
+       image does not have (step209). -->
   <Target Name="DropResilient" AfterTargets="WriteIlcRspFileForCompilation" BeforeTargets="IlcCompile">
     <ItemGroup>
       <IlcArg Remove="--resilient" />
+      <IlcArg Include="--noinlinetls" />
     </ItemGroup>
     <WriteLinesToFile File="%(ManagedBinary.IlcRspFile)" Lines="@(IlcArg)" Overwrite="true" />
   </Target>

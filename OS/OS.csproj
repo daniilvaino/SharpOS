@@ -348,9 +348,13 @@ detach vdisk
        ClassConstructorRunner unreachable) and blocks lazy static patterns.
        Dropping it routes cctor checks через our managed ClassConstructorRunner
        (combined с GcStaticsMaterializer для preinit blob materialization). -->
+  <!-- -noinlinetls: [ThreadStatic] through Internal.Runtime.ThreadStatics
+       (std) and the thread's words (ThreadArea), not native TLS — the
+       kernel image's .tls is CoreCLR's (step209). -->
   <Target Name="DropResilient" AfterTargets="WriteIlcRspFileForCompilation" BeforeTargets="IlcCompile">
     <ItemGroup>
       <IlcArg Remove="--resilient" />
+      <IlcArg Include="--noinlinetls" />
     </ItemGroup>
     <WriteLinesToFile File="%(ManagedBinary.IlcRspFile)" Lines="@(IlcArg)" Overwrite="true" />
   </Target>

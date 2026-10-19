@@ -54,7 +54,7 @@ namespace OS.Kernel.Threading
         }
 
         // Cheap, and it catches the difference between "ids are per thread" and
-        // "the thread-static is not honoured and everyone shares one".
+        // "everyone shares one".
         private static bool ThreadIdsDiffer()
         {
             s_firstId = ManagedThreadIds.Current;
