@@ -261,6 +261,21 @@ namespace OS.Hal
                     Console.WriteULong(cache.Misses);
                     Console.Write(" misses");
                 }
+                // Whether the disk waits slept (step210): interrupts taken per
+                // source, waits that slept, wakes the interrupts delivered.
+                if (DeviceIrq.Count > 0)
+                {
+                    Console.Write("; device interrupts");
+                    for (int s = 0; s < DeviceIrq.Count; s++)
+                    {
+                        Console.Write(" ");
+                        Console.WriteULong(DeviceIrq.Taken(s));
+                    }
+                    Console.Write(", sleeps ");
+                    Console.WriteULong(OS.Kernel.Threading.IrqWait.Sleeps);
+                    Console.Write(", wakes ");
+                    Console.WriteULong(OS.Kernel.Threading.IrqWait.Wakes);
+                }
                 DebugLog.EndLine();
             }
             finally { Leave(); }

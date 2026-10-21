@@ -8,11 +8,8 @@ namespace OS.Hal.Idt
     // the heap may be mid-write, the GC may be mid-mark. We use Console.*Raw
     // (stackalloc-only number formatting) and string literals exclusively.
     //
-    // Output goes through UEFI Console (we live inside firmware boot
-    // services in Phase 0). Once Phase 4 introduces UEFI encapsulation +
-    // Phase 5 brings up our framebuffer driver, PanicDump should switch to
-    // direct framebuffer writing (the firmware Console is unsafe inside an
-    // exception handler — its internal state may be torn).
+    // Output goes through Console: until ExitBootServices that is the
+    // firmware's ConOut, after it our own UART and framebuffer terminal.
     internal static unsafe class PanicDump
     {
         public static void Print(InterruptFrame* frame)

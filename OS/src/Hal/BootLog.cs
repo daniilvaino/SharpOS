@@ -197,9 +197,14 @@ namespace OS.Hal
             if (ch == '\n' || s_serialUsed >= SerialSize) SerialFlush();
         }
 
+        private static bool InInterrupt()
+            => (OS.Kernel.Threading.Scheduler.Current?.InterruptDepth ?? 0) != 0;
+
         private static void SerialFlush()
         {
             if (!s_serialReady || s_inSerial || s_serialUsed == 0) return;
+            if (InInterrupt() || OS.Kernel.Threading.Preemption.Depth != 0)
+                return;                             // a USB transfer: as Flush
 
             s_inSerial = true;
             bool ok;
@@ -256,6 +261,27 @@ namespace OS.Hal
             if (!s_ready || s_inFlush || s_used == 0) return;
             if (s_sector >= s_sectorCount) return;   // full: stop, never wrap
 
+            // Not from an interrupt handler (step210): a line printed there (the
+            // sampler's report on a tick) would write the disk with the tick
+            // still unacknowledged. With the drivers asleep on interrupts that
+            // wait never ends — no tick comes to wake anything. The line stays
+            // in the sector buffer for the next flush outside the handler.
+            //
+            // Nor inside a critical section: a disk command may now wait for its
+            // device and give up the CPU, and a section that suppresses
+            // preemption is relying on nobody else running — an app's collection
+            // is one (stop-the-world on one core). A line the walker printed in
+            // the middle of a collection flushed to the boot log on a USB stick,
+            // the write slept, another thread of the app allocated a buffer the
+            // mark had already passed, the sweep freed it under a file read
+            // (step210). Before step210 the volume was only tried here
+            // (TryWriteSectorAt); a try can still sleep in the driver.
+            if (InInterrupt() || OS.Kernel.Threading.Preemption.Depth != 0)
+            {
+                s_deferredFlushes++;
+                return;
+            }
+
             s_inFlush = true;
             // Pad only the unwritten tail of this sector; the next line will
             // overwrite the padding.
@@ -265,14 +291,7 @@ namespace OS.Hal
             bool busy = false;
             ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
             fixed (byte* p = s_line)
-            {
-                // Inside a critical section the volume is not waited for
-                // (waiting yields): a busy volume leaves the line in the
-                // sector buffer, and the next flush writes it.
-                ok = OS.Kernel.Threading.Preemption.Depth != 0
-                    ? Fat32.TryWriteSectorAt(s_startLba + s_sector, p, out busy)
-                    : Fat32.WriteSectorAt(s_startLba + s_sector, p);
-            }
+                ok = Fat32.WriteSectorAt(s_startLba + s_sector, p);
             OS.Kernel.Diagnostics.PerfCounters.CountDiskLog(started);
             if (busy)
             {

@@ -1,4 +1,4 @@
-﻿using OS.Hal;
+using OS.Hal;
 
 namespace OS.Kernel.Threading
 {
@@ -52,10 +52,17 @@ namespace OS.Kernel.Threading
                 return;
             }
 
+            // Joining the wait list and going to sleep are one step with the
+            // second look at the lock (step210): under preemption the owner
+            // can release between the failed CAS and the link, and a waiter
+            // linked after that release sleeps on a free lock forever.
+            Preemption.Suppress();
+            if (TryAcquire()) { Preemption.Allow(); return; }
             curr.Wait.Next = _waitHead;
             curr.Wait.Kind = WaitKind.Mutex;
             _waitHead = curr;
             curr.State = ThreadState.Waiting;
+            Preemption.Allow();
 
             Scheduler.Yield();
             // When we wake the releaser has already handed us ownership;
@@ -67,6 +74,7 @@ namespace OS.Kernel.Threading
         // _locked.
         public void Release()
         {
+            Preemption.Suppress();
             if (_waitHead != null)
             {
                 Thread t = _waitHead;
@@ -75,6 +83,7 @@ namespace OS.Kernel.Threading
                 t.Wait.Kind = WaitKind.None;
                 // Ownership transferred -- _locked stays 1.
                 Scheduler.WakeFromWait(t);
+                Preemption.Allow();
                 return;
             }
 
@@ -82,6 +91,7 @@ namespace OS.Kernel.Threading
             {
                 X64Asm.Xchg64(p, 0UL);   // atomic clear
             }
+            Preemption.Allow();
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿// Driver implementations adapted from MOOS by nifanfa
+// Driver implementations adapted from MOOS by nifanfa
 // (https://github.com/nifanfa/MOOS), released under the Unlicense
 // (public domain). Standing on shoulders of fellow public domain contributors.
 //
@@ -17,7 +17,8 @@
 //    Console.ToString/Panic.Error dropped. Write kept but unused (the
 //    FAT layer is read-only).
 //
-// Pure MMIO + polling, no Native/port I/O -> Invariant-1 clean.
+// Pure MMIO, no Native/port I/O -> Invariant-1 clean. Polling until the local
+// APIC is ours, then MSI (EnableInterrupts, step210).
 
 using System.Runtime.CompilerServices;
 using OS.Kernel;
@@ -115,6 +116,92 @@ namespace OS.Hal
         public static ulong ReadSectors => s_readSectors;
         public static ulong ReadTicks => s_readTicks;
         public static ulong ReadFailures => s_readFailures;
+
+        // Interrupts (plan §11, stages 1-2). Until EnableInterrupts the driver
+        // polls with preemption suppressed for a whole command, as before;
+        // after it a command sleeps until the port interrupts (IrqWait) and
+        // commands are serialised by a lock instead of by the scheduler.
+        private const uint PortInterrupts = 0x7800000Fu;   // TFE HBF HBD IF + DHR PS DS SDB
+        private const uint TaskFileError = 1u << 30;
+
+        private static Pci.PciDev s_pci;
+        private static int s_irqSource = -1;
+        private static uint s_irqStatus;              // PxIS bits the handler cleared
+        private static OS.Kernel.Threading.OwnedLock s_commandLock;
+        private static HBAPort* s_waitPort;
+        private static uint s_waitBit;
+
+        /// <summary>The interrupt source, -1 while the driver polls.</summary>
+        public static int InterruptSource => s_irqSource;
+
+        /// <summary>
+        /// Switches the boot disk's port to MSI. Called once the local APIC is
+        /// ours (ExitBootServicesProbe.TakeOverInterrupts); before that the
+        /// firmware owns interrupt delivery. Without MSI the driver stays on
+        /// polling and says so.
+        /// </summary>
+        public static void EnableInterrupts()
+        {
+            if (s_irqSource >= 0 || Controller == null || Device == null) return;
+            int source = DeviceIrq.Register(&OnInterrupt);
+            if (source < 0)
+            {
+                Log.Write(LogLevel.Warn, "[irq] ahci: no vector - polling");
+                return;
+            }
+            if (!Msi.TryEnable(s_pci, DeviceIrq.VectorOf(source), out string kind))
+            {
+                Log.Write(LogLevel.Warn, "[irq] ahci: no MSI - polling");
+                return;
+            }
+
+            s_commandLock = new OS.Kernel.Threading.OwnedLock();
+            HBAPort* port = Device.Port;
+            unchecked { port->InterruptStatus = (uint)-1; Controller->InterruptStatus = (uint)-1; }
+            port->InterruptEnable = PortInterrupts;
+            Controller->GlobalHostControl |= GhcAhciEnable | GhcInterruptEnable;
+            s_irqSource = source;
+
+            Log.Begin(LogLevel.Info);
+            Console.Write("[irq] ahci ");
+            Console.Write(kind);
+            Console.Write(" vector=0x");
+            Console.WriteHex(DeviceIrq.VectorOf(source));
+            Console.Write(" port=");
+            Console.WriteInt(DevicePort);
+            Log.EndLine();
+        }
+
+        // Interrupts off, any stack: clear the port's status (the device sends
+        // a new message only for a new bit), keep what was cleared for the
+        // waiting command, wake it.
+        private static void OnInterrupt()
+        {
+            HBA* controller = Controller;
+            SATADevice device = Device;
+            if (controller == null || device == null) return;
+            HBAPort* port = device.Port;
+            uint status = port->InterruptStatus;
+            port->InterruptStatus = status;
+            s_irqStatus |= status;
+            controller->InterruptStatus = controller->InterruptStatus;
+            OS.Kernel.Threading.IrqWait.Post(s_irqSource);
+        }
+
+        private static bool CommandFailed()
+            => ((Rd(&s_waitPort->InterruptStatus) | s_irqStatus) & TaskFileError) != 0;
+
+        private static bool CommandDone(int source)
+            => (Rd(&s_waitPort->CommandIssue) & s_waitBit) == 0 || CommandFailed();
+
+        // Before and after a command: status cleared. Polling, the port's
+        // interrupts stay off; with MSI they stay on.
+        private static void ResetStatus(HBA* controller, HBAPort* port)
+        {
+            if (s_irqSource < 0) { DisableInterrupts(controller, port); return; }
+            s_irqStatus = 0;
+            unchecked { port->InterruptStatus = (uint)-1; controller->InterruptStatus = (uint)-1; }
+        }
 
         private static void DisableInterrupts(HBA* controller, HBAPort* port)
         {
@@ -227,9 +314,14 @@ namespace OS.Hal
                 sata.Port = port;
                 if (!sata.Configure()) return false;
                 Device = sata;
+                s_pci = dev;
                 DeviceSlot = dev.Slot;
                 DeviceFunction = dev.Func;
                 DevicePort = k;
+
+                // The disk usually comes up after the APIC is ours (the boot
+                // disk is found post-EBS): interrupts from the start then.
+                if (OS.Hal.Apic.LocalApic.IsEnabled) EnableInterrupts();
                 return true;
             }
             return false;
@@ -425,14 +517,51 @@ namespace OS.Hal
             public override bool Flush()
             {
                 if (PortType == SATAPortType.ATAPI) return true;
-                OS.Kernel.Threading.Preemption.Suppress();
+                Serialise();
                 try { return FlushCore(); }
-                finally { OS.Kernel.Threading.Preemption.Allow(); }
+                finally { Unserialise(); }
+            }
+
+            // One command at a time (see ReadOrWrite): polling, by keeping the
+            // CPU; with interrupts, by a lock — the waits sleep, and another
+            // thread may run but not issue.
+            private static void Serialise()
+            {
+                if (s_irqSource < 0) OS.Kernel.Threading.Preemption.Suppress();
+                else s_commandLock.Enter();
+            }
+
+            private static void Unserialise()
+            {
+                if (s_irqSource < 0) OS.Kernel.Threading.Preemption.Allow();
+                else s_commandLock.Leave();
+            }
+
+            // Issue the command in `slot` and wait for it: done, failed (task
+            // file error) or past `ms`. Polling it spins; with interrupts it
+            // sleeps until the port's interrupt or the deadline.
+            private bool IssueAndWait(int slot, uint ms)
+            {
+                uint bit = 1u << slot;
+                s_waitPort = Port;
+                s_waitBit = bit;
+                Port->CommandIssue = bit;
+
+                ulong dl = Deadline(ms); long sp = FallbackSpins;
+                while (true)
+                {
+                    if ((Rd(&Port->CommandIssue) & bit) == 0) break;
+                    if (CommandFailed()) return false;
+                    if (Expired(dl, ref sp)) return false;
+                    if (s_irqSource >= 0)
+                        OS.Kernel.Threading.IrqWait.Sleep(s_irqSource, &CommandDone, dl);
+                }
+                return !CommandFailed();
             }
 
             private bool FlushCore()
             {
-                DisableInterrupts(Controller, Port);
+                ResetStatus(Controller, Port);
                 int Slot = FindSlot();
                 if (Slot == -1) return false;
 
@@ -457,17 +586,8 @@ namespace OS.Hal
                 while ((Rd(&Port->TaskFileData) & (0x80 | 0x08)) != 0)
                     if (Expired(dl, ref sp)) return false;
 
-                Port->CommandIssue = (uint)(1 << Slot);
-
-                dl = Deadline(30000); sp = FallbackSpins;
-                while (true)
-                {
-                    if ((Rd(&Port->CommandIssue) & (1 << Slot)) == 0) break;
-                    if ((Rd(&Port->InterruptStatus) & (1 << 30)) != 0) return false;
-                    if (Expired(dl, ref sp)) return false;
-                }
-                bool ok = (Rd(&Port->InterruptStatus) & (1 << 30)) == 0;
-                DisableInterrupts(Controller, Port);
+                bool ok = IssueAndWait(Slot, 30000);
+                ResetStatus(Controller, Port);
                 return ok;
             }
 
@@ -491,20 +611,20 @@ namespace OS.Hal
                 if (Count == 0 || Count >= 512) return false;
                 if (PortType == SATAPortType.ATAPI && Write) return false;
 
-                OS.Kernel.Threading.Preemption.Suppress();
+                Serialise();
                 try
                 {
                     return ReadOrWriteCore(Sector, Count, Buffer, Write);
                 }
                 finally
                 {
-                    OS.Kernel.Threading.Preemption.Allow();
+                    Unserialise();
                 }
             }
 
             private bool ReadOrWriteCore(ulong Sector, ushort Count, byte* Buffer, bool Write)
             {
-                DisableInterrupts(Controller, Port);
+                ResetStatus(Controller, Port);
                 int Slot = FindSlot();
                 if (Slot == -1) return false;
 
@@ -559,21 +679,12 @@ namespace OS.Hal
                 while ((Rd(&Port->TaskFileData) & (0x80 | 0x08)) != 0)
                     if (Expired(dl, ref sp)) return false;
 
-                Port->CommandIssue = (uint)(1 << Slot);
-
-                dl = Deadline(8000); sp = FallbackSpins;
-                while (true)
-                {
-                    if ((Rd(&Port->CommandIssue) & (1 << Slot)) == 0) break;
-                    if ((Rd(&Port->InterruptStatus) & (1 << 30)) != 0) return false;
-                    if (Expired(dl, ref sp)) return false;
-                }
-                if ((Rd(&Port->InterruptStatus) & (1 << 30)) != 0) return false;
+                if (!IssueAndWait(Slot, 8000)) return false;
 
                 dl = Deadline(2000); sp = FallbackSpins;
                 while (Rd(&Port->CommandIssue) != 0)
                     if (Expired(dl, ref sp)) return false;
-                DisableInterrupts(Controller, Port);
+                ResetStatus(Controller, Port);
                 return true;
             }
 

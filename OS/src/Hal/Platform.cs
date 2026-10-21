@@ -237,28 +237,42 @@ namespace OS.Hal
             TerminalConsole.Flush();
         }
 
+        // Off by the machine's own means (step210): ACPI S5, then a reset
+        // through 0xCF9 and the keyboard controller, and the firmware's
+        // ResetSystem only when neither took. The plan is said before the
+        // volume is flushed: a line after it would go to a disk that is about
+        // to lose power.
         public static void Shutdown()
         {
             if (!s_initialized)
                 return;
 
+            Console.Write("[power] off: ");
+            if (OS.Hal.Acpi.Power.CanPowerOff)
+            {
+                Console.Write("ACPI S5, PM1a=0x");
+                Console.WriteHex(OS.Hal.Acpi.Power.Pm1a);
+                Console.Write(" SLP_TYP=");
+                Console.WriteUInt(OS.Hal.Acpi.Power.SlpTypA);
+            }
+            else
+            {
+                Console.Write("no S5 (");
+                Console.Write(OS.Hal.Acpi.Power.Missing ?? "?");
+                Console.Write(")");
+            }
+            Console.WriteLine(", then reset 0xCF9/0x64, then firmware");
+
             // What the volume holds, to the medium before the power goes
             // (step208): a stick acknowledges writes it still has in its cache.
             Fat32.FlushForShutdown();
 
-            if (!HasCapability(PlatformCapabilities.Shutdown))
-            {
-                Halt();
-                return;
-            }
+            OS.Hal.Acpi.Power.PowerOff();
+            OS.Hal.Acpi.Power.Reset();
 
-            if (s_bootInfo.Shutdown == null)
-            {
-                Halt();
-                return;
-            }
-
-            s_bootInfo.Shutdown();
+            if (HasCapability(PlatformCapabilities.Shutdown) && s_bootInfo.Shutdown != null)
+                s_bootInfo.Shutdown();
+            Halt();
         }
 
         // Raw-event variant for the app key service (step143): post-EBS it

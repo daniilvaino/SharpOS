@@ -1,4 +1,4 @@
-﻿namespace OS.Hal.Usb
+namespace OS.Hal.Usb
 {
     // A USB stick as a Disk, so FAT32 mounts it with no idea it is USB.
     //
@@ -15,6 +15,9 @@
         private const int CswLength = 13;
 
         private static XhciController s_hc;
+
+        /// <summary>The controller the disk is on, null before Init.</summary>
+        internal static XhciController Controller => s_hc;
         private static uint s_slot;
         private static bool s_present;
         private static uint s_tag = 1;
@@ -384,25 +387,30 @@
         // submissions inside the stack: they all have the same shape in five
         // files, and a guard that is missing from one of them is worse than no
         // guard at all, because it is trusted.
+        // Holding the controller: the CPU while it is polled, its lock once it
+        // interrupts (XhciController.Enter, step210).
         public override bool Read(ulong sector, uint count, byte* data)
         {
-            OS.Kernel.Threading.Preemption.Suppress();
+            XhciController hc = UsbMassStorage.Controller;
+            bool locked = XhciController.Enter(hc);
             try { return UsbMassStorage.Read(sector, count, data); }
-            finally { OS.Kernel.Threading.Preemption.Allow(); }
+            finally { XhciController.Leave(hc, locked); }
         }
 
         public override bool Write(ulong sector, uint count, byte* data)
         {
-            OS.Kernel.Threading.Preemption.Suppress();
+            XhciController hc = UsbMassStorage.Controller;
+            bool locked = XhciController.Enter(hc);
             try { return UsbMassStorage.Write(sector, count, data); }
-            finally { OS.Kernel.Threading.Preemption.Allow(); }
+            finally { XhciController.Leave(hc, locked); }
         }
 
         public override bool Flush()
         {
-            OS.Kernel.Threading.Preemption.Suppress();
+            XhciController hc = UsbMassStorage.Controller;
+            bool locked = XhciController.Enter(hc);
             try { return UsbMassStorage.SynchronizeCache(); }
-            finally { OS.Kernel.Threading.Preemption.Allow(); }
+            finally { XhciController.Leave(hc, locked); }
         }
     }
 }

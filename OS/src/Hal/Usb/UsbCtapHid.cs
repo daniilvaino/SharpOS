@@ -108,7 +108,8 @@ namespace OS.Hal.Usb
 
             byte* frame = stackalloc byte[64];
 
-            OS.Kernel.Threading.Preemption.Suppress();
+            XhciController hc = s_hc;
+            bool locked = XhciController.Enter(hc);
             try
             {
                 // ---- out: the first frame, then continuations ----
@@ -186,7 +187,7 @@ namespace OS.Hal.Usb
             }
             finally
             {
-                OS.Kernel.Threading.Preemption.Allow();
+                XhciController.Leave(hc, locked);
             }
         }
 
@@ -262,7 +263,8 @@ namespace OS.Hal.Usb
 
             // One transfer owns the controller: the rings carry one enqueue
             // index apiece and nothing tells two completions apart.
-            OS.Kernel.Threading.Preemption.Suppress();
+            XhciController hc = s_hc;
+            bool locked = XhciController.Enter(hc);
             try
             {
                 if (!s_hc.TryWriteReportOn(s_function, frame, 64, timeoutMs)) return false;
@@ -298,7 +300,7 @@ namespace OS.Hal.Usb
             }
             finally
             {
-                OS.Kernel.Threading.Preemption.Allow();
+                XhciController.Leave(hc, locked);
             }
         }
     }

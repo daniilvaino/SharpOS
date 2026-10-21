@@ -34,6 +34,32 @@ namespace OS.Hal
             OS.Kernel.Panic.Fail("PortIo.Outb (stub not patched)");
         }
 
+        // Word-wide pair (step210): the ACPI PM1 control registers are 16 bits.
+        [RuntimeExport("PortIo_Inw")]
+        private static ushort Inw(ushort port)
+        {
+            OS.Kernel.Panic.Fail("PortIo.Inw (stub not patched)");
+            return 0;
+        }
+
+        [RuntimeExport("PortIo_Outw")]
+        private static void Outw(ushort port, ushort value)
+        {
+            OS.Kernel.Panic.Fail("PortIo.Outw (stub not patched)");
+        }
+
+        public static unsafe void* GetInwAddress()
+        {
+            delegate*<ushort, ushort> fn = &Inw;
+            return (void*)fn;
+        }
+
+        public static unsafe void* GetOutwAddress()
+        {
+            delegate*<ushort, ushort, void> fn = &Outw;
+            return (void*)fn;
+        }
+
         public static unsafe void* GetInbAddress()
         {
             delegate*<ushort, byte> fn = &Inb;

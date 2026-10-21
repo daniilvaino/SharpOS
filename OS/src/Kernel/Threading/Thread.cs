@@ -21,6 +21,7 @@
         Mutex     = 3,
         Address   = 4,    // WaitOnAddress
         Timer     = 5,    // Sleep / timed wait
+        Irq       = 6,    // a driver waiting for its device (IrqWait)
     }
 
     // Phase E9.c step 102 -- wait state per docs/threading-architecture.md

@@ -2,10 +2,10 @@
 
 namespace OS.Boot
 {
-    // Phase C experiment — physically call ExitBootServices and prove
-    // the own substrate (16550 UART + GOP framebuffer + PS/2) survives
-    // without UEFI. SharpOS has never done this before; the whole
-    // Phase B off-ramp existed to make it survivable.
+    // ExitBootServices and everything the boot does after it: the own
+    // substrate (16550 UART, GOP framebuffer, PS/2, local APIC, AHCI/xHCI,
+    // FAT32) and then, back in the boot sequence, the launcher. This is the
+    // default boot since step 91 (Probes.ExitBootServicesExperiment).
     //
     // Order is load-bearing:
     //   1. Bring up + REROUTE Console to the own UART/FbTty BEFORE the
@@ -19,12 +19,11 @@ namespace OS.Boot
     //   3. GetMemoryMap -> key, immediately ExitBootServices(key). If
     //      the map changed (EFI_INVALID_PARAMETER) retry: re-GetMemoryMap
     //      (no allocation between it and ExitBootServices) and call again.
-    //   4. Post-EBS: NO Boot Services calls. Prove the own substrate
-    //      live, then halt (the UEFI launcher cannot run without UEFI).
-    //
-    // Gated default-off (Probes.ExitBootServices): never-returning and
-    // it tears down UEFI, so it must never run in the headless
-    // regression battery.
+    //   4. Post-EBS: no Boot Services calls. Interrupts become ours
+    //      (TakeOverInterrupts: local APIC, our vectors, a stub for the
+    //      rest of the IDT), then the disks and the filesystem. Of the
+    //      firmware only the runtime ResetSystem is left, as the last way
+    //      to power off (Platform.Shutdown).
     internal static unsafe class ExitBootServicesProbe
     {
         private const uint TimerHz = OS.Kernel.Diagnostics.Probes.TimerHz;
@@ -263,6 +262,9 @@ namespace OS.Boot
             if (OS.Kernel.Diagnostics.Probes.FatWrite)
                 OS.Kernel.Diagnostics.FatWriteProbe.Run();
 
+            if (OS.Kernel.Diagnostics.Probes.DiskYield)
+                OS.Kernel.Diagnostics.DiskYieldProbe.Run();
+
             // Firmware-free hosted tier: run CoreCLR HERE, post-EBS.
             // Fs.Current is the FAT mounted above, so the host's
             // [host] FileOpen -> Platform.TryReadFile loads every
@@ -359,6 +361,11 @@ namespace OS.Boot
                 return;
             }
 
+            // The rest of the inherited firmware entries now lead into code
+            // with no owner: one stub of ours for all of them (step210).
+            if (!OS.Hal.Idt.Idt.StubUnownedVectors())
+                Console.WriteLine("[idt] FAIL the firmware's vectors are still in the table");
+
             if (!OS.Hal.Apic.LocalApic.StartPeriodic(OS.Hal.Idt.Idt.TimerVector, TimerHz))
             {
                 Console.WriteLine("[apic] FAIL timer calibration");
@@ -398,6 +405,11 @@ namespace OS.Boot
             // 300 ms of counting ticks: a check, not the calibration above.
             if (OS.Kernel.Diagnostics.Probes.Tests)
                 VerifyTickIsMoving();
+
+            // Device interrupts (MSI, plan §11): the disk wakes its waiter
+            // instead of being polled with the machine held.
+            OS.Hal.Ahci.EnableInterrupts();
+            OS.Hal.Usb.XhciController.EnableInterruptsAll();
         }
 
         // A clock is not a clock until it has been watched moving. Measured

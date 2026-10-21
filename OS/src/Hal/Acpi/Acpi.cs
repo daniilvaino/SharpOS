@@ -95,6 +95,10 @@ namespace OS.Hal.Acpi
             s_xsdt = xsdt;
             s_xsdtEntryCount = entryCount;
             s_initialized = true;
+
+            // The S5 sleep type and the PM1 ports, while the tables are surely
+            // mapped (Power, step210).
+            Power.Parse(FadtPtr);
             return true;
         }
 

@@ -895,6 +895,10 @@ namespace OS.Kernel.Threading
 
         private static Thread? DequeueRunnable()
         {
+            // Drivers woken by their devices since the last pass join the
+            // queue first, so they take part in this choice.
+            IrqWait.Deliver();
+
             Preemption.Suppress();
             Thread? t = s_runnableHead;
             if (t != null)

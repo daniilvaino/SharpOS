@@ -15,6 +15,7 @@ namespace OS.Hal.Idt
     //   4704..4707     LIDT helper (4 bytes: lidt [rcx]; ret)
     //   4712..4715     SIDT helper (4 bytes: sidt [rcx]; ret)
     //   4736..4991     Late-wired vector stubs (16 × 16 bytes)
+    //   4992..5007     The stub for every vector nobody owns (StubUnownedVectors)
     //
     // Hardware interrupt strategy has two eras, and Install() sits in the
     // first one:
@@ -27,15 +28,10 @@ namespace OS.Hal.Idt
     //   EOI is never sent, and the PIC suppresses everything after it.
     //
     //   After ExitBootServices those handlers are code without an owner.
-    //   ExitBootServicesProbe masks the legacy PIC and points the vectors we
-    //   actually raise at our own dispatcher (Phase F1). The inherited tail
-    //   stays in the table but can no longer be reached.
-    //
-    // (An older version of this comment justified the copy by the launcher's
-    // UEFI ReadKeyStroke polls. That has not been true since the launcher
-    // moved past ExitBootServices — it runs in Phase 5, the teardown is in
-    // Phase 4, and its input comes from our own drivers. The copy is still
-    // needed, but for Phase 0-3, not for the launcher.)
+    //   ExitBootServicesProbe masks the legacy PIC, points the vectors we
+    //   raise at our own dispatcher (Phase F1) and every other one above 31
+    //   at a stub of ours (StubUnownedVectors): nothing in the table leads
+    //   into the firmware any more.
     //
     // We also DO NOT issue CLI before LIDT — interrupts must keep flowing
     // to UEFI's handlers. Since LIDT is atomic, there's no race window:
@@ -67,10 +63,20 @@ namespace OS.Hal.Idt
         private const uint IrqStubSlots   = 16;
         private const uint IrqStubsEnd    = IrqStubsOffset + (IrqStubSlots * IdtTrampolines.VectorStubSize);
 
+        // Every other vector above the exceptions, once UEFI is gone: one
+        // stub, pushing a number no real vector has (step210).
+        public const int UnexpectedVector = 0x100;
+        private const uint UnexpectedStubOffset = IrqStubsEnd;
+
         private static bool s_installed;
         private static byte* s_buffer;
         private static uint s_bufferSize;
         private static uint s_irqStubsUsed;
+        private static ulong s_wired0, s_wired1, s_wired2, s_wired3;   // vectors with a gate of ours
+        private static ulong s_unexpected;
+
+        /// <summary>Interrupts that arrived on a vector nobody owns.</summary>
+        public static ulong UnexpectedCount => s_unexpected;
 
         public static bool IsInstalled => s_installed;
 
@@ -237,6 +243,58 @@ namespace OS.Hal.Idt
                 KernelCodeSelector,
                 ist: 0,
                 typeAttr: IdtDescriptor.TypeInterruptGate);
+            MarkWired(vector);
+            return true;
+        }
+
+        private static void MarkWired(int vector)
+        {
+            ulong bit = 1UL << (vector & 63);
+            switch (vector >> 6)
+            {
+                case 0: s_wired0 |= bit; break;
+                case 1: s_wired1 |= bit; break;
+                case 2: s_wired2 |= bit; break;
+                default: s_wired3 |= bit; break;
+            }
+        }
+
+        private static bool IsWired(int vector)
+        {
+            ulong bit = 1UL << (vector & 63);
+            switch (vector >> 6)
+            {
+                case 0: return (s_wired0 & bit) != 0;
+                case 1: return (s_wired1 & bit) != 0;
+                case 2: return (s_wired2 & bit) != 0;
+                default: return (s_wired3 & bit) != 0;
+            }
+        }
+
+        /// <summary>
+        /// Points every vector above the exceptions that is not ours at one
+        /// stub of ours (step210). Install copied the firmware's entries for
+        /// them so its handlers kept working while it lived; once it is gone
+        /// those entries lead into code without an owner, and an interrupt on
+        /// one of them — a stray MSI, a misprogrammed device — would jump
+        /// there. Now it is counted, said, acknowledged and returned from.
+        /// Call after ExitBootServices; vectors wired later replace the stub.
+        /// </summary>
+        public static bool StubUnownedVectors()
+        {
+            if (!s_installed || s_buffer == null) return false;
+            if (s_bufferSize < UnexpectedStubOffset + IdtTrampolines.VectorStubSize) return false;
+
+            byte* stub = s_buffer + UnexpectedStubOffset;
+            IdtTrampolines.WriteVectorStub(stub, UnexpectedVector, s_buffer + IdtTrampolines.CommonStubOffset);
+
+            IdtDescriptor* idt = (IdtDescriptor*)s_buffer;
+            for (int vector = (int)IdtTrampolines.VectorCount; vector < 256; vector++)
+            {
+                if (IsWired(vector)) continue;
+                IdtDescriptor.Build(&idt[vector], stub, KernelCodeSelector, ist: 0,
+                                    typeAttr: IdtDescriptor.TypeInterruptGate);
+            }
             return true;
         }
 
@@ -307,6 +365,38 @@ namespace OS.Hal.Idt
                 if (interrupted != null) interrupted.InterruptDepth--;
                 if (OS.Hal.X64Asm.TryResumeFrame(frame))
                     return;                 // iretq — does not return
+            }
+            else if (vector >= DeviceIrq.FirstVector && vector < DeviceIrq.FirstVector + DeviceIrq.MaxSources)
+            {
+                // A device (MSI). The handler clears the device's status and
+                // posts its source; the scheduler wakes the driver on its next
+                // pass (IrqWait). Never switches from here.
+                OS.Kernel.Threading.Thread? interrupted = OS.Kernel.Threading.Scheduler.Current;
+                if (interrupted != null) interrupted.InterruptDepth++;
+                DeviceIrq.Dispatch(vector);
+                OS.Hal.Apic.LocalApic.EndOfInterrupt();
+                if (interrupted != null) interrupted.InterruptDepth--;
+                if (OS.Hal.X64Asm.TryResumeFrame(frame))
+                    return;
+            }
+            else if (vector == UnexpectedVector)
+            {
+                // A vector nobody owns (StubUnownedVectors). The first few are
+                // said, with where the CPU was; all are acknowledged — if the
+                // APIC delivered it, it is in service until an EOI.
+                OS.Kernel.Threading.Thread? interrupted = OS.Kernel.Threading.Scheduler.Current;
+                if (interrupted != null) interrupted.InterruptDepth++;
+                s_unexpected++;
+                if (s_unexpected <= 8)
+                {
+                    Console.Write("[idt] unexpected interrupt on a vector nobody owns, rip=0x");
+                    Console.WriteHex(frame->Rip);
+                    Console.WriteLine("");
+                }
+                OS.Hal.Apic.LocalApic.EndOfInterrupt();
+                if (interrupted != null) interrupted.InterruptDepth--;
+                if (OS.Hal.X64Asm.TryResumeFrame(frame))
+                    return;
             }
             else if (vector == 1)
             {

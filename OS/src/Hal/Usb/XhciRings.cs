@@ -1,4 +1,4 @@
-﻿namespace OS.Hal.Usb
+namespace OS.Hal.Usb
 {
     // xHCI DMA structures and controller start: device context array, command
     // ring, event ring, scratchpad, then run.
@@ -334,8 +334,10 @@
                         _eventDequeue = 0;
                         _eventCycle ^= 1;
                     }
+                    // EHB (write 1 to clear) with the new pointer: the
+                    // interrupter sends nothing more while it is set.
                     Write64(_runtimeBase + IR0 + IR_ERDP,
-                            _eventRing + _eventDequeue * (ulong)TrbSize);
+                            (_eventRing + _eventDequeue * (ulong)TrbSize) | ERDP_EHB);
 
                     uint eventSlotId = (control >> 24) & 0xFF;
                     if (type == wantType && (wantSlot == 0 || eventSlotId == wantSlot))
@@ -362,11 +364,16 @@
                 // this is one or two reads instead of a hundred; the deadline
                 // is seconds away and does not need more. A non-blocking poll
                 // still reads it once, on its first turn.
-                if ((timeoutMs == 0 || (spins & 255) == 255) && Expired(deadline))
+                if ((timeoutMs == 0 || (spins & 255) == 255 || _irqSource >= 0) && Expired(deadline))
                 {
                     CountWait(started, spins);
                     return false;
                 }
+
+                // With interrupts the ring is empty until the next one: sleep
+                // (step210). A non-blocking poll does not.
+                if (_irqSource >= 0 && timeoutMs != 0)
+                    OS.Kernel.Threading.IrqWait.Sleep(_irqSource, &EventReady, deadline);
             }
             CountWait(started, spins);
             return false;

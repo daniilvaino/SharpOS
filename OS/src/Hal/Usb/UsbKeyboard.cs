@@ -50,9 +50,10 @@
         // through the interrupt ring and waits for its event.
         public static void Poll()
         {
-            OS.Kernel.Threading.Preemption.Suppress();
+            XhciController hc = s_hc;
+            bool locked = XhciController.Enter(hc);
             try { PollCore(); }
-            finally { OS.Kernel.Threading.Preemption.Allow(); }
+            finally { XhciController.Leave(hc, locked); }
         }
 
         private static void PollCore()

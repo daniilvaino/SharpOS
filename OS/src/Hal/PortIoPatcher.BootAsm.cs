@@ -51,6 +51,32 @@ namespace OS.Hal
             a.ret();
         }
 
+        [CompileTimeAsm]
+        public static partial int EmitInw(byte* dst);
+
+        // ushort Inw(ushort port) — port CX, result in AX.
+        [CompileTimeAsmBody(nameof(EmitInw))]
+        private static void EmitInw_Body(Iced.Intel.Assembler a)
+        {
+            a.mov(dx, cx);
+            a.@in(ax, dx);
+            a.movzx(eax, ax);
+            a.ret();
+        }
+
+        [CompileTimeAsm]
+        public static partial int EmitOutw(byte* dst);
+
+        // void Outw(ushort port, ushort value) — port CX, value DX.
+        [CompileTimeAsmBody(nameof(EmitOutw))]
+        private static void EmitOutw_Body(Iced.Intel.Assembler a)
+        {
+            a.mov(ax, dx);
+            a.mov(dx, cx);
+            a.@out(dx, ax);
+            a.ret();
+        }
+
         // Same shape as M4/M5.1 compare helpers.
         private static void CompareOrPanic(string name, byte* compile, byte* legacy, int compileLen, int legacyLen)
         {

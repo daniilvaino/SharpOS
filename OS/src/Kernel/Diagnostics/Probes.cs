@@ -385,6 +385,16 @@
         // multi-thread artefact in the project — commit milestone.
         public const bool ThreadPingPong = Tests;
 
+        // A large file read while another thread counts its turns (step210):
+        // the disk drivers sleep on their interrupts instead of holding the CPU.
+        public const bool DiskYield = Tests;
+
+        // Device interrupts (MSI) for the disk drivers (step210). Off: they
+        // poll with preemption suppressed, as before — the switch that told
+        // the heap corruption of step210 apart (on with DiskYield it came,
+        // off it did not).
+        public const bool DeviceInterrupts = true;
+
         // [ThreadStatic] in the kernel (step209): own value per thread, a
         // reference held only there survives a collection.
         public const bool ThreadStatics = Tests;

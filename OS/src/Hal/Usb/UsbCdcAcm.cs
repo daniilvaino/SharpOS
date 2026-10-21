@@ -56,7 +56,8 @@ namespace OS.Hal.Usb
             // The rings carry one enqueue index apiece and nothing tells two
             // concurrent completions apart, so a transfer owns the controller
             // from doorbell to event.
-            OS.Kernel.Threading.Preemption.Suppress();
+            XhciController hc = s_hc;
+            bool locked = XhciController.Enter(hc);
             try
             {
                 int sent = 0;
@@ -78,7 +79,7 @@ namespace OS.Hal.Usb
             }
             finally
             {
-                OS.Kernel.Threading.Preemption.Allow();
+                XhciController.Leave(hc, locked);
             }
         }
 
@@ -108,7 +109,8 @@ namespace OS.Hal.Usb
 
             // Same reason the writer suppresses: one enqueue index per ring,
             // and nothing distinguishes two completions.
-            OS.Kernel.Threading.Preemption.Suppress();
+            XhciController hc = s_hc;
+            bool locked = XhciController.Enter(hc);
             try
             {
                 if (!s_hc.TryCdcRead(s_slot, (void*)s_rxBuffer, want, timeoutMs, out uint got))
@@ -121,7 +123,7 @@ namespace OS.Hal.Usb
             }
             finally
             {
-                OS.Kernel.Threading.Preemption.Allow();
+                XhciController.Leave(hc, locked);
             }
         }
     }

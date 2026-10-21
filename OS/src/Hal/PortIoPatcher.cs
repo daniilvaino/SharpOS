@@ -8,8 +8,10 @@ namespace OS.Hal
     internal static unsafe partial class PortIoPatcher
     {
         private static bool s_installed;
+        private static bool s_wordInstalled;
 
         public static bool IsInstalled => s_installed;
+        public static bool IsWordInstalled => s_wordInstalled;
 
         public static bool TryInstall()
         {
@@ -26,6 +28,15 @@ namespace OS.Hal
             // Readback sanity check — fails silently if .text was mapped RO.
             if (inb[0] != 0x66 || inb[3] != 0xEC) return false;
             if (outb[0] != 0x88 || outb[5] != 0xEE) return false;
+
+            byte* inw = (byte*)PortIoStub.GetInwAddress();
+            byte* outw = (byte*)PortIoStub.GetOutwAddress();
+            if (inw != null && outw != null)
+            {
+                EmitInw(inw);
+                EmitOutw(outw);
+                s_wordInstalled = true;
+            }
 
             s_installed = true;
             return true;

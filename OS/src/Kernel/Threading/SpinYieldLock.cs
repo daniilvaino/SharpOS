@@ -22,12 +22,18 @@ namespace OS.Kernel.Threading
         {
             while (X64Asm.CmpXchg64(flag, value: 1UL, comparand: 0UL) != 0UL)
             {
-                // Contended. If we have a scheduler context, yield so
-                // some other thread can release. Pre-scheduler boot:
-                // single-thread, the flag is logically uncontended -- if
-                // we're here something is very wrong; spin to surface it.
+                // Contended. If we have a scheduler context, give the CPU
+                // to whoever can release. Idle, not Yield (step210): the
+                // owner may be asleep in a driver until its device
+                // interrupts (the FAT32 lock across a disk command), and
+                // Yield with nobody else runnable returns at once — a spin
+                // through the whole command. Idle halts until the next
+                // interrupt when nobody has work, which is the one that
+                // wakes the owner. Pre-scheduler boot: single-thread, the
+                // flag is logically uncontended -- if we're here something
+                // is very wrong; spin to surface it.
                 if (Scheduler.Current != null)
-                    Scheduler.Yield();
+                    Scheduler.Idle();
             }
         }
 
