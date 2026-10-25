@@ -97,6 +97,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Environment.Variables.cs" Link="std\Environment.Variables.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\ScreenText.cs" Link="std\Pipes\ScreenText.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeProbeMessages.cs" Link="std\Pipes\PipeProbeMessages.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SystemInfo.cs" Link="std\SystemInfo.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStatus.cs" Link="std\Pipes\PipeStatus.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\ObjectLayout.cs" Link="std\Exchange\ObjectLayout.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\Region.cs" Link="std\Exchange\Region.cs" />

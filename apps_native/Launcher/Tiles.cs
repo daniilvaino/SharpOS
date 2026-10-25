@@ -104,8 +104,10 @@ namespace Launcher
             var entries = new List<Entry>
             {
                 new Entry { Title = "Shell", Subtitle = "pipes, KQL, files", Path = ShellPath },
-                new Entry { Title = "PowerShell", Subtitle = "PowerShell 7, CoreCLR", Path = PowerShellPath, Managed = true },
             };
+            // An image built with -SkipCoreClr has no hosted runtime: no tile.
+            if (AppHost.FileExists(PowerShellPath))
+                entries.Add(new Entry { Title = "PowerShell", Subtitle = "PowerShell 7, CoreCLR", Path = PowerShellPath, Managed = true });
             foreach (FileNode node in FileTree.Read(GamesDirectory))
             {
                 if (node.Kind != NodeKind.Application) continue;

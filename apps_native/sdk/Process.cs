@@ -17,7 +17,7 @@ namespace SharpOS.AppSdk
     /// </remarks>
     public sealed unsafe class Process : IDisposable
     {
-        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18;
+        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18, OpSystemInfo = 21;
 
         private bool _released;
         private bool _exited;
@@ -35,6 +35,46 @@ namespace SharpOS.AppSdk
             {
                 ulong* request = stackalloc ulong[6];
                 return Call(OpCurrentId, request) == AppServiceStatus.Ok ? (uint)request[1] : 0u;
+            }
+        }
+
+        /// <summary>
+        /// What this system is and what came up (step211): build, firmware,
+        /// CPU, memory, storage, input, display, timers, buses, power. The
+        /// kernel sends it over a pipe named for this process; the copy is
+        /// this program's own.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The kernel does not report it.</exception>
+        public static SharpOS.Std.SystemInformation.SystemInfo GetSystemInfo()
+        {
+            string name = "sysinfo." + CurrentId.ToString();
+            if (PipeReader<SharpOS.Std.SystemInformation.SystemInfo>.Connect(name,
+                    out PipeReader<SharpOS.Std.SystemInformation.SystemInfo> reader, out string error) != PipeStatus.Ok)
+                throw new InvalidOperationException("cannot open the pipe for SystemInfo: " + error);
+            using (reader)
+            {
+                byte[] encoded = System.Text.Encoding.UTF8.GetBytes(name);
+                byte[] nameBytes = new byte[encoded.Length + 1];
+                Array.Copy(encoded, nameBytes, encoded.Length);
+                ulong* request = stackalloc ulong[2];
+                AppServiceStatus status;
+                fixed (byte* pointer = nameBytes)
+                {
+                    request[0] = (ulong)pointer;
+                    request[1] = 0;
+                    status = Call(OpSystemInfo, request);
+                }
+                if (status != AppServiceStatus.Ok)
+                    throw new InvalidOperationException("this kernel does not report SystemInfo");
+                if ((PipeStatus)request[1] != PipeStatus.Ok)
+                    throw new InvalidOperationException("the kernel could not send SystemInfo: " + ((PipeStatus)request[1]).ToString());
+
+                Region<SharpOS.Std.SystemInformation.SystemInfo> region = reader.Receive();
+                if (region == null)
+                    throw new InvalidOperationException("SystemInfo did not arrive: " + reader.Status.ToString());
+                SharpOS.Std.SystemInformation.SystemInfo info = region.ToHeap();
+                region.Dispose();
+                return info;
             }
         }
 

@@ -392,7 +392,8 @@ New-Item -ItemType Directory -Force -Path $espBootDir | Out-Null
 #   \games   games and data  \config  system.env, the battery script
 #   \home    the working directory to start in
 #   \system  for the system beyond the kernel — empty for now
-#   \sharpos the hosted runtime (CoreCLR), as before
+#   \sharpos the kernel's boot log and write probe; the hosted runtime
+#            (CoreCLR) unless -SkipCoreClr
 # Where each app goes is its .csproj's <SharpOsCategory> (tools/Apps.ps1).
 # \apps, where everything lay before, is removed: an old copy there would be
 # found by nothing and fill the volume.
@@ -407,39 +408,8 @@ foreach ($dir in @('bin', 'tests', 'games', 'config', 'home', 'system')) {
 $bootx64 = Join-Path $espBootDir "BOOTX64.EFI"
 Copy-Item -LiteralPath $builtEfi -Destination $bootx64 -Force
 
-# CoreCLR expects System.Private.CoreLib.dll at path \sharpos\System.Private.CoreLib.dll
-# (our Path.GetFullPath prepends "\sharpos\" to relative paths). Place the DLL there
-# on the EFI partition so CreateFileW -> SharpOSHost_FileOpen -> Platform.TryReadFile
-# via UEFI SimpleFileSystem can find it.
-$spcDll = Join-Path (Join-Path $repoRoot "dotnet-runtime-sharpos\artifacts\bin\coreclr\windows.x64.$ForkConfig") "System.Private.CoreLib.dll"
 $espSharpOSDir = Join-Path $qemuWorkDir "esp\sharpos"
-if (Test-Path -LiteralPath $spcDll) {
-    New-Item -ItemType Directory -Force -Path $espSharpOSDir | Out-Null
-    Copy-Item -LiteralPath $spcDll -Destination (Join-Path $espSharpOSDir "System.Private.CoreLib.dll") -Force
-    Write-Host "Prepared CoreCLR BCL: \sharpos\System.Private.CoreLib.dll"
-}
-else {
-    Write-Warning "System.Private.CoreLib.dll not found at $spcDll - CoreCLR init will fail with FILE_NOT_FOUND"
-}
-# Create directories that SharpOSHost_GetSystemString reports as existing.
-# GetTempPath → "C:\sharpos\tmp\", GetSystemDirectory → "C:\sharpos\system32".
-# PS FileSystemProvider validates these at PSDrive auto-mount; if a path is
-# reported but missing on disk, the entire PSDrive init throws and C: never
-# registers → all subsequent module discovery dies (no PSDrive to resolve
-# $PSHome\Modules against).
-New-Item -ItemType Directory -Force -Path (Join-Path $espSharpOSDir "tmp")      | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $espSharpOSDir "system32") | Out-Null
-Write-Host "Prepared empty dirs: \sharpos\tmp\ \sharpos\system32\"
-
-# PSReadLine reads its saved history on the first Up-arrow. The file is created
-# on demand by a normal host, but we have no writable filesystem yet, so stage an
-# empty one: a missing file makes every history navigation re-probe the path.
-$psrlHistoryDir  = Join-Path $espSharpOSDir "Microsoft\Windows\PowerShell\PSReadLine"
-$psrlHistoryFile = Join-Path $psrlHistoryDir "ConsoleHost_history.txt"
-New-Item -ItemType Directory -Force -Path $psrlHistoryDir | Out-Null
-if (-not (Test-Path -LiteralPath $psrlHistoryFile)) {
-    New-Item -ItemType File -Path $psrlHistoryFile | Out-Null
-}
+New-Item -ItemType Directory -Force -Path $espSharpOSDir | Out-Null
 # Boot log target: the kernel mirrors every console line into this file, one
 # sector per line. Pre-staged at a fixed size because writing in place needs
 # no cluster allocation - 16 MiB is ~32k lines, far more than a boot produces.
@@ -464,279 +434,359 @@ $fsWriteProbe = Join-Path $espSharpOSDir "fswrite.bin"
 [System.IO.File]::WriteAllBytes($fsWriteProbe, ([byte[]]@(65) * 512))
 Write-Host "Prepared FS write probe: fswrite.bin (512 x 'A')"
 
-Write-Host "Prepared PSReadLine history: \sharpos\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt"
-
-# ...and tell PSReadLine not to write it back. The media is read-only, so every
-# accepted command otherwise ends in "Access to the path ... is denied" printed
-# in red. $PSHome\profile.ps1 is the all-hosts profile; it is already probed at
-# startup. Guarded, because a throwing profile would break the prompt itself.
-$espProfile = Join-Path $espSharpOSDir "pwsh\profile.ps1"
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $espProfile) | Out-Null
-# Written byte-exact: CRLF (the guest is Windows-shaped) and UTF-8 without BOM.
-# Set-Content would end the file with the build host's newline, and its UTF8
-# means "with BOM" in Windows PowerShell 5.1 but not in pwsh 7 — the image
-# must not depend on which host or shell built it.
-$profileText = @(
-    '# SharpOS: the boot media is read-only, so history cannot be persisted.'
-    '# Keep in-session history (Up-arrow still works) but never touch the file.'
-    'try { Set-PSReadLineOption -HistorySaveStyle SaveNothing -ErrorAction Stop } catch { }'
-    ''
-) -join "`r`n"
-[System.IO.File]::WriteAllText($espProfile, $profileText, (New-Object System.Text.UTF8Encoding($false)))
-Write-Host "Prepared PS profile: \sharpos\pwsh\profile.ps1 (history SaveNothing)"
-
-# Stock PowerShell module manifests: required for built-in cmdlet registration.
-# Microsoft.PowerShell.Utility (Write-Output etc.), Microsoft.PowerShell.Management
-# (Get-ChildItem etc.), Microsoft.PowerShell.Security/Diagnostics — all import via
-# Modules/<Name>/<Name>.psd1 at PS startup. Without these manifests every cmdlet
-# lookup ends in "is not recognized" — even though the .dll is in TPA.
-# Дистрибутив PowerShell для гостя скачивается отдельно, по README:
-#   curl -L -o pwsh.zip .../PowerShell-7.6.5-win-x64.zip
-#   Expand-Archive pwsh.zip -DestinationPath payloads\pwsh\PowerShell-7.6.5-win-x64
-# Он и есть источник модулей: гость исполняет win-x64, и версия модулей должна
-# совпадать с версией сборок, которые лягут рядом (см. раскладку ниже — там
-# объяснено, почему версия дистрибутива вообще важна). Брать модули у pwsh,
-# установленного на машине сборки, нельзя: вне Windows это вообще чужая
-# платформа, а на Windows — другая версия, чем в payloads.
-# Версия — из toolchain.json (pwsh.version), каталог — ровно под неё. Раньше
-# брался «самый большой по алфавиту», и 7.10 проиграл бы 7.6.
-$pwshVersion = (Get-SharpOsToolchainSpec).pwsh.version
-$pwshDist = Get-Item -LiteralPath (Join-Path $repoRoot "payloads\pwsh\PowerShell-$pwshVersion-win-x64") -ErrorAction SilentlyContinue
-if (-not $pwshDist) {
-    $others = (Get-ChildItem -LiteralPath (Join-Path $repoRoot "payloads\pwsh") -Directory -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', '
-    Write-Warning "payloads\pwsh\PowerShell-$pwshVersion-win-x64 нет (версия из toolchain.json)$(if ($others) { "; есть: $others" })"
-}
-$stockPwshModules = if ($pwshDist) { Join-Path $pwshDist.FullName "Modules" } else { $null }
-$espPwshModules   = Join-Path $espSharpOSDir "pwsh\Modules"
-if ($stockPwshModules -and (Test-Path -LiteralPath $stockPwshModules)) {
-    New-Item -ItemType Directory -Force -Path $espPwshModules | Out-Null
-    Copy-Item -LiteralPath $stockPwshModules -Destination (Join-Path $espSharpOSDir "pwsh") -Recurse -Force
-    $modCount = (Get-ChildItem -LiteralPath $espPwshModules -Directory).Count
-    Write-Host "Prepared pwsh modules: \sharpos\pwsh\Modules\ ($modCount modules)"
+# The rest of \sharpos is the hosted runtime (CoreCLR), staged below.
+# A kernel without CoreCLR (-SkipCoreClr) runs none of it, so \sharpos keeps
+# only the kernel's own two files, and what an earlier full build left there goes.
+if ($SkipCoreClr) {
+    $kernelFiles = @('bootlog.txt', 'fswrite.bin')
+    Get-ChildItem -LiteralPath $espSharpOSDir -Force |
+        Where-Object { $_.Name -notin $kernelFiles } |
+        Remove-Item -Recurse -Force
+    Write-Host "SkipCoreClr: \sharpos\ holds only bootlog.txt and fswrite.bin"
 }
 else {
-    Write-Warning "Stock PowerShell Modules dir not found at $stockPwshModules - cmdlets will not register"
-}
+    # CoreCLR expects System.Private.CoreLib.dll at path \sharpos\System.Private.CoreLib.dll
+    # (our Path.GetFullPath prepends "\sharpos\" to relative paths). Place the DLL there
+    # on the EFI partition so CreateFileW -> SharpOSHost_FileOpen -> Platform.TryReadFile
+    # via UEFI SimpleFileSystem can find it.
+    $spcDll = Join-Path (Join-Path $repoRoot "dotnet-runtime-sharpos\artifacts\bin\coreclr\windows.x64.$ForkConfig") "System.Private.CoreLib.dll"
+    if (Test-Path -LiteralPath $spcDll) {
+        Copy-Item -LiteralPath $spcDll -Destination (Join-Path $espSharpOSDir "System.Private.CoreLib.dll") -Force
+        Write-Host "Prepared CoreCLR BCL: \sharpos\System.Private.CoreLib.dll"
+    }
+    else {
+        Write-Warning "System.Private.CoreLib.dll not found at $spcDll - CoreCLR init will fail with FILE_NOT_FOUND"
+    }
+    # Create directories that SharpOSHost_GetSystemString reports as existing.
+    # GetTempPath → "C:\sharpos\tmp\", GetSystemDirectory → "C:\sharpos\system32".
+    # PS FileSystemProvider validates these at PSDrive auto-mount; if a path is
+    # reported but missing on disk, the entire PSDrive init throws and C: never
+    # registers → all subsequent module discovery dies (no PSDrive to resolve
+    # $PSHome\Modules against).
+    New-Item -ItemType Directory -Force -Path (Join-Path $espSharpOSDir "tmp")      | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $espSharpOSDir "system32") | Out-Null
+    Write-Host "Prepared empty dirs: \sharpos\tmp\ \sharpos\system32\"
 
-# Stage A — byte-for-byte NORMAL dotnet program hosting.
-#
-# A genuinely-normal `dotnet build` console app (no -nostdlib, no -r:forkSPC)
-# references System.Runtime + System.Console v10.0.0.0. The fork's full
-# Microsoft.NETCore.App (coreclr-pack/Debug/net10.0) is also v10.0.0.0 — exact
-# version match, so the SAME binary that runs via `dotnet`/`corerun` on Windows
-# binds & runs in SharpOS. We are our own hostfxr/hostpolicy: ship the fx set,
-# generate the TPA list, host via coreclr_execute_assembly.
-#
-#   \sharpos\System.Private.CoreLib.dll  — proven SPC (windows.x64.Debug)
-#   \sharpos\fx\*.dll                    — rest of framework (171, ex-SPC)
-#   \sharpos\NormalHello.dll             — stock dotnet build artifact
-#   \sharpos\tpa.txt                     — newline/semicolon TPA list (host reads)
-# step125: Use the Windows-built BCL assemblies from the fork's
-# crossgen2_publish directory. These are the same BCL DLLs as in
-# coreclr-pack/linux-x64 BUT compiled `-os windows`, so Win32-targeted
-# types (Microsoft.Win32.Registry, System.Net.Sockets, etc.) contain
-# real implementations that talk to our advapi32/ws2_32/etc. stubs
-# instead of PNSE throw bodies.
-$forkFxWinSrc = Join-Path $repoRoot "dotnet-runtime-sharpos\artifacts\bin\crossgen2_publish\x64\Release"
-$fxDest   = Join-Path $espSharpOSDir "fx"
-$normalProj = Join-Path $repoRoot "apps_managed\normal-hello"
-$normalDllSrc = Join-Path $normalProj "bin\Release\net10.0\NormalHello.dll"
-# step128 — PowerShell bootstrap shim. A managed wrapper that reflection-
-# sets SystemPolicy.s_systemLockdownPolicy = None before invoking
-# ManagedPSEntry.Main(). Lets PS 7.5 run in FullLanguage mode on bare
-# metal (CLM detection in PS 7.5 has no env-var override). See
-# apps_managed/PowerShellBootstrap/Program.cs for the override logic.
-$psBootstrapProj   = Join-Path $repoRoot "apps_managed\PowerShellBootstrap"
-$psBootstrapDllSrc = Join-Path $psBootstrapProj "bin\Release\net10.0\PowerShellBootstrap.dll"
-# Список имён — ФИЛЬТР, а не источник байтов: он нужен, чтобы из crossgen2_publish
-# не утащить сборки инструментов (ILCompiler.*, crossgen2, System.CommandLine...).
-# Источник имён — общий фреймворк Microsoft.NETCore.App того SDK, которым
-# собирается форк (global.json форка): это и есть runtime pack, без
-# System.Private.CoreLib — те же ~171 сборки. Где стоит SDK (в .dotnet форка
-# или в системе), спрашиваем у dotnet --list-runtimes, а не угадываем путь.
-# Нативные файлы из него (coreclr.dll, clrjit.dll, msquic.dll...) отсекаются
-# по содержимому: в fx и tpa.txt идут только управляемые сборки, на любом хосте
-# одинаково — на Windows это .dll, на unix .so/.dylib, раньше их разделял
-# только фильтр по расширению, и образы с разных хостов отличались.
-# Байты — из crossgen2_publish; сборка, которой там нет, пропускается с
-# предупреждением, а не подменяется стоковой.
-function Test-ManagedAssembly([string]$Path) {
-    try { [void][System.Reflection.AssemblyName]::GetAssemblyName($Path); return $true }
-    catch { return $false }
-}
-$fxNameSource = $null
-if (Test-Path -LiteralPath $forkFxWinSrc) {
-    # --list-runtimes показывает рантаймы той установки, чей это muxer, —
-    # global.json на это не влияет. Поэтому сперва .dotnet форка (его ставит
-    # Arcade), иначе системный dotnet (если SDK форка стоит в системе).
-    $forkDotnet = Join-Path $repoRoot "dotnet-runtime-sharpos\.dotnet\dotnet"
-    if (Test-Path -LiteralPath "$forkDotnet.exe") { $forkDotnet = "$forkDotnet.exe" }
-    if (-not (Test-Path -LiteralPath $forkDotnet)) { $forkDotnet = 'dotnet' }
-    $runtimes = & $forkDotnet --list-runtimes 2>$null
-    # Строка вида: Microsoft.NETCore.App 10.0.5 [C:\...\shared\Microsoft.NETCore.App]
-    $netcore = $runtimes | Where-Object { $_ -match '^Microsoft\.NETCore\.App (10\.\S+) \[(.+)\]$' } |
-               ForEach-Object { [pscustomobject]@{ Version = $Matches[1]; Dir = Join-Path $Matches[2] $Matches[1] } } |
-               Sort-Object { [version]($_.Version -replace '-.*$', '') } -Descending | Select-Object -First 1
-    if ($netcore -and (Test-Path -LiteralPath $netcore.Dir)) { $fxNameSource = $netcore.Dir }
-}
-if ($fxNameSource) {
-    if (Test-Path -LiteralPath $fxDest) { Remove-Item -LiteralPath $fxDest -Recurse -Force }
-    New-Item -ItemType Directory -Force -Path $fxDest | Out-Null
-    $copied = 0
-    $skipped = @()
-    Get-ChildItem -LiteralPath $fxNameSource -Filter *.dll |
-        Where-Object { $_.Name -ne "System.Private.CoreLib.dll" -and (Test-ManagedAssembly $_.FullName) } |
-        ForEach-Object {
-            $name = $_.Name
-            $winSrc = Join-Path $forkFxWinSrc $name
-            if (Test-Path -LiteralPath $winSrc) {
-                Copy-Item -LiteralPath $winSrc -Destination (Join-Path $fxDest $name) -Force
-                $copied++
-            } else {
-                $skipped += $name
+    # PSReadLine reads its saved history on the first Up-arrow. The file is created
+    # on demand by a normal host, but we have no writable filesystem yet, so stage an
+    # empty one: a missing file makes every history navigation re-probe the path.
+    $psrlHistoryDir  = Join-Path $espSharpOSDir "Microsoft\Windows\PowerShell\PSReadLine"
+    $psrlHistoryFile = Join-Path $psrlHistoryDir "ConsoleHost_history.txt"
+    New-Item -ItemType Directory -Force -Path $psrlHistoryDir | Out-Null
+    if (-not (Test-Path -LiteralPath $psrlHistoryFile)) {
+        New-Item -ItemType File -Path $psrlHistoryFile | Out-Null
+    }
+    Write-Host "Prepared PSReadLine history: \sharpos\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt"
+
+    # ...and tell PSReadLine not to write it back. The media is read-only, so every
+    # accepted command otherwise ends in "Access to the path ... is denied" printed
+    # in red. $PSHome\profile.ps1 is the all-hosts profile; it is already probed at
+    # startup. Guarded, because a throwing profile would break the prompt itself.
+    $espProfile = Join-Path $espSharpOSDir "pwsh\profile.ps1"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $espProfile) | Out-Null
+    # Written byte-exact: CRLF (the guest is Windows-shaped) and UTF-8 without BOM.
+    # Set-Content would end the file with the build host's newline, and its UTF8
+    # means "with BOM" in Windows PowerShell 5.1 but not in pwsh 7 — the image
+    # must not depend on which host or shell built it.
+    $profileText = @(
+        '# SharpOS: the boot media is read-only, so history cannot be persisted.'
+        '# Keep in-session history (Up-arrow still works) but never touch the file.'
+        'try { Set-PSReadLineOption -HistorySaveStyle SaveNothing -ErrorAction Stop } catch { }'
+        ''
+    ) -join "`r`n"
+    [System.IO.File]::WriteAllText($espProfile, $profileText, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "Prepared PS profile: \sharpos\pwsh\profile.ps1 (history SaveNothing)"
+
+    # Stock PowerShell module manifests: required for built-in cmdlet registration.
+    # Microsoft.PowerShell.Utility (Write-Output etc.), Microsoft.PowerShell.Management
+    # (Get-ChildItem etc.), Microsoft.PowerShell.Security/Diagnostics — all import via
+    # Modules/<Name>/<Name>.psd1 at PS startup. Without these manifests every cmdlet
+    # lookup ends in "is not recognized" — even though the .dll is in TPA.
+    # Дистрибутив PowerShell для гостя скачивается отдельно, по README:
+    #   curl -L -o pwsh.zip .../PowerShell-7.6.5-win-x64.zip
+    #   Expand-Archive pwsh.zip -DestinationPath payloads\pwsh\PowerShell-7.6.5-win-x64
+    # Он и есть источник модулей: гость исполняет win-x64, и версия модулей должна
+    # совпадать с версией сборок, которые лягут рядом (см. раскладку ниже — там
+    # объяснено, почему версия дистрибутива вообще важна). Брать модули у pwsh,
+    # установленного на машине сборки, нельзя: вне Windows это вообще чужая
+    # платформа, а на Windows — другая версия, чем в payloads.
+    # Версия — из toolchain.json (pwsh.version), каталог — ровно под неё. Раньше
+    # брался «самый большой по алфавиту», и 7.10 проиграл бы 7.6.
+    $pwshVersion = (Get-SharpOsToolchainSpec).pwsh.version
+    $pwshDist = Get-Item -LiteralPath (Join-Path $repoRoot "payloads\pwsh\PowerShell-$pwshVersion-win-x64") -ErrorAction SilentlyContinue
+    if (-not $pwshDist) {
+        $others = (Get-ChildItem -LiteralPath (Join-Path $repoRoot "payloads\pwsh") -Directory -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', '
+        Write-Warning "payloads\pwsh\PowerShell-$pwshVersion-win-x64 нет (версия из toolchain.json)$(if ($others) { "; есть: $others" })"
+    }
+    $stockPwshModules = if ($pwshDist) { Join-Path $pwshDist.FullName "Modules" } else { $null }
+    $espPwshModules   = Join-Path $espSharpOSDir "pwsh\Modules"
+    if ($stockPwshModules -and (Test-Path -LiteralPath $stockPwshModules)) {
+        New-Item -ItemType Directory -Force -Path $espPwshModules | Out-Null
+        Copy-Item -LiteralPath $stockPwshModules -Destination (Join-Path $espSharpOSDir "pwsh") -Recurse -Force
+        $modCount = (Get-ChildItem -LiteralPath $espPwshModules -Directory).Count
+        Write-Host "Prepared pwsh modules: \sharpos\pwsh\Modules\ ($modCount modules)"
+    }
+    else {
+        Write-Warning "Stock PowerShell Modules dir not found at $stockPwshModules - cmdlets will not register"
+    }
+
+    # Stage A — byte-for-byte NORMAL dotnet program hosting.
+    #
+    # A genuinely-normal `dotnet build` console app (no -nostdlib, no -r:forkSPC)
+    # references System.Runtime + System.Console v10.0.0.0. The fork's full
+    # Microsoft.NETCore.App (coreclr-pack/Debug/net10.0) is also v10.0.0.0 — exact
+    # version match, so the SAME binary that runs via `dotnet`/`corerun` on Windows
+    # binds & runs in SharpOS. We are our own hostfxr/hostpolicy: ship the fx set,
+    # generate the TPA list, host via coreclr_execute_assembly.
+    #
+    #   \sharpos\System.Private.CoreLib.dll  — proven SPC (windows.x64.Debug)
+    #   \sharpos\fx\*.dll                    — rest of framework (171, ex-SPC)
+    #   \sharpos\NormalHello.dll             — stock dotnet build artifact
+    #   \sharpos\tpa.txt                     — newline/semicolon TPA list (host reads)
+    # step125: Use the Windows-built BCL assemblies from the fork's
+    # crossgen2_publish directory. These are the same BCL DLLs as in
+    # coreclr-pack/linux-x64 BUT compiled `-os windows`, so Win32-targeted
+    # types (Microsoft.Win32.Registry, System.Net.Sockets, etc.) contain
+    # real implementations that talk to our advapi32/ws2_32/etc. stubs
+    # instead of PNSE throw bodies.
+    $forkFxWinSrc = Join-Path $repoRoot "dotnet-runtime-sharpos\artifacts\bin\crossgen2_publish\x64\Release"
+    $fxDest   = Join-Path $espSharpOSDir "fx"
+    $normalProj = Join-Path $repoRoot "apps_managed\normal-hello"
+    $normalDllSrc = Join-Path $normalProj "bin\Release\net10.0\NormalHello.dll"
+    # step128 — PowerShell bootstrap shim. A managed wrapper that reflection-
+    # sets SystemPolicy.s_systemLockdownPolicy = None before invoking
+    # ManagedPSEntry.Main(). Lets PS 7.5 run in FullLanguage mode on bare
+    # metal (CLM detection in PS 7.5 has no env-var override). See
+    # apps_managed/PowerShellBootstrap/Program.cs for the override logic.
+    $psBootstrapProj   = Join-Path $repoRoot "apps_managed\PowerShellBootstrap"
+    $psBootstrapDllSrc = Join-Path $psBootstrapProj "bin\Release\net10.0\PowerShellBootstrap.dll"
+    # Список имён — ФИЛЬТР, а не источник байтов: он нужен, чтобы из crossgen2_publish
+    # не утащить сборки инструментов (ILCompiler.*, crossgen2, System.CommandLine...).
+    # Источник имён — общий фреймворк Microsoft.NETCore.App того SDK, которым
+    # собирается форк (global.json форка): это и есть runtime pack, без
+    # System.Private.CoreLib — те же ~171 сборки. Где стоит SDK (в .dotnet форка
+    # или в системе), спрашиваем у dotnet --list-runtimes, а не угадываем путь.
+    # Нативные файлы из него (coreclr.dll, clrjit.dll, msquic.dll...) отсекаются
+    # по содержимому: в fx и tpa.txt идут только управляемые сборки, на любом хосте
+    # одинаково — на Windows это .dll, на unix .so/.dylib, раньше их разделял
+    # только фильтр по расширению, и образы с разных хостов отличались.
+    # Байты — из crossgen2_publish; сборка, которой там нет, пропускается с
+    # предупреждением, а не подменяется стоковой.
+    function Test-ManagedAssembly([string]$Path) {
+        try { [void][System.Reflection.AssemblyName]::GetAssemblyName($Path); return $true }
+        catch { return $false }
+    }
+    $fxNameSource = $null
+    if (Test-Path -LiteralPath $forkFxWinSrc) {
+        # --list-runtimes показывает рантаймы той установки, чей это muxer, —
+        # global.json на это не влияет. Поэтому сперва .dotnet форка (его ставит
+        # Arcade), иначе системный dotnet (если SDK форка стоит в системе).
+        $forkDotnet = Join-Path $repoRoot "dotnet-runtime-sharpos\.dotnet\dotnet"
+        if (Test-Path -LiteralPath "$forkDotnet.exe") { $forkDotnet = "$forkDotnet.exe" }
+        if (-not (Test-Path -LiteralPath $forkDotnet)) { $forkDotnet = 'dotnet' }
+        $runtimes = & $forkDotnet --list-runtimes 2>$null
+        # Строка вида: Microsoft.NETCore.App 10.0.5 [C:\...\shared\Microsoft.NETCore.App]
+        $netcore = $runtimes | Where-Object { $_ -match '^Microsoft\.NETCore\.App (10\.\S+) \[(.+)\]$' } |
+                   ForEach-Object { [pscustomobject]@{ Version = $Matches[1]; Dir = Join-Path $Matches[2] $Matches[1] } } |
+                   Sort-Object { [version]($_.Version -replace '-.*$', '') } -Descending | Select-Object -First 1
+        if ($netcore -and (Test-Path -LiteralPath $netcore.Dir)) { $fxNameSource = $netcore.Dir }
+    }
+    if ($fxNameSource) {
+        if (Test-Path -LiteralPath $fxDest) { Remove-Item -LiteralPath $fxDest -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path $fxDest | Out-Null
+        $copied = 0
+        $skipped = @()
+        Get-ChildItem -LiteralPath $fxNameSource -Filter *.dll |
+            Where-Object { $_.Name -ne "System.Private.CoreLib.dll" -and (Test-ManagedAssembly $_.FullName) } |
+            ForEach-Object {
+                $name = $_.Name
+                $winSrc = Join-Path $forkFxWinSrc $name
+                if (Test-Path -LiteralPath $winSrc) {
+                    Copy-Item -LiteralPath $winSrc -Destination (Join-Path $fxDest $name) -Force
+                    $copied++
+                } else {
+                    $skipped += $name
+                }
             }
+        Write-Host "Prepared framework: \sharpos\fx\ ($copied dll; names from Microsoft.NETCore.App $($netcore.Version))"
+        if ($skipped.Count) {
+            Write-Warning "fx: $($skipped.Count) сборок из списка нет в crossgen2_publish, пропущены: $($skipped -join ', ')"
         }
-    Write-Host "Prepared framework: \sharpos\fx\ ($copied dll; names from Microsoft.NETCore.App $($netcore.Version))"
-    if ($skipped.Count) {
-        Write-Warning "fx: $($skipped.Count) сборок из списка нет в crossgen2_publish, пропущены: $($skipped -join ', ')"
     }
-}
-else {
-    Write-Warning "fork fx unavailable - Stage A normal hosting unavailable"
-    Write-Warning "  names: Microsoft.NETCore.App 10.x из dotnet --list-runtimes (в каталоге форка)"
-    Write-Warning "  bytes: $forkFxWinSrc (crossgen2_publish; собирается сабсетом clr форка)"
-}
+    else {
+        Write-Warning "fork fx unavailable - Stage A normal hosting unavailable"
+        Write-Warning "  names: Microsoft.NETCore.App 10.x из dotnet --list-runtimes (в каталоге форка)"
+        Write-Warning "  bytes: $forkFxWinSrc (crossgen2_publish; собирается сабсетом clr форка)"
+    }
 
-# Гейт выше закрыт здесь намеренно. Раньше он охватывал ещё две вещи, к fx
-# отношения не имеющие: сборку приложений и генерацию tpa.txt. Без
-# coreclr-pack терялось всё сразу — в том числе PowerShellBootstrap, который
-# снимает блокировку языкового режима, и сам список сборок. Ядро при этом
-# запускало pwsh.dll, тот не мог разрешить зависимости по имени и вставал
-# молча: ни строки на обоих последовательных портах, машина жива и тикает.
-# Когда fx на месте, ничего не меняется: имена из него по-прежнему кладутся
-# в tpa.txt первыми и побеждают одноимённые из дистрибутива pwsh.
+    # Гейт выше закрыт здесь намеренно. Раньше он охватывал ещё две вещи, к fx
+    # отношения не имеющие: сборку приложений и генерацию tpa.txt. Без
+    # coreclr-pack терялось всё сразу — в том числе PowerShellBootstrap, который
+    # снимает блокировку языкового режима, и сам список сборок. Ядро при этом
+    # запускало pwsh.dll, тот не мог разрешить зависимости по имени и вставал
+    # молча: ни строки на обоих последовательных портах, машина жива и тикает.
+    # Когда fx на месте, ничего не меняется: имена из него по-прежнему кладутся
+    # в tpa.txt первыми и побеждают одноимённые из дистрибутива pwsh.
 
-# Build the normal app (stock SDK, normal references). If project missing,
-# create a vanilla `dotnet new console`.
-if (-not (Test-Path -LiteralPath (Join-Path $normalProj "NormalHello.csproj"))) {
-    New-Item -ItemType Directory -Force -Path $normalProj | Out-Null
-    Push-Location $normalProj; & dotnet new console -n NormalHello -o . | Out-Null; Pop-Location
-}
-Push-Location $normalProj; & dotnet build -c Release | Out-Null; Pop-Location
-if (Test-Path -LiteralPath $normalDllSrc) {
-    Copy-Item -LiteralPath $normalDllSrc -Destination (Join-Path $espSharpOSDir "NormalHello.dll") -Force
-    $h = (Get-FileHash -LiteralPath $normalDllSrc -Algorithm SHA256).Hash
-    Write-Host "Prepared NormalHello.dll (stock dotnet build) sha256=$h"
-} else {
-    Write-Warning "NormalHello.dll not found at $normalDllSrc"
-}
-
-# Build PowerShellBootstrap shim — managed wrapper that forces
-# SystemPolicy → None via reflection, then forwards to ManagedPSEntry.
-if (Test-Path -LiteralPath (Join-Path $psBootstrapProj "PowerShellBootstrap.csproj")) {
-    Push-Location $psBootstrapProj; & dotnet build -c Release | Out-Null; Pop-Location
-    if (Test-Path -LiteralPath $psBootstrapDllSrc) {
-        Copy-Item -LiteralPath $psBootstrapDllSrc -Destination (Join-Path $espSharpOSDir "PowerShellBootstrap.dll") -Force
-        $bh = (Get-FileHash -LiteralPath $psBootstrapDllSrc -Algorithm SHA256).Hash
-        Write-Host "Prepared PowerShellBootstrap.dll sha256=$bh"
+    # Build the normal app (stock SDK, normal references). If project missing,
+    # create a vanilla `dotnet new console`.
+    if (-not (Test-Path -LiteralPath (Join-Path $normalProj "NormalHello.csproj"))) {
+        New-Item -ItemType Directory -Force -Path $normalProj | Out-Null
+        Push-Location $normalProj; & dotnet new console -n NormalHello -o . | Out-Null; Pop-Location
+    }
+    Push-Location $normalProj; & dotnet build -c Release | Out-Null; Pop-Location
+    if (Test-Path -LiteralPath $normalDllSrc) {
+        Copy-Item -LiteralPath $normalDllSrc -Destination (Join-Path $espSharpOSDir "NormalHello.dll") -Force
+        $h = (Get-FileHash -LiteralPath $normalDllSrc -Algorithm SHA256).Hash
+        Write-Host "Prepared NormalHello.dll (stock dotnet build) sha256=$h"
     } else {
-        Write-Warning "PowerShellBootstrap.dll not found at $psBootstrapDllSrc"
+        Write-Warning "NormalHello.dll not found at $normalDllSrc"
     }
-} else {
-    Write-Warning "PowerShellBootstrap project not found at $psBootstrapProj"
-}
 
-# Benchmarks (step 168): a stock console app, run from the launcher when a
-# number is wanted. Its [perf] lines and the kernel's are gathered by
-# tools/perf_report.ps1.
-$benchProj   = Join-Path $repoRoot "apps_managed\Bench"
-$benchDllSrc = Join-Path $benchProj "bin\Release\net10.0\Bench.dll"
-if (Test-Path -LiteralPath (Join-Path $benchProj "Bench.csproj")) {
-    Push-Location $benchProj; & dotnet build -c Release | Out-Null; Pop-Location
-    if (Test-Path -LiteralPath $benchDllSrc) {
-        Copy-Item -LiteralPath $benchDllSrc -Destination (Join-Path $espSharpOSDir "Bench.dll") -Force
-        $bh = (Get-FileHash -LiteralPath $benchDllSrc -Algorithm SHA256).Hash
-        Write-Host "Prepared Bench.dll sha256=$bh"
+    # Build PowerShellBootstrap shim — managed wrapper that forces
+    # SystemPolicy → None via reflection, then forwards to ManagedPSEntry.
+    if (Test-Path -LiteralPath (Join-Path $psBootstrapProj "PowerShellBootstrap.csproj")) {
+        Push-Location $psBootstrapProj; & dotnet build -c Release | Out-Null; Pop-Location
+        if (Test-Path -LiteralPath $psBootstrapDllSrc) {
+            Copy-Item -LiteralPath $psBootstrapDllSrc -Destination (Join-Path $espSharpOSDir "PowerShellBootstrap.dll") -Force
+            $bh = (Get-FileHash -LiteralPath $psBootstrapDllSrc -Algorithm SHA256).Hash
+            Write-Host "Prepared PowerShellBootstrap.dll sha256=$bh"
+        } else {
+            Write-Warning "PowerShellBootstrap.dll not found at $psBootstrapDllSrc"
+        }
     } else {
-        Write-Warning "Bench.dll not found at $benchDllSrc"
+        Write-Warning "PowerShellBootstrap project not found at $psBootstrapProj"
     }
-}
 
-# StarlingProbe: низ движка Starling (HTML/DOM/CSS/раскладка/display-list)
-# на hosted-ярусе. Сборки Starling лежат в payloads/starling/ — их кладёт
-# tools/build_starling.ps1; в гит они не попадают, как WAD и pwsh. Верхние слои
-# движка (Engine, Bindings) не везём: им нужны net11, Wasmtime и сеть.
-$starlingLib  = Join-Path $repoRoot "payloads\starling"
-$starlingDest = Join-Path $espSharpOSDir "starling"
-$probeProj    = Join-Path $repoRoot "apps_managed\StarlingProbe"
-$probeDllSrc  = Join-Path $probeProj "bin\Release\net10.0\StarlingProbe.dll"
-if ((Test-Path -LiteralPath $starlingLib) -and
-    (Test-Path -LiteralPath (Join-Path $probeProj "StarlingProbe.csproj"))) {
-    Push-Location $probeProj; & dotnet build -c Release | Out-Null; Pop-Location
-    New-Item -ItemType Directory -Force -Path $starlingDest | Out-Null
-    $n = 0
-    Get-ChildItem -LiteralPath $starlingLib -Filter *.dll | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $starlingDest $_.Name) -Force
-        $n++
+    # Benchmarks (step 168): a stock console app, run from the launcher when a
+    # number is wanted. Its [perf] lines and the kernel's are gathered by
+    # tools/perf_report.ps1.
+    $benchProj   = Join-Path $repoRoot "apps_managed\Bench"
+    $benchDllSrc = Join-Path $benchProj "bin\Release\net10.0\Bench.dll"
+    if (Test-Path -LiteralPath (Join-Path $benchProj "Bench.csproj")) {
+        Push-Location $benchProj; & dotnet build -c Release | Out-Null; Pop-Location
+        if (Test-Path -LiteralPath $benchDllSrc) {
+            Copy-Item -LiteralPath $benchDllSrc -Destination (Join-Path $espSharpOSDir "Bench.dll") -Force
+            $bh = (Get-FileHash -LiteralPath $benchDllSrc -Algorithm SHA256).Hash
+            Write-Host "Prepared Bench.dll sha256=$bh"
+        } else {
+            Write-Warning "Bench.dll not found at $benchDllSrc"
+        }
     }
-    if (Test-Path -LiteralPath $probeDllSrc) {
-        Copy-Item -LiteralPath $probeDllSrc -Destination (Join-Path $espSharpOSDir "StarlingProbe.dll") -Force
-        $ph = (Get-FileHash -LiteralPath $probeDllSrc -Algorithm SHA256).Hash
-        Write-Host "Prepared StarlingProbe.dll sha256=$ph (+$n сборок Starling)"
-    } else {
-        Write-Warning "StarlingProbe.dll not found at $probeDllSrc"
-    }
-}
 
-# Generate TPA list: SPC (root) + every fx dll + every pwsh/* dll + the
-# app. Semicolon-sep, virtual-drive C:\sharpos\ paths so BCL's
-# Path.IsPathFullyQualified accepts them. SharpOSHost_FileOpen strips the
-# C:\ prefix transparently.
-#
-# All pwsh/*.dll are added so PowerShell-internal assembly resolution
-# finds them by NAME via TPABinder (CoreCLR picks the path from TPA).
-# Without pwsh/* in TPA, PowerShell falls back to constructing paths
-# itself ($PSHome + filename) and hits a Path.Join bug that doubles the
-# prefix into "C:\sharpos\C:\sharpos\pwsh\X.dll".
-$tpa = New-Object System.Text.StringBuilder
-[void]$tpa.Append('C:\sharpos\System.Private.CoreLib.dll')
-$fxNames = @{}
-# Каталога может не быть — тогда весь фреймворк берётся из дистрибутива pwsh,
-# он самодостаточный и несёт все 300 сборок.
-if (Test-Path -LiteralPath $fxDest) {
-    Get-ChildItem -LiteralPath $fxDest -Filter *.dll | ForEach-Object {
-        [void]$tpa.Append(';C:\sharpos\fx\' + $_.Name)
-        $fxNames[$_.Name] = $true
+    # StarlingProbe: низ движка Starling (HTML/DOM/CSS/раскладка/display-list)
+    # на hosted-ярусе. Сборки Starling лежат в payloads/starling/ — их кладёт
+    # tools/build_starling.ps1; в гит они не попадают, как WAD и pwsh. Верхние слои
+    # движка (Engine, Bindings) не везём: им нужны net11, Wasmtime и сеть.
+    $starlingLib  = Join-Path $repoRoot "payloads\starling"
+    $starlingDest = Join-Path $espSharpOSDir "starling"
+    $probeProj    = Join-Path $repoRoot "apps_managed\StarlingProbe"
+    $probeDllSrc  = Join-Path $probeProj "bin\Release\net10.0\StarlingProbe.dll"
+    if ((Test-Path -LiteralPath $starlingLib) -and
+        (Test-Path -LiteralPath (Join-Path $probeProj "StarlingProbe.csproj"))) {
+        Push-Location $probeProj; & dotnet build -c Release | Out-Null; Pop-Location
+        New-Item -ItemType Directory -Force -Path $starlingDest | Out-Null
+        $n = 0
+        Get-ChildItem -LiteralPath $starlingLib -Filter *.dll | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $starlingDest $_.Name) -Force
+            $n++
+        }
+        if (Test-Path -LiteralPath $probeDllSrc) {
+            Copy-Item -LiteralPath $probeDllSrc -Destination (Join-Path $espSharpOSDir "StarlingProbe.dll") -Force
+            $ph = (Get-FileHash -LiteralPath $probeDllSrc -Algorithm SHA256).Hash
+            Write-Host "Prepared StarlingProbe.dll sha256=$ph (+$n сборок Starling)"
+        } else {
+            Write-Warning "StarlingProbe.dll not found at $probeDllSrc"
+        }
+    }
+
+    # Generate TPA list: SPC (root) + every fx dll + every pwsh/* dll + the
+    # app. Semicolon-sep, virtual-drive C:\sharpos\ paths so BCL's
+    # Path.IsPathFullyQualified accepts them. SharpOSHost_FileOpen strips the
+    # C:\ prefix transparently.
+    #
+    # All pwsh/*.dll are added so PowerShell-internal assembly resolution
+    # finds them by NAME via TPABinder (CoreCLR picks the path from TPA).
+    # Without pwsh/* in TPA, PowerShell falls back to constructing paths
+    # itself ($PSHome + filename) and hits a Path.Join bug that doubles the
+    # prefix into "C:\sharpos\C:\sharpos\pwsh\X.dll".
+    $tpa = New-Object System.Text.StringBuilder
+    [void]$tpa.Append('C:\sharpos\System.Private.CoreLib.dll')
+    $fxNames = @{}
+    # Каталога может не быть — тогда весь фреймворк берётся из дистрибутива pwsh,
+    # он самодостаточный и несёт все 300 сборок.
+    if (Test-Path -LiteralPath $fxDest) {
+        Get-ChildItem -LiteralPath $fxDest -Filter *.dll | ForEach-Object {
+            [void]$tpa.Append(';C:\sharpos\fx\' + $_.Name)
+            $fxNames[$_.Name] = $true
+        }
+    }
+    # Add pwsh/*.dll skipping (a) the duplicate SPC and (b) any dll already
+    # provided by fx/ (169 of 300 pwsh dlls overlap with fx — those keep
+    # the fx variant; CoreCLR would honor the first TPA entry anyway).
+    # Список — по самому дистрибутиву, а не по \sharpos\pwsh в ESP: туда сборки
+    # копируются ниже, уже после этого места. Со списком по ESP свежая сборка
+    # давала TPA без единой сборки pwsh, а повторная — список из остатков прошлого
+    # прогона (в том числе другой версии pwsh).
+    if ($pwshDist) {
+        Get-ChildItem -LiteralPath $pwshDist.FullName -Filter *.dll | ForEach-Object {
+            if ($_.Name -eq 'System.Private.CoreLib.dll') { return }
+            if ($fxNames.ContainsKey($_.Name)) { return }
+            [void]$tpa.Append(';C:\sharpos\pwsh\' + $_.Name)
+        }
+    }
+    [void]$tpa.Append(';C:\sharpos\NormalHello.dll')
+    [void]$tpa.Append(';C:\sharpos\PowerShellBootstrap.dll')
+    [void]$tpa.Append(';C:\sharpos\Bench.dll')
+    # Сборки Starling — по той же схеме, что pwsh: всё в TPA по имени,
+    # дубликаты fx пропускаем (побеждает вариант из fx).
+    if (Test-Path -LiteralPath $starlingDest) {
+        Get-ChildItem -LiteralPath $starlingDest -Filter *.dll | ForEach-Object {
+            if ($fxNames.ContainsKey($_.Name)) { return }
+            [void]$tpa.Append(';C:\sharpos\starling\' + $_.Name)
+        }
+    }
+    [void]$tpa.Append(';C:\sharpos\StarlingProbe.dll')
+    [System.IO.File]::WriteAllText((Join-Path $espSharpOSDir "tpa.txt"), $tpa.ToString())
+    Write-Host "Prepared \sharpos\tpa.txt (length=$($tpa.Length))"
+
+    # PowerShell distribution. Staged from payloads\pwsh\<dist>\ rather than
+    # copied by hand once, because which build is on the image decides whether its
+    # precompiled code is used at all: assemblies carry a ReadyToRun format version,
+    # and the runtime loads only its own. A 7.5 distribution (format 10) against
+    # this runtime (format 16, .NET 10) has every one of its assemblies rejected,
+    # and System.Management.Automation alone is 19 MB that then gets compiled from
+    # scratch on every start — the long startup and the pause on a first-time
+    # command both came from exactly that.
+    #
+    # System.Private.CoreLib is deliberately NOT taken from the distribution: that
+    # assembly and the runtime binary are one unit, built together and agreeing on
+    # internal layout. Ours stays.
+    if ($pwshDist) {
+        $pwshEsp = Join-Path $espSharpOSDir "pwsh"
+        New-Item -ItemType Directory -Force -Path $pwshEsp | Out-Null
+        $staged = 0
+        # The distribution's .exe files stay out: pwsh.exe is the Windows apphost
+        # (hostfxr -> pwsh.dll), createdump.exe a dump tool. The kernel runs
+        # pwsh.dll itself, so neither is ever started here; copies an earlier
+        # build left on the ESP go too.
+        Get-ChildItem -LiteralPath $pwshEsp -Filter *.exe -File -ErrorAction SilentlyContinue | Remove-Item -Force
+        foreach ($f in Get-ChildItem -LiteralPath $pwshDist.FullName -File) {
+            if ($f.Name -eq "System.Private.CoreLib.dll") { continue }
+            if ($f.Extension -eq ".exe") { continue }
+            Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $pwshEsp $f.Name) -Force
+            $staged++
+        }
+        Write-Host "Prepared PowerShell: $($pwshDist.Name) -> \sharpos\pwsh\ ($staged files, CoreLib kept ours)"
+    }
+    else {
+        # Молча этот случай пропускать нельзя: ядро всё равно вызовет
+        # coreclr_execute_assembly(\sharpos\pwsh\pwsh.dll), файла не окажется, и
+        # загрузка встанет без сообщения ни на одном из последовательных портов.
+        Write-Warning "payloads\pwsh\ пуст — PowerShell в образ не попадёт, и загрузка встанет на запуске pwsh.dll"
+        Write-Warning "  Скачайте дистрибутив win-x64 по инструкции из README (раздел про payloads)."
     }
 }
-# Add pwsh/*.dll skipping (a) the duplicate SPC and (b) any dll already
-# provided by fx/ (169 of 300 pwsh dlls overlap with fx — those keep
-# the fx variant; CoreCLR would honor the first TPA entry anyway).
-# Список — по самому дистрибутиву, а не по \sharpos\pwsh в ESP: туда сборки
-# копируются ниже, уже после этого места. Со списком по ESP свежая сборка
-# давала TPA без единой сборки pwsh, а повторная — список из остатков прошлого
-# прогона (в том числе другой версии pwsh).
-if ($pwshDist) {
-    Get-ChildItem -LiteralPath $pwshDist.FullName -Filter *.dll | ForEach-Object {
-        if ($_.Name -eq 'System.Private.CoreLib.dll') { return }
-        if ($fxNames.ContainsKey($_.Name)) { return }
-        [void]$tpa.Append(';C:\sharpos\pwsh\' + $_.Name)
-    }
-}
-[void]$tpa.Append(';C:\sharpos\NormalHello.dll')
-[void]$tpa.Append(';C:\sharpos\PowerShellBootstrap.dll')
-[void]$tpa.Append(';C:\sharpos\Bench.dll')
-# Сборки Starling — по той же схеме, что pwsh: всё в TPA по имени,
-# дубликаты fx пропускаем (побеждает вариант из fx).
-if (Test-Path -LiteralPath $starlingDest) {
-    Get-ChildItem -LiteralPath $starlingDest -Filter *.dll | ForEach-Object {
-        if ($fxNames.ContainsKey($_.Name)) { return }
-        [void]$tpa.Append(';C:\sharpos\starling\' + $_.Name)
-    }
-}
-[void]$tpa.Append(';C:\sharpos\StarlingProbe.dll')
-[System.IO.File]::WriteAllText((Join-Path $espSharpOSDir "tpa.txt"), $tpa.ToString())
-Write-Host "Prepared \sharpos\tpa.txt (length=$($tpa.Length))"
 # step137: ELF apps removed. No ELF images are generated or staged anymore;
 # actively delete any stale ELF images + .abi sidecars from a prior ESP so the
 # launcher only ever sees PE apps. (Fetch is dormant until its PE migration.)
@@ -899,42 +949,6 @@ foreach ($stalePayload in @(Get-ChildItem -LiteralPath $espBootDir -Filter "*.WA
 $staleRom = Join-Path $espBootDir "GAME.NES"
 if (Test-Path -LiteralPath $staleRom) { Remove-Item -LiteralPath $staleRom -Force }
 
-# PowerShell distribution. Staged from payloads\pwsh\<dist>\ rather than
-# copied by hand once, because which build is on the image decides whether its
-# precompiled code is used at all: assemblies carry a ReadyToRun format version,
-# and the runtime loads only its own. A 7.5 distribution (format 10) against
-# this runtime (format 16, .NET 10) has every one of its assemblies rejected,
-# and System.Management.Automation alone is 19 MB that then gets compiled from
-# scratch on every start — the long startup and the pause on a first-time
-# command both came from exactly that.
-#
-# System.Private.CoreLib is deliberately NOT taken from the distribution: that
-# assembly and the runtime binary are one unit, built together and agreeing on
-# internal layout. Ours stays.
-if ($pwshDist) {
-    $pwshEsp = Join-Path $espSharpOSDir "pwsh"
-    New-Item -ItemType Directory -Force -Path $pwshEsp | Out-Null
-    $staged = 0
-    # The distribution's .exe files stay out: pwsh.exe is the Windows apphost
-    # (hostfxr -> pwsh.dll), createdump.exe a dump tool. The kernel runs
-    # pwsh.dll itself, so neither is ever started here; copies an earlier
-    # build left on the ESP go too.
-    Get-ChildItem -LiteralPath $pwshEsp -Filter *.exe -File -ErrorAction SilentlyContinue | Remove-Item -Force
-    foreach ($f in Get-ChildItem -LiteralPath $pwshDist.FullName -File) {
-        if ($f.Name -eq "System.Private.CoreLib.dll") { continue }
-        if ($f.Extension -eq ".exe") { continue }
-        Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $pwshEsp $f.Name) -Force
-        $staged++
-    }
-    Write-Host "Prepared PowerShell: $($pwshDist.Name) -> \sharpos\pwsh\ ($staged files, CoreLib kept ours)"
-}
-else {
-    # Молча этот случай пропускать нельзя: ядро всё равно вызовет
-    # coreclr_execute_assembly(\sharpos\pwsh\pwsh.dll), файла не окажется, и
-    # загрузка встанет без сообщения ни на одном из последовательных портов.
-    Write-Warning "payloads\pwsh\ пуст — PowerShell в образ не попадёт, и загрузка встанет на запуске pwsh.dll"
-    Write-Warning "  Скачайте дистрибутив win-x64 по инструкции из README (раздел про payloads)."
-}
 
 
 Write-Host "Prepared EFI image: $bootx64"

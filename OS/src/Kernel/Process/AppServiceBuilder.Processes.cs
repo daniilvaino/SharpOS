@@ -68,6 +68,10 @@ namespace OS.Kernel.Process
         // step208: the program cache — [0] starts served from it, [1] starts
         // that read the file.
         public const int ProcessOpProgramCache = 20;
+        // step211: SystemInfo — [0] a NUL-ended UTF-8 pipe name the caller
+        // already reads; the kernel writes one SystemInfo to it. [1] out: the
+        // PipeStatus of the send.
+        public const int ProcessOpSystemInfo = 21;
 
         // A path answered in UTF-8 (step208; before, a byte a char): written
         // when it fits the caller's buffer; its length in bytes either way.
@@ -191,6 +195,14 @@ namespace OS.Kernel.Process
             {
                 if (!System.DateTime.Clock.IsRealClock) return (int)AppServiceStatus.Unsupported;
                 request[0] = (ulong)System.DateTime.UtcNow.Ticks;
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpSystemInfo)
+            {
+                char* name = stackalloc char[(int)MaxPathChars];
+                if (!TryReadUtf8Path(request[0], name, MaxPathChars)) return (int)AppServiceStatus.InvalidParameter;
+                request[1] = (ulong)OS.Kernel.SystemFacts.SendTo(string.FromUtf16Z(name, (int)MaxPathChars));
                 return (int)AppServiceStatus.Ok;
             }
 

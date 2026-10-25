@@ -11,11 +11,13 @@
 // a side table keyed by reference identity — the same shape as the kernel's
 // HostLocks, for the same reason.
 //
-// The table is fixed and small. That is a deliberate bound, not an oversight:
-// `lock` in this system guards a handful of long-lived structures, and a table
-// that grew without limit would be a slow leak keyed by objects that are then
-// kept alive forever. Overflowing it is a fault worth hearing about, not one to
-// paper over — so it throws.
+// The table is fixed and small, and bounds the locks in use at one time, not
+// the objects ever locked: a slot goes back once nobody holds the object or
+// waits for it. Until step211 a slot stayed bound to its first object for
+// good, so 64 distinct objects ever locked used the table up, and each was
+// kept alive from it — interactive KQL, which locks a fresh code service per
+// completion, failed on about the fourteenth Tab. Overflowing it now means 64
+// locks at once, a fault worth hearing about, so it still throws.
 
 namespace System.Threading
 {
@@ -38,6 +40,21 @@ namespace System.Threading
         // wake is worth the call.
         private static int[] s_waiters = null!;
 
+        // Threads with a claim on the slot: the holder, and each thread on its
+        // way in or waiting. The slot goes back to the table when this reaches
+        // zero; until then the object stays bound to it, or a waiter would
+        // take a slot that already belongs to someone else.
+        private static int[] s_users = null!;
+
+        // A freed slot. Lookups probe past it, so an object placed after it in
+        // the probe chain is still found; a claim may reuse it.
+        private static object s_removed = null!;
+
+        // Guards s_owners and s_users. Held only for a probe of the table,
+        // never while blocked on a lock.
+        private static int s_tableLock;
+        private static int s_tableWaiters;
+
         // Zero means "nobody", so thread ids start at one.
         private const int Unowned = 0;
 
@@ -45,7 +62,7 @@ namespace System.Threading
         {
             if (obj == null) throw new ArgumentNullException(nameof(obj));
 
-            int slot = SlotFor(obj);
+            int slot = Claim(obj);
             int self = CurrentThreadId();
 
             while (true)
@@ -57,10 +74,12 @@ namespace System.Threading
                 }
 
                 // Already ours: `lock` is reentrant, and a nested lock on the
-                // same object must not deadlock against itself.
+                // same object must not deadlock against itself. The holder's
+                // claim already keeps the slot, so this one goes back.
                 if (s_holders[slot] == self)
                 {
                     s_recursion[slot]++;
+                    Release(slot);
                     return;
                 }
 
@@ -90,10 +109,10 @@ namespace System.Threading
         {
             if (obj == null) throw new ArgumentNullException(nameof(obj));
 
-            int slot = SlotFor(obj);
+            int slot = Find(obj);
             int self = CurrentThreadId();
 
-            if (s_holders[slot] != self)
+            if (slot < 0 || s_holders[slot] != self)
                 throw new SynchronizationLockException(
                     "Monitor.Exit called from a thread that does not hold the lock.");
 
@@ -104,45 +123,39 @@ namespace System.Threading
             Interlocked.Exchange(ref s_holders[slot], Unowned);
             if (Interlocked.Read(ref s_waiters[slot]) != 0)
                 ThreadBackend.WakeAll(ref s_holders[slot]);
+            Release(slot);
         }
 
         public static bool TryEnter(object obj)
         {
             if (obj == null) throw new ArgumentNullException(nameof(obj));
 
-            int slot = SlotFor(obj);
-            int self = CurrentThreadId();
-
-            if (Interlocked.CompareExchange(ref s_holders[slot], self, Unowned) == Unowned)
-            {
-                s_recursion[slot] = 1;
-                return true;
-            }
-
-            if (s_holders[slot] == self)
-            {
-                s_recursion[slot]++;
-                return true;
-            }
-
+            int slot = Claim(obj);
+            if (TryTake(slot)) return true;
+            Release(slot);
             return false;
         }
 
         public static bool TryEnter(object obj, int millisecondsTimeout)
         {
+            if (obj == null) throw new ArgumentNullException(nameof(obj));
+
             // A millisecond at a time, but each wait ends as soon as the owner
-            // word changes rather than at the next tick.
-            int slot = SlotFor(obj);
+            // word changes rather than at the next tick. One claim covers the
+            // whole wait, so the slot cannot change hands under it.
+            int slot = Claim(obj);
             for (int waited = 0; waited < millisecondsTimeout; waited++)
             {
-                if (TryEnter(obj)) return true;
+                if (TryTake(slot)) return true;
                 int holder = Interlocked.Read(ref s_holders[slot]);
                 Interlocked.Increment(ref s_waiters[slot]);
                 if (holder != Unowned)
                     ThreadBackend.WaitWhile(ref s_holders[slot], holder, 1);
                 Interlocked.Decrement(ref s_waiters[slot]);
             }
-            return TryEnter(obj);
+            if (TryTake(slot)) return true;
+            Release(slot);
+            return false;
         }
 
         /// <summary>Whether the current thread holds the lock on <paramref name="obj"/>.</summary>
@@ -154,19 +167,8 @@ namespace System.Threading
         {
             if (obj == null) throw new ArgumentNullException(nameof(obj));
 
-            EnsureTables();
-
-            int start = (int)((uint)obj.GetHashCode() % Capacity);
-            for (int probe = 0; probe < Capacity; probe++)
-            {
-                int slot = (start + probe) % Capacity;
-                if (ReferenceEquals(s_owners[slot], obj))
-                    return s_holders[slot] == CurrentThreadId();
-                if (s_owners[slot] == null)
-                    return false;
-            }
-
-            return false;
+            int slot = Find(obj);
+            return slot >= 0 && s_holders[slot] == CurrentThreadId();
         }
 
         // Pulse / Wait are the condition-variable half of Monitor. Nothing in
@@ -182,9 +184,6 @@ namespace System.Threading
         public static bool Wait(object obj) => throw new NotSupportedException(
             "Monitor.Wait is not implemented — see std-no-runtime/Threading.Monitor.cs.");
 
-        /// <summary>
-        /// Finds this object's slot, claiming a free one if it has none.
-        /// </summary>
         /// <summary>
         /// Builds the side tables. Idempotent, and meant to be called once at
         /// startup — before a second thread exists — by whoever installs the
@@ -210,39 +209,144 @@ namespace System.Threading
             int[] holders = new int[Capacity];
             int[] recursion = new int[Capacity];
             int[] waiters = new int[Capacity];
+            int[] users = new int[Capacity];
+            object removed = new object();
             object?[] owners = new object?[Capacity];
 
             s_holders = holders;
             s_recursion = recursion;
             s_waiters = waiters;
+            s_users = users;
+            s_removed = removed;
             s_owners = owners;          // last: it is the one everyone tests
         }
 
-        private static int SlotFor(object obj)
+        // The holder word, taken or re-entered by this thread on a slot it
+        // already has a claim on. A re-entry hands the extra claim back.
+        private static bool TryTake(int slot)
         {
-            EnsureTables();
+            int self = CurrentThreadId();
 
-            int start = (int)((uint)obj.GetHashCode() % Capacity);
-
-            for (int probe = 0; probe < Capacity; probe++)
+            if (Interlocked.CompareExchange(ref s_holders[slot], self, Unowned) == Unowned)
             {
-                int slot = (start + probe) % Capacity;
-
-                if (ReferenceEquals(s_owners[slot], obj)) return slot;
-
-                if (s_owners[slot] == null)
-                {
-                    // Claim it. Two threads locking a brand new object at once
-                    // can both land here, so re-check after writing: the loser
-                    // simply keeps probing and finds the winner's slot.
-                    s_owners[slot] = obj;
-                    if (ReferenceEquals(s_owners[slot], obj)) return slot;
-                }
+                s_recursion[slot] = 1;
+                return true;
             }
 
-            throw new InvalidOperationException(
-                "Monitor: no free lock slots. The table is a fixed 64 entries — " +
-                "see std-no-runtime/Threading.Monitor.cs.");
+            if (s_holders[slot] == self)
+            {
+                s_recursion[slot]++;
+                Release(slot);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// This object's slot with one more claim on it, binding a free slot
+        /// to the object when it has none.
+        /// </summary>
+        private static int Claim(object obj)
+        {
+            EnsureTables();
+            LockTable();
+            try
+            {
+                int start = (int)((uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj) % Capacity);
+                int free = -1;
+
+                for (int probe = 0; probe < Capacity; probe++)
+                {
+                    int slot = (start + probe) % Capacity;
+                    object? owner = s_owners[slot];
+
+                    if (ReferenceEquals(owner, obj))
+                    {
+                        s_users[slot]++;
+                        return slot;
+                    }
+
+                    if (ReferenceEquals(owner, s_removed))
+                    {
+                        if (free < 0) free = slot;
+                        continue;
+                    }
+
+                    if (owner == null)
+                    {
+                        // The end of this object's chain: it has no slot.
+                        if (free < 0) free = slot;
+                        break;
+                    }
+                }
+
+                if (free < 0)
+                    throw new InvalidOperationException(
+                        "Monitor: no free lock slots. The table holds 64 locks at once — " +
+                        "see std-no-runtime/Threading.Monitor.cs.");
+
+                s_owners[free] = obj;
+                s_users[free] = 1;
+                return free;
+            }
+            finally
+            {
+                UnlockTable();
+            }
+        }
+
+        /// <summary>The object's slot, or -1 when it has none; claims nothing.</summary>
+        private static int Find(object obj)
+        {
+            EnsureTables();
+            LockTable();
+            try
+            {
+                int start = (int)((uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj) % Capacity);
+
+                for (int probe = 0; probe < Capacity; probe++)
+                {
+                    int slot = (start + probe) % Capacity;
+                    object? owner = s_owners[slot];
+                    if (ReferenceEquals(owner, obj)) return slot;
+                    if (owner == null) return -1;
+                }
+
+                return -1;
+            }
+            finally
+            {
+                UnlockTable();
+            }
+        }
+
+        // Gives back one claim; the last one frees the slot. Marked removed
+        // rather than emptied, so the probe chains through it stay whole.
+        private static void Release(int slot)
+        {
+            LockTable();
+            if (--s_users[slot] == 0)
+                s_owners[slot] = s_removed;
+            UnlockTable();
+        }
+
+        private static void LockTable()
+        {
+            while (Interlocked.CompareExchange(ref s_tableLock, 1, 0) != 0)
+            {
+                Interlocked.Increment(ref s_tableWaiters);
+                if (Interlocked.Read(ref s_tableLock) != 0)
+                    ThreadBackend.WaitWhile(ref s_tableLock, 1, 1);
+                Interlocked.Decrement(ref s_tableWaiters);
+            }
+        }
+
+        private static void UnlockTable()
+        {
+            Interlocked.Exchange(ref s_tableLock, 0);
+            if (Interlocked.Read(ref s_tableWaiters) != 0)
+                ThreadBackend.WakeAll(ref s_tableLock);
         }
 
         private static int CurrentThreadId() => ManagedThreadIds.Current;

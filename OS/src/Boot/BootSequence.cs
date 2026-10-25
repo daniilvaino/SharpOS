@@ -296,6 +296,10 @@ namespace OS.Boot
             if (!GcStaticsMaterializer.Materialize())
                 Panic.Fail("gc statics materialization failed");
 
+            // What only the firmware knows, copied while its memory is still
+            // its own (SystemInfo, step211).
+            OS.Kernel.SystemFacts.CaptureFirmware(bootInfo);
+
             // The region write barrier for RhpByRefAssignRef: Iced assembles
             // it, and Iced needs the statics. Before any region exists.
             OS.Kernel.Diagnostics.WriteWatch.Install((byte*)bootInfo.RegionBarrierBuffer + 384);

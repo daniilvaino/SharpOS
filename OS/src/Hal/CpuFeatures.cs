@@ -13,6 +13,9 @@ namespace OS.Hal
     {
         public static ulong Value;
 
+        /// <summary>The AVX register state is on (XCR0) and interrupts save it.</summary>
+        public static bool AvxState;
+
         /// <param name="avxState">XCR0 enables AVX state and interrupts save it
         /// (BootSequence.ConfigureXcr0) — VEX instructions, vfmadd included,
         /// raise #UD without it.</param>
@@ -29,6 +32,7 @@ namespace OS.Hal
                 if (fmaCpu && avxState) features |= LibmPatcher.FeatureFma;
             }
             Value = features;
+            AvxState = avxState;
             LibmPatcher.Apply(features);
 
             Log.Begin(LogLevel.Info);

@@ -352,7 +352,7 @@ namespace Launcher
                         + " entries per folder are listed,\nso one crowded folder cannot bury\nthe rest of the tree.";
 
                 default:
-                    return "Not an application - nothing to run.";
+                    return "Enter shows it in LESS.";
             }
         }
 
@@ -400,8 +400,66 @@ namespace Launcher
                     return;
 
                 default:
-                    SetStatus("Not an application.");
+                    ShowInPager(node);
                     return;
+            }
+        }
+
+        // Any other file is shown by the pager, as the shell's `READ FILE | LESS`.
+        private const string ReaderPath = "\\bin\\READ.EXE";
+        private const string PagerPath = "\\bin\\LESS.EXE";
+
+        private static void ShowInPager(FileNode node)
+        {
+            foreach (string program in new[] { ReaderPath, PagerPath })
+            {
+                if (AppHost.FileExists(program)) continue;
+                SetStatus(program + " is not on this image.");
+                return;
+            }
+
+            SetStatus("Viewing " + node.Name + " ...");
+            Application.Refresh();
+            var driver = Application.Driver as SharpOSDriver;
+            driver?.Suspend();
+
+            // The pager first, so the reader has somewhere to write; the ends
+            // not handed over are closed here, or the pager never sees the end.
+            SharpOS.Std.Pipes.PipePair pair = SharpOS.Std.Pipes.Pipe.Create();
+            Process pager = null, reader = null;
+            string failure = null;
+            try
+            {
+                pager = Process.Start(PagerPath, null, pair.ReadEnd, null);
+                reader = Process.Start(ReaderPath, new[] { node.Path }, null, pair.WriteEnd);
+            }
+            catch (InvalidOperationException e) { failure = e.Message; }
+            finally
+            {
+                pair.WriteEnd.Dispose();
+                pair.ReadEnd.Dispose();
+            }
+
+            int pagerCode = 0;
+            if (reader != null) { reader.WaitForExit(); reader.Dispose(); }
+            if (pager != null) { pager.WaitForExit(); pagerCode = pager.ExitCode; pager.Dispose(); }
+
+            driver?.Resume();
+            Repaint();
+
+            if (failure != null)
+            {
+                SetStatus("Could not view " + node.Name);
+                MessageBox.ErrorQuery("Cannot view", failure, "OK");
+            }
+            else if (pagerCode != 0)
+            {
+                SetStatus("LESS exited with " + pagerCode.ToString());
+                MessageBox.Query("Finished", "LESS exited with code " + pagerCode.ToString() + ".", "OK");
+            }
+            else
+            {
+                SetStatus("Viewed " + node.Name);
             }
         }
 

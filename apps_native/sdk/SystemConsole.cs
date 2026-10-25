@@ -1,6 +1,9 @@
 // System.Console for the app tier, backed by the AppHost service table
-// (kernel console via WriteString). Write/WriteLine, ReadKey and Clear — the
-// subset ported app code (ManagedDoom's logging, the shell's line editor) uses.
+// (kernel console via WriteString). Write/WriteLine, ReadKey, Clear, colours,
+// window size, cursor position and visibility, title — the subset ported app
+// code (ManagedDoom's logging, the shell's line editor, a full-screen pager)
+// uses. Not here: CursorLeft/CursorTop, which need the terminal's answer to
+// ESC [6n in the input (donext, "Ввод программы — поток байт терминала").
 
 using SharpOS.AppSdk;
 
@@ -87,6 +90,71 @@ namespace System
 
         /// <summary>Clears the screen and puts the cursor at its top left (the terminal's ESC [H ESC [2J).</summary>
         public static void Clear() => AppHost.WriteString("\u001b[H\u001b[2J");
+
+        // The window (step210), as BCL has it on Unix: the size is what the
+        // terminal's owner reports (here the kernel, ConsoleSize — the
+        // TIOCGWINSZ of this system), cursor, visibility and title are escape
+        // sequences written to the terminal. The size cannot be set. Zero when
+        // there is no terminal to ask, as a failed ioctl gives there. Where BCL
+        // on Unix throws from a getter (CursorVisible, Title), these give back
+        // what was last set: the terminal does not report it.
+
+        public static int WindowWidth
+        {
+            get => AppConsole.TryGetSize(out int columns, out _) ? columns : 0;
+            set => throw new PlatformNotSupportedException();
+        }
+
+        public static int WindowHeight
+        {
+            get => AppConsole.TryGetSize(out _, out int rows) ? rows : 0;
+            set => throw new PlatformNotSupportedException();
+        }
+
+        public static int BufferWidth => WindowWidth;
+        public static int BufferHeight => WindowHeight;
+
+        /// <summary>Moves the cursor to column <paramref name="left"/>, row <paramref name="top"/>, both from 0 (ESC [row;col H).</summary>
+        public static void SetCursorPosition(int left, int top)
+        {
+            if (left < 0 || left >= short.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(left), left, "The value must be greater than or equal to zero and less than the console's buffer size in that dimension.");
+            if (top < 0 || top >= short.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(top), top, "The value must be greater than or equal to zero and less than the console's buffer size in that dimension.");
+            AppHost.WriteString("\u001b[" + (top + 1).ToString() + ";" + (left + 1).ToString() + "H");
+        }
+
+        private static bool s_cursorVisible = true;
+
+        /// <summary>Shows or hides the cursor (ESC [?25h / ESC [?25l).</summary>
+        public static bool CursorVisible
+        {
+            get => s_cursorVisible;
+            set
+            {
+                s_cursorVisible = value;
+                AppHost.WriteString(value ? "\u001b[?25h" : "\u001b[?25l");
+            }
+        }
+
+        private static string s_title = "";
+
+        /// <summary>
+        /// The window title (OSC 0). Our terminal has no title bar and takes the
+        /// sequence silently; a terminal on the far end of a serial line shows it.
+        /// </summary>
+        public static string Title
+        {
+            get => s_title;
+            set
+            {
+                if (value == null) throw new ArgumentNullException(nameof(value));
+                if (value.Length > 24500)
+                    throw new ArgumentOutOfRangeException(nameof(value), "The console title is too long.");
+                s_title = value;
+                AppHost.WriteString("\u001b]0;" + value + "\u0007");
+            }
+        }
 
         // Colours (step200) as the terminal takes them: ANSI SGR, the sixteen
         // ConsoleColor values on the 30–37/90–97 codes (backgrounds +10). The
