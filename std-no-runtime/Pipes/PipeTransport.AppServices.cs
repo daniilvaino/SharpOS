@@ -150,6 +150,17 @@ namespace SharpOS.Std.Pipes
             return 0;
         }
 
+        /// <summary>Another handle on a writing end (step212); Unsupported on an older kernel.</summary>
+        public static PipeStatus Duplicate(int handle, out int copy)
+        {
+            copy = 0;
+            if (!Available || Services->PipeDuplicateAddress == 0) return PipeStatus.Unsupported;
+            int made = 0;
+            var status = (PipeStatus)((delegate* unmanaged<int, int*, int>)Services->PipeDuplicateAddress)(handle, &made);
+            copy = made;
+            return status;
+        }
+
         /// <summary>Waits until the other end of the pipe has come; at once on an older kernel.</summary>
         public static PipeStatus WaitPeer(int handle)
         {
@@ -157,11 +168,22 @@ namespace SharpOS.Std.Pipes
             return (PipeStatus)((delegate* unmanaged<int, int>)Services->PipeWaitPeerAddress)(handle);
         }
 
-        /// <summary>A line on the screen: where a message goes when there is no output to send it to.</summary>
-        public static void Print(string line) => System.Console.WriteLine(line);
+        /// <summary>
+        /// A line on the terminal: where a message goes when there is no output
+        /// to send it to. Not System.Console, which is the standard output since
+        /// step212.
+        /// </summary>
+        public static void Print(string line)
+        {
+            if (line != null) AppHost.WriteString(line);
+            AppHost.WriteString("\n");
+        }
 
-        /// <summary>Text on the screen as it is, no line added (step197: a file's bytes arrive in pieces).</summary>
-        public static void PrintText(string text) => System.Console.Write(text);
+        /// <summary>Text on the terminal as it is, no line added (step197: a file's bytes arrive in pieces).</summary>
+        public static void PrintText(string text)
+        {
+            if (text != null) AppHost.WriteString(text);
+        }
 
         public static PipeStatus Close(int handle)
         {

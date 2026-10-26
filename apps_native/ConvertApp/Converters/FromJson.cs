@@ -57,13 +57,13 @@ namespace PipeApps
                 }
                 catch (JsonException e)
                 {
-                    Console.WriteLine("CONVERT --from " + Format + ": line " + ((e.LineNumber ?? 0) + 1).ToString()
+                    Console.Error.WriteLine("CONVERT --from " + Format + ": line " + ((e.LineNumber ?? 0) + 1).ToString()
                                       + ", column " + ((e.BytePositionInLine ?? 0) + 1).ToString() + ": " + Plain(e.Message));
                     return 1;
                 }
                 catch (FormatException e)
                 {
-                    Console.WriteLine("CONVERT --from " + Format + ": " + e.Message);
+                    Console.Error.WriteLine("CONVERT --from " + Format + ": " + e.Message);
                     return 1;
                 }
             }

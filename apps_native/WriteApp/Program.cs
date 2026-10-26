@@ -63,7 +63,7 @@ namespace PipeApps
                 string refused = CheckAppend(path, schema, rootKey, type, out header);
                 if (refused != null)
                 {
-                    Console.WriteLine("WRITE: " + refused);
+                    Console.Error.WriteLine("WRITE: " + refused);
                     input.Dispose();
                     return 1;
                 }
@@ -76,7 +76,7 @@ namespace PipeApps
             }
             catch (IOException e)
             {
-                Console.WriteLine("WRITE: " + e.Message);
+                Console.Error.WriteLine("WRITE: " + e.Message);
                 input.Dispose();
                 return 1;
             }
@@ -153,7 +153,7 @@ namespace PipeApps
 
         private static int Usage()
         {
-            Console.WriteLine("usage: WRITE file [--append]");
+            Console.Error.WriteLine("usage: WRITE file [--append]");
             return 2;
         }
     }

@@ -1,4 +1,4 @@
-﻿namespace OS.Hal
+namespace OS.Hal
 {
     // Where raw set-1 scancodes come from, whatever hardware produced them.
     // Named for the layer it is: OS.Kernel.Input.Keyboard sits above this and
@@ -29,9 +29,26 @@
 
         public static uint Dropped => s_dropped;
 
+        // Set once the input pump runs: from then on the pump is the only
+        // reader of the hardware, and everyone else takes from the ring.
+        //
+        // Readers used to fall through to the hardware whenever the ring was
+        // empty — from their own thread, while the pump read it too. A code the
+        // pump had taken but not yet pushed was then overtaken by the next one
+        // read directly: a Shift release came before the key it belonged to,
+        // or was lost in the USB queue both threads touched unguarded. Fast
+        // typing came out with Shift on the wrong keys and keys missing.
+        private static volatile bool s_pumped;
+
+        /// <summary>The input pump is running: readers take from the ring only.</summary>
+        public static void PumpStarted() => s_pumped = true;
+
         /// <summary>Called by the input pump. Full ring drops the oldest.</summary>
         public static void Push(byte scancode)
         {
+            // As TryReadScancode: a reader must not see the ring between the
+            // two writes below.
+            OS.Kernel.Threading.Preemption.Suppress();
             int next = (s_head + 1) % RingSize;
             if (next == s_tail)
             {
@@ -40,6 +57,7 @@
             }
             s_ring[s_head] = scancode;
             s_head = next;
+            OS.Kernel.Threading.Preemption.Allow();
         }
 
         /// <summary>Takes directly from the hardware. For the pump only.</summary>
@@ -74,9 +92,9 @@
             else scancode = 0;
             OS.Kernel.Threading.Preemption.Allow();
 
-            // Buffered first, hardware second: without a pump running (early
-            // boot, probes) this behaves exactly as it always did.
-            return have || TryReadHardware(out scancode);
+            // Buffered first; the hardware only while no pump runs (early boot,
+            // probes) — with one, the pump alone reads it (s_pumped).
+            return have || (!s_pumped && TryReadHardware(out scancode));
         }
 
         /// <summary>Binds the USB keyboard, if the xHCI stack found one.</summary>

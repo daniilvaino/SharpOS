@@ -1,4 +1,4 @@
-﻿using OS.Hal;
+using OS.Hal;
 using OS.Kernel.Threading;
 
 namespace OS.Kernel.Input
@@ -51,6 +51,7 @@ namespace OS.Kernel.Input
                 // shell instead of cancelling the command.
                 Scheduler.SpawnHosted(&CtrlDeliveryEntry, null, 64 * 1024);
                 Scheduler.Spawn(&PumpEntry, 64 * 1024);
+                ScancodeSource.PumpStarted();
             }
 
             // From here on the pump flushes the screen every interval, so line

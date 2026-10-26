@@ -21,7 +21,7 @@ namespace PipeApps
             if (!file.ReadHeader())
             {
                 if (file.Complaint == null) return 0;
-                Console.WriteLine("CONVERT --from externalpipe: " + file.Complaint);
+                Console.Error.WriteLine("CONVERT --from externalpipe: " + file.Complaint);
                 return 1;
             }
             return ExternalPipe.Replay(file, "CONVERT --from externalpipe");

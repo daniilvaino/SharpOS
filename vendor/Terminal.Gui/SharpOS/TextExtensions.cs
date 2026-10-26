@@ -1,4 +1,4 @@
-﻿// What Terminal.Gui needed NStack for, expressed on plain strings.
+// What Terminal.Gui needed NStack for, expressed on plain strings.
 //
 // The library was written against NStack's ustring because .NET had no rune
 // type when it was written: it targets netstandard2.0 and net472, and a string
@@ -20,6 +20,9 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+// The library's Rune (SharpOS/Rune.cs, in System as NStack had it), not
+// std's System.Text.Rune, which this file's using of System.Text also sees.
+using Rune = System.Rune;
 
 namespace Terminal.Gui
 {

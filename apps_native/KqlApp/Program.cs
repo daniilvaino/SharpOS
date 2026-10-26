@@ -103,7 +103,7 @@ namespace PipeApps
             if (s_reported || s_start == 0) return;
             s_reported = true;
             long now = Stopwatch.GetTimestamp();
-            AppHost.WriteString("[kql] start ms: declared=" + Ms(s_start, s_declared) + " bind1=" + Ms(s_declared, s_firstBound)
+            Console.Error.Write("[kql] start ms: declared=" + Ms(s_start, s_declared) + " bind1=" + Ms(s_declared, s_firstBound)
                                 + " bind2=" + Ms(s_firstBound, s_bound) + " first=" + Ms(s_bound, now) + " total=" + Ms(s_start, now) + "\n");
         }
 
@@ -116,9 +116,9 @@ namespace PipeApps
             bool interactive = args.Length == 0 && PipeTransport.StandardEnd(0) != 0;
             if (args.Length == 0 && !interactive)
             {
-                Console.WriteLine("KQL 'query': runs the query over the messages on the input (the table " + TableName + ")");
-                Console.WriteLine("  PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'");
-                Console.WriteLine("  PIPEGEN 100 | KQL      asks for the query once the input's type is known; Tab completes");
+                Console.Error.WriteLine("KQL 'query': runs the query over the messages on the input (the table " + TableName + ")");
+                Console.Error.WriteLine("  PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'");
+                Console.Error.WriteLine("  PIPEGEN 100 | KQL      asks for the query once the input's type is known; Tab completes");
                 return 2;
             }
             try
@@ -139,7 +139,7 @@ namespace PipeApps
                 // the message says what happened without it.
                 string type = e.GetType().Name;
                 bool named = e is not PipeException && !type.StartsWith("EETypeRva");
-                Console.WriteLine("KQL: " + (named ? type + ": " : "") + e.Message);
+                Console.Error.WriteLine("KQL: " + (named ? type + ": " : "") + e.Message);
                 return 1;
             }
         }
@@ -446,8 +446,8 @@ namespace PipeApps
             IReadOnlyList<Diagnostic> found = code.GetDiagnostics();
             if (found.Count == 0) return true;
             // The first one: the rest usually follow from it.
-            Console.WriteLine("KQL: " + Where(query, found[0].Start) + ": " + found[0].Message);
-            if (hint != null) Console.WriteLine("KQL: " + hint);
+            Console.Error.WriteLine("KQL: " + Where(query, found[0].Start) + ": " + found[0].Message);
+            if (hint != null) Console.Error.WriteLine("KQL: " + hint);
             return false;
         }
 
@@ -726,7 +726,7 @@ namespace PipeApps
         {
             if (evaluated is not TabularResult table) return 0;
             int row = IndexOf(table.Value.Type, RowColumn);
-            int output = Pipe.TakeOutput();
+            int output = Pipe.TakeOutput("the input's type, forwarded");
             bool screen = output == 0;
             bool declared = false;
             try
@@ -777,7 +777,7 @@ namespace PipeApps
                             if (opened != PipeStatus.Ok)
                             {
                                 region.Dispose();
-                                Console.WriteLine("KQL: the output: " + (error ?? Pipe.Explain(opened)));
+                                Console.Error.WriteLine("KQL: the output: " + (error ?? Pipe.Explain(opened)));
                                 return 1;
                             }
                             declared = true;
@@ -787,7 +787,7 @@ namespace PipeApps
                         {
                             region.Dispose();
                             if (sent == PipeStatus.Broken) return 141;
-                            Console.WriteLine("KQL: the output: " + Pipe.Explain(sent));
+                            Console.Error.WriteLine("KQL: the output: " + Pipe.Explain(sent));
                             return 1;
                         }
                         region.End("the region went on to the standard output");
@@ -1007,6 +1007,9 @@ namespace PipeApps
             public string Name;
             public ColumnKind Kind;
             public FieldShape Field;
+            // A dynamic column's known schema (step212): a record field's
+            // properties, for completion past the dot; null for plain dynamic.
+            public TypeSymbol Type;
             // An Expando entry the query names (step205): looked up in each
             // message, null where the message has none.
             public bool IsEntry;
@@ -1047,7 +1050,7 @@ namespace PipeApps
             public static Columns Of(View root)
             {
                 TypeShape shape = root.Shape;
-                if (shape != null) return Named(Of(shape), shape);
+                if (shape != null) return Named(Of(shape, root.Shapes), shape);
                 // A boxed number or bool: the value itself.
                 ColumnKind kind = root.Kind switch
                 {
@@ -1066,7 +1069,7 @@ namespace PipeApps
                 RegionShapes shapes = schema == null ? null : RegionShapes.Parse(schema, out _);
                 TypeShape root = shapes == null ? null : shapes[rootKey];
                 if (root == null) return new Columns { Sources = new Source[0] };
-                return Named(Of(root), root);
+                return Named(Of(root, shapes), root);
             }
 
             // The type's name without its namespace: what the prompt shows.
@@ -1081,7 +1084,7 @@ namespace PipeApps
                 return columns;
             }
 
-            private static Columns Of(TypeShape shape)
+            private static Columns Of(TypeShape shape, RegionShapes shapes)
             {
                 if (shape.BoxedValue != null) return Whole(KindOf(shape.BoxedValue));
                 if (shape.IsString) return Whole(ColumnKind.String);
@@ -1094,8 +1097,53 @@ namespace PipeApps
                 if (shape.IsArray || shape.Fields == null) return Whole(ColumnKind.Dynamic);
                 var sources = new Source[shape.Fields.Length];
                 for (int i = 0; i < sources.Length; i++)
-                    sources[i] = new Source { Name = shape.Fields[i].Name, Kind = KindOf(shape.Fields[i]), Field = shape.Fields[i] };
+                {
+                    FieldShape f = shape.Fields[i];
+                    ColumnKind kind = KindOf(f);
+                    sources[i] = new Source
+                    {
+                        Name = f.Name,
+                        Kind = kind,
+                        Field = f,
+                        Type = kind == ColumnKind.Dynamic && f.Kind == FieldKind.Reference ? DynamicOf(shapes, f.TypeName, 0) : null,
+                    };
+                }
                 return new Columns { Sources = sources };
+            }
+
+            // A record or array field as Kusto.Language sees dynamic with a
+            // schema (step212): a bag of its fields, an array of its element —
+            // `Display.` then completes Width, Height. The leaves are dynamic
+            // of their type, not the type: BabyKusto evaluates a property of
+            // dynamic to dynamic, and binds by the name "dynamic" (Simplify).
+            private static TypeSymbol DynamicOf(RegionShapes shapes, string typeName, int depth)
+            {
+                if (shapes == null || typeName == null || depth > 4) return ScalarTypes.Dynamic;
+                TypeShape t = shapes.ByName(typeName);
+                if (t == null || t.IsExpando || t.IsString) return ScalarTypes.Dynamic;
+                if (t.IsArray) return ScalarTypes.GetDynamicArray(PropertyOf(t.Elements, shapes, depth + 1));
+                if (t.Fields == null || t.Fields.Length == 0) return ScalarTypes.Dynamic;
+                var properties = new List<ColumnSymbol>(t.Fields.Length);
+                foreach (FieldShape f in t.Fields) properties.Add(new ColumnSymbol(f.Name, PropertyOf(f, shapes, depth + 1)));
+                return ScalarTypes.GetDynamicBag(properties);
+            }
+
+            private static TypeSymbol PropertyOf(FieldShape f, RegionShapes shapes, int depth)
+            {
+                switch (f.Kind)
+                {
+                    case FieldKind.Bool: return ScalarTypes.GetDynamic(ScalarTypes.Bool);
+                    case FieldKind.Char: return ScalarTypes.GetDynamic(ScalarTypes.String);
+                    case FieldKind.Single:
+                    case FieldKind.Double: return ScalarTypes.GetDynamic(ScalarTypes.Real);
+                    case FieldKind.Reference:
+                        return f.TypeName == "System.String" ? ScalarTypes.GetDynamic(ScalarTypes.String) : DynamicOf(shapes, f.TypeName, depth);
+                    case FieldKind.Struct:
+                        return f.TypeName == "System.DateTime" ? ScalarTypes.GetDynamic(ScalarTypes.DateTime)
+                             : f.TypeName == "System.TimeSpan" ? ScalarTypes.GetDynamic(ScalarTypes.TimeSpan)
+                             : ScalarTypes.Dynamic;
+                    default: return ScalarTypes.GetDynamic(ScalarTypes.Long);
+                }
             }
 
             private static Columns Whole(ColumnKind kind)
@@ -1126,7 +1174,7 @@ namespace PipeApps
             public TableSymbol Symbol()
             {
                 var columns = new List<ColumnSymbol>();
-                foreach (Source s in Sources) columns.Add(new ColumnSymbol(s.Name, Scalar(s.Kind)));
+                foreach (Source s in Sources) columns.Add(new ColumnSymbol(s.Name, s.Type ?? Scalar(s.Kind)));
                 if (Row) columns.Add(new ColumnSymbol(RowColumn, ScalarTypes.Long));
                 return new TableSymbol(TableName, columns);
             }

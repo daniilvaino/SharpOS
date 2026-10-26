@@ -1,4 +1,4 @@
-﻿using SharpOS.AppSdk;
+using SharpOS.AppSdk;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -1851,6 +1851,18 @@ namespace AotTests
 
             Check("compare-and-swap is atomic", System.Threading.Interlocked.IsAtomic);
             Check("thread ids are per-thread", System.Threading.ManagedThreadIds.IsPerThread);
+
+            // RandomNumberGenerator over the kernel's RDRAND (HardwareRandom):
+            // two draws of 32 bytes are not equal and not all zero, and GetInt32
+            // stays inside its range.
+            byte[] draw1 = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+            byte[] draw2 = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+            bool differ = false, nonZero = false;
+            for (int i = 0; i < 32; i++) { differ |= draw1[i] != draw2[i]; nonZero |= draw1[i] != 0; }
+            Check("cryptographic random: two draws differ and are not zero", differ && nonZero);
+            bool inRange = true;
+            for (int i = 0; i < 200; i++) { int r = System.Security.Cryptography.RandomNumberGenerator.GetInt32(3, 10); inRange &= r >= 3 && r < 10; }
+            Check("cryptographic random: GetInt32 stays in range", inRange);
 
             int mainId = System.Threading.ManagedThreadIds.Current;
             s_otherId = 0;

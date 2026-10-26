@@ -203,7 +203,7 @@ namespace System.Collections.Generic
         T this[int index] { get; }
     }
 
-    public interface IEqualityComparer<T>
+    public interface IEqualityComparer<in T>
     {
         bool Equals(T x, T y);
         int GetHashCode(T obj);

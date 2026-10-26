@@ -40,9 +40,9 @@ namespace PipeApps
                 }
             }
 
-            Console.WriteLine("CONVERT: unknown conversion" + (args.Length > 0 ? ": " + string.Join(" ", args) : "") + "; known:");
+            Console.Error.WriteLine("CONVERT: unknown conversion" + (args.Length > 0 ? ": " + string.Join(" ", args) : "") + "; known:");
             foreach (IConverter c in Registry.All)
-                Console.WriteLine("  CONVERT --" + c.Direction + " " + c.Format + (c.Options.Length > 0 ? " " + c.Options : ""));
+                Console.Error.WriteLine("  CONVERT --" + c.Direction + " " + c.Format + (c.Options.Length > 0 ? " " + c.Options : ""));
             return 2;
         }
     }

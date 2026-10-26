@@ -22,7 +22,7 @@ using System.Collections.Generic;
 
 namespace System.Runtime.CompilerServices
 {
-    public sealed class ConditionalWeakTable<TKey, TValue>
+    public sealed class ConditionalWeakTable<TKey, TValue> : IEnumerable<KeyValuePair<TKey, TValue>>
         where TKey : class
         where TValue : class
     {
@@ -83,6 +83,13 @@ namespace System.Runtime.CompilerServices
             _entries[key] = created;
             return created;
         }
+
+        // BCL: the table enumerates its live entries (explicitly, through the interface).
+        IEnumerator<KeyValuePair<TKey, TValue>> IEnumerable<KeyValuePair<TKey, TValue>>.GetEnumerator()
+            => ((IEnumerable<KeyValuePair<TKey, TValue>>)_entries).GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+            => ((IEnumerable<KeyValuePair<TKey, TValue>>)_entries).GetEnumerator();
 
         private sealed class IdentityComparer : IEqualityComparer<TKey>
         {

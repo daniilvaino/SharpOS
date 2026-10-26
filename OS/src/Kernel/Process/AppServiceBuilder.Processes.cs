@@ -72,6 +72,13 @@ namespace OS.Kernel.Process
         // already reads; the kernel writes one SystemInfo to it. [1] out: the
         // PipeStatus of the send.
         public const int ProcessOpSystemInfo = 21;
+        // step212: ProcessOpStartWithEnvironment's request ([6] 0: a copy of
+        // the caller's environment) and more ends than input and output: [8]
+        // ulongs, each (number << 32) | handle, [9] how many (up to
+        // MaxHandedEnds). Each is a writing end of the caller's; the child
+        // finds it under its number (stderr 2, stdtext 3).
+        public const int ProcessOpStartWithEnds = 22;
+        internal const int MaxHandedEnds = 8;
 
         // A path answered in UTF-8 (step208; before, a byte a char): written
         // when it fits the caller's buffer; its length in bytes either way.
@@ -314,7 +321,7 @@ namespace OS.Kernel.Process
                 return (int)AppServiceStatus.Ok;
             }
 
-            if (op == ProcessOpStart || op == ProcessOpStartWithEnvironment)
+            if (op == ProcessOpStart || op == ProcessOpStartWithEnvironment || op == ProcessOpStartWithEnds)
             {
                 ulong serviceStarted = Ticks();
                 request[5] = 0;
@@ -322,16 +329,26 @@ namespace OS.Kernel.Process
                 if (!TryReadUtf8Path(request[0], path, MaxPathChars))
                     return (int)AppServiceStatus.InvalidParameter;
                 string[] childEnvironment = null;
-                if (op == ProcessOpStartWithEnvironment)
+                if (op == ProcessOpStartWithEnvironment || (op == ProcessOpStartWithEnds && request[6] != 0))
                 {
                     childEnvironment = ProcessEnvironment.Decode((char*)request[6], (int)System.Math.Min(request[7], (ulong)ProcessEnvironment.MaxChars + 1));
                     if (childEnvironment == null) return (int)AppServiceStatus.InvalidParameter;
+                }
+                // Copied out of the caller's memory before anything is checked.
+                ulong* ends = stackalloc ulong[MaxHandedEnds];
+                int endCount = 0;
+                if (op == ProcessOpStartWithEnds)
+                {
+                    if (request[9] > MaxHandedEnds || (request[9] != 0 && request[8] == 0))
+                        return (int)AppServiceStatus.InvalidParameter;
+                    endCount = (int)request[9];
+                    for (int i = 0; i < endCount; i++) ends[i] = ((ulong*)request[8])[i];
                 }
                 if (!TryResolveRunAppAbi(path, AppServiceTable.AutoSelectAbiVersion, (uint)AppServiceAbi.Auto, out uint abi, out AppServiceAbi serviceAbi, out AbiResolveSource source))
                     return (int)AppServiceStatus.InvalidParameter;
                 AppServiceStatus started = StartFromPath(path, abi, serviceAbi, source == AbiResolveSource.Request,
                     request[2] != 0 ? (byte*)request[1] : null, (uint)request[2],
-                    (int)request[3], (int)request[4], out AppProcess child, childEnvironment);
+                    (int)request[3], (int)request[4], out AppProcess child, childEnvironment, ends, endCount);
                 s_sService += Ticks() - serviceStarted;
                 if (started == AppServiceStatus.Ok) request[5] = child.Id;
                 return (int)started;
@@ -370,12 +387,12 @@ namespace OS.Kernel.Process
         internal static AppServiceStatus StartFromPath(
             char* path, uint appAbiVersion, AppServiceAbi serviceAbi, bool abiFromRequest,
             byte* arguments, uint argumentsLength, int inputEnd, int outputEnd, out AppProcess process,
-            string[] environment = null)
+            string[] environment = null, ulong* ends = null, int endCount = 0)
         {
             ulong pathStarted = Ticks();
             try
             {
-                return StartFromPathCore(path, appAbiVersion, serviceAbi, abiFromRequest, arguments, argumentsLength, inputEnd, outputEnd, out process, environment);
+                return StartFromPathCore(path, appAbiVersion, serviceAbi, abiFromRequest, arguments, argumentsLength, inputEnd, outputEnd, out process, environment, ends, endCount);
             }
             finally
             {
@@ -383,10 +400,14 @@ namespace OS.Kernel.Process
             }
         }
 
+        // A handed end: its number (stderr 2, stdtext 3 …) and handle.
+        private static uint EndNumber(ulong end) => (uint)(end >> 32);
+        private static int EndHandle(ulong end) => (int)(uint)end;
+
         private static AppServiceStatus StartFromPathCore(
             char* path, uint appAbiVersion, AppServiceAbi serviceAbi, bool abiFromRequest,
             byte* arguments, uint argumentsLength, int inputEnd, int outputEnd, out AppProcess process,
-            string[] environment)
+            string[] environment, ulong* ends, int endCount)
         {
             process = null;
             BootInfo bootInfo = Platform.GetBootInfo();
@@ -407,8 +428,20 @@ namespace OS.Kernel.Process
             // The ends handed over must be the caller's, of the right role; a
             // start that fails leaves them with it (step194 §5).
             uint holder = global::OS.Kernel.Pipes.KernelPipes.CallerHolder();
-            if ((inputEnd > 0 && !global::OS.Kernel.Pipes.KernelPipes.IsEnd(holder, inputEnd, SharpOS.Std.Pipes.PipeRole.Reader)) ||
-                (outputEnd > 0 && !global::OS.Kernel.Pipes.KernelPipes.IsEnd(holder, outputEnd, SharpOS.Std.Pipes.PipeRole.Writer)))
+            bool endsOk = (inputEnd <= 0 || global::OS.Kernel.Pipes.KernelPipes.IsEnd(holder, inputEnd, SharpOS.Std.Pipes.PipeRole.Reader))
+                       && (outputEnd <= 0 || global::OS.Kernel.Pipes.KernelPipes.IsEnd(holder, outputEnd, SharpOS.Std.Pipes.PipeRole.Writer));
+            // The further ends (step212): writers of the caller's, numbered
+            // past the standard two, each number and each handle once.
+            for (int i = 0; endsOk && i < endCount; i++)
+            {
+                uint number = EndNumber(ends[i]);
+                int handle = EndHandle(ends[i]);
+                endsOk = number >= 2 && handle > 0 && handle != outputEnd
+                         && global::OS.Kernel.Pipes.KernelPipes.IsEnd(holder, handle, SharpOS.Std.Pipes.PipeRole.Writer);
+                for (int j = 0; endsOk && j < i; j++)
+                    endsOk = EndNumber(ends[j]) != number && EndHandle(ends[j]) != handle;
+            }
+            if (!endsOk)
             {
                 GiveBackFile(cached, file, fileSize);
                 return AppServiceStatus.InvalidParameter;
@@ -421,9 +454,12 @@ namespace OS.Kernel.Process
             try
             {
                 StartupData.Clear();
-                if ((arguments != null && !StartupData.SetArguments(arguments, argumentsLength)) ||
-                    (inputEnd > 0 && !StartupData.AddPipeEnd(StartupData.RoleInput, inputEnd)) ||
-                    (outputEnd > 0 && !StartupData.AddPipeEnd(StartupData.RoleOutput, outputEnd)))
+                bool recorded = (arguments == null || StartupData.SetArguments(arguments, argumentsLength))
+                             && (inputEnd <= 0 || StartupData.AddPipeEnd(StartupData.RoleInput, inputEnd))
+                             && (outputEnd <= 0 || StartupData.AddPipeEnd(StartupData.RoleOutput, outputEnd));
+                for (int i = 0; recorded && i < endCount; i++)
+                    recorded = StartupData.AddPipeEnd(EndNumber(ends[i]), EndHandle(ends[i]));
+                if (!recorded)
                 {
                     result = AppServiceStatus.InvalidParameter;
                 }
@@ -435,7 +471,7 @@ namespace OS.Kernel.Process
                     result = StartProcess(new MemoryBlock(file, fileSize), name,
                         appAbiVersion, serviceAbi, abiFromRequest,
                         AppProcesses.Current?.Id ?? 0, out process, holder, inputEnd, outputEnd, environment,
-                        string.FromUtf16Z(path, (int)MaxPathChars));
+                        string.FromUtf16Z(path, (int)MaxPathChars), ends, endCount);
                     s_gProcess += Ticks() - g2;
                     if (process != null)
                     {
@@ -504,7 +540,7 @@ namespace OS.Kernel.Process
             uint appAbiVersion, AppServiceAbi serviceAbi, bool abiFromRequest,
             uint launcherId, out AppProcess process,
             uint endHolder = 0, int inputEnd = 0, int outputEnd = 0, string[] environment = null,
-            string imagePath = null)
+            string imagePath = null, ulong* ends = null, int endCount = 0)
         {
             process = null;
             var proc = new AppProcess
@@ -626,12 +662,12 @@ namespace OS.Kernel.Process
                 // The ends become the new process's before any of its code
                 // runs; the caller's handles go dead. Either both move or
                 // neither does.
-                if (!TransferEnds(endHolder, proc.Id, inputEnd, outputEnd)) { result = AppServiceStatus.InvalidParameter; break; }
+                if (!TransferEnds(endHolder, proc.Id, inputEnd, outputEnd, ends, endCount)) { result = AppServiceStatus.InvalidParameter; break; }
 
                 Thread main = Scheduler.Spawn(&ProcessMainEntry, MainThreadKernelStackBytes, startRunnable: false);
                 if (main == null)
                 {
-                    TransferEnds(proc.Id, endHolder, inputEnd, outputEnd);
+                    TransferEnds(proc.Id, endHolder, inputEnd, outputEnd, ends, endCount);
                     result = FailedAtStep(9);
                     break;
                 }
@@ -666,13 +702,21 @@ namespace OS.Kernel.Process
             return result;
         }
 
-        private static bool TransferEnds(uint from, uint to, int inputEnd, int outputEnd)
+        // All the ends move or none does: a failure hands back what had moved.
+        private static bool TransferEnds(uint from, uint to, int inputEnd, int outputEnd, ulong* ends, int endCount)
         {
-            if (inputEnd > 0 && global::OS.Kernel.Pipes.KernelPipes.Transfer(from, inputEnd, to) != SharpOS.Std.Pipes.PipeStatus.Ok)
-                return false;
-            if (outputEnd > 0 && global::OS.Kernel.Pipes.KernelPipes.Transfer(from, outputEnd, to) != SharpOS.Std.Pipes.PipeStatus.Ok)
+            int* handles = stackalloc int[2 + MaxHandedEnds];
+            int count = 0;
+            if (inputEnd > 0) handles[count++] = inputEnd;
+            if (outputEnd > 0) handles[count++] = outputEnd;
+            for (int i = 0; i < endCount; i++) handles[count++] = EndHandle(ends[i]);
+
+            for (int moved = 0; moved < count; moved++)
             {
-                if (inputEnd > 0) global::OS.Kernel.Pipes.KernelPipes.Transfer(to, inputEnd, from);
+                if (global::OS.Kernel.Pipes.KernelPipes.Transfer(from, handles[moved], to) == SharpOS.Std.Pipes.PipeStatus.Ok)
+                    continue;
+                for (int back = 0; back < moved; back++)
+                    global::OS.Kernel.Pipes.KernelPipes.Transfer(to, handles[back], from);
                 return false;
             }
             return true;

@@ -285,6 +285,26 @@ namespace SharpOS.Std.Pipes
         }
     }
 
+    /// <summary>
+    /// Text straight to the terminal, as it comes (step212): the standard
+    /// output when none was handed over, and stdtext for now.
+    /// </summary>
+    internal sealed class TerminalTextWriter : TextWriter
+    {
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+
+        public override void Write(char value) => PipeTransport.PrintText(value.ToString());
+
+        public override void Write(string? value)
+        {
+            if (!string.IsNullOrEmpty(value)) PipeTransport.PrintText(value);
+        }
+
+        public override void WriteLine(string? value) => PipeTransport.PrintText((value ?? "") + "\n");
+
+        public override void WriteLine() => PipeTransport.PrintText("\n");
+    }
+
     public static partial class Pipe
     {
         /// <summary>The standard input as text: string messages a line each, byte[] ones decoded as UTF-8.</summary>

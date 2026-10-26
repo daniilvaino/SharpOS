@@ -1,4 +1,4 @@
-﻿namespace OS.Kernel.Process
+namespace OS.Kernel.Process
 {
     internal enum AppServiceStatus : uint
     {
@@ -393,6 +393,17 @@
         // a service: no transition, called by every [ThreadStatic] access.
         // Zero: an older kernel; thread statics throw.
         public ulong ThreadWordsAddress;
+
+        // int PipeDuplicate(int handle, int* copy) (step212): another handle
+        // on the same writing end — the stream ends when the last copy
+        // closes. For `n>&m` and a shell's own output across its commands.
+        // Zero: an older kernel.
+        public ulong PipeDuplicateAddress;
+
+        // int RandomFill(byte* buffer, int count): cryptographic random bytes,
+        // RDRAND (HardwareRandom); Unsupported on a CPU without it. Behind
+        // RandomNumberGenerator in the app. Zero: an older kernel.
+        public ulong RandomFillAddress;
     }
 
     /// <summary>

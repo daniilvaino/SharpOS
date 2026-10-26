@@ -143,6 +143,9 @@ namespace SharpOS.Std.Pipes
 
         private const byte Null = 0, Value = 1, Obj = 2, InPlace = 3, Detached = 4;
 
+        /// <summary>The descriptions of the region this view reads: the types its fields name.</summary>
+        internal RegionShapes Shapes => _scope?.Shapes;
+
         private View(ViewScope scope, ulong at, TypeShape type, FieldKind value, byte shape, TypeShape enumType,
                      ulong bits = 0, string text = null)
         {

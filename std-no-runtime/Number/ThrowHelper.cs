@@ -44,5 +44,11 @@ namespace System
         {
             throw new FormatException(SR.Argument_BadFormatSpecifier);
         }
+
+        [DoesNotReturn]
+        internal static void ThrowFormatInvalidString()
+        {
+            throw new FormatException("Input string was not in a correct format.");
+        }
     }
 }

@@ -84,6 +84,9 @@
         // The running thread's words (ThreadArea, [ThreadStatic]): 17 bytes.
         private const uint ThreadWordsOffset    = 0x540;
         private const uint ThreadWordsMinBuffer = 0x560;
+        // RDRAND (HardwareRandom): 13 bytes.
+        private const uint RdRandOffset         = 0x560;
+        private const uint RdRandMinBuffer      = 0x570;
 
         private const uint CmpXchg64Offset       = 0x1A0;
         private const uint Xchg64Offset          = 0x1C0;
@@ -417,6 +420,33 @@
                 s_readTscReady = true;
             }
             value = s_readTsc();
+            return true;
+        }
+
+        private static bool s_rdRandReady;
+        private static delegate* unmanaged<ulong*, int> s_rdRand;
+
+        /// <summary>
+        /// One RDRAND: true with 64 random bits in <paramref name="value"/>,
+        /// false when the instruction said no data this time (CF clear —
+        /// retry) or the stub cannot be placed. The caller checks CPUID first:
+        /// on a CPU without RDRAND the instruction faults.
+        /// </summary>
+        public static bool RdRand(out ulong value)
+        {
+            value = 0;
+            if (s_execBuffer == null || s_execBufferSize < RdRandMinBuffer)
+                return false;
+            if (!s_rdRandReady)
+            {
+                byte* p = (byte*)s_execBuffer + RdRandOffset;
+                EmitRdRandBootAsm(p);
+                s_rdRand = (delegate* unmanaged<ulong*, int>)p;
+                s_rdRandReady = true;
+            }
+            ulong v;
+            if (s_rdRand(&v) == 0) return false;
+            value = v;
             return true;
         }
 

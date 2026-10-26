@@ -73,6 +73,8 @@ namespace PipeApps
 
         private static string Hex(ulong value) => "0x" + value.ToString("X");
 
-        private static void Say(string text) => AppHost.WriteString(text);
+        // stdtext (step212): what the spy saw is for whoever reads the screen,
+        // beside the messages it passes on.
+        private static void Say(string text) => Pipe.Text.Write(text);
     }
 }

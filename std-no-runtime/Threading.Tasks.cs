@@ -99,15 +99,17 @@ namespace System.Threading
     /// A cancellation flag and the tokens that observe it.
     /// </summary>
     /// <remarks>
-    /// Partial against the BCL: no callbacks (Register), no timers (CancelAfter),
-    /// no WaitHandle. Cancel wakes nobody — waiters poll the token between slices.
+    /// Partial against the BCL: no timers (CancelAfter), no WaitHandle. Waiters
+    /// poll the token between slices. Callbacks (CancellationToken.Register)
+    /// live in Threading.CancellationTokenSource.Callbacks.cs; Cancel runs them.
     /// A linked source (CreateLinkedTokenSource) keeps its parent tokens and
     /// reports cancelled when it or any parent is, which is what callers of a
-    /// linked source observe; it is checked on read rather than propagated by a
-    /// registration, because there are no registrations. Dispose drops the
-    /// links, as the BCL's Dispose unregisters from the parents.
+    /// linked source observe; it is checked on read, and the first Register on
+    /// a linked source also registers on the parents so its callbacks run when
+    /// a parent is cancelled. Dispose drops the links, as the BCL's Dispose
+    /// unregisters from the parents.
     /// </remarks>
-    public sealed class CancellationTokenSource : IDisposable
+    public sealed partial class CancellationTokenSource : IDisposable
     {
         internal bool _cancelled;
 
@@ -144,11 +146,19 @@ namespace System.Threading
             }
         }
 
-        public void Cancel() => _cancelled = true;
+        public void Cancel() => Cancel(false);
 
-        public void Cancel(bool throwOnFirstException) => _cancelled = true;
+        public void Cancel(bool throwOnFirstException)
+        {
+            _cancelled = true;
+            ExecuteCallbackHandlers(throwOnFirstException);
+        }
 
-        public void Dispose() => _linkedTokens = null;
+        public void Dispose()
+        {
+            UnhookLinkedParents();
+            _linkedTokens = null;
+        }
 
         /// <summary>A source that is cancelled when either token is.</summary>
         public static CancellationTokenSource CreateLinkedTokenSource(CancellationToken token1, CancellationToken token2) =>
@@ -176,7 +186,7 @@ namespace System.Threading
         }
     }
 
-    public readonly struct CancellationToken : IEquatable<CancellationToken>
+    public readonly partial struct CancellationToken : IEquatable<CancellationToken>
     {
         private readonly CancellationTokenSource? _source;
 
@@ -254,6 +264,15 @@ namespace System.Threading
                 if (ThreadBackend.CanBlock) break;
             }
             return IsSet;
+        }
+
+        // BCL: whole milliseconds; -1 ms (Timeout.InfiniteTimeSpan) waits forever.
+        public bool Wait(TimeSpan timeout)
+        {
+            long totalMilliseconds = (long)timeout.TotalMilliseconds;
+            if (totalMilliseconds < -1 || totalMilliseconds > int.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(timeout), "The timeout must represent a value between -1 and Int32.MaxValue, inclusive.");
+            return Wait((int)totalMilliseconds);
         }
 
         public void Wait(CancellationToken token)
@@ -345,6 +364,7 @@ namespace System.Threading
                 _completed = true;
                 if (Interlocked.Exchange(ref _signal, 1) == 2)
                     ThreadBackend.WakeAll(ref _signal);
+                RunContinuations();   // Threading.Tasks.Continuations.cs
             }
 
             // Marks the word as waited on and blocks while it stays that way.

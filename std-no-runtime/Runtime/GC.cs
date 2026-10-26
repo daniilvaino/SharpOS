@@ -46,6 +46,16 @@ namespace System
         public static void Collect() => SharpOS.Std.NoRuntime.GC.Collect();
         public static void Collect(int generation) => SharpOS.Std.NoRuntime.GC.Collect();
         public static void Collect(int generation, GCCollectionMode mode) => SharpOS.Std.NoRuntime.GC.Collect();
+
+        // One generation: every collection is a collection of all of them, so
+        // each generation's count is the number of collections.
+        public static int MaxGeneration => 0;
+
+        public static int CollectionCount(int generation)
+        {
+            if (generation < 0) throw new ArgumentOutOfRangeException(nameof(generation), "Non-negative number required.");
+            return SharpOS.Std.NoRuntime.GcMark.Collections;
+        }
     }
 
     // Minimal enum to satisfy `GC.Collect(int, GCCollectionMode)` shape —

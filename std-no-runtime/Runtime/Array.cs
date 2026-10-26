@@ -161,58 +161,114 @@ namespace System
             for (int i = 0; i < length; i++) destinationArray[i] = sourceArray[i];
         }
 
-        // ---- IndexOf / LastIndexOf ----
-        // Generic versions go through IEquatable<T> via shared-generic
-        // interface dispatch (step 32). For element types that don't
-        // implement IEquatable<T>, callers should use the non-constrained
-        // search themselves; we don't ship the object-based search to keep
-        // the surface narrow.
+        // BCL's long overloads (Array.cs): checked down to int, as there.
+        public static void Copy(Array sourceArray, Array destinationArray, long length)
+            => Copy(sourceArray, destinationArray, checked((int)length));
 
-        public static int IndexOf<T>(T[] array, T value) where T : IEquatable<T>
+        public static void Copy(Array sourceArray, long sourceIndex, Array destinationArray, long destinationIndex, long length)
+            => Copy(sourceArray, checked((int)sourceIndex), destinationArray, checked((int)destinationIndex), checked((int)length));
+
+        // ---- Clone ----
+        // Array.Clone is Object.MemberwiseClone: a new array of the same type
+        // and shape, the elements copied as bits (references shared). The
+        // bounds block of a multidimensional array sits ahead of the elements
+        // and is copied with them.
+        public unsafe object Clone()
         {
-            if (array == null) return -1;
+            Array self = this;
+            byte* source = *(byte**)Unsafe.AsPointer(ref self);
+            var mt = *(SharpOS.Std.NoRuntime.GcMethodTable**)source;
+            void* copy = SharpOS.Std.NoRuntime.GcRuntimeExports.RhpNewArray(mt, Length);
+            ulong bytes = (ulong)mt->BaseSize - SzArrayBaseSize + (ulong)(uint)Length * mt->ComponentSize;
+            if (bytes != 0)
+                SharpOS.Std.MemoryOps.Memmove(ref *((byte*)copy + 16), ref *(source + 16), (nuint)bytes);
+            return Unsafe.As<IntPtr, object>(ref *(IntPtr*)&copy);
+        }
+
+        // ---- Fill / Clear(Array) ----
+        // BCL (Array.cs): every slot, or a range, set to one value.
+
+        public static void Fill<T>(T[] array, T value)
+        {
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            for (int i = 0; i < array.Length; i++) array[i] = value;
+        }
+
+        public static void Fill<T>(T[] array, T value, int startIndex, int count)
+        {
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            if ((uint)startIndex > (uint)array.Length) throw new ArgumentOutOfRangeException(nameof(startIndex), "Index was out of range. Must be non-negative and less than or equal to the size of the collection.");
+            if ((uint)count > (uint)(array.Length - startIndex)) throw new ArgumentOutOfRangeException(nameof(count), "Count must be positive and count must refer to a location within the string/array/collection.");
+            for (int i = startIndex; i < startIndex + count; i++) array[i] = value;
+        }
+
+        // Clear(Array): every element to its default — zeroed bits, as
+        // Clear(Array, int, int) over the whole array.
+        public static unsafe void Clear(Array array)
+        {
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            Array self = array;
+            byte* obj = *(byte**)Unsafe.AsPointer(ref self);
+            var mt = *(SharpOS.Std.NoRuntime.GcMethodTable**)obj;
+            ulong bytes = (ulong)(uint)array.Length * mt->ComponentSize;
+            byte* elements = obj + 16 + ((ulong)mt->BaseSize - SzArrayBaseSize);
+            for (ulong i = 0; i < bytes; i++) elements[i] = 0;
+        }
+
+        // ---- IndexOf / LastIndexOf ----
+        // BCL shape: no constraint on T, equality by EqualityComparer<T>.Default
+        // (IEquatable<T> when the type has it, Object.Equals otherwise).
+
+        public static int IndexOf<T>(T[] array, T value)
+        {
+            if (array == null) throw new ArgumentNullException(nameof(array));
             return IndexOf(array, value, 0, array.Length);
         }
 
-        public static int IndexOf<T>(T[] array, T value, int startIndex) where T : IEquatable<T>
+        public static int IndexOf<T>(T[] array, T value, int startIndex)
         {
-            if (array == null) return -1;
+            if (array == null) throw new ArgumentNullException(nameof(array));
             return IndexOf(array, value, startIndex, array.Length - startIndex);
         }
 
-        public static int IndexOf<T>(T[] array, T value, int startIndex, int count) where T : IEquatable<T>
+        public static int IndexOf<T>(T[] array, T value, int startIndex, int count)
         {
-            if (array == null) return -1;
-            if (startIndex < 0 || count < 0 || startIndex + count > array.Length) return -1;
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            if ((uint)startIndex > (uint)array.Length) throw new ArgumentOutOfRangeException(nameof(startIndex));
+            if ((uint)count > (uint)(array.Length - startIndex)) throw new ArgumentOutOfRangeException(nameof(count));
+            EqualityComparer<T> comparer = EqualityComparer<T>.Default;
             int end = startIndex + count;
             for (int i = startIndex; i < end; i++)
             {
-                if (value.Equals(array[i])) return i;
+                if (comparer.Equals(array[i], value)) return i;
             }
             return -1;
         }
 
-        public static int LastIndexOf<T>(T[] array, T value) where T : IEquatable<T>
+        public static int LastIndexOf<T>(T[] array, T value)
         {
-            if (array == null) return -1;
+            if (array == null) throw new ArgumentNullException(nameof(array));
             if (array.Length == 0) return -1;
             return LastIndexOf(array, value, array.Length - 1, array.Length);
         }
 
-        public static int LastIndexOf<T>(T[] array, T value, int startIndex) where T : IEquatable<T>
+        public static int LastIndexOf<T>(T[] array, T value, int startIndex)
         {
-            if (array == null) return -1;
-            return LastIndexOf(array, value, startIndex, startIndex + 1);
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            return LastIndexOf(array, value, startIndex, array.Length == 0 ? 0 : startIndex + 1);
         }
 
-        public static int LastIndexOf<T>(T[] array, T value, int startIndex, int count) where T : IEquatable<T>
+        public static int LastIndexOf<T>(T[] array, T value, int startIndex, int count)
         {
-            if (array == null) return -1;
-            if (startIndex < 0 || count < 0 || startIndex - count + 1 < 0) return -1;
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            if (array.Length == 0) return -1;
+            if ((uint)startIndex >= (uint)array.Length) throw new ArgumentOutOfRangeException(nameof(startIndex));
+            if (count < 0 || startIndex - count + 1 < 0) throw new ArgumentOutOfRangeException(nameof(count));
+            EqualityComparer<T> comparer = EqualityComparer<T>.Default;
             int end = startIndex - count + 1;
             for (int i = startIndex; i >= end; i--)
             {
-                if (value.Equals(array[i])) return i;
+                if (comparer.Equals(array[i], value)) return i;
             }
             return -1;
         }

@@ -121,7 +121,7 @@ namespace DataApps
                     return 0;
                 }
             }
-            Console.WriteLine("DATATEST: unknown role " + role);
+            Console.Error.WriteLine("DATATEST: unknown role " + role);
             return 2;
         }
 

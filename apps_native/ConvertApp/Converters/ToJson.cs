@@ -38,7 +38,7 @@ namespace PipeApps
             bool lines = Lines;
             if (options.Length > 0)
             {
-                Console.WriteLine("CONVERT --to " + Format + ": unknown option " + options[0]);
+                Console.Error.WriteLine("CONVERT --to " + Format + ": unknown option " + options[0]);
                 return 2;
             }
             _json = new Utf8JsonWriter(_buffer);
@@ -62,7 +62,7 @@ namespace PipeApps
             }
             catch (InvalidOperationException e) when (e is not ObjectDisposedException)
             {
-                Console.WriteLine("CONVERT --to " + Format + ": " + e.Message);
+                Console.Error.WriteLine("CONVERT --to " + Format + ": " + e.Message);
                 return 1;
             }
             if (!lines)

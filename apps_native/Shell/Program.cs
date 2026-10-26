@@ -84,7 +84,9 @@ namespace Shell
             AppHost.WriteUInt(length);
             AppHost.WriteString("\n");
 
-            var executor = new Executor();
+            // The shell's own output (step212): its commands and builtins write
+            // there, each a copy of the end; the screen when none was handed over.
+            var executor = new Executor(null, SharpOS.Std.Pipes.Pipe.OutputEnd(), null);
             uint ran = 0;
             uint failed = 0;
             bool handOver = false;
@@ -125,7 +127,9 @@ namespace Shell
 
         private static int Interactive()
         {
-            var executor = new Executor();
+            // `shell | pipecnt` (step212): what the commands print goes to the
+            // pipe; the prompt and the line being typed stay on the terminal.
+            var executor = new Executor(null, SharpOS.Std.Pipes.Pipe.OutputEnd(), null);
             RunStartup(executor);
             return Interactive(executor);
         }

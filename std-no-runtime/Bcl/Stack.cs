@@ -93,6 +93,26 @@ namespace System.Collections.Generic
             _size++;
         }
 
+        // BCL Stack<T>.EnsureCapacity: grow to at least capacity (doubling,
+        // as Push does), return the capacity it ends with.
+        public int EnsureCapacity(int capacity)
+        {
+            if (capacity < 0) throw new ArgumentOutOfRangeException(nameof(capacity), "Non-negative number required.");
+
+            if (_array.Length < capacity)
+            {
+                int newCapacity = _array.Length == 0 ? DefaultCapacity : 2 * _array.Length;
+                if ((uint)newCapacity > (uint)Array.MaxLength) newCapacity = Array.MaxLength;
+                if (newCapacity < capacity) newCapacity = capacity;
+
+                T[] newArray = new T[newCapacity];
+                for (int i = 0; i < _size; i++) newArray[i] = _array[i];
+                _array = newArray;
+            }
+
+            return _array.Length;
+        }
+
         // Snapshot in LIFO order — oldest push last.
         public T[] ToArray()
         {

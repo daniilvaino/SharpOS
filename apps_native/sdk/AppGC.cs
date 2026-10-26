@@ -55,7 +55,7 @@ namespace SharpOS.AppSdk
         {
             if (s_installed) return;
             s_installed = true;
-            GC.s_collectHook = &Collect;
+            SharpOS.Std.NoRuntime.GC.s_collectHook = &Collect;
         }
 
         /// <summary>

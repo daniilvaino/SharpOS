@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Okojo (MIT, akeit0/okojo), vendored in vendor/Okojo. -->
+  <PropertyGroup>
+    <IlcSystemModule>JsApp</IlcSystemModule>
+    <StartupObject>AppEntry</StartupObject>
+    <Nullable>annotations</Nullable>
+    <NoWarn>$(NoWarn);CS0436;CS8632;CS0649</NoWarn>
+    <!-- SharpOS cut: the parts of Okojo that need what this runtime does not
+         have (reflection metadata, ...) are under #if !SHARPOS. -->
+    <DefineConstants>$(DefineConstants);SHARPOS</DefineConstants>
+  </PropertyGroup>
+
+  <Import Project="..\sdk\FreestandingPe.props" />
+  <!-- JSON.parse and source maps: JsonDocument from the vendored System.Text.Json. -->
+  <Import Project="..\..\vendor\SystemTextJson\SystemTextJson.props" />
+
+  <PropertyGroup>
+    <O>..\..\vendor\Okojo\src\</O>
+    <T>..\..\vendor\Okojo\SharpOS\</T>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="$(T)GlobalUsings.cs" Link="GlobalUsings.cs" />
+    <Compile Include="$(T)OkojoShims.cs" Link="OkojoShims.cs" />
+    <Compile Include="$(O)Okojo.JavaScript\**\*.cs" Exclude="$(O)Okojo.JavaScript\obj\**;$(O)Okojo.JavaScript\bin\**" LinkBase="Okojo.JavaScript" />
+    <Compile Include="$(O)Okojo.JavaScript.Embedding\**\*.cs" Exclude="$(O)Okojo.JavaScript.Embedding\obj\**;$(O)Okojo.JavaScript.Embedding\bin\**" LinkBase="Okojo.JavaScript.Embedding" />
+    <Compile Include="$(O)Okojo.Numerics\**\*.cs" Exclude="$(O)Okojo.Numerics\obj\**;$(O)Okojo.Numerics\bin\**" LinkBase="Okojo.Numerics" />
+    <Compile Include="$(O)Okojo.Text.Unicode\**\*.cs" Exclude="$(O)Okojo.Text.Unicode\obj\**;$(O)Okojo.Text.Unicode\bin\**" LinkBase="Okojo.Text.Unicode" />
+    <Compile Include="$(O)Okojo.Text.RegularExpressions\**\*.cs" Exclude="$(O)Okojo.Text.RegularExpressions\obj\**;$(O)Okojo.Text.RegularExpressions\bin\**" LinkBase="Okojo.Text.RegularExpressions" />
+    <Compile Include="$(O)Okojo.Globalization\**\*.cs" Exclude="$(O)Okojo.Globalization\obj\**;$(O)Okojo.Globalization\bin\**" LinkBase="Okojo.Globalization" />
+    <!-- One assembly here: friend-assembly declarations mean nothing. -->
+    <Compile Remove="$(O)**\InternalsVisibleTo.cs" />
+    <!-- Intl data under Okojo.Globalization's own resource names; ILC carries
+         manifest resources into the image (std Runtime/Reflection.Assembly.cs). -->
+    <EmbeddedResource Include="$(O)Okojo.Globalization\Data\CalendarData.txt" LogicalName="Okojo.Globalization.Data.CalendarData.txt" />
+    <EmbeddedResource Include="$(O)Okojo.Globalization\Data\LocaleData.txt" LogicalName="Okojo.Globalization.Data.LocaleData.txt" />
+    <EmbeddedResource Include="$(O)Okojo.Globalization\Data\LikelySubtags.txt" LogicalName="Okojo.Globalization.Data.LikelySubtags.txt" />
+  </ItemGroup>
+
+  <!-- The SDK's Regex source generator answers [GeneratedRegex] with code for
+       the BCL's Regex; OkojoShims.cs gives the bodies instead. -->
+  <Target Name="DropRegexGenerator" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'System.Text.RegularExpressions.Generator'" />
+    </ItemGroup>
+  </Target>
+</Project>

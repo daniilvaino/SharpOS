@@ -20,25 +20,24 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
 Что есть и чего нет — README, таблица «Стандартная библиотека». По пользе:
 
 1. **Целые типы.** `int` и `long` — ручные `Parse(string)`/`TryParse`, дважды (`OS/src/Boot/MinimalRuntime.cs` и `apps_native/sdk/MinimalRuntime.cs`); у `uint`, `ulong`, `short`, `ushort`, `byte`, `sbyte`, `char` нет `Parse`. Порт `Number.Parsing` из dotnet/runtime со всеми перегрузками, как уже лежит для `double`/`float`/`decimal` в `Number/`; ручные копии снести.
-2. **`Convert.From/ToBase64String`, `From/ToHexString`** — обёртки над `Base64Encoder`/`Base64Decoder`, которые уже в std.
-3. **Бросающие `DateTime.Parse`/`ParseExact`, `TimeSpan.Parse`/`ParseExact`; `Version.Parse`.**
-4. **`Regex`** (`System.Text.RegularExpressions`). Самый большой и самый нужный: из-за него вырезаны `matches regex` и `extract()` в BabyKusto, а разбор `.env` (`Formats/Dotenv`) заменяет регулярки compose-go ручным сканированием. Сначала интерпретатор (`RegexInterpreter`), без компилятора и генератора исходников.
+2. **`Version.Parse`.**
+3. **`Regex`** (`System.Text.RegularExpressions`). Самый большой и самый нужный: из-за него вырезаны `matches regex` и `extract()` в BabyKusto, а разбор `.env` (`Formats/Dotenv`) заменяет регулярки compose-go ручным сканированием. Сначала интерпретатор (`RegexInterpreter`), без компилятора и генератора исходников.
    Порт из `dotnet-runtime-sharpos`: 35 тыс. строк, без компиляторов
    (`RegexCompiler`, `LWCG`, `AssemblyCompiler` — Reflection.Emit; BCL и сам
    уходит в интерпретатор без динамического кода) и без `Symbolic`
-   (NonBacktracking) — ≈19 тыс. Не хватает в std (сверка 2026-10-08):
-   `Hashtable` (имена групп), `CharUnicodeInfo.GetUnicodeCategory` с таблицами
-   (`\w`), `SearchValues<char>`/`<string>`, `ConcurrentDictionary`,
-   `WeakReference<T>` (слабые ссылки в сборщике), `Environment.TickCount64`,
-   `string.Create<TState>`, `IndexOfAnyInRange`, `Volatile`,
-   `System.Threading.Lock` — порты, полезные и без Regex.
+   (NonBacktracking) — ≈19 тыс. С step212 в std есть `Hashtable`,
+   `CharUnicodeInfo` с таблицами, `SearchValues<char>`, `IndexOfAnyInRange`,
+   `string.Create`, `Lock`; не хватает `SearchValues<string>`, слабого
+   `WeakReference<T>` (сейчас сильный), `Environment.TickCount64`.
+   Второй потребитель — Okojo: восемь его внутренних образцов `[GeneratedRegex]`
+   сейчас идут через его собственный движок ECMAScript (`vendor/Okojo/SharpOS/OkojoShims.cs`).
    Ещё потребитель — подсветка синтаксиса для редактора: все готовые движки на
    регулярках. Кандидат — подсветка AvaloniaEdit (`.xshd`, построчно с
    состоянием, MIT), уже вынесенная под терминал в `tui-cs/Editor`; включается
    в `TextView` v1 через `SetNormalColor(line, idx)`, как в
    `UICatalog/Scenarios/SyntaxHighlighting.cs`. Загрузчик `.xshd` хочет
    `XmlReader` — у нас TurboXml.
-5. Позже: `Enum.Parse` (нужны метаданные перечислений), `Uri`, `IPAddress`, `DateTimeOffset`, `BigInteger`, `Half`; XML в std (сейчас TurboXml только в ядре, для манифестов).
+4. Позже: `Enum.Parse` по имени (нужны метаданные перечислений; числом есть), `IPAddress`, `System.Collections.Frozen` (у Okojo заглушки), `Encoder`/`Decoder` в `Encoding` (у Lua вырезы); XML в std (сейчас TurboXml только в ядре, для манифестов).
 
 ## Пути: у ярусов разные соглашения
 
@@ -47,6 +46,8 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
 - **std `System.IO.Path`** — Windows-форма: `DirectorySeparatorChar = '\\'`, выдуманный `CurrentDirectory = "C:\sharpos\"`, не связанный с `Environment.CurrentDirectory`. В AOT-приложении `Path.GetFullPath("a")` строит от `C:\sharpos\`, а `Process.ResolvePath("a")` — от настоящего рабочего каталога.
 
 Путь, выданный одним ярусом, другой понимает только через срез `C:`; на границе (аргументы hosted-запуска, рабочий каталог, `ImagePath`, переменные окружения) перевода нет.
+
+step212: std объявляет себя Unix-платформой (`OperatingSystem.IsWindows()` = false) — так ведёт себя порт `Uri`: `/home/x` — неявный file-URI. `Path` при этом остаётся виндовым.
 
 Решить: одна каноническая форма. Естественная — Unix (`/`, без дисков): оболочка уже bash, `Path` в std — порт `Path.Unix.cs`, `GetFullPath` от `Environment.CurrentDirectory`. Hosted остаётся Windows — перевод `/x` ↔ `C:\x` в одном месте на границе запуска, а не срезом в каждой службе PAL.
 
@@ -98,6 +99,14 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
   `msvcrt`; даты файлов 1601; в tpa.txt `StarlingProbe.dll`, которого нет на
   образе.
 
+- **Код выхода тестов — число пройденных** (PROCTEST 84, DATATEST 212).
+  Ненулевой код ломает трубу писателя (step194 §3), и `proctest | less`
+  получал «broken» вместо конца потока (LESS теперь показывает прочитанное,
+  step212). Выходить 0 при всех пройденных, число провалов — иначе.
+- **PROCTEST под `> f` или `| …`** — 80/5 вместо 84/1: проверки 3, 16 и общая
+  сверка ресурсов считают процессы и трубы всей машины, а рядом живёт стадия
+  конвейера. Сверять своё, а не глобальное.
+
 Вывод мимо stdout, перемешанные строки стадий и строки ядра в консоли — раздел
 «Каналы вывода программы».
 
@@ -142,8 +151,8 @@ summarize n = count() by Level'`. Дальше:
 - **Слияние стадий** (`KQL | KQL`, `where | where`): каждая стадия сейчас —
   свой процесс и своё связывание.
 - **Вырезано** (`SharpOS cut:`): `matches regex`, `extract()` (нет Regex —
-  см. «Разборщики BCL»), `url_decode`/`url_encode_component` (нет
-  `System.Uri`: порт тянет `Rune`, `SearchValues`, `UriParser`, `IriHelper`).
+  см. «Разборщики BCL»), `url_decode`/`url_encode_component` (их резал
+  `System.Uri` — с step212 он в std, вернуть).
 - VIEWFILT → FILTER (`KQL 'where …'` или обёртка).
 - **Скорость:** главный тормоз найден, он не в KQL — `KernelHeap` (раздел
   «Память ядра» ниже): KQLBABY 4,9 с на свежей загрузке, 188 с в конце батареи.
@@ -346,11 +355,21 @@ UTF-8 и отдаёт движку терминала **по символу**, �
 
 Порядок:
 
-1. `Console` → stdout/stderr в SDK; stdtext — новый канал; запись в закрытый
-   конец — «некуда», не падение.
-2. Таблица концов в ядре вместо пары вход/выход, наследование; номерные
-   перенаправления в оболочке (`2>`, `3>`, `n>&m`) — разборщик их понимает,
-   отвергаем мы сами.
+1. `Console` → stdout в SDK, stdtext — `Pipe.Text` (step212; в госте не
+   проверено). Осталось: строка без `\n` при выходе программы теряется —
+   нужен крючок «программа вернулась»; запись в закрытый конец — «некуда»,
+   не падение (вместе с шагом 2).
+2. Концы с номерами (step212): служба процесса 22 передаёт ребёнку до 8
+   пишущих концов под номерами от 2, `Console.Error` и `Pipe.Text` пишут в 2 и
+   3, когда их передали. Оболочка разбирает перенаправления стадии по порядку,
+   как sh: `n> f`, `n>> f` (WRITE рядом), `n>&m`, `n>&-` (труба `Discard`: всё
+   уходит в никуда) — `sysinfo 3>&1 1>&- | less` пускает панель по конвейеру.
+   Копии конца (`PipeDuplicate`): поток кончается с последней копией, тип у
+   трубы один на всех писателей; оболочка раздаёт копии своего выхода каждой
+   команде. В госте проверено: `2> f`, `3> f`, `2>&1`, `3>&2`,
+   `SYSINFO 3>&1 >&- | LESS`. Осталось: `1>&2` (у 2 без перенаправления нет
+   конца — это консоль ядра); вход оболочки (`echo … | shell`) — по-прежнему
+   одной команде.
 3. Подсказки в описании трубы; оболочка выводит по ним; ключ «выводи всё».
 4. Строки ядра — вон из консоли пользователя.
 5. FETCH: панель в stdtext, `SystemInfo` в stdout с «не для терминала»; SYSINFO
@@ -373,6 +392,31 @@ UTF-8 и отдаёт движку терминала **по символу**, �
 
 Проверка: обычное консольное .NET-приложение собрано под std без правок —
 `pipegen 5 | hello | kql "take 1"`, `hello > f`, `hello 2> err`.
+
+Хвосты шагов 1–2 (step212, не доделано):
+
+- **SYSINFO пишет оба канала всегда** (объект в stdout, панель в stdtext):
+  голый `SYSINFO` печатает и панель, и строку объекта, `SYSINFO | KQL` — ещё и
+  панель на экран. Оставить или откатить к «панель только при экране» —
+  не решено; шумность снимет шаг 3. В госте новая версия не проверена.
+- **Отказ «у трубы один тип» — код 134.** `SYSINFO 3>&1 | …` падает
+  необработанным `PipeException`; программе — ловить и выходить с 1 и одной
+  строкой. Текст отказа для двух писателей говорит «writer sends …, reader
+  expects …» — переписать на «первый писатель объявил X, этот — Y».
+- **LESS показывает ESC буквально** (`^[[36m…`) — рисовать цвета SGR, как
+  `less -R`; иначе stdtext с цветом в LESS нечитаем.
+- **Массив объектов печатается `?`**: `StorageFacts[1] { StorageFacts { ? } }`
+  в `CONVERT --to lines`, `Storage = System.Object[1] { Expando { ? } }` в KQL;
+  JSON тех же данных целый — ломается текстовая печать (`ScreenText`) объекта
+  внутри массива.
+- **Замеры старта KQL** (`[kql] start ms …`) идут в `Console.Error` — перенести
+  в stdtext, чтобы `3>&-` прятал их без ошибок.
+- **`> f` теперь WRITE рядом со стадией** (было — отдельная стадия в конце),
+  разрешён на любой стадии и в `sh -c`; код WRITE — код конвейера, если стадии
+  чисты. После переделки в госте не проверены `echo x > a.txt`,
+  `pipecnt > c.txt`, PROCTEST (было 84/1), `synth 3 | pipespy a 3>&1 >&- | pipecnt`,
+  дополнение KQL внутри записи (`project Display.` + Tab).
+- **Строка без `\n` теряется при выходе** — крючок «программа вернулась» в SDK.
 
 ## Ввод программы — поток байт терминала через трубу
 
@@ -474,7 +518,16 @@ hosted-ярусе у нас Unix-IL CoreLib) спрашивает `CSI 6n` и ж
   при записи, записи на FAT12/16, нескольких томов. `FileStream` только на
   чтение грузит файл целиком; `EnumerateFiles` не ленивый. Каталог после
   удалений не сжимается.
-- **PowerShell (PAL)** — см. «Долги шага 197».
+- **Том FAT16 — запись отказывает «отказом диска».** Отчёт тестера (2026-10-26):
+  образ `mkfs.vfat -F 16` (и `fat:rw:` QEMU — тоже FAT16). Все пути записи
+  (`Fat32Create`, `Fat32Files`, `Fat32Remove`) молча отказывают при
+  `!s_isFat32`, и наверх приходит `DeviceError` (статус 7): `echo > f`,
+  `mkdir`, `bootlog` «create failed». `df` молчит — FSInfo есть только у FAT32.
+  После неудачной перезаписи файл перестаёт читаться — вероятно `Locate`
+  (`Fat32.Lock.cs`), который на FAT16 отвечает «нет файла». Сделать: монтировать
+  FAT16 только для чтения с честным отказом, `df` по таблице FAT, разобрать
+  чтение после отказа; позже — запись на FAT16 (16-битные элементы, корень
+  фиксированного размера).- **PowerShell (PAL)** — см. «Долги шага 197».
 
 ## xHCI: устройство на контроллере 4:0.0 ноутбука не адресуется
 
@@ -604,6 +657,23 @@ Windows-side async I/O: трубы, файлы, консоль.
 
 ---
 
+## Скрипты LUA и JS — следующее
+
+`vendor/LuaCSharp` и `vendor/Okojo` (step212) идут как языки и стадии
+конвейера. Дальше по пользе:
+
+1. **Модули JS: `import`.** В ядре Okojo есть `FileModuleSourceLoader` —
+   подключить через `UseModuleSourceLoader` к нашим файлам.
+2. **`Okojo.Node`**: `require`, `path`, `fs`, `process`, `timers`
+   (`setTimeout`), `buffer`, `events`. Не перенесён; `fs`/`process`
+   садить на наши файлы и процессы.
+3. **Вывод значений в приглашении JS** — объекты сейчас печатаются сырым
+   `ToString()` (`{  }`); нужен форматтер, как у Node.
+4. **`WebAssembly`** — у Okojo только интерфейс движка; Wasmtime — нативный.
+   Нужен интерпретатор wasm на C# под `IWasmBackend`.
+5. **KQL после скрипта**: поля Expando — `dynamic`, голое `where Even` с
+   bool из JS отвергается — пишется `where tobool(Even)`. Решить, выводить ли
+   тип столбца `dynamic` по первому значению.
 # Долги — ждут повода
 
 Каждый проверен по дереву и никому сейчас не мешает. У каждого назван триггер:
@@ -762,7 +832,8 @@ MinimalRuntime обязана явно ответить «нужен ли тот
 +movbe,+xsave,+f16c,+aes,+pclmulqdq` — как на хосте (step208), полная батарея
 проходит. NativeAOT это не трогает: ILC фиксирует набор при сборке. Решить,
 делать ли это умолчанием (PowerShell в QEMU ускорится так же). `-cpu max` под
-WHPX роняет OVMF (#GP до загрузки).
+WHPX роняет OVMF (#GP до загрузки). С step212 к умолчанию добавлен `+rdrand` —
+источник `RandomNumberGenerator`.
 
 ## Гигабайтные страницы прошивки ломают кучу приложения
 

@@ -33,7 +33,7 @@ namespace PipeApps
         {
             if (options.Length > 0)
             {
-                Console.WriteLine("CONVERT --to " + Format + ": unknown option " + options[0]);
+                Console.Error.WriteLine("CONVERT --to " + Format + ": unknown option " + options[0]);
                 return 2;
             }
             using PipeWriter<byte[]> output = Pipe.Write<byte[]>();
@@ -50,7 +50,7 @@ namespace PipeApps
             }
             catch (InvalidOperationException e) when (e is not ObjectDisposedException)
             {
-                Console.WriteLine("CONVERT --to " + Format + ": " + e.Message);
+                Console.Error.WriteLine("CONVERT --to " + Format + ": " + e.Message);
                 return 1;
             }
             if (!Sequence) output.Copy(new byte[] { 0xFF });

@@ -83,6 +83,24 @@ namespace System
             }
         }
 
+        // Converts a substring of this string to an array of characters. Copies the
+        // characters of this string beginning at position sourceIndex and ending at
+        // sourceIndex + count - 1 to the character array buffer, beginning
+        // at destinationIndex. Argument checks as in the BCL (String.cs); the copy
+        // is a loop instead of Buffer.Memmove, like CopyTo(Span<char>) above.
+        public void CopyTo(int sourceIndex, char[] destination, int destinationIndex, int count)
+        {
+            if (destination == null) throw new ArgumentNullException(nameof(destination));
+            if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+            if (sourceIndex < 0) throw new ArgumentOutOfRangeException(nameof(sourceIndex));
+            if (count > Length - sourceIndex) throw new ArgumentOutOfRangeException(nameof(sourceIndex));
+            if (destinationIndex > destination.Length - count) throw new ArgumentOutOfRangeException(nameof(destinationIndex));
+            if (destinationIndex < 0) throw new ArgumentOutOfRangeException(nameof(destinationIndex));
+
+            fixed (char* src = &_firstChar)
+                for (int i = 0; i < count; i++) destination[destinationIndex + i] = src[sourceIndex + i];
+        }
+
         /// <summary>Copies the contents of this string into the destination span.</summary>
         /// <returns>true if the data was copied; false if the destination was too short to fit the contents of the string.</returns>
         public bool TryCopyTo(Span<char> destination)

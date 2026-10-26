@@ -59,7 +59,7 @@ namespace PipeApps
             TypeKeys.Description text = null;
             foreach (TypeKeys.Description d in TypeKeys.Declared)
                 if (d.Name == "System.String") text = d;
-            if (text == null) { Console.WriteLine("SYNTH: no System.String in the catalog"); return 1; }
+            if (text == null) { Console.Error.WriteLine("SYNTH: no System.String in the catalog"); return 1; }
 
             var ghost = new TypeKeys.Description
             {
@@ -76,21 +76,21 @@ namespace PipeApps
             };
             byte[] schema = RegionSchema.Build(new List<TypeKeys.Description> { ghost, text });
 
-            AppHost.WriteString("\u001b[90mSYNTH: type " + typeName + ", key 0x" + ghost.Key.ToString("X")
-                                + ", fields Level Weight Name " + extraName + " — in no program\u001b[0m\n");
+            Pipe.Text.Write("\u001b[90mSYNTH: type " + typeName + ", key 0x" + ghost.Key.ToString("X")
+                            + ", fields Level Weight Name " + extraName + " — in no program\u001b[0m\n");
 
-            int output = Pipe.TakeOutput();
+            int output = Pipe.TakeOutput(typeName);
             RegionShapes shapes = null;
             if (output != 0)
             {
                 PipeStatus opened = PipeTransport.OpenEnd(output, schema, ghost.Key, out string error);
-                if (opened != PipeStatus.Ok) { Console.WriteLine("SYNTH: " + (error ?? "cannot open the output")); return 1; }
+                if (opened != PipeStatus.Ok) { Console.Error.WriteLine("SYNTH: " + (error ?? "cannot open the output")); return 1; }
             }
             else
             {
                 // No output: read our own blocks back the way a reader would.
                 shapes = RegionShapes.Parse(schema, out string bad);
-                if (shapes == null) { Console.WriteLine("SYNTH: " + bad); return 1; }
+                if (shapes == null) { Console.Error.WriteLine("SYNTH: " + bad); return 1; }
             }
 
             try
@@ -101,7 +101,7 @@ namespace PipeApps
                     ulong stringSize = Round8(text.BaseSize + (ulong)name.Length * text.ComponentSize);
                     ulong size = GhostBaseSize + stringSize;
                     byte* block = (byte*)PipeTransport.Allocate(size);
-                    if (block == null) { Console.WriteLine("SYNTH: no exchange memory"); return 1; }
+                    if (block == null) { Console.Error.WriteLine("SYNTH: no exchange memory"); return 1; }
                     for (ulong b = 0; b < size; b++) block[b] = 0;
 
                     // Record 0, the root: [header][key][Level][Weight][Name → record 1][extra].
@@ -132,7 +132,7 @@ namespace PipeApps
                     if (!shapes.Validate(block, size, out string complaint))
                     {
                         PipeTransport.Free(block);
-                        Console.WriteLine("SYNTH: my own block fails the reader's check: " + complaint);
+                        Console.Error.WriteLine("SYNTH: my own block fails the reader's check: " + complaint);
                         return 1;
                     }
                     var region = new RawRegion(block, size, schema, 0, shapes);

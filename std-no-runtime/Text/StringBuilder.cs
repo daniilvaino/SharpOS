@@ -22,9 +22,8 @@
 //  - AppendFormat overloads + AppendFormatHelper (format strings
 //    like "{0:X8}") — skip. Callers explicitly format via
 //    NumberFormatting.UIntToHex(...) etc., then Append.
-//  - AppendInterpolatedStringHandler + the overloads that take it
-//    ([InterpolatedStringHandlerArgument("")]) — interpolated strings
-//    `$"..."`. Skip; callers chain Append calls manually.
+//  - AppendInterpolatedStringHandler + the overloads that take it: in
+//    StringBuilder.Interpolation.cs.
 //  - AppendJoin — uses IEnumerable<T>/AppendFormat; skip. `string.Join`
 //    lives on System.String separately.
 //  - InsertSpanFormattable<T> + Insert(sbyte/short/...) — skip, same
@@ -643,18 +642,18 @@ namespace System.Text
         }
 
         [CLSCompliant(false)]
-        public StringBuilder Append(sbyte value) => Append(NumberFormatting.IntToString(value));
-        public StringBuilder Append(byte value) => Append(NumberFormatting.UIntToString(value));
-        public StringBuilder Append(short value) => Append(NumberFormatting.IntToString(value));
-        public StringBuilder Append(int value) => Append(NumberFormatting.IntToString(value));
-        public StringBuilder Append(long value) => Append(NumberFormatting.LongToString(value));
+        public StringBuilder Append(sbyte value) => Append(SharpOS.Std.NoRuntime.NumberFormatting.IntToString(value));
+        public StringBuilder Append(byte value) => Append(SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(value));
+        public StringBuilder Append(short value) => Append(SharpOS.Std.NoRuntime.NumberFormatting.IntToString(value));
+        public StringBuilder Append(int value) => Append(SharpOS.Std.NoRuntime.NumberFormatting.IntToString(value));
+        public StringBuilder Append(long value) => Append(SharpOS.Std.NoRuntime.NumberFormatting.LongToString(value));
 
         [CLSCompliant(false)]
-        public StringBuilder Append(ushort value) => Append(NumberFormatting.UIntToString(value));
+        public StringBuilder Append(ushort value) => Append(SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(value));
         [CLSCompliant(false)]
-        public StringBuilder Append(uint value) => Append(NumberFormatting.UIntToString(value));
+        public StringBuilder Append(uint value) => Append(SharpOS.Std.NoRuntime.NumberFormatting.UIntToString(value));
         [CLSCompliant(false)]
-        public StringBuilder Append(ulong value) => Append(NumberFormatting.ULongToString(value));
+        public StringBuilder Append(ulong value) => Append(SharpOS.Std.NoRuntime.NumberFormatting.ULongToString(value));
 
         public StringBuilder Append(object value) => value == null ? this : Append(value.ToString());
 

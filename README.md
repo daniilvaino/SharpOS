@@ -1,4 +1,4 @@
-﻿# SharpOS
+# SharpOS
 
 Экспериментальная операционная система, целиком написанная на C#: загрузка, ядро, приложения и пользовательское окружение. Не на C# только [форк CoreCLR](https://github.com/daniilvaino/dotnet-runtime-sharpos/tree/sharpos/coreclr-port). Собирается обычным `dotnet publish -r win-x64`.
 
@@ -175,9 +175,9 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `SortedDictionary` | 🟡 | 🟡 | ✅ | внутри сортированный массив: вставка линейная |
 | LINQ | ✅ | ✅ | ✅ | своя мини-реализация `System.Linq.Enumerable` |
 | `string.Format`, интерполяция, `ToString(format)` чисел | 🟡 | 🟡 | ✅ | форматтер чисел и `DefaultInterpolatedStringHandler` из .NET 8 (UTF-16 и UTF-8); культура только инвариантная, без `decimal`/`Half`/`Int128` |
-| `System.Enum` | 🟡 | 🟡 | ✅ | нет `ToString`, `Parse`, `GetNames` |
+| `System.Enum` | 🟡 | 🟡 | ✅ | нет `ToString`, `GetNames`; `ToObject` есть, `Parse` — только числом: имён членов без метаданных нет |
 | `Enum.IsDefined` | 🔴 | 🟡 | ✅ | в приложениях всегда `true`: метаданных перечислений нет |
-| `DateTime` / `TimeSpan` | 🟡 | 🟡 | ✅ | календарь полный; часы — нет. В ядре источник не подключён, `Now` = начало эпохи (`IsRealClock` = false). В приложениях с step182 идут монотонные часы от HPET: интервалы верны, дата нет (эпоха + аптайм). Настоящую дату отдаёт только hosted-ярус |
+| `DateTime` / `TimeSpan` | 🟡 | 🟡 | ✅ | порт BCL (step212): `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, все стандартные и пользовательские форматы, инвариантная культура; `TimeZoneInfo` только с UTC — базы поясов нет, `Local` = UTC. Часы — нет. В ядре источник не подключён, `Now` = начало эпохи (`IsRealClock` = false). В приложениях с step182 идут монотонные часы от HPET: интервалы верны, дата нет (эпоха + аптайм). Настоящую дату отдаёт только hosted-ярус |
 | `Array.Copy` с перекрытием (семантика memmove) | ✅ | ✅ | ✅ | |
 | `Math.Abs`, `Math.Sqrt` | ✅ | ✅ | ✅ | |
 | `Math.Floor` / `Ceiling` / `Truncate` / `Round` | ✅ | ✅ | ✅ | |
@@ -186,11 +186,13 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | Разбор XML | ✅ | ⏳ | ✅ | TurboXml; ядро читает им манифесты приложений |
 | JSON: `Utf8JsonReader` / `Utf8JsonWriter`, `JsonDocument`, `JsonNode` | ⏳ | 🟡 | ✅ | из System.Text.Json (.NET 10): чтение кусками, запись в `IBufferWriter<byte>`. Сериализатора и `JavaScriptEncoder` нет |
 | Разбор чисел (`Parse` / `TryParse`) | 🟡 | 🟡 | ✅ | `double`, `float`, `decimal` — как в BCL; `int` и `long` — только `Parse(string)` и `TryParse`; остальных целых нет |
-| Разбор `DateTime` / `TimeSpan` / `Guid` | 🟡 | 🟡 | ✅ | только `TryParse`/`TryParseExact` (у `Guid` и `Parse`), инвариантная культура, без зон |
-| Base64 и hex через `Convert` | 🔴 | 🔴 | ✅ | кодировщики `System.Buffers.Text.Base64` есть, обёрток `Convert.From/ToBase64String`, `From/ToHexString` нет |
+| Разбор `DateTime` / `TimeSpan` / `Guid` | 🟡 | 🟡 | ✅ | `Parse`/`ParseExact`/`TryParse*` — порт BCL (step212); инвариантная культура, поясов кроме UTC нет |
+| Base64 и hex через `Convert` | 🟡 | 🟡 | ✅ | `Convert.From/ToBase64String`, `From/ToHexString` над `System.Buffers.Text.Base64` и `HexConverter` (step212); прогоном не проверены, перенос строк Base64 не портирован |
 | Разбор `.env` | ✅ | ✅ | 🚫 | формат `env_file` Docker Compose, проверен тестами compose-go; ядро читает им `\config\system.env` |
-| Коллекции `Concurrent.*` и `Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`, `Regex`, `ValueTuple`, `DateTimeOffset` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple<T1,T2>` есть |
+| Коллекции `Concurrent.*` и `Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`, `Regex`, `ValueTuple` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple<T1,T2>` есть |
 | CBOR (`System.Formats.Cbor`) | 🔴 | ✅ | ✅ | порт из dotnet/runtime; без `Half`, `BigInteger`, `decimal` и `DateTimeOffset` — теги при этом читаются. Разбор проверен на ответе аппаратного ключа, запись пока нет |
+| `System.Uri` | 🟡 | 🟡 | ✅ | порт System.Private.Uri (.NET 10, step212) вместе с `SearchValues`, `IdnMapping` (инвариантный режим) и `Hashtable`; std считает себя Unix-платформой (`OperatingSystem.IsWindows()` = false), `file:///home/x` — путь `/home/x`; прогоном не проверен |
+| `RandomNumberGenerator` | 🟡 | ✅ | ✅ | порт BCL поверх `RDRAND` (step212): ядро — `HardwareRandom`, приложения — служба ядра; процессор без `RDRAND` — `CryptographicException`, а не предсказуемые байты (в QEMU нужен `-cpu …,+rdrand`, `run_build` ставит). В ядре прогоном не проверен |
 | SHA-256 | ✅ | ✅ | ✅ | `System.Security.Cryptography.SHA256.HashData`, своя реализация в std. Других алгоритмов нет: ни P-256, ни AES, ни HMAC |
 
 ### Потоки и синхронизация
@@ -199,6 +201,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 |---|:-:|:-:|:-:|---|
 | `Thread.Start()` | ✅ | 🟡 | ✅ | в приложениях вместо `Thread` есть `AppThreads.Spawn` и `Task.Run` |
 | `Task.Run`, `Task.Delay` | ✅ | ✅ | ✅ | на пуле потоков; потоки приложения умирают вместе с ним |
+| `ContinueWith`, `WhenAny`/`WhenAll`, `WaitAsync`, `TaskCompletionSource(options)` | 🟡 | 🟡 | ✅ | step212: продолжения в `Task` std, синхронные или на пул; `TaskScheduler` — только `Default` (пул); одно исключение вместо `AggregateException`; прямыми тестами не покрыты |
 | `ThreadPool.QueueUserWorkItem` | ⏳ | ⏳ | ✅ | |
 | `lock` (`Monitor.Enter` / `Exit`) | ✅ | ✅ | ✅ | `Pulse` / `Wait` намеренно не реализованы |
 | `[ThreadStatic]` | 🟡 | 🟡 | ✅ | с step209; каждое обращение — вызов, а не встроенный TLS; изнутри разделяемого обобщённого кода (через словарь) — исключение. В ядре — после `Scheduler.Init` |
@@ -234,6 +237,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | Внешние данные: `READ`, `WRITE`, `CONVERT` | 🚫 | 🟡 | 🚫 | файл в трубу и обратно; `> файл` хранит поток объектов как есть (externalpipe), `READ` отдаёт те же сообщения без класса; JSON, JSON Lines, CBOR, CBOR Sequence и строки в объекты (`Expando`) и обратно, `Into<T>` из `Expando`; потоково, память — один элемент; проверено только под QEMU |
 | Запросы KQL в конвейере | 🚫 | 🟡 | 🚫 | `PIPEGEN 100 \| KQL 'where Level >= 3 \| summarize n = count() by Level'`: сообщения входа — таблица, читается по мере прихода; `take` прекращает чтение, `where`/`take`/`sort` пересылают исходные блоки, `extend` пишет в само сообщение (над Expando — любые скаляры, над типом с полями — числа, bool, даты, интервалы и строки в существующие поля), `project`/`project-away`/`project-rename` над Expando — правки самого блока; схема — из объявления писателя, запрос связан до данных; Expando — открытая таблица, каждое имя — свой столбец `dynamic`; Expando и вложенные объекты — `dynamic` (поля, сравнения, арифметика, `tostring`/`tolong`); ошибки запроса с позицией; `… \| KQL` без запроса спрашивает его, когда тип входа известен, Tab дополняет по его столбцам; без `matches regex`, `extract()`, `url_decode`/`url_encode_component`; проверено только под QEMU |
 | Terminal.Gui | 🚫 | ✅ | ⏳ | на нашей std, свой драйвер поверх терминала ядра; мыши нет |
+| Скрипты: Lua и JavaScript | 🚫 | 🟡 | 🚫 | `LUA` (Lua-CSharp, Lua 5.2) и `JS` (Okojo, ECMAScript): `-e`, файл, приглашение; стадия конвейера — сообщение входит таблицей или объектом, выходит Expando или строкой (step212). У Lua `require` по `\bin\lua` и текущему каталогу, `init.lua`; у JS нет `require`/`import` и API Node и браузера; проверено только под QEMU |
 | Оболочка с синтаксисом bash | 🚫 | 🟡 | 🚫 | `&&` `\|\|` `;`, конвейер `a \| b \| c`, встроенные `cd` `pwd` `ls` `cat` `echo` `expect` `exit` `export` `unset` `env` `which`, `$ИМЯ` и `${ИМЯ}` из окружения, программы по `PATH`, запуск `.EXE` (с аргументами) и `.DLL` (без); `> файл` и `>> файл` в конце конвейера, код конвейера — первой упавшей стадии; `<` нет; переменных оболочки, `$(…)`, циклов и `if` нет — строка с ними отклоняется целиком, с номером столбца. Редактор строки (ReadLine): история между сеансами, Tab (и по `$ИМЯ`, и внутри `KQL '…'`), Ctrl-клавиши, `clear`. Ctrl+C прерывает только набор строки, не запущенную программу |
 | Изоляция процессов через MMU | 🚫 | 🚫 | 🚫 | это unikernel |
 | Параллельное исполнение по одному виртуальному адресу | 🚫 | 🚫 | 🟡 | потоки в одном ALC работают, несколько ALC в планах |
@@ -253,6 +257,8 @@ PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'
 PIPEGEN 100 | KQL                            # kql (LogEntry)> запрос, Tab — столбцы LogEntry
 SYNTH 20 | VIEWFILT 3                        # тип, которого нет ни в одной программе
 PIPEGEN 1000 | PIPESPY a | PIPESPY b | PIPECNT   # обе стадии видят объект по одному адресу
+PIPEGEN 20 | LUA -e "return function(m) m.Square = m.Level * m.Level return m end" | JS -e "m => ({...m, Even: m.Level % 2 == 0})" | KQL 'where tobool(Even)'
+SYSINFO 3>&- | KQL 'project-away Storage, Input' | LUA -e "return strings" | CONVERT --to jsonl | JSON2DIR   # числа и bool строками: json2dir берёт только строки
 ```
 
 `PIPESPY` печатает адрес, по которому пришло сообщение. Две такие стадии подряд показывают один и тот же адрес: это один объект проходит через четыре программы.
@@ -451,6 +457,8 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 - **[ShellSyntaxTree](https://github.com/Aaronontheweb/ShellSyntaxTree)** (Aaron Stannard, Apache-2.0) - разбор командной строки bash в дерево. На нём стоит оболочка; половина для PowerShell не компилируется.
 - **[Kusto.Language](https://github.com/microsoft/Kusto-Query-Language)** (Microsoft, Apache-2.0) - разбор и связывание KQL, диагностика, автодополнение, раскраска. Приложение KQLTEST.
 - **[BabyKusto](https://github.com/davidnx/baby-kusto-csharp)** (Microsoft, MIT) и **[t-digest](https://github.com/Cyral/t-digest-csharp)** (Heath Milligan, MIT) - исполнение KQL. Приложения KQL и KQLBABY; правки и вырезы — в `PROVENANCE.md`.
+- **[Lua-CSharp](https://github.com/nuskey8/Lua-CSharp)** (Yusuke Nakada, MIT, `vendor/LuaCSharp/`) - интерпретатор Lua 5.2 на C#. Приложение LUA: скрипты, приглашение, стадия конвейера.
+- **[Okojo](https://github.com/akeit0/okojo)** (Akito Inoue, MIT, `vendor/Okojo/`) - движок JavaScript на C#: разбор, компиляция в байткод, VM, `Intl`, `RegExp`. Приложение JS. Внутри — переработанные куски .NET runtime (MIT), устройство навеяно V8; уведомления в `THIRD_PARTY_NOTICES.md`.
 - **[SharpLibm](https://github.com/daniilvaino/SharpLibm)** (MIT, сабмодуль `SharpLibm/`) - libm на C# под `Math`/`MathF`, на основе [CORE-MATH](https://core-math.gitlabpages.inria.fr/) и других; чужой код внутри перечислен в `THIRD-PARTY-NOTICES.md`.
 - **[MOOS](https://github.com/nifanfa/MOOS)** (nifanfa, Unlicense) - драйверы `AHCI`, `Disk`, `PCI(Express)` и глифы CP437. Адаптированы под наш HAL, лежат в `OS/src/`.
 - **[Font 8x8](https://github.com/dhepper/font8x8)** (Daniel Hepper, Public Domain) - глифы framebuffer-консоли.

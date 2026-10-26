@@ -86,9 +86,13 @@ namespace SharpOS.Std.NoRuntime
         // (the kernel's output goes to the raw serial port only).
         public static bool InProgress;
 
+        /// <summary>Collections begun since start: System.GC.CollectionCount.</summary>
+        public static int Collections;
+
         public static void Begin()
         {
             InProgress = true;
+            Collections++;
             if (GcStress.VerifyHeap)
                 GcStress.Check(1);
             s_count = 0;

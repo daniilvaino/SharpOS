@@ -1,4 +1,4 @@
-﻿// System.ReadOnlySpan<T> — ported from dotnet/runtime:
+// System.ReadOnlySpan<T> — ported from dotnet/runtime:
 //   src/libraries/System.Private.CoreLib/src/System/ReadOnlySpan.cs
 //
 // Cuts mirror Span<T> — see that file's header for full list.
@@ -94,6 +94,14 @@ namespace System
         public override int GetHashCode() => throw new NotSupportedException();
 
         public static implicit operator ReadOnlySpan<T>(T[] array) => new ReadOnlySpan<T>(array);
+
+        // BCL (.NET 9): a span of a reference type read as a span of its base.
+        // C# 14 lowers the covariant span conversions (string[] → ReadOnlySpan<object>)
+        // to this; without it the compiler crashed emitting them (NoConversion).
+        public static ReadOnlySpan<T> CastUp<TDerived>(ReadOnlySpan<TDerived> items) where TDerived : class, T
+        {
+            return new ReadOnlySpan<T>(ref Unsafe.As<TDerived, T>(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(items)), items.Length);
+        }
 
         public static ReadOnlySpan<T> Empty => default;
 

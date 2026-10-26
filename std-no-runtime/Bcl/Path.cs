@@ -72,6 +72,32 @@ namespace System.IO
             return Normalize(CurrentDirectory + path);
         }
 
+        // BCL GetFullPath(path, basePath): a relative path taken from basePath.
+        // A rooted base stands for a qualified one — the system has one root.
+        public static string GetFullPath(string path, string basePath)
+        {
+            if (path == null) throw new ArgumentNullException(nameof(path));
+            if (basePath == null) throw new ArgumentNullException(nameof(basePath));
+            if (!IsPathRooted(basePath)) throw new ArgumentException("Basepath argument is not fully qualified.", nameof(basePath));
+
+            if (IsPathRooted(path)) return GetFullPath(path);
+            if (path.Length == 0) return Normalize(basePath);
+            return Normalize(Combine(basePath, path));
+        }
+
+        // BCL HasExtension: a '.' in the file name that is not its last character.
+        public static bool HasExtension(string? path)
+        {
+            if (path == null) return false;
+            for (int i = path.Length - 1; i >= 0; i--)
+            {
+                char c = path[i];
+                if (c == '.') return i != path.Length - 1;
+                if (c == DirectorySeparatorChar || c == AltDirectorySeparatorChar || c == VolumeSeparatorChar) break;
+            }
+            return false;
+        }
+
         // Resolve '.' and '..' segments, collapse duplicate separators,
         // normalize all separators к '\'. Pure string manipulation.
         //

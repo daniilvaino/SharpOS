@@ -138,6 +138,16 @@ namespace System.Collections.Generic
             return -1;
         }
 
+        // BCL List<T>.LastIndexOf(T): the last match, searching backwards.
+        public int LastIndexOf(T item)
+        {
+            EqualityComparer<T> cmp = EqualityComparer<T>.Default;
+            for (int i = _size - 1; i >= 0; i--)
+                if (cmp.Equals(_items[i], item))
+                    return i;
+            return -1;
+        }
+
         public void Insert(int index, [SharpOS.Std.Pipes.Retains] T item)
         {
             if (_size == _items.Length) EnsureCapacity(_size + 1);

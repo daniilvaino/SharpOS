@@ -112,6 +112,15 @@ namespace OS.Kernel.Pipes
         public static int Break(int handle)
             => (int)KernelPipes.Break(KernelPipes.CallerHolder(), handle);
 
+        // step212: another handle on a writing end, the caller's.
+        [UnmanagedCallersOnly]
+        public static int Duplicate(int handle, int* copy)
+        {
+            PipeStatus status = KernelPipes.Duplicate(KernelPipes.CallerHolder(), handle, out int made);
+            if (copy != null) *copy = made;
+            return (int)status;
+        }
+
         // answer: [0] schema bytes, [1] root key. Copies when the buffer is large enough.
         [UnmanagedCallersOnly]
         public static int Schema(int handle, byte* buffer, ulong capacity, ulong* answer)

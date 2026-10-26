@@ -214,6 +214,11 @@ namespace System.IO
 
         public static FileStream Open(string path, FileMode mode, FileAccess access) => new FileStream(path, mode, access);
 
+        // The kernel's file services take no locks, so there is nothing for
+        // share to permit or deny: every open behaves as FileShare.ReadWrite |
+        // FileShare.Delete would.
+        public static FileStream Open(string path, FileMode mode, FileAccess access, FileShare share) => new FileStream(path, mode, access);
+
         // Whole-file load through the AppHost read service. The service has
         // no size query, so grow + retry: BufferTooSmall and exact-fit
         // (bytesRead == capacity, possibly truncated) both double and retry.

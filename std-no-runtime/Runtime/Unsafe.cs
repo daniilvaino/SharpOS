@@ -374,6 +374,21 @@ namespace System.Runtime.CompilerServices
             return ref SubtractByteOffset(ref source, (IntPtr)(void*)byteOffset);
         }
 
+        // .NET 8 shape (TFrom/TTo : struct); .NET 9 widened it to ref structs.
+        [Intrinsic]
+        [NonVersionable]
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static TTo BitCast<TFrom, TTo>(TFrom source)
+            where TFrom : struct
+            where TTo : struct
+        {
+            if (sizeof(TFrom) != sizeof(TTo))
+            {
+                throw new NotSupportedException();
+            }
+            return ReadUnaligned<TTo>(ref As<TFrom, byte>(ref source));
+        }
+
         [Intrinsic]
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -143,10 +143,10 @@ namespace System.Collections.Generic
             return true;
         }
 
-        private void Resize()
-        {
-            int newSize = HashHelpers.ExpandPrime(_count);
+        private void Resize() => Resize(HashHelpers.ExpandPrime(_count));
 
+        private void Resize(int newSize)
+        {
             var entries = new Entry[newSize];
             Array.Copy(_entries!, entries, _count);
 
@@ -163,6 +163,25 @@ namespace System.Collections.Generic
                 entries[i].next = bucket - 1;
                 bucket = i + 1;
             }
+        }
+
+        /// <summary>
+        /// Room for at least <paramref name="capacity"/> entries without a
+        /// resize; the capacity it ends with. BCL Dictionary.EnsureCapacity.
+        /// </summary>
+        public int EnsureCapacity(int capacity)
+        {
+            if (capacity < 0) throw new ArgumentOutOfRangeException(nameof(capacity), "Non-negative number required.");
+
+            int currentCapacity = _entries == null ? 0 : _entries.Length;
+            if (currentCapacity >= capacity) return currentCapacity;
+
+            _version++;
+            if (_buckets == null) return Initialize(capacity);
+
+            int newSize = HashHelpers.GetPrime(capacity);
+            Resize(newSize);
+            return newSize;
         }
 
         private bool RemoveEntry(TKey key)
@@ -238,7 +257,7 @@ namespace System.Collections.Generic
     internal static class HashHelpers
     {
         public const int MaxPrimeArrayLength = 0x7FFFFFC3;
-        private const int HashPrime = 101;
+        public const int HashPrime = 101; // public as in the BCL - Hashtable uses it
 
         public static bool IsPrime(int candidate)
         {

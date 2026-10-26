@@ -51,6 +51,12 @@ namespace LessApp
             byte[] gathered = null;
             int gatheredLength = 0;
 
+            // A writer that ends with a code other than 0 breaks the pipe
+            // (step194 §3) — a test battery exits with its passed count. What
+            // arrived before the break is still shown, marked as cut short.
+            bool broken = false;
+            try
+            {
             foreach (View message in Pipe.Read())
             {
                 // A view lives until the next message: turn it into data now.
@@ -70,6 +76,11 @@ namespace LessApp
                 if (kind == null) kind = message.Kind == ViewKind.String ? "text" : new string((message.TypeName ?? "null").AsSpan());
                 AddLines(lines, text ?? "null");
             }
+            }
+            catch (PipeException e) when (e.IsStandardEndBroken)
+            {
+                broken = true;
+            }
             if (gatheredLength > 0)
                 AddLines(lines, Encoding.UTF8.GetString(gathered, 0, gatheredLength));
             if (lines.Count == 0)
@@ -78,7 +89,7 @@ namespace LessApp
                 return ExitNoData;
             }
 
-            var pager = new Pager(lines, kind);
+            var pager = new Pager(lines, broken ? (kind ?? "text") + ", cut short" : kind);
             pager.Loop();
             return ExitOk;
         }

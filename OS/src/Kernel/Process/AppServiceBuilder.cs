@@ -1,4 +1,4 @@
-﻿using OS.Boot;
+using OS.Boot;
 using OS.Hal;
 using OS.Kernel.Exec;
 using OS.Kernel.Input;
@@ -361,6 +361,8 @@ namespace OS.Kernel.Process
                 table.PipeWaitPeerAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.WaitPeer;
                 table.PipeBreakAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.Break;
                 table.PipeWaitSchemaAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.WaitSchema;
+                table.PipeDuplicateAddress = (ulong)(nint)(delegate* unmanaged<int, int*, int>)&OS.Kernel.Pipes.PipeServices.Duplicate;
+            table.RandomFillAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&HardwareRandom.Fill;
                 table.ExceptionHeadAddress = (ulong)OS.Boot.EH.ExInfoHead.GetHeadAddress();
                 table.ProcessAddress = (ulong)(nint)(delegate* unmanaged<int, ulong*, int>)&ProcessService;
                 if (OS.Kernel.Diagnostics.Probes.PipeProbe)

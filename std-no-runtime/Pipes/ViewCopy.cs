@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using SharpOS.Std.Exchange;
 using SharpOS.Std.NoRuntime;
@@ -533,8 +534,8 @@ namespace SharpOS.Std.Pipes
                     if (has == ViewKind.String)
                     {
                         string text = (string)value;
-                        if (type == "System.DateTime" && DateTime.TryParse(text, out DateTime date)) { Unsafe.AsRef<DateTime>((void*)to) = date; return; }
-                        if (type == "System.TimeSpan" && TimeSpan.TryParseConstant(text, out TimeSpan span)) { Unsafe.AsRef<TimeSpan>((void*)to) = span; return; }
+                        if (type == "System.DateTime" && DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out DateTime date)) { Unsafe.AsRef<DateTime>((void*)to) = date; return; }
+                        if (type == "System.TimeSpan" && TimeSpan.TryParseExact(text, "c", CultureInfo.InvariantCulture, out TimeSpan span)) { Unsafe.AsRef<TimeSpan>((void*)to) = span; return; }
                         if (type == "System.Guid" && Guid.TryParse(text, out Guid guid)) { Unsafe.AsRef<Guid>((void*)to) = guid; return; }
                         throw Cannot(owner, field, type, value, "not in a form it parses from");
                     }

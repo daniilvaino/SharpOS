@@ -64,6 +64,16 @@ namespace System
                 throw new ArgumentException("The value cannot be an empty string.", paramName);
             }
         }
+
+        // BCL (.NET 8): null, empty, or only white space.
+        public static void ThrowIfNullOrWhiteSpace(string argument, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(argument))] string? paramName = null)
+        {
+            if (string.IsNullOrWhiteSpace(argument))
+            {
+                ArgumentNullException.ThrowIfNull(argument, paramName);
+                throw new ArgumentException("The value cannot be an empty string or composed entirely of whitespace.", paramName);
+            }
+        }
     }
 
     public class ArgumentNullException : ArgumentException
@@ -83,6 +93,12 @@ namespace System
         public static void ThrowIfNull(object argument, string paramName)
         {
             if (argument == null) Throw(paramName);
+        }
+
+        // BCL: internal ThrowIfNull(object?, ExceptionArgument), the CoreLib-internal overload.
+        internal static void ThrowIfNull(object? argument, ExceptionArgument paramName)
+        {
+            if (argument is null) ThrowHelper.ThrowArgumentNullException(paramName);
         }
 
         public static void Throw() => throw new ArgumentNullException();
@@ -310,6 +326,59 @@ namespace System
         public InsufficientExecutionStackException() : base("Insufficient stack to continue executing the program safely. This can happen from having too many functions on the call stack or function on the stack using too much stack space.") { }
         public InsufficientExecutionStackException(string message) : base(message) { }
         public InsufficientExecutionStackException(string message, Exception innerException) : base(message, innerException) { }
+    }
+
+    // BCL: an array of the wrong rank for the operation.
+    public class RankException : Exception
+    {
+        public RankException() : base("Attempted to operate on an array with the incorrect number of dimensions.") { }
+        public RankException(string? message) : base(message) { }
+        public RankException(string? message, Exception? innerException) : base(message, innerException) { }
+    }
+
+    public class TimeoutException : Exception
+    {
+        public TimeoutException() : base("The operation has timed out.") { }
+        public TimeoutException(string? message) : base(message) { }
+        public TimeoutException(string? message, Exception? innerException) : base(message, innerException) { }
+    }
+
+    // BCL: the runtime raises it when a thread's stack runs out and the
+    // process ends; code may still construct and throw one, as interpreters
+    // do for a guest's runaway recursion.
+    public sealed class StackOverflowException : Exception
+    {
+        public StackOverflowException() : base("Operation caused a stack overflow.") { }
+        public StackOverflowException(string? message) : base(message) { }
+        public StackOverflowException(string? message, Exception? innerException) : base(message, innerException) { }
+    }
+}
+
+namespace System.Diagnostics
+{
+    // BCL (.NET 7): a code path that should never run, did.
+    public sealed class UnreachableException : Exception
+    {
+        public UnreachableException() : base("The program executed an instruction that was thought to be unreachable.") { }
+        public UnreachableException(string? message) : base(message ?? "The program executed an instruction that was thought to be unreachable.") { }
+        public UnreachableException(string? message, Exception? innerException) : base(message ?? "The program executed an instruction that was thought to be unreachable.", innerException) { }
+    }
+}
+
+namespace System.Globalization
+{
+    // BCL: a culture name that names no culture. Declared for callers that
+    // catch it; GetCultureInfo here (Globalization.cs) takes every name.
+    public class CultureNotFoundException : ArgumentException
+    {
+        public CultureNotFoundException() : base("Culture is not supported.") { }
+        public CultureNotFoundException(string? message) : base(message) { }
+        public CultureNotFoundException(string? paramName, string? message) : base(message, paramName) { }
+        public CultureNotFoundException(string? message, Exception? innerException) : base(message, innerException) { }
+        public CultureNotFoundException(string? paramName, string? invalidCultureName, string? message)
+            : base(message, paramName) { InvalidCultureName = invalidCultureName; }
+
+        public virtual string? InvalidCultureName { get; }
     }
 }
 

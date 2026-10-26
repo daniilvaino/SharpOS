@@ -167,6 +167,31 @@ namespace System
         public static bool SequenceEqual<T>(this ReadOnlySpan<T> span, ReadOnlySpan<T> other) where T : IEquatable<T>
             => SequenceEqualCore(ref MemoryMarshal.GetReference(span), span.Length, ref MemoryMarshal.GetReference(other), other.Length);
 
+        // BCL (.NET 7+): the comparer overloads, for any T.
+        // SharpOS cut: upstream's value-type fast path to the IEquatable overload.
+        public static bool SequenceEqual<T>(this Span<T> span, ReadOnlySpan<T> other, System.Collections.Generic.IEqualityComparer<T>? comparer = null) =>
+            SequenceEqual((ReadOnlySpan<T>)span, other, comparer);
+
+        public static bool SequenceEqual<T>(this ReadOnlySpan<T> span, ReadOnlySpan<T> other, System.Collections.Generic.IEqualityComparer<T>? comparer = null)
+        {
+            // If the spans differ in length, they're not equal.
+            if (span.Length != other.Length)
+            {
+                return false;
+            }
+
+            comparer ??= System.Collections.Generic.EqualityComparer<T>.Default;
+            for (int i = 0; i < span.Length; i++)
+            {
+                if (!comparer.Equals(span[i], other[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private static bool SequenceEqualCore<T>(ref T headA, int lengthA, ref T headB, int lengthB) where T : IEquatable<T>
         {
             if (lengthA != lengthB) return false;

@@ -44,7 +44,7 @@ namespace SharpOS.Std.NoRuntime
         }
 
         [RuntimeExport("RhpNewArray")]
-        private static void* RhpNewArray(GcMethodTable* mt, int numElements)
+        internal static void* RhpNewArray(GcMethodTable* mt, int numElements)
         {
             if (mt == null)
                 return null;

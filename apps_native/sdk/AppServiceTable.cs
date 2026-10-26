@@ -1,4 +1,4 @@
-﻿namespace SharpOS.AppSdk
+namespace SharpOS.AppSdk
 {
     internal enum AppServiceStatus : uint
     {
@@ -332,6 +332,15 @@
         // a service: no transition, called by every [ThreadStatic] access.
         // Zero: an older kernel; thread statics throw.
         public ulong ThreadWordsAddress;
+
+        // int PipeDuplicate(int handle, int* copy) (step212): another handle
+        // on the same writing end — the stream ends when the last copy
+        // closes. Zero: an older kernel.
+        public ulong PipeDuplicateAddress;
+
+        // int RandomFill(byte* buffer, int count): cryptographic random bytes
+        // (the kernel's RDRAND). Zero: an older kernel; no RandomNumberGenerator.
+        public ulong RandomFillAddress;
     }
 
     /// <summary>

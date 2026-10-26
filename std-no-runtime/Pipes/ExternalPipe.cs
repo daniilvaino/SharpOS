@@ -140,7 +140,7 @@ namespace SharpOS.Std.Pipes
         /// </summary>
         public static int Replay(ExternalPipeReader file, string program)
         {
-            int output = Pipe.TakeOutput();
+            int output = Pipe.TakeOutput("the file's type");
             RegionShapes shapes = null;
             try
             {

@@ -1,4 +1,4 @@
-﻿using OS.Hal;
+using OS.Hal;
 using OS.Hal.Acpi;
 using OS.Hal.Idt;
 using OS.Kernel;
@@ -1245,6 +1245,9 @@ namespace OS.Boot
             // Installed here because that clock needs the HPET, and here is
             // where the HPET starts.
             System.DateTime.Clock.Install(&UtcTicks);
+
+            // And RandomNumberGenerator somewhere to get its bytes: RDRAND.
+            OS.Hal.HardwareRandom.Install();
 
             // The counter moves and a stopwatch agrees with it: checks.
             if (Probes.Tests)

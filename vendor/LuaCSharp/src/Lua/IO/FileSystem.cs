@@ -1,0 +1,159 @@
+﻿namespace Lua.IO;
+
+/// <param name="baseDirectory">Directory that relative paths are resolved against.</param>
+/// <param name="stringMode">
+/// Selects UTF-8 text I/O for <see cref="LuaStringMode.Utf16"/>, or raw byte I/O for <see cref="LuaStringMode.Bytes"/>.
+/// Use the same mode as <see cref="Lua.Platforms.LuaPlatform.StringMode"/>.
+/// </param>
+public sealed class FileSystem(string? baseDirectory, LuaStringMode stringMode) : ILuaFileSystem
+{
+    public FileSystem(string? baseDirectory = null)
+        : this(baseDirectory, LuaStringMode.Utf16) { }
+
+    public string BaseDirectory => baseDirectory ?? Directory.GetCurrentDirectory();
+
+    public static (FileMode, FileAccess access) GetFileMode(LuaFileOpenMode luaFileOpenMode)
+    {
+        return luaFileOpenMode switch
+        {
+            LuaFileOpenMode.Read => (FileMode.Open, FileAccess.Read),
+            LuaFileOpenMode.Write => (FileMode.Create, FileAccess.Write),
+            LuaFileOpenMode.Append => (FileMode.Append, FileAccess.Write),
+            LuaFileOpenMode.ReadUpdate => (FileMode.Open, FileAccess.ReadWrite),
+            LuaFileOpenMode.WriteUpdate => (FileMode.Create, FileAccess.ReadWrite),
+            LuaFileOpenMode.AppendUpdate => (FileMode.Append, FileAccess.ReadWrite),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(luaFileOpenMode),
+                luaFileOpenMode,
+                null
+            ),
+        };
+    }
+
+    public string GetFullPath(string path)
+    {
+        if (baseDirectory == null || Path.IsPathRooted(path))
+        {
+            return path;
+        }
+
+        return Path.Combine(baseDirectory, path);
+    }
+
+    public bool IsReadable(string path)
+    {
+        return File.Exists(GetFullPath(path));
+    }
+
+    public ValueTask<ILuaStream> Open(
+        string path,
+        LuaFileOpenMode openMode,
+        CancellationToken cancellationToken
+    )
+    {
+        var (mode, access) = GetFileMode(openMode);
+        Stream stream;
+        path = GetFullPath(path);
+        if (openMode == LuaFileOpenMode.AppendUpdate)
+        {
+            stream = File.Open(
+                path,
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.ReadWrite | FileShare.Delete
+            );
+        }
+        else
+        {
+            stream = File.Open(path, mode, access, FileShare.ReadWrite | FileShare.Delete);
+        }
+
+        ILuaStream wrapper = new LuaStream(openMode, stream, stringMode);
+
+        if (openMode == LuaFileOpenMode.AppendUpdate)
+        {
+            wrapper.Seek(SeekOrigin.End, 0);
+        }
+
+        return new(wrapper);
+    }
+
+    public ValueTask Rename(string oldName, string newName, CancellationToken cancellationToken)
+    {
+        oldName = GetFullPath(oldName);
+        newName = GetFullPath(newName);
+
+        // Check the source first: a failed rename must leave the destination untouched.
+        var isFile = File.Exists(oldName);
+        if (!isFile && !Directory.Exists(oldName))
+        {
+            throw new FileNotFoundException("No such file or directory", oldName);
+        }
+
+        if (oldName == newName)
+        {
+            return default;
+        }
+
+        if (!isFile)
+        {
+            Directory.Move(oldName, newName);
+            return default;
+        }
+
+        // Let the filesystem replace the destination only when the move succeeds.
+#if NETSTANDARD2_1
+        // .NET Standard does not expose the overwrite overload of File.Move.
+        if (File.Exists(newName))
+        {
+            File.Replace(oldName, newName, null);
+        }
+        else
+        {
+            File.Move(oldName, newName);
+        }
+#else
+        File.Move(oldName, newName, overwrite: true);
+#endif
+        return default;
+    }
+
+    public ValueTask Remove(string path, CancellationToken cancellationToken)
+    {
+        path = GetFullPath(path);
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException("No such file or directory", path);
+        }
+
+        File.Delete(path);
+        return default;
+    }
+
+    static readonly string directorySeparator = Path.DirectorySeparatorChar.ToString();
+
+    public string DirectorySeparator => directorySeparator;
+
+    // SharpOS cut: Path.GetTempFileName() — this OS has no temporary directory convention
+    // (no TEMP/TMP, no Path.GetTempPath), so os.tmpname and io.tmpfile raise an error.
+    static string TempFileName()
+    {
+        throw new NotSupportedException("no temporary directory on this system");
+    }
+
+    public string GetTempFileName()
+    {
+        return TempFileName();
+    }
+
+    public ValueTask<ILuaStream> OpenTempFileStream(CancellationToken cancellationToken)
+    {
+        return new(
+            new LuaStream(
+                LuaFileOpenMode.WriteUpdate,
+                File.Open(TempFileName(), FileMode.Open, FileAccess.ReadWrite),
+                stringMode
+            )
+        );
+    }
+}

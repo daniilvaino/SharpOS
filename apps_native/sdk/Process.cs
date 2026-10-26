@@ -17,7 +17,7 @@ namespace SharpOS.AppSdk
     /// </remarks>
     public sealed unsafe class Process : IDisposable
     {
-        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18, OpSystemInfo = 21;
+        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18, OpSystemInfo = 21, OpStartWithEnds = 22;
 
         private bool _released;
         private bool _exited;
@@ -279,9 +279,14 @@ namespace SharpOS.AppSdk
         /// The child's environment, NAME=value each (step207); null for a copy
         /// of this process's.
         /// </param>
+        /// <param name="ends">
+        /// More writing ends (step212), each under its number in the child:
+        /// 2 its error stream (Console.Error), 3 its stdtext (Pipe.Text). Up
+        /// to eight, numbers from 2, each once.
+        /// </param>
         public static Process Start(string path, string[] arguments = null,
                                     PipeReadEnd input = null, PipeWriteEnd output = null,
-                                    string[] environment = null)
+                                    string[] environment = null, (int Number, PipeWriteEnd End)[] ends = null)
         {
             if (path == null) throw new ArgumentNullException(nameof(path));
             if (!Available) throw new InvalidOperationException("this kernel does not start processes");
@@ -296,6 +301,14 @@ namespace SharpOS.AppSdk
             // The ends are spent now and given back if the start fails.
             int inputHandle = input?.Take("the end was handed to " + full) ?? 0;
             int outputHandle = output?.Take("the end was handed to " + full) ?? 0;
+            int endCount = ends == null ? 0 : ends.Length;
+            if (endCount > 8) throw new ArgumentException("at most eight more ends", nameof(ends));
+            ulong* handed = stackalloc ulong[8];
+            for (int i = 0; i < endCount; i++)
+            {
+                if (ends[i].End == null || ends[i].Number < 2) throw new ArgumentException("an end numbered 2 or more", nameof(ends));
+                handed[i] = ((ulong)(uint)ends[i].Number << 32) | (uint)ends[i].End.Take("the end was handed to " + full);
+            }
 
             char[] block = null;
             if (environment != null)
@@ -311,7 +324,7 @@ namespace SharpOS.AppSdk
                 fixed (char* b = block) SharpOS.Std.NoRuntime.EnvironmentBlock.Encode(environment, b, length);
             }
 
-            ulong* request = stackalloc ulong[8];
+            ulong* request = stackalloc ulong[10];
             AppServiceStatus status;
             fixed (byte* pathPointer = pathBytes)
             fixed (byte* listPointer = list)
@@ -325,12 +338,15 @@ namespace SharpOS.AppSdk
                 request[5] = 0;
                 request[6] = (ulong)blockPointer;
                 request[7] = block == null ? 0UL : (ulong)(block.Length - 1);
-                status = Call(block == null ? OpStart : OpStartWithEnvironment, request);
+                request[8] = (ulong)handed;
+                request[9] = (ulong)endCount;
+                status = Call(endCount > 0 ? OpStartWithEnds : block == null ? OpStart : OpStartWithEnvironment, request);
             }
             if (status != AppServiceStatus.Ok)
             {
                 if (inputHandle != 0) input.Restore(inputHandle);
                 if (outputHandle != 0) output.Restore(outputHandle);
+                for (int i = 0; i < endCount; i++) ends[i].End.Restore((int)(uint)handed[i]);
                 throw new InvalidOperationException(status == AppServiceStatus.LimitReached
                     ? "cannot start " + full + ": too many processes are running"
                     : "cannot start " + full + ": " + Explain(status));

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 
 namespace SharpOS.Std.Pipes
 {
@@ -10,7 +11,10 @@ namespace SharpOS.Std.Pipes
     // type declares it; the other is checked against it, as two ends meeting
     // by name are. The standard ends are the same thing seen from the started
     // program: Pipe.Read(), Read<T>(), Write<T>() and WriteTo() without a name.
-    // No input is an empty stream; no output is the screen.
+    // No input is an empty stream; no output is the screen. System.Console's
+    // text is the standard output too (step212), a pipe of strings; one
+    // program's standard output has one type, and text beside data goes to
+    // Pipe.Text (stdtext) or Console.Error.
 
     /// <summary>The two ends of a new pipe, both this program's until one is opened or handed over.</summary>
     public sealed class PipePair
@@ -52,6 +56,13 @@ namespace SharpOS.Std.Pipes
             return handle;
         }
 
+        /// <summary>The handle, the end still this one's.</summary>
+        internal int Peek()
+        {
+            if (_handle == 0) throw new InvalidOperationException(_gone ?? "the pipe end is closed");
+            return _handle;
+        }
+
         /// <summary>A start that failed gives the end back.</summary>
         internal void Restore(int handle)
         {
@@ -73,6 +84,19 @@ namespace SharpOS.Std.Pipes
     public sealed partial class PipeWriteEnd : PipeEnd
     {
         internal PipeWriteEnd(int handle) : base(handle) { }
+
+        /// <summary>
+        /// Another end on the same pipe, not yet opened (step212): both write
+        /// it, one type between them, and the reader's stream ends when the
+        /// last of them closes. `2>&amp;1` hands a stage such a copy.
+        /// </summary>
+        public PipeWriteEnd Duplicate()
+        {
+            int handle = Peek();
+            PipeStatus status = PipeTransport.Duplicate(handle, out int copy);
+            if (status != PipeStatus.Ok) throw new PipeException(status, "a copy of the pipe end: " + Pipe.Explain(status));
+            return new PipeWriteEnd(copy);
+        }
 
         /// <summary>A writer of <typeparamref name="T"/> on this end; the type is checked against the reader's, if it declared one.</summary>
         public PipeWriter<T> Write<T>() where T : class
@@ -137,6 +161,18 @@ namespace SharpOS.Std.Pipes
             return new PipePair(writer, reader);
         }
 
+        /// <summary>
+        /// A writing end whose messages go nowhere (step212): what `n>&amp;-`
+        /// hands a program. Writes succeed; nobody reads.
+        /// </summary>
+        public static PipeWriteEnd Nowhere()
+        {
+            PipeStatus status = PipeTransport.Create(1, PipeOverflow.Discard, out int writer, out int reader);
+            if (status != PipeStatus.Ok) throw new PipeException(status, "a pipe to nowhere: " + Explain(status));
+            PipeTransport.Close(reader);
+            return new PipeWriteEnd(writer);
+        }
+
         // ---- the standard ends ----
 
         private static bool s_inputOpened;
@@ -155,8 +191,60 @@ namespace SharpOS.Std.Pipes
         /// </summary>
         public static PipeWriter<T> Write<T>() where T : class
         {
-            int handle = TakeOutput();
+            int handle = TakeOutput(OutputName<T>());
             return handle != 0 ? OpenWriter<T>(handle, "the standard output") : PipeWriter<T>.ToScreen();
+        }
+
+        /// <summary>
+        /// The standard output as System.Console's text (step212): a pipe of
+        /// strings, a message a line; with no output handed over, the screen,
+        /// written through as it comes so a prompt shows before its input.
+        /// One type a pipe: once this is open, Write&lt;T&gt;() is refused, and
+        /// the other way round.
+        /// </summary>
+        public static TextWriter ConsoleText()
+        {
+            int handle = TakeOutput("text (System.Console)");
+            return handle != 0
+                ? new PipeTextWriter(OpenWriter<string>(handle, "the standard output"))
+                : new TerminalTextWriter();
+        }
+
+        /// <summary>The end number stdtext is handed under (step212), as `3>` names it.</summary>
+        public const int TextEnd = 3;
+
+        /// <summary>The end number the error stream is handed under, as `2>` names it.</summary>
+        public const int ErrorEnd = 2;
+
+        private static TextWriter s_text;
+
+        /// <summary>
+        /// stdtext (step212): text for whoever reads the screen, beside the
+        /// data on the standard output — a panel, a report, a summary. A pipe
+        /// of strings when an end was handed under <see cref="TextEnd"/>
+        /// (`3> file`); the terminal otherwise.
+        /// </summary>
+        public static TextWriter Text => s_text ??= HandedText(TextEnd, "stdtext") ?? new TerminalTextWriter();
+
+        /// <summary>
+        /// The error stream as a pipe of strings when an end was handed under
+        /// <see cref="ErrorEnd"/> (`2> file`); null when none was, and the
+        /// error stream is the kernel's.
+        /// </summary>
+        public static TextWriter ErrorText() => HandedText(ErrorEnd, "the error stream");
+
+        private static TextWriter HandedText(int number, string what)
+        {
+            int handle = PipeTransport.StandardEnd((uint)number);
+            return handle == 0 ? null : new PipeTextWriter(OpenWriter<string>(handle, what));
+        }
+
+        // What the standard output is a pipe of, for the refusal to open it twice.
+        private static string OutputName<T>()
+        {
+            ulong key = MessageCatalog.KeyOf(typeof(T));
+            SharpOS.Std.Exchange.TypeKeys.Description d = key == 0 ? null : SharpOS.Std.Exchange.TypeKeys.DescriptionOf(key);
+            return d != null ? d.Name : "a typed writer";
         }
 
         /// <summary>
@@ -175,15 +263,23 @@ namespace SharpOS.Std.Pipes
         /// <summary>The standard output as an end to hand to a process; null when there is none (the screen).</summary>
         public static PipeWriteEnd OutputEnd()
         {
-            int handle = TakeOutput();
+            int handle = TakeOutput("an end handed over");
             return handle == 0 ? null : new PipeWriteEnd(handle);
         }
 
-        /// <summary>The standard output's handle, or 0 for the screen. Opened once.</summary>
-        internal static int TakeOutput()
+        private static string s_outputAs;
+
+        /// <summary>
+        /// The standard output's handle, or 0 for the screen. Opened once, as
+        /// one thing: a pipe has one type (step212).
+        /// </summary>
+        internal static int TakeOutput(string asWhat)
         {
-            if (s_outputOpened) throw new InvalidOperationException("the standard output is already open");
+            if (s_outputOpened)
+                throw new InvalidOperationException("the standard output is already open as " + s_outputAs
+                    + ": a pipe has one type; text beside data goes to Pipe.Text or Console.Error");
             s_outputOpened = true;
+            s_outputAs = asWhat;
             return PipeTransport.StandardEnd(1);
         }
 

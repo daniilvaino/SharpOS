@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Lua-CSharp (MIT, nuskey8/Lua-CSharp), vendored in vendor/LuaCSharp. -->
+  <PropertyGroup>
+    <IlcSystemModule>LuaApp</IlcSystemModule>
+    <StartupObject>AppEntry</StartupObject>
+    <Nullable>annotations</Nullable>
+    <NoWarn>$(NoWarn);CS0436;CS8632;CS0649</NoWarn>
+  </PropertyGroup>
+
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <PropertyGroup>
+    <L>..\..\vendor\LuaCSharp\src\</L>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\vendor\LuaCSharp\SharpOS\GlobalUsings.cs" Link="GlobalUsings.cs" />
+    <!-- InternalVisibleTo: one assembly here. ValueStringBuilder: std has the same BCL copy. -->
+    <Compile Include="$(L)Lua\**\*.cs" Exclude="$(L)Lua\obj\**;$(L)Lua\bin\**;$(L)Lua\InternalVisibleTo.cs;$(L)Lua\Internal\ValueStringBuilder.cs" LinkBase="Lua" />
+    <Compile Include="$(L)Lua.Annotations\**\*.cs" Exclude="$(L)Lua.Annotations\obj\**;$(L)Lua.Annotations\bin\**" LinkBase="Lua.Annotations" />
+  </ItemGroup>
+</Project>

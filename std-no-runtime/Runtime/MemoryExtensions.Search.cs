@@ -156,6 +156,16 @@ namespace System
         internal static bool EqualsOrdinalIgnoreCase(this ReadOnlySpan<char> span, ReadOnlySpan<char> value)
             => EqualsCore(span, value, ignoreCase: true);
 
+        // BCL (MemoryExtensions.Globalization.cs, internal): verbatim.
+        internal static bool EqualsOrdinal(this ReadOnlySpan<char> span, ReadOnlySpan<char> value)
+        {
+            if (span.Length != value.Length)
+                return false;
+            if (value.Length == 0)  // span.Length == value.Length == 0
+                return true;
+            return span.SequenceEqual(value);
+        }
+
         // ---- AsMemory ----
 
         public static Memory<T> AsMemory<T>(this T[]? array)

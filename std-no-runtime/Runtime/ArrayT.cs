@@ -32,7 +32,7 @@ namespace System
         // Prevent the C# compiler from generating a public default constructor.
         private Array() { }
 
-        public IEnumerator<T> GetEnumerator()
+        public new IEnumerator<T> GetEnumerator()
         {
             return new ArrayEnumerator(Unsafe.As<T[]>(this), this.Length);
         }
@@ -47,7 +47,7 @@ namespace System
         //  ((int[])a).IsReadOnly returns false.
         //  ((IList<int>)a).IsReadOnly returns true.
         //
-        public bool IsReadOnly => true;
+        public new bool IsReadOnly => true;
 
         public void Add(T item)
         {

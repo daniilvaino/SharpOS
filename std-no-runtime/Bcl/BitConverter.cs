@@ -16,7 +16,7 @@
 
 namespace System
 {
-    public static class BitConverter
+    public static partial class BitConverter
     {
         public const bool IsLittleEndian = true;
 
@@ -41,6 +41,14 @@ namespace System
         public static unsafe double UInt64BitsToDouble(ulong value) => *(double*)&value;
         [CLSCompliant(false)]
         public static unsafe ulong DoubleToUInt64Bits(double value) => *(ulong*)&value;
+
+        // Half (BCL .NET 6+/8+): its bits are its one ushort field.
+        public static Half Int16BitsToHalf(short value) => new Half((ushort)value);
+        public static short HalfToInt16Bits(Half value) => (short)value._value;
+        [CLSCompliant(false)]
+        public static Half UInt16BitsToHalf(ushort value) => new Half(value);
+        [CLSCompliant(false)]
+        public static ushort HalfToUInt16Bits(Half value) => value._value;
 
         // byte[]-reader subset (step141: ManagedDoom WAD/lump parsing).
         // Little-endian composition, bounds via the array indexer.

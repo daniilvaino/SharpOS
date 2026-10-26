@@ -74,7 +74,13 @@ namespace System.Diagnostics.CodeAnalysis
         public string[] Members { get; }
     }
 
-    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Enum | AttributeTargets.Constructor | AttributeTargets.Method | AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Event | AttributeTargets.Interface | AttributeTargets.Delegate, Inherited = false, AllowMultiple = false)]
+    // The BCL's targets: on parameters and generic parameters above all,
+    // where annotated code (Okojo's host interop) puts it.
+    [AttributeUsage(
+        AttributeTargets.Field | AttributeTargets.ReturnValue | AttributeTargets.GenericParameter |
+        AttributeTargets.Parameter | AttributeTargets.Property | AttributeTargets.Method |
+        AttributeTargets.Class | AttributeTargets.Interface | AttributeTargets.Struct,
+        Inherited = false)]
     internal sealed class DynamicallyAccessedMembersAttribute : Attribute
     {
         public DynamicallyAccessedMembersAttribute(DynamicallyAccessedMemberTypes memberTypes) { MemberTypes = memberTypes; }
@@ -168,10 +174,29 @@ namespace System.Diagnostics.CodeAnalysis
         public string? Justification { get; set; }
     }
 
+    [AttributeUsage(AttributeTargets.All, Inherited = false, AllowMultiple = true)]
+    internal sealed class UnconditionalSuppressMessageAttribute : Attribute
+    {
+        public UnconditionalSuppressMessageAttribute(string category, string checkId) { Category = category; CheckId = checkId; }
+        public string Category { get; }
+        public string CheckId { get; }
+        public string? Scope { get; set; }
+        public string? Target { get; set; }
+        public string? MessageId { get; set; }
+        public string? Justification { get; set; }
+    }
+
     [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Constructor | AttributeTargets.Method | AttributeTargets.Property | AttributeTargets.Event, Inherited = false, AllowMultiple = false)]
     internal sealed class ExcludeFromCodeCoverageAttribute : Attribute
     {
         public ExcludeFromCodeCoverageAttribute() { }
         public string? Justification { get; set; }
+    }
+
+    [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
+    internal sealed class ConstantExpectedAttribute : Attribute
+    {
+        public object? Min { get; set; }
+        public object? Max { get; set; }
     }
 }

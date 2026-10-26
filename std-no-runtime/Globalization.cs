@@ -31,8 +31,27 @@ namespace System.Globalization
         // made with `new` is not, and neither is its NumberFormat.
         private bool _isReadOnly;
         private NumberFormatInfo? _numInfo;
+        internal DateTimeFormatInfo? _dateTimeInfo; // BCL field name: DateTimeFormatInfo.GetInstance reads it
+        private Calendar? _calendar;
 
         public CultureInfo(string name) { _name = name ?? ""; }
+
+        // useUserOverride selects the user's regional settings over the
+        // culture's defaults; there are none here.
+        public CultureInfo(string name, bool useUserOverride) : this(name) { _ = useUserOverride; }
+
+        /// <summary>A read-only culture by name, as the BCL caches them: the invariant data under that name.</summary>
+        public static CultureInfo GetCultureInfo(string name)
+        {
+            ArgumentNullException.ThrowIfNull(name, nameof(name));
+            return new CultureInfo(name) { _isReadOnly = true };
+        }
+
+        /// <summary>Ordinal comparison, as invariant globalization mode has it (CompareInfo.cs).</summary>
+        public CompareInfo CompareInfo => new CompareInfo(_name);
+
+        /// <summary>Left to right, simple case mapping (TextInfo.cs).</summary>
+        public TextInfo TextInfo => new TextInfo(_name);
 
         // Properties rather than static fields: a lazily initialised static
         // reference field is the one construct this environment cannot run
@@ -51,11 +70,52 @@ namespace System.Globalization
 
         public bool IsNeutralCulture => _name.Length == 0;
 
+        /// <summary>The culture data (BCL member): every culture here has the invariant data (Globalization/CultureData.cs).</summary>
+        internal CultureData _cultureData => CultureData.Invariant;
+
         /// <summary>
-        /// Separators and patterns for laying out a date field. One culture in
-        /// the system, so this is the same object for every CultureInfo.
+        /// The culture's date and time formatting data: the invariant data, as
+        /// CultureData.Invariant has it. A read-only culture hands out the shared
+        /// read-only DateTimeFormatInfo.InvariantInfo; a culture made with
+        /// <c>new</c> gets its own writable instance, as in the BCL.
         /// </summary>
-        public DateTimeFormatInfo DateTimeFormat => DateTimeFormatInfo.InvariantInfo;
+        public DateTimeFormatInfo DateTimeFormat
+        {
+            get
+            {
+                if (_dateTimeInfo == null)
+                {
+                    _dateTimeInfo = _isReadOnly
+                        ? DateTimeFormatInfo.InvariantInfo
+                        : new DateTimeFormatInfo(); // writable, invariant data
+                }
+                return _dateTimeInfo;
+            }
+            set
+            {
+                ArgumentNullException.ThrowIfNull(value, nameof(value));
+                if (_isReadOnly)
+                    throw new InvalidOperationException("Instance is read-only.");
+                _dateTimeInfo = value;
+            }
+        }
+
+        /// <summary>The culture's calendar: Gregorian, the invariant culture's only one (read-only for a read-only culture).</summary>
+        public Calendar Calendar
+        {
+            get
+            {
+                if (_calendar == null)
+                {
+                    Calendar calendar = new GregorianCalendar();
+                    _calendar = _isReadOnly ? Calendar.ReadOnly(calendar) : calendar;
+                }
+                return _calendar;
+            }
+        }
+
+        /// <summary>The calendars the culture can use: Gregorian alone, as for the invariant culture.</summary>
+        public Calendar[] OptionalCalendars => new Calendar[] { new GregorianCalendar() };
 
         public bool IsReadOnly => _isReadOnly;
 

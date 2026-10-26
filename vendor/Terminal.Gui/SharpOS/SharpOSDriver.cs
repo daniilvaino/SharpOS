@@ -1,4 +1,4 @@
-﻿// A console driver for SharpOS.
+// A console driver for SharpOS.
 //
 // The stock drivers all speak to a host we do not have: WindowsDriver calls
 // kernel32, CursesDriver links ncurses, NetDriver drives System.Console with a
@@ -17,6 +17,9 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+// The library's Rune (SharpOS/Rune.cs, in System as NStack had it), not
+// std's System.Text.Rune, which this file's using of System.Text also sees.
+using Rune = System.Rune;
 using SharpOS.AppSdk;
 
 namespace Terminal.Gui

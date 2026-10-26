@@ -85,15 +85,15 @@
 expect 0 AOTTESTS.EXE --pipe-writer-dies normal
 expect 134 AOTTESTS.EXE --pipe-writer-dies crash
 expect 0 AOTTESTS.EXE --pipe-stress 2
-expect 313 AOTTESTS.EXE
-expect 313 AOTTESTS.EXE
+expect 315 AOTTESTS.EXE
+expect 315 AOTTESTS.EXE
 expect 0  BENCHAOT.EXE
 expect 3 AOTTESTS.EXE --echo-args 'two words' третий
 expect 2 AOTTESTS.EXE --untranslated-interface1
 expect 2 AOTTESTS.EXE --untranslated-interface2
 expect 2 AOTTESTS.EXE --untranslated-interface3
 expect 1 AOTTESTS.EXE --untranslated-interface4
-expect 313 AOTTESTS.EXE --gc-stress 16 4
+expect 315 AOTTESTS.EXE --gc-stress 16 4
 expect 0 AOTTESTS.EXE --gc-stress 1 1 --pipe-stress 1
 expect 23 AOTTESTS.EXE --gc-stress 1 1 --dynamic
 PIPEGEN 5

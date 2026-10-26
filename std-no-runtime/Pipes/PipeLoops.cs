@@ -464,7 +464,7 @@ namespace SharpOS.Std.Pipes
         /// </summary>
         public void WriteTo()
         {
-            int handle = Pipe.TakeOutput();
+            int handle = Pipe.TakeOutput("the input's type, passed on");
             Pump(null, handle, handle == 0);
         }
 

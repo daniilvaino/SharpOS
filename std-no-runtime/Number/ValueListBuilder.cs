@@ -21,6 +21,13 @@ namespace System.Collections.Generic
             _pos = 0;
         }
 
+        // .NET 9+ (dotnet/runtime main ValueListBuilder.cs): start from a pooled array of
+        // `capacity` instead of a caller-supplied span. System.Uri uses it.
+        public ValueListBuilder(int capacity)
+        {
+            Grow(capacity);
+        }
+
         public int Length
         {
             get => _pos;

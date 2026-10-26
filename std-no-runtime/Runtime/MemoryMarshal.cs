@@ -16,7 +16,7 @@ using System.Runtime.CompilerServices;
 
 namespace System.Runtime.InteropServices
 {
-    public static class MemoryMarshal
+    public static partial class MemoryMarshal
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ref T GetArrayDataReference<T>(T[] array)
@@ -28,13 +28,15 @@ namespace System.Runtime.InteropServices
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ref T GetReference<T>(ReadOnlySpan<T> span) => ref span._reference;
 
+        // BCL signatures: the reference is scoped (the caller vouches for its
+        // lifetime) and the read-only one is `ref readonly`, so `in x` binds.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static Span<T> CreateSpan<T>(ref T reference, int length)
-            => new Span<T>(ref reference, length);
+        public static Span<T> CreateSpan<T>(scoped ref T reference, int length)
+            => new Span<T>(ref Unsafe.AsRef(in reference), length);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static ReadOnlySpan<T> CreateReadOnlySpan<T>(ref T reference, int length)
-            => new ReadOnlySpan<T>(ref reference, length);
+        public static ReadOnlySpan<T> CreateReadOnlySpan<T>(scoped ref readonly T reference, int length)
+            => new ReadOnlySpan<T>(ref Unsafe.AsRef(in reference), length);
 
         // Reads a structure of type T out of a read-only span of bytes.
         // Throws if the span is too small. T must be a value type without

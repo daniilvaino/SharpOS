@@ -1,9 +1,10 @@
-// System.Console for the app tier, backed by the AppHost service table
-// (kernel console via WriteString). Write/WriteLine, ReadKey, Clear, colours,
-// window size, cursor position and visibility, title — the subset ported app
-// code (ManagedDoom's logging, the shell's line editor, a full-screen pager)
-// uses. Not here: CursorLeft/CursorTop, which need the terminal's answer to
-// ESC [6n in the input (donext, "Ввод программы — поток байт терминала").
+// System.Console for the app tier. Write/WriteLine go to the standard output
+// (step212): a pipe of strings when one was handed over, the terminal
+// otherwise; Error to the error stream. ReadKey, Clear, colours, window size,
+// cursor and title talk to the terminal itself — the subset ported app code
+// (ManagedDoom's logging, the shell's line editor, a full-screen pager) uses.
+// Not here: CursorLeft/CursorTop, which need the terminal's answer to ESC [6n
+// in the input (donext, "Ввод программы — поток байт терминала").
 
 using SharpOS.AppSdk;
 
@@ -11,27 +12,26 @@ namespace System
 {
     public static class Console
     {
-        public static void Write(string value)
-        {
-            if (value != null) AppHost.WriteString(value);
-        }
+        /// <summary>
+        /// The standard output as text (step212), as BCL has it: a pipe of
+        /// strings, a message a line, when the output was handed to a pipe or a
+        /// file; the terminal otherwise. Opened on first use — after it, the
+        /// standard output cannot be opened as another type (one type a pipe).
+        /// </summary>
+        public static System.IO.TextWriter Out => s_out ??= SharpOS.Std.Pipes.Pipe.ConsoleText();
+        private static System.IO.TextWriter s_out;
 
-        public static void WriteLine(string value)
-        {
-            if (value != null) AppHost.WriteString(value);
-            AppHost.WriteString("\n");
-        }
+        public static void Write(string value) => Out.Write(value);
 
-        public static void WriteLine()
-        {
-            AppHost.WriteString("\n");
-        }
+        public static void WriteLine(string value) => Out.WriteLine(value);
+
+        public static void WriteLine() => Out.WriteLine();
 
         /// <summary>
         /// The error stream (step208): the kernel's error port (COM4), or the
         /// console when the kernel has no such service.
         /// </summary>
-        public static System.IO.TextWriter Error => s_error ??= new ErrorWriter();
+        public static System.IO.TextWriter Error => s_error ??= SharpOS.Std.Pipes.Pipe.ErrorText() ?? new ErrorWriter();
         private static System.IO.TextWriter s_error;
 
         /// <summary>
@@ -41,6 +41,73 @@ namespace System
         /// ReadKey's. Opened once, as the pipe's standard end is.
         /// </summary>
         public static System.IO.Stream OpenStandardInput() => SharpOS.Std.Pipes.Pipe.ReadBytes();
+
+        /// <summary>
+        /// The standard output as bytes: the pipe's byte[] messages, on the
+        /// screen as text when nothing reads the pipe
+        /// (SharpOS.Std.Pipes.Pipe.WriteBytes). Buffered up to 64 KiB a
+        /// message — Flush sends what is gathered.
+        /// </summary>
+        public static System.IO.Stream OpenStandardOutput() => SharpOS.Std.Pipes.Pipe.WriteBytes();
+
+        /// <summary>The error stream as bytes, decoded as UTF-8 onto <see cref="Error"/>.</summary>
+        public static System.IO.Stream OpenStandardError() => new ErrorStream();
+
+        /// <summary>
+        /// The next character of the standard input, or -1 at its end — as the
+        /// BCL's Console.In.Read(). The keyboard is ReadKey's.
+        /// </summary>
+        public static int Read() => (s_in ??= SharpOS.Std.Pipes.Pipe.ReadText()).Read();
+        private static System.IO.TextReader s_in;
+
+        // Bytes to Error as UTF-8 text; a sequence cut by a write boundary
+        // waits for the next write.
+        private sealed class ErrorStream : System.IO.Stream
+        {
+            private readonly byte[] _pending = new byte[4];
+            private int _pendingCount;
+
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => throw new NotSupportedException();
+            public override long Position
+            {
+                get => throw new NotSupportedException();
+                set => throw new NotSupportedException();
+            }
+
+            public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            public override long Seek(long offset, System.IO.SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Flush() { }
+
+            public override void Write(byte[] buffer, int offset, int count)
+                => Write(new ReadOnlySpan<byte>(buffer, offset, count));
+
+            public override void Write(ReadOnlySpan<byte> buffer)
+            {
+                if (buffer.Length == 0) return;
+                byte[] all = new byte[_pendingCount + buffer.Length];
+                new ReadOnlySpan<byte>(_pending, 0, _pendingCount).CopyTo(all);
+                buffer.CopyTo(new Span<byte>(all, _pendingCount, buffer.Length));
+
+                // Hold back an incomplete UTF-8 sequence at the end.
+                int end = all.Length;
+                int lead = end - 1;
+                while (lead >= 0 && end - lead < 4 && (all[lead] & 0xC0) == 0x80) lead--;
+                if (lead >= 0)
+                {
+                    byte b = all[lead];
+                    int need = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
+                    if (end - lead < need) end = lead;
+                }
+                _pendingCount = all.Length - end;
+                for (int i = 0; i < _pendingCount; i++) _pending[i] = all[end + i];
+
+                if (end > 0) Error.Write(System.Text.Encoding.UTF8.GetString(all, 0, end));
+            }
+        }
 
         private sealed class ErrorWriter : System.IO.TextWriter
         {

@@ -255,6 +255,21 @@ namespace OS.Hal
             a.ret();
         }
 
+        // xor eax,eax ; rdrand rdx ; setc al ; mov [rcx],rdx ; ret — one
+        // hardware random qword to [RCX], EAX = 1 when the CPU had one (CF).
+        [CompileTimeAsm]
+        private static partial int EmitRdRandBootAsm(byte* dst);
+
+        [CompileTimeAsmBody(nameof(EmitRdRandBootAsm))]
+        private static void EmitRdRandBootAsm_Body(Iced.Intel.Assembler a)
+        {
+            a.xor(eax, eax);
+            a.rdrand(rdx);
+            a.setc(al);
+            a.mov(__qword_ptr[rcx], rdx);
+            a.ret();
+        }
+
         // Read the SSE control word into EAX.
         //
         // The scratch slot is carved out with sub/add rather than written at

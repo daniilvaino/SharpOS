@@ -1,6 +1,8 @@
 // SYSINFO (step211): what this system is and what came up, from the kernel's
 // SystemInfo. Into a pipe it goes as the typed record (`sysinfo | kql
-// "project Cpu.Avx, Build.Tests"`); on the screen it is printed by section.
+// "project Cpu.Avx, Build.Tests"`); on the screen it is printed by section,
+// on stdtext. Choosing by IsScreen is temporary: the hint "not for the
+// terminal" on the pipe replaces it (donext, «Каналы вывода программы»).
 
 using System;
 using System.Runtime;
@@ -38,13 +40,12 @@ namespace SysInfoApp
                 return 1;
             }
 
+            // The data to the output, the panel to stdtext, always (step212):
+            // which of them is seen is the shell's to say — `3>&-` the object
+            // alone, `>&-` the panel alone, `3>&1 >&- | less` the panel down
+            // the pipe.
             using PipeWriter<SystemInfo> output = Pipe.Write<SystemInfo>();
-            if (!output.IsScreen)
-            {
-                output.Copy(info);
-                return 0;
-            }
-
+            output.Copy(info);
             Print(info);
             return 0;
         }
@@ -101,19 +102,12 @@ namespace SysInfoApp
 
         private static string YesNo(bool value) => value ? "yes" : "no";
 
+        // The panel is text for the screen (stdtext), not the standard output:
+        // that is a pipe of SystemInfo, and a pipe has one type.
         private static void Section(string name)
-        {
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine(name);
-            Console.ResetColor();
-        }
+            => Pipe.Text.Write("\u001b[36m" + name + "\u001b[0m\n");
 
         private static void Line(string name, string value)
-        {
-            Console.Write("  ");
-            Console.Write(name);
-            Console.Write(new string(' ', Math.Max(1, 20 - name.Length)));
-            Console.WriteLine(value ?? "");
-        }
+            => Pipe.Text.Write("  " + name + new string(' ', Math.Max(1, 20 - name.Length)) + (value ?? "") + "\n");
     }
 }

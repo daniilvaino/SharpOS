@@ -92,6 +92,16 @@ namespace System
 
         public unsafe bool IsArray => Table->IsArray;
 
+        public unsafe bool IsByRef => Table->ElementType == SharpOS.Std.NoRuntime.GcEETypeElementType.ByRef;
+
+        public unsafe bool IsPointer => Table->ElementType == SharpOS.Std.NoRuntime.GcEETypeElementType.Pointer;
+
+        /// <summary>BCL Type.IsInstanceOfType: o is not null and its type assigns to this one.</summary>
+        public bool IsInstanceOfType(object? o) => o != null && IsAssignableFrom(o.GetType());
+
+        /// <summary>The image the type lives in: one assembly per image here (Reflection.Assembly.cs).</summary>
+        public virtual System.Reflection.Assembly Assembly => System.Reflection.ImageAssembly.Instance;
+
         public unsafe bool IsEnum
         {
             get

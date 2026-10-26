@@ -54,8 +54,9 @@
     # QEMU CPU model. qemu64 is x86-64-v1: no SSE4/AVX, so CoreLib's
     # precompiled methods that depend on them are rejected and JIT-compiled
     # instead (perf suspect 20). "max" offers everything TCG can emulate —
-    # comparing the two tells how much of a benchmark that costs.
-    [string]$Cpu = "qemu64,+nx",
+    # comparing the two tells how much of a benchmark that costs. +rdrand: the
+    # source RandomNumberGenerator draws from (HardwareRandom); TCG emulates it.
+    [string]$Cpu = "qemu64,+nx,+rdrand",
     # QEMU's accelerator: "tcg" (the default, any host) or "whpx" (Windows
     # Hypervisor Platform, step205) — timings without the emulator's own costs.
     [string]$Accel = "tcg",
@@ -859,14 +860,19 @@ foreach ($peApp in $peApps) {
 }
 
 # Files an app reads, kept beside its sources (step207): <App>\esp\* go into
-# the app's own folder on the image. DATATEST's sample externalpipe files live
-# there — the bytes a past build wrote, which every build after it must still read.
+# the app's own folder on the image, subfolders kept (LUA's \bin\lua\*.lua).
+# DATATEST's sample externalpipe files live there — the bytes a past build
+# wrote, which every build after it must still read.
 foreach ($peApp in $peApps) {
     $appEsp = Join-Path (Join-Path $repoRoot $peApp.Folder) "esp"
     if (-not (Test-Path -LiteralPath $appEsp)) { continue }
-    foreach ($dataFile in Get-ChildItem -LiteralPath $appEsp -File) {
-        Copy-Item -LiteralPath $dataFile.FullName -Destination (Join-Path $espDirs[$peApp.Category] $dataFile.Name) -Force
-        Write-Host "Prepared app data: $($peApp.Category)/$($dataFile.Name)"
+    foreach ($dataFile in Get-ChildItem -LiteralPath $appEsp -File -Recurse) {
+        $relative = $dataFile.FullName.Substring($appEsp.Length).TrimStart([char]92, [char]47)
+        $dataDst = Join-Path $espDirs[$peApp.Category] $relative
+        $dataDir = Split-Path -Parent $dataDst
+        if (-not (Test-Path -LiteralPath $dataDir)) { New-Item -ItemType Directory -Path $dataDir -Force | Out-Null }
+        Copy-Item -LiteralPath $dataFile.FullName -Destination $dataDst -Force
+        Write-Host "Prepared app data: $($peApp.Category)/$($relative.Replace([char]92, [char]47))"
     }
 }
 

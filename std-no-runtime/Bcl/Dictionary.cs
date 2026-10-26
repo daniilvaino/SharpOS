@@ -60,6 +60,28 @@ namespace System.Collections.Generic
             Clear(capacity);
         }
 
+        // BCL copy constructors: the pairs added in the source's order, a
+        // duplicate key an ArgumentException as from Add.
+        public Dictionary(IDictionary<TKey, TValue> dictionary) : this(dictionary, null) { }
+
+        public Dictionary(IDictionary<TKey, TValue> dictionary, IEqualityComparer<TKey> comparer)
+            : this(dictionary != null ? dictionary.Count : 0, comparer)
+        {
+            if (dictionary == null) throw new ArgumentNullException(nameof(dictionary));
+            foreach (KeyValuePair<TKey, TValue> pair in dictionary)
+                Add(pair.Key, pair.Value);
+        }
+
+        public Dictionary(IEnumerable<KeyValuePair<TKey, TValue>> collection) : this(collection, null) { }
+
+        public Dictionary(IEnumerable<KeyValuePair<TKey, TValue>> collection, IEqualityComparer<TKey> comparer)
+            : this((collection as ICollection<KeyValuePair<TKey, TValue>>)?.Count ?? 0, comparer)
+        {
+            if (collection == null) throw new ArgumentNullException(nameof(collection));
+            foreach (KeyValuePair<TKey, TValue> pair in collection)
+                Add(pair.Key, pair.Value);
+        }
+
         public IEqualityComparer<TKey> Comparer => _comparer;
 
         /// <summary>Live entries: everything ever used, less what was freed.</summary>

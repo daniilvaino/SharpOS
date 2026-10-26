@@ -109,6 +109,17 @@ namespace System
     // throws compile.
     public class ObjectDisposedException : InvalidOperationException
     {
+        // BCL (.NET 7) guards: the object's type name as ObjectName.
+        public static void ThrowIf([System.Diagnostics.CodeAnalysis.DoesNotReturnIf(true)] bool condition, object instance)
+        {
+            if (condition) throw new ObjectDisposedException(instance?.GetType().FullName);
+        }
+
+        public static void ThrowIf([System.Diagnostics.CodeAnalysis.DoesNotReturnIf(true)] bool condition, Type type)
+        {
+            if (condition) throw new ObjectDisposedException(type?.FullName);
+        }
+
         public ObjectDisposedException(string? objectName)
             : base("Cannot access a disposed object: " + (objectName ?? ""))
             { ObjectName = objectName ?? ""; }

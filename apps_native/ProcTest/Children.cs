@@ -329,7 +329,7 @@ namespace PipeApps
                 }
             }
 
-            Console.WriteLine("[proctest] unknown child role " + role);
+            Console.Error.WriteLine("[proctest] unknown child role " + role);
             return 2;
         }
 

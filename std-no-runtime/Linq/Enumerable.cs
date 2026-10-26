@@ -1,4 +1,4 @@
-﻿// Mini-LINQ for the NoStdLib kernel/std environment.
+// Mini-LINQ for the NoStdLib kernel/std environment.
 //
 // BCL-signature-compatible System.Linq.Enumerable so real LINQ-to-objects code
 // compiles against our std unchanged. Lazy operators are yield-based (identical
@@ -11,7 +11,8 @@
 // Count/Any/All, First/Last/Single/ElementAt (+OrDefault), Contains, Skip/Take
 // (+While), Concat/Distinct/Reverse, Cast/OfType, Empty/Range/Repeat, Aggregate,
 // Sum/Min/Max/Average, OrderBy/OrderByDescending (stable, returns IEnumerable).
-// Deferred: ThenBy / IOrderedEnumerable, GroupBy, Join, Zip, Union/Intersect/
+// ThenBy / IOrderedEnumerable: Enumerable.Ordering.cs.
+// Deferred: GroupBy, Join, Zip, Union/Intersect/
 // Except, nullable-numeric aggregates, decimal. Add per first consumer.
 
 using System;
@@ -20,7 +21,7 @@ using System.Collections.Generic;
 
 namespace System.Linq
 {
-    public static class Enumerable
+    public static partial class Enumerable
     {
         private static void ThrowNull(string name) => throw new ArgumentNullException(name);
         private static void ThrowNoElements() => throw new InvalidOperationException("Sequence contains no elements");
@@ -199,76 +200,7 @@ namespace System.Linq
                 yield return element;
         }
 
-        // ---- ordering (stable; returns IEnumerable, ThenBy deferred) ---
-
-        public static IEnumerable<TSource> OrderBy<TSource, TKey>(this IEnumerable<TSource> source, Func<TSource, TKey> keySelector)
-            => OrderByCore(source, keySelector, Comparer<TKey>.Default, false);
-
-        public static IEnumerable<TSource> OrderBy<TSource, TKey>(this IEnumerable<TSource> source, Func<TSource, TKey> keySelector, IComparer<TKey> comparer)
-            => OrderByCore(source, keySelector, comparer ?? Comparer<TKey>.Default, false);
-
-        public static IEnumerable<TSource> OrderByDescending<TSource, TKey>(this IEnumerable<TSource> source, Func<TSource, TKey> keySelector)
-            => OrderByCore(source, keySelector, Comparer<TKey>.Default, true);
-
-        public static IEnumerable<TSource> OrderByDescending<TSource, TKey>(this IEnumerable<TSource> source, Func<TSource, TKey> keySelector, IComparer<TKey> comparer)
-            => OrderByCore(source, keySelector, comparer ?? Comparer<TKey>.Default, true);
-
-        // Wrap the sorted array in a real iterator. Returning the TSource[]
-        // directly as IEnumerable<TSource> would fault when the caller iterates
-        // it: arrays don't implement our IEnumerable<T> (no SZArrayHelper),
-        // so GetEnumerator on the array -> "iface-resolve: no impl slot". The
-        // foreach below walks the array directly (ldelem), not via IEnumerable.
-        private static IEnumerable<TSource> OrderByCore<TSource, TKey>(IEnumerable<TSource> source, Func<TSource, TKey> keySelector, IComparer<TKey> comparer, bool descending)
-        {
-            var sorted = StableSort(source, keySelector, comparer, descending);
-            foreach (var item in sorted)
-                yield return item;
-        }
-
-        private static TSource[] StableSort<TSource, TKey>(IEnumerable<TSource> source, Func<TSource, TKey> keySelector, IComparer<TKey> comparer, bool descending)
-        {
-            if (source == null) ThrowNull(nameof(source));
-            if (keySelector == null) ThrowNull(nameof(keySelector));
-            var items = ToArray(source);
-            int n = items.Length;
-            if (n <= 1) return items;
-
-            var keys = new TKey[n];
-            var idx = new int[n];
-            for (int i = 0; i < n; i++) { keys[i] = keySelector(items[i]); idx[i] = i; }
-
-            // Stable bottom-up merge sort on the index array, comparing keys
-            // directly via IComparer<TKey>. OrderBy must be STABLE, which
-            // Array.Sort's introsort is not; we already hold keys[] + comparer,
-            // so an inline merge is the natural fit. Comparer<T>.Default.Compare
-            // works fine here (Min/Max use the same call).
-            int sign = descending ? -1 : 1;
-            var buf = new int[n];
-            for (int width = 1; width < n; width <<= 1)
-            {
-                for (int lo = 0; lo < n; lo += width << 1)
-                {
-                    int mid = lo + width; if (mid > n) mid = n;
-                    int hi = lo + (width << 1); if (hi > n) hi = n;
-                    int i = lo, j = mid, k = lo;
-                    while (i < mid && j < hi)
-                    {
-                        // <= 0 keeps the left run first on ties -> stable.
-                        if (sign * comparer.Compare(keys[idx[i]], keys[idx[j]]) <= 0)
-                            buf[k++] = idx[i++];
-                        else
-                            buf[k++] = idx[j++];
-                    }
-                    while (i < mid) buf[k++] = idx[i++];
-                    while (j < hi) buf[k++] = idx[j++];
-                }
-                var t = idx; idx = buf; buf = t;
-            }
-
-            var result = new TSource[n];
-            for (int i = 0; i < n; i++) result[i] = items[idx[i]];
-            return result;
-        }
+        // ---- ordering: Enumerable.Ordering.cs ------------------------------
 
         // ---- materialization ------------------------------------------
 
@@ -319,6 +251,16 @@ namespace System.Linq
             if (keySelector == null) ThrowNull(nameof(keySelector));
             if (valueSelector == null) ThrowNull(nameof(valueSelector));
             var dict = new Dictionary<TKey, TValue>();
+            foreach (var item in source) dict.Add(keySelector(item), valueSelector(item));
+            return dict;
+        }
+
+        public static Dictionary<TKey, TValue> ToDictionary<TSource, TKey, TValue>(this IEnumerable<TSource> source, Func<TSource, TKey> keySelector, Func<TSource, TValue> valueSelector, IEqualityComparer<TKey> comparer)
+        {
+            if (source == null) ThrowNull(nameof(source));
+            if (keySelector == null) ThrowNull(nameof(keySelector));
+            if (valueSelector == null) ThrowNull(nameof(valueSelector));
+            var dict = new Dictionary<TKey, TValue>(comparer);
             foreach (var item in source) dict.Add(keySelector(item), valueSelector(item));
             return dict;
         }

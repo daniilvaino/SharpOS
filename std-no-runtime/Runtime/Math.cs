@@ -89,7 +89,29 @@ namespace System
         public static long   Clamp(long value, long min, long max)     => value < min ? min : (value > max ? max : value);
         public static ulong  Clamp(ulong value, ulong min, ulong max)  => value < min ? min : (value > max ? max : value);
 
+        // BCL (Math.cs): min > max is the caller's error; NaN passes through.
+        public static double Clamp(double value, double min, double max)
+        {
+            if (min > max) throw new ArgumentException("'" + min.ToString() + "' cannot be greater than " + max.ToString() + ".");
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
+        }
+
+        public static float Clamp(float value, float min, float max)
+        {
+            if (min > max) throw new ArgumentException("'" + min.ToString() + "' cannot be greater than " + max.ToString() + ".");
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
+        }
+
         // ---- BigMul ----
+        // BCL Math.BigMul(uint, uint) / (int, int): the widening multiply, verbatim.
+        public static ulong BigMul(uint a, uint b) => (ulong)a * b;
+
+        public static long BigMul(int a, int b) => (long)a * b;
+
         // BCL Math.BigMul(ulong, ulong, out ulong): the software path of dotnet/runtime
         // Math.cs (MIT); the Bmi2.X64.MultiplyNoFlags branch is not ported (no X86 intrinsics).
         public static ulong BigMul(ulong a, ulong b, out ulong low)

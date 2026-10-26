@@ -40,6 +40,16 @@ namespace System
                 case ExceptionArgument.value: return "value";
                 case ExceptionArgument.buffer: return "buffer";
                 case ExceptionArgument.dictionary: return "dictionary";
+                case ExceptionArgument.s: return "s";
+                case ExceptionArgument.index: return "index";
+                case ExceptionArgument.codePoint: return "codePoint";
+                case ExceptionArgument.culture: return "culture";
+                case ExceptionArgument.ch: return "ch";
+                case ExceptionArgument.input: return "input";
+                case ExceptionArgument.format: return "format";
+                case ExceptionArgument.factor: return "factor";
+                case ExceptionArgument.divisor: return "divisor";
+                case ExceptionArgument.values: return "values";
                 default: return "";
             }
         }
@@ -55,6 +65,16 @@ namespace System
         value,
         buffer,
         dictionary,
+        s,              // CharUnicodeInfo, Rune
+        index,
+        codePoint,
+        culture,
+        ch,
+        input,
+        format,         // DateTime / DateTimeOffset / TimeSpan / DateOnly / TimeOnly
+        factor,         // TimeSpan
+        divisor,        // TimeSpan
+        values,         // MemoryExtensions SearchValues overloads
     }
 
     internal static partial class SR

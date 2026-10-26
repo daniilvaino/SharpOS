@@ -128,7 +128,7 @@ namespace System.Threading.Tasks
     }
 
     /// <summary>A task that produces a value.</summary>
-    public class Task<TResult> : Task
+    public partial class Task<TResult> : Task
     {
         internal TResult? m_result;
 

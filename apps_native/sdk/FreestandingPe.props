@@ -87,6 +87,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)KeyInfo.cs"              Link="sdk\KeyInfo.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileEntry.cs"            Link="sdk\FileEntry.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)SystemConsole.cs"        Link="sdk\SystemConsole.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Environment.AppHost.cs"  Link="sdk\Environment.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileSystemInfo.AppHost.cs" Link="sdk\FileSystemInfo.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ProcessStub.cs"          Link="sdk\ProcessStub.cs" />

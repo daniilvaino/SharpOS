@@ -1,4 +1,4 @@
-﻿namespace SharpOS.AppSdk
+namespace SharpOS.AppSdk
 {
     internal static unsafe class AppRuntime
     {
@@ -175,6 +175,10 @@
                         s_wallClockOffset = (long)request[0] - UtcTicks();
                 }
                 System.DateTime.Clock.Install(&WallTicks);
+
+                // RandomNumberGenerator's bytes: the kernel's RDRAND service.
+                if (s_services->RandomFillAddress != 0)
+                    SharpOS.Std.NoRuntime.SystemRandom.Install((delegate* unmanaged<byte*, int, int>)s_services->RandomFillAddress);
             }
 
             // Materialize the app image's GCStaticRegion (lazy `static readonly`

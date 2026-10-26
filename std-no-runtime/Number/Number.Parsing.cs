@@ -7,9 +7,8 @@
 // TryParseDecimal / TryNumberToDecimal. Bodies verbatim.
 //
 // SharpOS cuts:
-//   * The integer parsers (TryParseInt32IntegerStyle & co., Int128/UInt128): the
-//     primitives' Parse/TryParse forward to SharpOS.Std.NoRuntime.NumberParsing (see
-//     NumberParsing.cs); porting these is a separate job.
+//   * The integer parsers (TryParseInt32IntegerStyle & co.) live in
+//     Number.Parsing.Integer.cs; Int128/UInt128 ones are not ported.
 //   * Half parsing: no System.Half in std.
 //   * ParseDecimal reports overflow through release/8.0's ThrowOverflowException(string)
 //     (added here) instead of the TypeCode overload: no TypeCode in std.

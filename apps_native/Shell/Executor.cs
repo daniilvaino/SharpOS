@@ -396,6 +396,51 @@ namespace Shell
             return raw.Substring(i);
         }
 
+        /// <summary>A stage's `n> file`, `n>&amp;m` or `n>&amp;-`, in the order written (step212).</summary>
+        private sealed class Redirection
+        {
+            public int Number;
+            public string Target;
+            public bool Append;
+            // `n>&m`: n gets what m has at this point; Discard for `n>&-`; -1 for a file.
+            public int CopyOf = -1;
+        }
+
+        // Redirection.CopyOf of `n>&-`: n goes nowhere.
+        private const int Discard = 0;
+
+        /// <summary>
+        /// The operator of a redirect as written: `>` / `>>` with an optional
+        /// end number before it (1 when none; 9 at most), `n>&amp;m`
+        /// (<paramref name="copyOf"/> m) or `n>&amp;-` (<see cref="Discard"/>);
+        /// -1 for a file. False for anything else — `<`, `&>`, here-documents —
+        /// which this shell does not run.
+        /// </summary>
+        private static bool ParseRedirect(string raw, out int number, out bool append, out int copyOf)
+        {
+            number = 1;
+            append = false;
+            copyOf = -1;
+            int i = 0;
+            while (i < raw.Length && raw[i] >= '0' && raw[i] <= '9') i++;
+            if (i > 1) return false;
+            if (i == 1) number = raw[0] - '0';
+            if (i >= raw.Length || raw[i] != '>') return false;
+            i++;
+            if (i < raw.Length && raw[i] == '&')
+            {
+                i++;
+                if (i < raw.Length && raw[i] == '-') copyOf = Discard;
+                else if (i < raw.Length && raw[i] >= '1' && raw[i] <= '9') copyOf = raw[i] - '0';
+                else return false;
+                i++;
+                return i == raw.Length && number >= 1;
+            }
+            if (i < raw.Length && raw[i] == '>') { append = true; i++; }
+            if (i < raw.Length && (raw[i] == '>' || raw[i] == '&' || raw[i] == '|')) return false;
+            return number >= 1;
+        }
+
         /// <summary>A name $NAME can take: a letter or _, then letters, digits and _.</summary>
         internal static bool IsName(string name)
         {
@@ -410,10 +455,12 @@ namespace Shell
 
         /// <summary>
         /// <c>a | b | c</c>: a pipe between each two stages, every stage started
-        /// with its ends, all of them waited for. <c>&gt; file</c> and
-        /// <c>&gt;&gt; file</c> on the last stage are one more stage, WRITE
-        /// file [--append] (step197). The first stage gets the shell's own input
-        /// (none outside <c>sh -c</c>), the last its output (the screen).
+        /// with its ends, all of them waited for. <c>n&gt; file</c> on any
+        /// stage is a WRITE file [--append] beside it, fed by the end the
+        /// stage gets under n (step212; before, <c>&gt; file</c> was one more
+        /// stage at the end); the redirects go in order, as in sh (HandOut). The
+        /// first stage gets the shell's own input (none outside <c>sh -c</c>),
+        /// the last its output (the screen).
         /// </summary>
         /// <remarks>
         /// The code (step197) is the first stage's from the left that ended with
@@ -429,6 +476,8 @@ namespace Shell
             var arguments = new List<List<string>>();
             // A stage's own environment (`env A=1 prog`, step208); null: the shell's.
             var environments = new List<string[]>();
+            // A stage's redirects in order (step212); null: none.
+            var redirects = new List<List<Redirection>>();
             // A builtin with output may start the pipeline (`echo x > f`,
             // `ls | PIPECNT`): the shell runs it itself, its text going on as
             // a string per line. `cat FILE` there is READ FILE — the file
@@ -497,25 +546,42 @@ namespace Shell
                 arguments.Add(args);
                 environments.Add(environment);
 
-                foreach (Redirect redirect in stage.Redirects)
+                // The redirects, in order, as in sh (step212): `n> f` / `n>> f`
+                // a WRITE beside the stage, `n>&m` what m has at that point,
+                // `n>&-` nowhere. 1 is the output, 2 the error stream, 3 stdtext;
+                // `3>&1 1>&-` sends stdtext on down the pipeline instead.
+                List<Redirection> stageRedirects = null;
+                var named = new bool[10];
+                named[1] = true;
+                foreach (ClauseElement element in stage.Elements)
                 {
-                    bool append = redirect.Direction == RedirectDirection.Append;
-                    if (k != end - 1 || (redirect.Direction != RedirectDirection.Out && !append) || stage.Redirects.Count > 1)
+                    if (element.Role != ClauseElementRole.Redirect) continue;
+                    if (!ParseRedirect(element.Raw, out int number, out bool append, out int copyOf))
                     {
-                        Write("sh: only `> file` and `>> file` at the end of a pipeline are supported\n");
+                        Write("sh: only `n> file`, `n>> file`, `n>&m` and `n>&-` are supported (n 1 to 9; 1 when left out)\n");
                         return 2;
                     }
-                    if (_output != null)
+                    if (builtinFirst && k == first && (number != 1 || copyOf > 0))
                     {
-                        Write("sh: the output is already a pipe; `>` cannot redirect it\n");
+                        Write("sh: `");
+                        Write(element.Raw);
+                        Write("` is for programs; ");
+                        Write(verb);
+                        Write(" has only its output, for `> file` or `>&-`\n");
                         return 2;
                     }
-                    var write = new List<string> { Target(redirect, stage) };
-                    if (append) write.Add("--append");
-                    verbs.Add("WRITE");
-                    arguments.Add(write);
-                    environments.Add(null);
+                    if (copyOf > 0 && !named[copyOf])
+                    {
+                        Write("sh: `" + element.Raw + "`: " + copyOf.ToString()
+                              + " is not redirected before it on this stage\n");
+                        return 2;
+                    }
+                    named[number] = true;
+                    string target = copyOf >= 0 ? null : Resolve(Expand(RedirectTarget(element.Raw), true));
+                    stageRedirects ??= new List<Redirection>();
+                    stageRedirects.Add(new Redirection { Number = number, Target = target, Append = append, CopyOf = copyOf });
                 }
+                redirects.Add(stageRedirects);
             }
 
             int count = verbs.Count;
@@ -524,6 +590,10 @@ namespace Shell
 
             var started = new List<Process>();
             var names = new List<string>();
+            // The WRITEs beside the stages: waited for after them, so the code
+            // reported is a stage's, not the echo of its break in a side file.
+            var sideStarted = new List<Process>();
+            var sidePairs = new List<SharpOS.Std.Pipes.PipePair>();
             int code = 0;
             string failedStage = null;
             bool failed = false;
@@ -537,15 +607,21 @@ namespace Shell
                     failed = true;
                     break;
                 }
+                // What the shell made for this stage and the stage did not
+                // take: closed after the start, or the pipes would stay open.
+                // (A pair's own ends close below with the pair.)
+                var owned = new List<PipeWriteEnd>();
                 try
                 {
+                    var ends = new List<(int, PipeWriteEnd)>();
+                    PipeWriteEnd output = HandOut(redirects[k], Natural(k, count, pairs, owned),
+                                                  sideStarted, sidePairs, owned, ends);
                     started.Add(Process.Start(path, arguments[k].ToArray(),
                         k > 0 ? pairs[k - 1].ReadEnd : TakeInput(),
-                        k < count - 1 ? pairs[k].WriteEnd : TakeOutput(),
-                        environments[k]));
+                        output, environments[k], ends.Count > 0 ? ends.ToArray() : null));
                     names.Add(verbs[k]);
                 }
-                catch (System.InvalidOperationException e)
+                catch (System.Exception e) when (e is System.InvalidOperationException || e is SharpOS.Std.Pipes.PipeException)
                 {
                     Write("sh: ");
                     Write(e.Message);
@@ -554,13 +630,36 @@ namespace Shell
                     failedStage = verbs[k];
                     failed = true;
                 }
+                finally
+                {
+                    foreach (PipeWriteEnd made in owned) made.Dispose();
+                }
             }
 
             // The builtin runs once the stages after it are up: its text has
             // somewhere to go, however much of it there is.
             int builtinCode = 0;
             if (builtinFirst && !failed)
-                builtinCode = RunBuiltinStage(verbs[0], arguments[0], count > 1 ? pairs[0].WriteEnd : TakeOutput());
+            {
+                var owned = new List<PipeWriteEnd>();
+                try
+                {
+                    PipeWriteEnd output = HandOut(redirects[0], Natural(0, count, pairs, owned),
+                                                  sideStarted, sidePairs, owned, new List<(int, PipeWriteEnd)>());
+                    builtinCode = RunBuiltinStage(verbs[0], arguments[0], output);
+                }
+                catch (System.Exception e) when (e is System.InvalidOperationException || e is SharpOS.Std.Pipes.PipeException)
+                {
+                    Write("sh: ");
+                    Write(e.Message);
+                    Write("\n");
+                    builtinCode = 126;
+                }
+                finally
+                {
+                    foreach (PipeWriteEnd made in owned) made.Dispose();
+                }
+            }
 
             // Whatever was not handed over: the stages that did start see the end.
             for (int k = 0; k < pairs.Length; k++)
@@ -568,10 +667,16 @@ namespace Shell
                 pairs[k].WriteEnd.Dispose();
                 pairs[k].ReadEnd.Dispose();
             }
+            foreach (SharpOS.Std.Pipes.PipePair pair in sidePairs)
+            {
+                pair.WriteEnd.Dispose();
+                pair.ReadEnd.Dispose();
+            }
+            // The input goes to one command. The output stays the shell's: each
+            // command got a copy (TakeOutput), and the reader's stream ends when
+            // the shell does.
             _input?.Dispose();
-            _output?.Dispose();
             _input = null;
-            _output = null;
 
             int offset = builtinFirst ? 1 : 0;
             var codes = new int[started.Count + offset];
@@ -586,6 +691,16 @@ namespace Shell
                 codes[k + offset] = started[k].ExitCode;
                 started[k].Dispose();
             }
+            // A WRITE of `> file` that failed (it says why itself) is the
+            // pipeline's code only when no stage failed: its stage's 141 is
+            // the echo of it, not the cause.
+            int sideCode = 0;
+            foreach (Process side in sideStarted)
+            {
+                side.WaitForExit();
+                if (sideCode == 0 && side.ExitCode != 0 && side.ExitCode != QuietExitCode) sideCode = side.ExitCode;
+                side.Dispose();
+            }
 
             if (!failed)
             {
@@ -597,6 +712,12 @@ namespace Shell
                         chosen = k;
                         break;
                     }
+                }
+                if ((codes[chosen] == 0 || codes[chosen] == QuietExitCode) && sideCode != 0)
+                {
+                    codes = new[] { sideCode };
+                    names = new List<string> { "WRITE" };
+                    chosen = 0;
                 }
                 code = codes[chosen];
                 if (code != 0)
@@ -641,7 +762,72 @@ namespace Shell
             return code;
         }
 
-        // The shell's own ends, each handed to one stage once.
+        // Where stage k writes when nothing is redirected: the pipe to the next
+        // stage, or the shell's own output — a copy, the shell's to close if
+        // the stage does not take it; null: the screen.
+        private PipeWriteEnd Natural(int k, int count, SharpOS.Std.Pipes.PipePair[] pairs, List<PipeWriteEnd> owned)
+        {
+            if (k < count - 1) return pairs[k].WriteEnd;
+            PipeWriteEnd output = TakeOutput();
+            if (output != null) owned.Add(output);
+            return output;
+        }
+
+        /// <summary>
+        /// The ends a stage's redirects leave it with (step212), as sh does it:
+        /// 1 starts as <paramref name="output"/>; `n> file` starts a WRITE and
+        /// n gets its pipe, `n>&amp;m` gets what m has then, `n>&amp;-` an end
+        /// to nowhere. The new 1 is returned (null: the screen); the numbers
+        /// from 2 go to <paramref name="ends"/> — not those left on the screen,
+        /// which stay where they were. An end two numbers share goes once, the
+        /// later number getting a copy.
+        /// </summary>
+        private PipeWriteEnd HandOut(List<Redirection> redirects, PipeWriteEnd output, List<Process> sideStarted,
+                                     List<SharpOS.Std.Pipes.PipePair> sidePairs, List<PipeWriteEnd> owned,
+                                     List<(int, PipeWriteEnd)> ends)
+        {
+            var at = new PipeWriteEnd[10];
+            at[1] = output;
+            if (redirects != null)
+                foreach (Redirection r in redirects)
+                {
+                    if (r.CopyOf > 0)
+                    {
+                        at[r.Number] = at[r.CopyOf];
+                    }
+                    else if (r.CopyOf == Discard)
+                    {
+                        at[r.Number] = SharpOS.Std.Pipes.Pipe.Nowhere();
+                        owned.Add(at[r.Number]);
+                    }
+                    else
+                    {
+                        string writePath = ProgramPath("WRITE", out _)
+                                           ?? throw new System.InvalidOperationException("no WRITE on PATH for `> file`");
+                        SharpOS.Std.Pipes.PipePair pair = SharpOS.Std.Pipes.Pipe.Create();
+                        sidePairs.Add(pair);
+                        string[] writeArgs = r.Append ? new[] { r.Target, "--append" } : new[] { r.Target };
+                        sideStarted.Add(Process.Start(writePath, writeArgs, pair.ReadEnd, null, null));
+                        at[r.Number] = pair.WriteEnd;
+                    }
+                }
+            for (int n = 2; n < at.Length; n++)
+            {
+                if (at[n] == null) continue;
+                PipeWriteEnd end = at[n];
+                for (int m = 1; m < n; m++)
+                    if (at[m] == at[n])
+                    {
+                        end = at[n].Duplicate();
+                        owned.Add(end);
+                        break;
+                    }
+                ends.Add((n, end));
+            }
+            return at[1];
+        }
+
+        // The shell's own input, handed to one stage once.
         private PipeReadEnd TakeInput()
         {
             PipeReadEnd end = _input;
@@ -649,11 +835,22 @@ namespace Shell
             return end;
         }
 
+        // The shell's own output, a copy for each command (step212): one
+        // stream for all of them, ending when the shell does. A kernel
+        // without copies gets the end itself, once, as before.
         private PipeWriteEnd TakeOutput()
         {
-            PipeWriteEnd end = _output;
-            _output = null;
-            return end;
+            if (_output == null) return null;
+            try
+            {
+                return _output.Duplicate();
+            }
+            catch (SharpOS.Std.Pipes.PipeException)
+            {
+                PipeWriteEnd end = _output;
+                _output = null;
+                return end;
+            }
         }
 
         // The failed stage's name to whoever asked (sh -c --report NAME).
@@ -713,14 +910,6 @@ namespace Shell
             return verb;
         }
 
-        // `> $HOME/out.txt`: the target expanded, from the working directory.
-        private string Target(Redirect redirect, Clause clause)
-        {
-            foreach (ClauseElement element in clause.Elements)
-                if (element.Role == ClauseElementRole.Redirect)
-                    return Resolve(Expand(RedirectTarget(element.Raw), true));
-            return redirect.Target;
-        }
 
         // ---- step208: environment builtins ----
 
@@ -1413,7 +1602,9 @@ namespace Shell
             Write("programs: NAME.EXE by its name, looked for along PATH (" + (System.Environment.GetEnvironmentVariable("PATH") ?? "") + ")\n");
             Write("expect CODE COMMAND — run it, succeed only on that exit code\n");
             Write("a path runs too: .EXE as a program, .DLL on the hosted runtime\n");
-            Write("operators: && || ; a | b | c ; > file and >> file at the end of a pipeline\n");
+            Write("operators: && || ; a | b | c ; n> file, n>> file, n>&m, n>&- on any program, in order:\n");
+            Write("           1 the output (left out: > file), 2 errors, 3 stdtext (reports, panels);\n");
+            Write("           sysinfo 3>&1 1>&- | less — the panel down the pipe, the data nowhere\n");
             Write("not here: shell variables (x=1), $(...), loops, if, functions, X=1 prog\n");
             Write("keys: Up/Down history, Tab completes, Home/End, Ctrl+A/E/U/K/W, Ctrl+L clears,\n");
             Write("      Ctrl+C drops the line, Ctrl+D on an empty line leaves\n");

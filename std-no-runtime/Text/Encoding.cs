@@ -21,7 +21,7 @@
 
 namespace System.Text
 {
-    public abstract class Encoding
+    public abstract partial class Encoding
     {
         public static Encoding ASCII => new ASCIIEncoding();
         public static Encoding Latin1 => new Latin1Encoding();

@@ -145,6 +145,113 @@ namespace System.Threading
 
         public static long Read(ref long location) => CompareExchange(ref location, 0, 0);
 
+        // And / Or (BCL .NET 5+, the unsigned and 64-bit forms .NET 8+): atomic bitwise
+        // update, returning the ORIGINAL value, as upstream. Same compare-and-swap loop
+        // the BCL itself uses where no single instruction returns the old value.
+        public static int And(ref int location1, int value)
+        {
+            int current = location1;
+            while (true)
+            {
+                int newValue = current & value;
+                int oldValue = CompareExchange(ref location1, newValue, current);
+                if (oldValue == current)
+                    return oldValue;
+                current = oldValue;
+            }
+        }
+
+        public static uint And(ref uint location1, uint value)
+        {
+            uint current = location1;
+            while (true)
+            {
+                uint newValue = current & value;
+                uint oldValue = CompareExchange(ref location1, newValue, current);
+                if (oldValue == current)
+                    return oldValue;
+                current = oldValue;
+            }
+        }
+
+        public static long And(ref long location1, long value)
+        {
+            long current = location1;
+            while (true)
+            {
+                long newValue = current & value;
+                long oldValue = CompareExchange(ref location1, newValue, current);
+                if (oldValue == current)
+                    return oldValue;
+                current = oldValue;
+            }
+        }
+
+        public static ulong And(ref ulong location1, ulong value)
+        {
+            ulong current = location1;
+            while (true)
+            {
+                ulong newValue = current & value;
+                ulong oldValue = CompareExchange(ref location1, newValue, current);
+                if (oldValue == current)
+                    return oldValue;
+                current = oldValue;
+            }
+        }
+
+        public static int Or(ref int location1, int value)
+        {
+            int current = location1;
+            while (true)
+            {
+                int newValue = current | value;
+                int oldValue = CompareExchange(ref location1, newValue, current);
+                if (oldValue == current)
+                    return oldValue;
+                current = oldValue;
+            }
+        }
+
+        public static uint Or(ref uint location1, uint value)
+        {
+            uint current = location1;
+            while (true)
+            {
+                uint newValue = current | value;
+                uint oldValue = CompareExchange(ref location1, newValue, current);
+                if (oldValue == current)
+                    return oldValue;
+                current = oldValue;
+            }
+        }
+
+        public static long Or(ref long location1, long value)
+        {
+            long current = location1;
+            while (true)
+            {
+                long newValue = current | value;
+                long oldValue = CompareExchange(ref location1, newValue, current);
+                if (oldValue == current)
+                    return oldValue;
+                current = oldValue;
+            }
+        }
+
+        public static ulong Or(ref ulong location1, ulong value)
+        {
+            ulong current = location1;
+            while (true)
+            {
+                ulong newValue = current | value;
+                ulong oldValue = CompareExchange(ref location1, newValue, current);
+                if (oldValue == current)
+                    return oldValue;
+                current = oldValue;
+            }
+        }
+
         // A real mfence once a tier installs one. On one core this matters
         // less than it will under SMP, but it is no longer nothing: the
         // compiler reorders too, and a barrier that expands to nothing gives

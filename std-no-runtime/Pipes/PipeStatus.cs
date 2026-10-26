@@ -92,5 +92,7 @@ namespace SharpOS.Std.Pipes
         DropOldest = 0,
         /// <summary>The new message goes.</summary>
         DropNewest = 1,
+        /// <summary>Nothing is queued: every message goes, and a writer never waits (step212, `1>&amp;-`).</summary>
+        Discard = 2,
     }
 }

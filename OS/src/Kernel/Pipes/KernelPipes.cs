@@ -55,8 +55,9 @@ namespace OS.Kernel.Pipes
             public PipeOverflow Overflow;
             public int WriterEnd;           // end index, -1 when not attached yet
             public int ReaderEnd;
-            public bool WriterGone;          // closed or ended
-            public bool WriterBroke;         // ended without Close
+            public int Writers;              // open writing ends: one, more with Duplicate (step212)
+            public bool WriterGone;          // the last writer closed or ended
+            public bool WriterBroke;         // a writer ended without Close
             public bool ReaderGone;
             public ulong[] Blocks;
             public ulong[] Lengths;
@@ -125,6 +126,7 @@ namespace OS.Kernel.Pipes
                 }
                 p.WriterEnd = w;
                 p.ReaderEnd = r;
+                p.Writers = 1;
                 s_livePipes++;
                 writer = w + 1;
                 reader = r + 1;
@@ -224,6 +226,17 @@ namespace OS.Kernel.Pipes
                 if (!TryEnd(holder, handle, (PipeRole)0, out Pipe p)) return PipeStatus.BadHandle;
                 if (s_ends[handle - 1].Role == PipeRole.Writer)
                 {
+                    // A copy of a writer (step212) writes the pipe's type: one
+                    // type a pipe, whoever of the copies declared it first.
+                    if (p.Writers > 1 && p.Schema != null)
+                    {
+                        error = TypeCheck.Compare(p.Schema, p.RootKey, schema, rootKey);
+                        if (error != null)
+                        {
+                            error = "a pipe has one type, and another writer of this one declared it first: " + error;
+                            return PipeStatus.TypeMismatch;
+                        }
+                    }
                     // Never refused: a reader that declared another type is
                     // told at its next receive (step196).
                     if (p.ReaderSchema != null)
@@ -278,6 +291,31 @@ namespace OS.Kernel.Pipes
             }
         }
 
+        /// <summary>
+        /// Another handle on a writing end, the same holder's (step212): what
+        /// `2>&amp;1` hands a stage, and a shell's own output across its
+        /// commands. The stream ends when the last copy closes, and is broken
+        /// if any copy's holder failed.
+        /// </summary>
+        public static PipeStatus Duplicate(uint holder, int handle, out int copy)
+        {
+            copy = 0;
+            Preemption.Suppress();
+            try
+            {
+                if (!TryEnd(holder, handle, PipeRole.Writer, out Pipe p)) return PipeStatus.BadHandle;
+                int e = NewEnd(p, holder, PipeRole.Writer);
+                if (e < 0) return PipeStatus.NoMemory;
+                p.Writers++;
+                copy = e + 1;
+                return PipeStatus.Ok;
+            }
+            finally
+            {
+                Preemption.Allow();
+            }
+        }
+
         /// <summary>The description the writer declared; null when none yet.</summary>
         public static byte[] SchemaOf(uint holder, int handle, out ulong rootKey)
         {
@@ -310,6 +348,15 @@ namespace OS.Kernel.Pipes
                 if (!TryEnd(holder, handle, PipeRole.Writer, out Pipe p)) return PipeStatus.BadHandle;
                 if (ExchangeHeap.OwnerOf(block) != holder || ExchangeHeap.SizeOf(block) < length || length == 0)
                     return PipeStatus.BadBlock;
+
+                // A pipe to nowhere (step212): the message goes, whoever reads.
+                if (p.Overflow == PipeOverflow.Discard)
+                {
+                    ExchangeHeap.Free(block);
+                    p.Sent++;
+                    p.Lost++;
+                    return PipeStatus.Ok;
+                }
 
                 while (true)
                 {
@@ -578,8 +625,16 @@ namespace OS.Kernel.Pipes
 
             if (role == PipeRole.Writer)
             {
+                // A copy that failed breaks the stream for good; the stream
+                // ends when the last copy closes (step212).
+                if (broke) p.WriterBroke = true;
+                if (--p.Writers > 0)
+                {
+                    if (p.WriterEnd == index) p.WriterEnd = AnyWriter(p);
+                    Bump(p);
+                    return;
+                }
                 p.WriterGone = true;
-                p.WriterBroke = broke;
                 p.WriterEnd = -2;
             }
             else
@@ -604,6 +659,14 @@ namespace OS.Kernel.Pipes
                 ReleasePipe(p);
             }
             Bump(p);
+        }
+
+        // An open writing end of the pipe besides the one just closed.
+        private static int AnyWriter(Pipe p)
+        {
+            for (int i = 0; i < s_ends.Length; i++)
+                if (s_ends[i].Open && s_ends[i].Pipe == p && s_ends[i].Role == PipeRole.Writer) return i;
+            return -2;
         }
 
         private static void ReleasePipe(Pipe p)
@@ -651,6 +714,7 @@ namespace OS.Kernel.Pipes
             if (role == PipeRole.Writer)
             {
                 p.WriterEnd = end;
+                p.Writers = 1;
                 p.Schema = Copy(schema);
                 p.RootKey = rootKey;
             }

@@ -57,6 +57,8 @@ namespace SharpOS.Std.Pipes
         /// <summary>The kernel is started by nobody: it has no standard ends.</summary>
         public static int StandardEnd(uint role) => 0;
 
+        public static PipeStatus Duplicate(int handle, out int copy) => KernelPipes.Duplicate(Holder, handle, out copy);
+
         /// <summary>A line on the screen: where a message goes when there is no output to send it to.</summary>
         public static void Print(string line) => OS.Hal.Console.WriteLine(line);
 

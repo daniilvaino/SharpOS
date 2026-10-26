@@ -71,12 +71,12 @@ namespace PipeApps
             }
             catch (FileNotFoundException)
             {
-                Console.WriteLine("READ: no such file: " + path);
+                Console.Error.WriteLine("READ: no such file: " + path);
                 return 1;
             }
             catch (IOException e)
             {
-                Console.WriteLine("READ: " + e.Message);
+                Console.Error.WriteLine("READ: " + e.Message);
                 return 1;
             }
 
@@ -96,14 +96,14 @@ namespace PipeApps
                         var file = new ExternalPipeReader(Take);
                         if (!file.ReadHeader())
                         {
-                            Console.WriteLine("READ: " + path + ": " + file.Complaint);
+                            Console.Error.WriteLine("READ: " + path + ": " + file.Complaint);
                             return 1;
                         }
                         return ExternalPipe.Replay(file, "READ: " + path);
                     }
                     if (externalpipe)
                     {
-                        Console.WriteLine("READ: " + path + ": not an externalpipe (no signature at its start)");
+                        Console.Error.WriteLine("READ: " + path + ": not an externalpipe (no signature at its start)");
                         return 1;
                     }
                 }
@@ -156,7 +156,7 @@ namespace PipeApps
 
         private static int Usage()
         {
-            Console.WriteLine("usage: READ file [--chunk N] [--bytes | --externalpipe]");
+            Console.Error.WriteLine("usage: READ file [--chunk N] [--bytes | --externalpipe]");
             return 2;
         }
     }

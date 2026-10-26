@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -196,15 +196,7 @@ namespace System
         public int CompareTo(int other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is int v ? CompareTo(v) : 1;
 
-        public static int Parse(string s)
-        {
-            if (!SharpOS.Std.NoRuntime.NumberParsing.TryParseInt32(s, out int value))
-                throw new FormatException("Input string was not in a correct format.");
-            return value;
-        }
-
-        public static bool TryParse(string s, out int result)
-            => SharpOS.Std.NoRuntime.NumberParsing.TryParseInt32(s, out result);
+        // Parse / TryParse: std-no-runtime/Number/Primitives.Parsing.Integer.cs (BCL port).
     }
 
     public partial struct UInt32 : IEquatable<uint>, IComparable<uint>, IComparable
@@ -232,15 +224,7 @@ namespace System
         public int CompareTo(long other) => _value < other ? -1 : (_value > other ? 1 : 0);
         public int CompareTo(object obj) => obj is long v ? CompareTo(v) : 1;
 
-        public static long Parse(string s)
-        {
-            if (!SharpOS.Std.NoRuntime.NumberParsing.TryParseInt64(s, out long value))
-                throw new FormatException("Input string was not in a correct format.");
-            return value;
-        }
-
-        public static bool TryParse(string s, out long result)
-            => SharpOS.Std.NoRuntime.NumberParsing.TryParseInt64(s, out result);
+        // Parse / TryParse: std-no-runtime/Number/Primitives.Parsing.Integer.cs (BCL port).
     }
 
     public partial struct UInt64 : IEquatable<ulong>, IComparable<ulong>, IComparable
@@ -388,7 +372,7 @@ namespace System
     }
 
     public abstract class ValueType { }
-    public abstract class Enum : ValueType
+    public abstract partial class Enum : ValueType
     {
         /// <summary>
         /// Whether every bit set in <paramref name="flag"/> is also set here.
@@ -646,7 +630,7 @@ namespace System
 
     namespace Runtime.CompilerServices
     {
-        public class RuntimeHelpers
+        public partial class RuntimeHelpers
         {
             public static unsafe int OffsetToStringData => sizeof(IntPtr) + sizeof(int);
 

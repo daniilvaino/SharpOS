@@ -48,7 +48,7 @@ namespace PipeApps
         {
             if (options.Length > 0)
             {
-                Console.WriteLine("CONVERT --from " + Format + ": unknown option " + options[0]);
+                Console.Error.WriteLine("CONVERT --from " + Format + ": unknown option " + options[0]);
                 return 2;
             }
             using (_input = Pipe.ReadBytes())
@@ -60,7 +60,7 @@ namespace PipeApps
                 }
                 catch (FormatException e)
                 {
-                    Console.WriteLine("CONVERT --from " + Format + ": " + e.Message);
+                    Console.Error.WriteLine("CONVERT --from " + Format + ": " + e.Message);
                     return 1;
                 }
             }
@@ -248,7 +248,7 @@ namespace PipeApps
             if (tag == 0 && state == CborReaderState.TextString)
             {
                 string text = reader.ReadTextString();
-                return DateTime.TryParse(text, out DateTime date) ? date : (object)text;
+                return DateTime.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime date) ? date : (object)text;
             }
             if (tag == 1 && (state == CborReaderState.UnsignedInteger || state == CborReaderState.NegativeInteger))
                 return new DateTime(UnixEpochTicks + reader.ReadInt64() * TimeSpan.TicksPerSecond, DateTimeKind.Utc);
