@@ -96,7 +96,7 @@ namespace Launcher
             Application.Run(top);
             Application.Shutdown();
 
-            AppHost.WriteString("[launcher] exited\n");
+            Console.Write("[launcher] exited\n");
             return 0;
         }
 
@@ -115,7 +115,7 @@ namespace Launcher
                     new MenuItem("_Run", "Start the selected application", Activate),
                     new MenuItem("Re_fresh", "Read the volume again", LoadRoot),
                     null,
-                    new MenuItem("_Quit", "Leave the launcher", () => Application.RequestStop()),
+                    new MenuItem("_Quit", "Leave the launcher", ConfirmQuit),
                 }),
                 new MenuBarItem("_Help", new MenuItem[]
                 {
@@ -251,6 +251,15 @@ namespace Launcher
             return body;
         }
 
+        // The launcher ending powers the machine off: a stray Esc did that
+        // without a word (step213), so it asks first.
+        private static void ConfirmQuit()
+        {
+            int answer = MessageBox.Query("Quit", "Leave the launcher and power the machine off?", "Stay", "Power off");
+            if (answer == 1) Application.RequestStop();
+            else Repaint();
+        }
+
         private static StatusBar BuildStatusBar()
         {
             s_status = new StatusItem(Key.Null, "Ready", null);
@@ -260,7 +269,7 @@ namespace Launcher
                 new StatusItem(Key.Enter, "~Enter~ Open/Run", Activate),
                 new StatusItem(Key.Backspace, "~Backspace~ Up", GoUp),
                 new StatusItem(Key.F5, "~F5~ Refresh", LoadRoot),
-                new StatusItem(Key.Esc, "~Esc~ Quit", () => Application.RequestStop()),
+                new StatusItem(Key.Esc, "~Esc~ Quit", ConfirmQuit),
                 s_status,
             });
         }

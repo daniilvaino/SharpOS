@@ -2,6 +2,8 @@
 using OS.Hal.Timer;
 using OS.Kernel;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Threading
 {
     // Round-robin scheduler, single CPU. Threads give up the CPU with

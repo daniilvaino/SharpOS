@@ -1,3 +1,5 @@
+#pragma warning disable CS0649 // filled by the other side of the ABI, never from C#
+
 namespace OS.Boot
 {
     // Phase B#2 sub-step 1 — capture the GOP framebuffer while UEFI Boot

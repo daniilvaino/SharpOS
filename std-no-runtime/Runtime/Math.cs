@@ -26,21 +26,19 @@ namespace System
         //
         // NaN follows the BCL: it wins, because a comparison against NaN is
         // false either way and picking the other operand would quietly turn a
-        // bad number into a plausible one. Spotted by self-comparison — the one
-        // value that is not equal to itself — since float.IsNaN does not exist
-        // in this environment.
+        // bad number into a plausible one.
         public static float Min(float a, float b)
-            => a != a ? a : b != b ? b : (a < b ? a : b);
+            => float.IsNaN(a) ? a : float.IsNaN(b) ? b : (a < b ? a : b);
 
         public static double Min(double a, double b)
-            => a != a ? a : b != b ? b : (a < b ? a : b);
+            => double.IsNaN(a) ? a : double.IsNaN(b) ? b : (a < b ? a : b);
 
         // ---- Max ----
         public static float  Max(float a, float b)
-            => a != a ? a : b != b ? b : (a > b ? a : b);
+            => float.IsNaN(a) ? a : float.IsNaN(b) ? b : (a > b ? a : b);
 
         public static double Max(double a, double b)
-            => a != a ? a : b != b ? b : (a > b ? a : b);
+            => double.IsNaN(a) ? a : double.IsNaN(b) ? b : (a > b ? a : b);
 
         public static byte   Max(byte a, byte b)     => a > b ? a : b;
         public static sbyte  Max(sbyte a, sbyte b)   => a > b ? a : b;

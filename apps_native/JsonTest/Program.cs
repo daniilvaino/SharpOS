@@ -86,7 +86,7 @@ namespace JsonCheckApp
             Nodes();
 
             Console.WriteLine("[jsoncheck] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
-            return s_passed;
+            return s_failed;
         }
 
         private static void ReadWhole(byte[] sample)

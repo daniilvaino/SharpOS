@@ -34,6 +34,8 @@
 using System;
 using SharpOS.Std.NoRuntime;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace Internal.Runtime.CompilerHelpers
 {
     public static unsafe class ArrayHelpers

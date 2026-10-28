@@ -20,7 +20,7 @@ namespace DoomApp
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            AppHost.WriteString("doom: start\n");
+            Console.Write("doom: start\n");
 
             try
             {
@@ -28,10 +28,10 @@ namespace DoomApp
 
                 var configPath = ConfigUtilities.GetConfigPath();
                 var config = new Config(configPath);
-                AppHost.WriteString("doom: config ok\n");
+                Console.Write("doom: config ok\n");
 
                 var content = new GameContent(args);
-                AppHost.WriteString("doom: content ok (WAD parsed)\n");
+                Console.Write("doom: content ok (WAD parsed)\n");
 
                 // GOP framebuffer -> real video (step143); headless boots keep
                 // NullVideo (video == null) and stay sim-only.
@@ -41,21 +41,21 @@ namespace DoomApp
                         out uint fbStride, out uint fbFormat))
                 {
                     video = new GopVideo(config, content, fbBase, fbWidth, fbHeight, fbStride, fbFormat);
-                    AppHost.WriteString("doom: video ");
-                    AppHost.WriteUInt(fbWidth);
-                    AppHost.WriteChar('x');
-                    AppHost.WriteUInt(fbHeight);
-                    AppHost.WriteString(fbFormat == 0 ? " RGBX\n" : " BGRX\n");
+                    Console.Write("doom: video ");
+                    Console.Write(fbWidth);
+                    Console.Write('x');
+                    Console.Write(fbHeight);
+                    Console.Write(fbFormat == 0 ? " RGBX\n" : " BGRX\n");
                 }
                 else
                 {
-                    AppHost.WriteString("doom: no framebuffer, headless\n");
+                    Console.Write("doom: no framebuffer, headless\n");
                 }
 
                 var input = new SharpUserInput(config);
 
                 var doom = new Doom(args, config, content, video, null, null, input);
-                AppHost.WriteString("doom: core up, running\n");
+                Console.Write("doom: core up, running\n");
 
                 // 35 Hz pacing off the HPET (step143). Without a time source
                 // (headless/pre-EBS) the loop runs unpaced, as before. The
@@ -100,21 +100,21 @@ namespace DoomApp
                     }
                 }
 
-                AppHost.WriteString("doom: quit from menu\n");
+                Console.Write("doom: quit from menu\n");
                 return 42;
             }
             catch (Exception e)
             {
                 // No GetType() on the app std yet — message + stack trace
                 // (populated by the kernel-shared EH engine, step140).
-                AppHost.WriteString("doom: EXCEPTION: ");
-                AppHost.WriteString(e.Message ?? "(no message)");
-                AppHost.WriteChar('\n');
+                Console.Write("doom: EXCEPTION: ");
+                Console.Write(e.Message ?? "(no message)");
+                Console.Write('\n');
                 string trace = e.StackTrace;
                 if (trace != null)
                 {
-                    AppHost.WriteString(trace);
-                    AppHost.WriteChar('\n');
+                    Console.Write(trace);
+                    Console.Write('\n');
                 }
                 return 1;
             }

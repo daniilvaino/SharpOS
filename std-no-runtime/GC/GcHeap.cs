@@ -18,6 +18,8 @@
 // exists and still derives the list from the heap itself, which is the way
 // back if the list is ever doubted.
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace SharpOS.Std.NoRuntime
 {
     internal static unsafe class GcHeap
@@ -45,7 +47,9 @@ namespace SharpOS.Std.NoRuntime
         /// launch's garbage until a start found no memory, with no collection
         /// asked for on that path.
         /// </summary>
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         public static bool CollectBeforeGrowing;
+        #pragma warning restore CS0649
 
         private static uint s_grownSinceCollect;
         private static bool s_growAfterCollect;
@@ -298,7 +302,9 @@ namespace SharpOS.Std.NoRuntime
         // triggers could not run there anyway (pipe_plan.md "Подготовить под
         // трубы", item 6). Counted, not refused — refusing from a handler is a
         // panic, and the count is what says whether any handler does it.
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         public static delegate*<bool> s_allocationAllowed;
+        #pragma warning restore CS0649
         public static ulong AllocationsWhereForbidden;
         public static uint LastForbiddenSize;
 
@@ -805,9 +811,13 @@ namespace SharpOS.Std.NoRuntime
         // hook, so it stays on Allocate.
 
         /// <summary>The host's preemption depth: the fast path's section. Null: no fast path.</summary>
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         public static uint* s_preemptionDepth;
+        #pragma warning restore CS0649
         /// <summary>The host's deferred-tick flag: set, leaving the section goes through <see cref="s_leaveCritical"/>.</summary>
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         public static byte* s_preemptionPending;
+        #pragma warning restore CS0649
 
         /// <summary>
         /// An object of <paramref name="size"/> bytes with its method table and,

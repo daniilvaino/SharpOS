@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using OS.Boot.EH;
 using OS.Hal;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.PAL.SharpOSHost
 {
     // Phase 2 + 3 of SEH unwind: RtlLookupFunctionEntry + RtlVirtualUnwind.
@@ -177,7 +179,9 @@ namespace OS.PAL.SharpOSHost
         // max (JIT code heaps are few); 4 ulongs/entry: base,len,cb,ctx.
         private const int DynMax = 64;
         private struct DynTab { public fixed ulong S[DynMax * 4]; }
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static DynTab s_dyn;
+        #pragma warning restore CS0169
         private static int s_dynCount;
 
         [RuntimeExport("SharpOSHost_RegisterFunctionTableCallback")]
@@ -253,7 +257,9 @@ namespace OS.PAL.SharpOSHost
         // static + fixed buffer — no managed alloc, no cctor (CCR trap).
         private const int StatMax = 64;
         private struct StatTab { public fixed ulong S[StatMax * 3]; }
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static StatTab s_stat;
+        #pragma warning restore CS0169
         private static int s_statCount;
 
         [RuntimeExport("SharpOSHost_RegisterStaticFunctionTable")]
@@ -322,7 +328,9 @@ namespace OS.PAL.SharpOSHost
         // duplicate registrations from fork-side hooks (defense in depth).
         private const int StubMax = 1024;
         private struct StubTab { public fixed ulong S[StubMax * 2]; }
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static StubTab s_stubs;
+        #pragma warning restore CS0169
         private static int s_stubCount;
 
         // Synthetic leaf metadata. UNWIND_INFO is 4 zero bytes
@@ -335,7 +343,9 @@ namespace OS.PAL.SharpOSHost
         // unwindInfo = imageBase + UnwindInfoAddress = &s_leafUw.
         private struct LeafUw
         {
+            #pragma warning disable CS0649 // filled by the other side of the ABI, never from C#
             public byte B0, B1, B2, B3;
+            #pragma warning restore CS0649
         }
         private static LeafUw s_leafUw;
         private static RuntimeFunction s_leafRf;

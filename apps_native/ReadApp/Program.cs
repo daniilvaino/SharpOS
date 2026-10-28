@@ -6,7 +6,7 @@ using SharpOS.Std.Pipes;
 
 namespace PipeApps
 {
-    // READ file [--chunk N] [--bytes | --externalpipe] — a file to the
+    // READ file [--chunk N] [--bytes | --externalpipe | --lines] — a file to the
     // standard output (step197, step206; the explicit modes step208).
     //
     // Without a mode READ looks at the file's first bytes. An externalpipe
@@ -19,7 +19,8 @@ namespace PipeApps
     // The modes say it instead of the guess: --bytes — bytes, whatever the
     // file is (an externalpipe too, for CONVERT --from externalpipe to take);
     // --externalpipe — messages, and a file that is not one is refused
-    // (exit 1, nothing out) rather than sent on as bytes.
+    // (exit 1, nothing out) rather than sent on as bytes; --lines — UTF-8
+    // text, a string a line (step213): `READ log --lines | KQL 'take 45'`.
     //
     // On the screen, when the output was handed to nobody, a text file shows
     // as text. No file: a message and exit code 1.
@@ -51,7 +52,7 @@ namespace PipeApps
         {
             string path = null;
             int chunk = 64 * 1024;
-            bool bytes = false, externalpipe = false;
+            bool bytes = false, externalpipe = false, lines = false;
             for (int i = 0; i < args.Length; i++)
             {
                 if (args[i] == "--chunk" && i + 1 < args.Length)
@@ -60,10 +61,17 @@ namespace PipeApps
                 }
                 else if (args[i] == "--bytes") bytes = true;
                 else if (args[i] == "--externalpipe") externalpipe = true;
+                else if (args[i] == "--lines") lines = true;
+                else if (args[i] == "--help" || args[i] == "-h" || args[i] == "-?")
+                {
+                    Console.WriteLine(UsageText);
+                    return 0;
+                }
+                else if (args[i].Length > 1 && args[i][0] == '-') return Usage();
                 else if (path == null) path = args[i];
                 else return Usage();
             }
-            if (path == null || (bytes && externalpipe)) return Usage();
+            if (path == null || (bytes ? 1 : 0) + (externalpipe ? 1 : 0) + (lines ? 1 : 0) > 1) return Usage();
 
             try
             {
@@ -82,6 +90,7 @@ namespace PipeApps
 
             using (s_file)
             {
+                if (lines) return Lines(chunk);
                 if (!bytes)
                 {
                     s_head = new byte[ExternalPipe.Signature.Length];
@@ -154,9 +163,61 @@ namespace PipeApps
             return got;
         }
 
+        // --lines (step213): the file as UTF-8 text, a string message a line
+        // (without its \n, a CRLF's \r dropped), read N bytes at a time; a
+        // character cut by a piece's end is finished from the next. A line
+        // longer than 64 Ki characters goes in pieces (PipeTextWriter).
+        private static int Lines(int chunk)
+        {
+            using System.IO.TextWriter output = Pipe.WriteText();
+            var piece = new byte[chunk + 3];
+            int carried = 0;
+            while (true)
+            {
+                int n = Fill(piece, carried, chunk);
+                int length = carried + n;
+                if (length == 0) break;
+                int whole = n == 0 ? length : WholeCharacters(piece, length);
+                output.Write(System.Text.Encoding.UTF8.GetString(piece, 0, whole));
+                carried = length - whole;
+                Array.Copy(piece, whole, piece, 0, carried);
+                if (n == 0) break;
+            }
+            return 0;
+        }
+
+        // How many bytes from the start end on a character boundary: a lead
+        // byte in the last three whose sequence runs past the end stays out.
+        private static int WholeCharacters(byte[] bytes, int length)
+        {
+            for (int back = 1; back <= 3 && back <= length; back++)
+            {
+                byte b = bytes[length - back];
+                if ((b & 0xC0) == 0x80) continue;
+                int need = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
+                return need > back ? length - back : length;
+            }
+            return length;
+        }
+
+        // Up to count bytes into piece from at; fewer only at the file's end.
+        private static int Fill(byte[] piece, int at, int count)
+        {
+            int got = 0;
+            while (got < count)
+            {
+                int n = Take(new Span<byte>(piece, at + got, count - got));
+                if (n == 0) break;
+                got += n;
+            }
+            return got;
+        }
+
+        private const string UsageText = "usage: READ file [--chunk N] [--bytes | --externalpipe | --lines]";
+
         private static int Usage()
         {
-            Console.Error.WriteLine("usage: READ file [--chunk N] [--bytes | --externalpipe]");
+            Console.Error.WriteLine(UsageText);
             return 2;
         }
     }

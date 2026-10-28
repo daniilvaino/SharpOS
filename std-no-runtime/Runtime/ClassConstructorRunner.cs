@@ -121,7 +121,9 @@ namespace System.Runtime.CompilerServices
         /// would wait for is the one it interrupted, or one that cannot run
         /// until the handler returns. Null: always.
         /// </summary>
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         public static unsafe delegate*<bool> s_canWait;
+        #pragma warning restore CS0649
 
         private static unsafe void CheckStaticClassConstruction(
             ref StaticClassConstructionContext context)

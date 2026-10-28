@@ -9,6 +9,8 @@
 // Cuts: no LockRecursionException on overflow; TryEnter(TimeSpan) rounds to
 // whole milliseconds as Monitor.TryEnter takes them.
 
+#pragma warning disable CS9216 // this Lock is built on Monitor, taken on the Lock itself
+
 namespace System.Threading
 {
     public sealed class Lock

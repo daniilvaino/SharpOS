@@ -11,6 +11,8 @@ using OS.TestApp;
 using SharpOS.Std.NoRuntime;
 using HpetTimer = OS.Hal.Timer.Hpet;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Boot
 {
     // Single source of truth for kernel boot ordering. Each phase has

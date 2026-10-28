@@ -1,6 +1,8 @@
 ﻿using OS.Hal;
 using OS.Hal.Usb;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Diagnostics
 {
     // Reports every USB host controller the machine exposes.

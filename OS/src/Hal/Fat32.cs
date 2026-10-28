@@ -630,7 +630,7 @@ namespace OS.Hal
                                 | ((uint)ent[29] << 8)
                                 | ((uint)ent[30] << 16)
                                 | ((uint)ent[31] << 24);
-                        attrs = (ulong)(ent[11] & 0x10) | ((ulong)sz << 32);
+                        attrs = ((ulong)ent[11] & 0x10) | ((ulong)sz << 32);
 
                         // Advance one entry for resume.
                         off += 32;

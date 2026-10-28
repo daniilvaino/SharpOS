@@ -14,7 +14,7 @@ namespace PipeApps
     // the two, the first token says. --from jsonl (FromJsonl, step206) takes
     // the sequence only: a top-level array is an error. An object
     // is an Expando, an array object[], a string string, an integer long
-    // (double when it does not fit), a fraction double, true/false bool,
+    // (ulong past it, double when neither fits), a fraction double, true/false bool,
     // null nothing. An element that is not an object is an error.
     //
     // The parse streams: the input is read in 64 KiB pieces, the reader's
@@ -168,7 +168,11 @@ namespace PipeApps
                     Add(reader.GetString());
                     return;
                 case JsonTokenType.Number:
-                    Add(reader.TryGetInt64(out long whole) ? (object)whole : reader.GetDouble());
+                    // Past long, a ulong before a double: 18446744073709551615
+                    // came back rounded (step213).
+                    Add(reader.TryGetInt64(out long whole) ? (object)whole
+                        : reader.TryGetUInt64(out ulong large) ? (object)large
+                        : reader.GetDouble());
                     return;
                 case JsonTokenType.True:
                     Add(BoolBox.Of(true));

@@ -26,7 +26,9 @@ namespace OS.Kernel.Diagnostics
         private class Payload
         {
             public byte[] Data;
+            #pragma warning disable CS0649 // a test object: its shape is what the test needs, not the field's value
             public object Next;
+            #pragma warning restore CS0649
         }
 
         // Statics are `object` so GcRoots.Register(ref object) accepts them.

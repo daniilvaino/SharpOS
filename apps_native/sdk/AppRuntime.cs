@@ -29,9 +29,9 @@ namespace SharpOS.AppSdk
             if (s_services->AbiVersion != AppServiceTable.CurrentAbiVersion)
             {
                 AppHost.WriteError("[app] service table ABI ");
-                AppHost.WriteUInt(s_services->AbiVersion);
+                AppHost.Terminal.WriteUInt(s_services->AbiVersion);
                 AppHost.WriteError(", this program was built for ");
-                AppHost.WriteUInt(AppServiceTable.CurrentAbiVersion);
+                AppHost.Terminal.WriteUInt(AppServiceTable.CurrentAbiVersion);
                 AppHost.WriteError("\n");
                 Fatal("service table ABI mismatch");
             }
@@ -191,9 +191,9 @@ namespace SharpOS.AppSdk
             // the statics.
             if (!SharpOS.Std.NoRuntime.GcStaticsInit.Materialize())
             {
-                AppHost.WriteString("gcstatics: init FAILED code=");
-                AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcStaticsInit.FailedCount);
-                AppHost.WriteChar('\n');
+                AppHost.Terminal.Write("gcstatics: init FAILED code=");
+                AppHost.Terminal.WriteUInt((uint)SharpOS.Std.NoRuntime.GcStaticsInit.FailedCount);
+                AppHost.Terminal.WriteChar('\n');
                 Fatal("app GC statics not materialized");
             }
 
@@ -243,11 +243,11 @@ namespace SharpOS.AppSdk
             Process.Mark(0);
             if ((s_services->Settings & AppServiceTable.SettingAnnounceBuild) != 0)
             {
-                AppHost.WriteString("\u001b[90m[app] ");
-                AppHost.WriteString(AppBuildInfo.Name);
-                AppHost.WriteString(" build ");
-                AppHost.WriteString(AppBuildInfo.Id);
-                AppHost.WriteString("\u001b[0m\n");
+                AppHost.Terminal.Write("\u001b[90m[app] ");
+                AppHost.Terminal.Write(AppBuildInfo.Name);
+                AppHost.Terminal.Write(" build ");
+                AppHost.Terminal.Write(AppBuildInfo.Id);
+                AppHost.Terminal.Write("\u001b[0m\n");
             }
             Process.Mark(1);
         }
@@ -317,6 +317,17 @@ namespace SharpOS.AppSdk
         {
             object ex = System.Runtime.CompilerServices.Unsafe.As<nint, object>(ref exception);
             if (ex is SharpOS.Std.Pipes.PipeException pipe && pipe.IsStandardEndBroken) return 141;
+            // A stage given another type than it reads (step213): a mistake in
+            // the command line, not in the program — what does not match, and 1.
+            if (ex is SharpOS.Std.Pipes.PipeException mismatch && mismatch.Status == SharpOS.Std.Pipes.PipeStatus.TypeMismatch)
+            {
+                AppHost.WriteError("\u001b[31m");
+                AppHost.WriteError(AppBuildInfo.Name);
+                AppHost.WriteError(": the input is of another type: ");
+                AppHost.WriteError(mismatch.Message);
+                AppHost.WriteError("\u001b[0m\n");
+                return 1;
+            }
             if (ex is System.Exception e)
             {
                 AppHost.WriteError("\u001b[31m");
@@ -363,29 +374,29 @@ namespace SharpOS.AppSdk
         private static void OnHeapBroken(nint at, int phase)
         {
             AppHost.WriteError("[gcstress] app heap broken at 0x");
-            AppHost.WriteHex((ulong)at);
+            AppHost.Terminal.WriteHex((ulong)at);
             // What lies there: a header, then what overwrote it.
             for (int i = 0; i < 6; i++)
             {
                 AppHost.WriteError(i == 0 ? " bytes 0x" : " 0x");
-                AppHost.WriteHex(*(ulong*)(at + i * 8));
+                AppHost.Terminal.WriteHex(*(ulong*)(at + i * 8));
             }
             // Why, the segment (start, objects, bump, end) and the object before.
             var seg = SharpOS.Std.NoRuntime.GcHeap.BrokenSegment;
             AppHost.WriteError(" why ");
-            AppHost.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.BrokenReason);
+            AppHost.Terminal.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.BrokenReason);
             if (seg != null)
             {
-                AppHost.WriteHex((ulong)seg->Start);
-                AppHost.WriteHex((ulong)seg->ObjectStart);
-                AppHost.WriteHex((ulong)seg->Current);
-                AppHost.WriteHex((ulong)seg->End);
+                AppHost.Terminal.WriteHex((ulong)seg->Start);
+                AppHost.Terminal.WriteHex((ulong)seg->ObjectStart);
+                AppHost.Terminal.WriteHex((ulong)seg->Current);
+                AppHost.Terminal.WriteHex((ulong)seg->End);
             }
             nint prev = SharpOS.Std.NoRuntime.GcHeap.BrokenPrevious;
-            AppHost.WriteHex((ulong)prev);
+            AppHost.Terminal.WriteHex((ulong)prev);
             if (prev != 0)
-                for (int i = 0; i < 3; i++) AppHost.WriteHex(*(ulong*)(prev + i * 8));
-            AppHost.WriteHex((ulong)phase);
+                for (int i = 0; i < 3; i++) AppHost.Terminal.WriteHex(*(ulong*)(prev + i * 8));
+            AppHost.Terminal.WriteHex((ulong)phase);
             AppHost.WriteError("\n");
             Fatal(phase == 1 ? "found before a mark: the program wrote it"
                              : "found after a sweep: the collector wrote it");

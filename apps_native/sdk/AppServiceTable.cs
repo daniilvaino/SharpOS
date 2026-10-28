@@ -1,3 +1,5 @@
+#pragma warning disable CS0649 // filled by the other side of the ABI, never from C#
+
 namespace SharpOS.AppSdk
 {
     internal enum AppServiceStatus : uint
@@ -272,8 +274,9 @@ namespace SharpOS.AppSdk
 
         // void SetExceptionExitCode(int (*code)(nint exception)) (step197):
         // the exit code for an unhandled exception, asked of the app; 0 the
-        // default (134), 141 a broken standard end — the process ends without
-        // a report.
+        // default (134) with the kernel's report; any other — 141 a broken
+        // standard end, 1 a pipe of another type (step213) — ends the process
+        // with that code and no report.
         public ulong SetExceptionExitCodeAddress;
 
         // Settings for the app's own start (step197), bits; 0 from an older

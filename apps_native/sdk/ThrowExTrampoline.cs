@@ -29,7 +29,7 @@ namespace SharpOS.AppSdk
             // mov rax,imm64 + jmp rax patch fits; the string load + halt loop is
             // comfortably larger.
             _ = exceptionAsBytes;
-            AppHost.WriteString("RhpThrowEx: throw bridge not patched\r\n");
+            AppHost.Terminal.Write("RhpThrowEx: throw bridge not patched\r\n");
             for (; ; ) { }
         }
 

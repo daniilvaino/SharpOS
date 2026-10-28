@@ -34,9 +34,9 @@ namespace PipeApps
     //
     // The columns are the type the writer declared (step205: waited for, not
     // guessed from the first message), and the query is bound to it before
-    // any data is read: integers and enums long, float and double real, bool,
+    // any data is read: integers long, float and double real, bool,
     // string and char string, DateTime datetime, TimeSpan timespan, Guid and
-    // decimal their text, anything else (objects, arrays, structs) dynamic. A
+    // decimal their text, enums their member's name (step213), anything else (objects, arrays, structs) dynamic. A
     // message that is not an object of fields — an Expando, an array, a
     // string, a number — is the column Value. Over Expandos the table is open:
     // every name the query reads is a dynamic column of its own (`where Level
@@ -91,6 +91,7 @@ namespace PipeApps
         private const string RowColumn = "__row";
         private const string WholeColumn = "Value";
         private const int ChunkRows = 256;
+        private const ulong ChunkBytes = 1 << 20;
 
         // The start, by phase (step205): to the writer's declared type, the
         // first binding (over Expandos), the second, the first row out. One
@@ -547,7 +548,9 @@ namespace PipeApps
                 // it; a DateTime or TimeSpan is one 64-bit field (step205).
                 bool text = kind == FieldKind.Reference && s.Field.TypeName == "System.String";
                 bool time = kind == FieldKind.Struct && (s.Field.TypeName == "System.DateTime" || s.Field.TypeName == "System.TimeSpan");
-                if ((kind == FieldKind.Reference && !text) || (kind == FieldKind.Struct && !time) || kind == FieldKind.Char) return false;
+                // An enum is a string column (its member's name): not written back.
+                if ((kind == FieldKind.Reference && !text) || (kind == FieldKind.Struct && !time) || kind == FieldKind.Char
+                    || s.Field.Enum != null) return false;
                 bool seen = false;
                 foreach (FieldEdit e in list) if (e.Name == name) seen = true;
                 if (!seen) list.Add(new FieldEdit { Index = IndexOf(result, name), Name = name });
@@ -1094,6 +1097,10 @@ namespace PipeApps
                     bag.Bag = true;
                     return bag;
                 }
+                // A byte stream (READ, cat) is text, a piece a row: as dynamic
+                // each 64 KiB piece was an array of 65 536 numbers, and the
+                // boot log ran the heap out at `take 3` (step213).
+                if (shape.IsArray && shape.Elements != null && shape.Elements.Kind == FieldKind.Byte) return Whole(ColumnKind.Text);
                 if (shape.IsArray || shape.Fields == null) return Whole(ColumnKind.Dynamic);
                 var sources = new Source[shape.Fields.Length];
                 for (int i = 0; i < sources.Length; i++)
@@ -1151,6 +1158,9 @@ namespace PipeApps
 
             private static ColumnKind KindOf(FieldShape f)
             {
+                // An enum by its member's name, as LESS shows it (step213):
+                // `where Color == "Blue"`, not the number behind it.
+                if (f.Enum != null) return ColumnKind.Text;
                 switch (f.Kind)
                 {
                     case FieldKind.Bool: return ColumnKind.Bool;
@@ -1315,6 +1325,10 @@ namespace PipeApps
                 if (v.IsNull) return null;
                 if (kind == ColumnKind.String) return (string)v;
                 if (kind == ColumnKind.Char) return ((char)v).ToString();
+                // An enum: the member's name, or the number when it has none.
+                if (v.EnumShape != null) return v.ToString();
+                if (v.TryGetBytes(out byte* bytes, out int length))
+                    return System.Text.Encoding.UTF8.GetString(bytes, length);
                 return ViewCopy.ToHeapValue(v)?.ToString();
             }
 
@@ -1392,13 +1406,17 @@ namespace PipeApps
                     if (head == null) break;
                     batch.Clear();
                     batch.Add(head);
-                    // What else has arrived, without waiting for more.
-                    while (batch.Count < ChunkRows)
+                    ulong bytes = head.Length;
+                    // What else has arrived, without waiting for more — up to
+                    // ChunkBytes too: 256 pieces of 64 KiB were a whole 16 MiB
+                    // file in one chunk, and its strings twice that (step213).
+                    while (batch.Count < ChunkRows && bytes < ChunkBytes)
                     {
                         RawRegion more = _input.TryReceive();
                         if (more != null)
                         {
                             batch.Add(more);
+                            bytes += more.Length;
                             continue;
                         }
                         if (_input.Status == PipeStatus.EndOfStream) ended = true;

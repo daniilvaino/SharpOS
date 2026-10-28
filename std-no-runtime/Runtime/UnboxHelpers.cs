@@ -14,6 +14,8 @@ using System.Runtime;
 using System.Runtime.CompilerServices;
 using SharpOS.Std.NoRuntime;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace System.Runtime
 {
     internal static unsafe class UnboxHelpers
@@ -44,11 +46,16 @@ namespace System.Runtime
         /// (release/8.0, MIT): null clears the nullable; a box of exactly T
         /// sets HasValue and copies the value to its offset (GcMethodTable
         /// .NullableValueOffset, major-9 flags); anything else is InvalidCastException.
+        /// Sizes are the Nullable's own, as stock has them: the value runs
+        /// from its offset to ValueTypeSize. The size of the boxed T is not it —
+        /// BaseSize of a boxed int is 8 past the header, and an `int?` local
+        /// holds the int at 4, so 4 bytes went past the local into the caller's
+        /// saved registers (step213: rbx of `summarize … by X = toint(X)`).
         /// </summary>
         [RuntimeExport("RhUnboxNullable")]
         public static void RhUnboxNullable(ref byte data, GcMethodTable* pUnboxToEEType, object obj)
         {
-            uint size = pUnboxToEEType->BaseSize - 16;     // ValueTypeSize: less the object header and the MT
+            uint size = pUnboxToEEType->ValueTypeSize;
             if (obj == null)
             {
                 Unsafe.InitBlockUnaligned(ref data, 0, size);
@@ -65,7 +72,7 @@ namespace System.Runtime
             uint offset = pUnboxToEEType->NullableValueOffset;
 
             Unsafe.As<byte, bool>(ref data) = true;
-            Unsafe.CopyBlockUnaligned(ref Unsafe.Add(ref data, (int)offset), ref Unsafe.As<RawData>(obj).Data, pObjType->BaseSize - 16);
+            Unsafe.CopyBlockUnaligned(ref Unsafe.Add(ref data, (int)offset), ref Unsafe.As<RawData>(obj).Data, size - offset);
         }
 
         /// <summary>

@@ -73,9 +73,8 @@ namespace OS.Kernel.Process
 
         // HPET moments of its life (step196, where a start-and-exit goes):
         // runnable, first instruction of its code, its runtime set up (before
-        // and after the build banner), its code done, its ending done, its
-        // waiters woken.
-        public ulong TRunnable, TEntry, TMark0, TMark1, TCodeDone, TEnded, TWoken;
+        // and after the build banner), its code done, its ending done.
+        public ulong TRunnable, TEntry, TMark0, TMark1, TCodeDone, TEnded;
 
         // Its own start, by phase (HPET ticks, step208): reading the file,
         // whether from the program cache, the file's size, loading the PE,

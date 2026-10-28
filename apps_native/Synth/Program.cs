@@ -48,7 +48,9 @@ namespace PipeApps
 
         private static int Run(string[] args)
         {
-            int n = args.Length > 0 ? int.Parse(args[0]) : 5;
+            if (!NumberArg.TryFirst(args, "SYNTH", "SYNTH [n] — n objects (5) of a type made up for this run", 5, out long count, out int exit))
+                return exit;
+            int n = (int)count;
             s_random = (ulong)System.Diagnostics.Stopwatch.GetTimestamp() | 1;
 
             string typeName = "Ghost." + Word(1) + Word(5);

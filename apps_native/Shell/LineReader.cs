@@ -45,7 +45,7 @@ namespace Shell
                 ConsoleKeyInfo key = Console.ReadKey(true);
                 if (key.Key == ConsoleKey.Enter)
                 {
-                    AppHost.WriteString("\n");
+                    AppHost.Terminal.Write("\n");
                     string line = editor.Text;
                     Remember(line);
                     return line;
@@ -55,12 +55,12 @@ namespace Shell
                 {
                     if (key.Key == ConsoleKey.C)
                     {
-                        AppHost.WriteString("^C\n");
+                        AppHost.Terminal.Write("^C\n");
                         return "";
                     }
                     if (key.Key == ConsoleKey.D && editor.Text.Length == 0)
                     {
-                        AppHost.WriteString("\n");
+                        AppHost.Terminal.Write("\n");
                         return null;
                     }
                     if (key.Key == ConsoleKey.L)
@@ -82,7 +82,7 @@ namespace Shell
         private KeyHandler Begin(string prompt, int promptWidth)
         {
             Console2.Origin = promptWidth;
-            AppHost.WriteString(prompt);
+            AppHost.Terminal.Write(prompt);
             return new KeyHandler(new Console2(), History, _completion);
         }
 

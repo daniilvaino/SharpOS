@@ -45,10 +45,11 @@ namespace OS.Kernel.Memory
             // needs explained arrived where no argument can be trusted — three
             // rounds of reading registers there produced three different
             // stories, all wrong. The slow path spills and calls the resolver
-            // like any other dispatch, and the resolver reports a null `this`
-            // by name with arguments passed the ordinary way.
+            // like any other dispatch, and the resolver answers a null `this`
+            // with a method that throws NullReferenceException from the
+            // caller's frame.
             //
-            // The cost is a spill and a call on a path that is about to panic.
+            // The cost is a spill and a call on a path that is about to throw.
             a.jz(slow);
 
             a.mov(rax, __qword_ptr[rcx]);

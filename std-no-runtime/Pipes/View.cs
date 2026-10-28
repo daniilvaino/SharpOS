@@ -926,6 +926,11 @@ namespace SharpOS.Std.Pipes
                     Paint(text, colour, Dim, " }");
                     return;
                 default:
+                    // The std structs that are values: their usual text, as
+                    // CONVERT --to json writes them, not their private fields
+                    // (step213: DateTime came out as _dateData = …).
+                    string value = StdStructText();
+                    if (value != null) { Paint(text, colour, NumberColour, value); return; }
                     PaintType(text, colour, _type.IsExpando ? "Expando" : _type.Name);
                     if (depth <= 0) { Paint(text, colour, Dim, " { … }"); return; }
                     Paint(text, colour, Dim, " { ");
@@ -940,6 +945,23 @@ namespace SharpOS.Std.Pipes
                     }
                     Paint(text, colour, Dim, " }");
                     return;
+            }
+        }
+
+        // A struct's fields count from 8 before its value — the box's start
+        // (ViewCopy.BoxCopy) — in place or boxed alike.
+        private string StdStructText()
+        {
+            if (_type == null || !_type.IsValueType) return null;
+            void* value = (void*)(_at + 8);
+            switch (_type.Name)
+            {
+                case "System.DateTime": return (*(DateTime*)value).ToString("O");
+                case "System.DateTimeOffset": return (*(DateTimeOffset*)value).ToString("O");
+                case "System.TimeSpan": return (*(TimeSpan*)value).ToString();
+                case "System.Guid": return (*(Guid*)value).ToString();
+                case "System.Decimal": return (*(decimal*)value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                default: return null;
             }
         }
 

@@ -5,6 +5,8 @@ using Fami.Core;
 using Fami.Core.CPU;
 using SharpOS.AppSdk;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace Fami
 {
     // Fami on SharpOS: cartridge off the ESP, picture to the GOP framebuffer,
@@ -61,15 +63,15 @@ namespace Fami
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            AppHost.WriteString("fami: start\n");
+            Console.Write("fami: start\n");
 
             try
             {
                 if (!AppHost.FileExists(RomPath))
                 {
-                    AppHost.WriteString("fami: no ");
-                    AppHost.WriteString(RomPath);
-                    AppHost.WriteChar('\n');
+                    Console.Write("fami: no ");
+                    Console.Write(RomPath);
+                    Console.Write('\n');
                     return 2;
                 }
 
@@ -81,7 +83,7 @@ namespace Fami
                 // only thing that says which.
                 MC6502State nes = new MC6502State();
                 nes.Init();
-                AppHost.WriteString("fami: init\n");
+                Console.Write("fami: init\n");
 
                 // Opened, parsed and closed as three visible steps rather than
                 // one `using` block. Upstream's parser prints the mapper number
@@ -89,19 +91,19 @@ namespace Fami
                 // `using` would leave that construction and the stream's
                 // disposal inside the same unlit gap.
                 FileStream rom = File.OpenRead(RomPath);
-                AppHost.WriteString("fami: rom open\n");
+                Console.Write("fami: rom open\n");
 
                 Cartridge cart = Cartridge.Load(rom, nes);
-                AppHost.WriteString("fami: cartridge parsed\n");
+                Console.Write("fami: cartridge parsed\n");
 
                 rom.Dispose();
-                AppHost.WriteString("fami: rom closed\n");
+                Console.Write("fami: rom closed\n");
 
                 nes.LoadCartridge(cart);
-                AppHost.WriteString("fami: mapper attached\n");
+                Console.Write("fami: mapper attached\n");
 
                 nes.Reset();
-                AppHost.WriteString("fami: reset\n");
+                Console.Write("fami: reset\n");
 
                 GopVideo video = null;
                 if (AppHost.TryGetFramebuffer(
@@ -109,22 +111,22 @@ namespace Fami
                         out uint fbStride, out uint fbFormat))
                 {
                     video = new GopVideo(fbBase, fbWidth, fbHeight, fbStride, fbFormat);
-                    AppHost.WriteString("fami: video ");
-                    AppHost.WriteUInt(fbWidth);
-                    AppHost.WriteChar('x');
-                    AppHost.WriteUInt(fbHeight);
-                    AppHost.WriteString(" scale ");
-                    AppHost.WriteUInt((uint)video.Scale);
-                    AppHost.WriteChar('\n');
+                    Console.Write("fami: video ");
+                    Console.Write(fbWidth);
+                    Console.Write('x');
+                    Console.Write(fbHeight);
+                    Console.Write(" scale ");
+                    Console.Write((uint)video.Scale);
+                    Console.Write('\n');
                 }
                 else
                 {
-                    AppHost.WriteString("fami: headless (no framebuffer)\n");
+                    Console.Write("fami: headless (no framebuffer)\n");
                 }
 
                 RunLoop(nes, video);
 
-                AppHost.WriteString("fami: quit\n");
+                Console.Write("fami: quit\n");
                 return 42;
             }
             catch (Exception e)
@@ -134,9 +136,9 @@ namespace Fami
                 // and if that is what faults, a catch block that leads with it
                 // prints nothing at all — leaving a crash that looks identical
                 // to a hang.
-                AppHost.WriteString("fami: exception caught\n");
-                AppHost.WriteString(e.Message ?? "(no message)");
-                AppHost.WriteChar('\n');
+                Console.Write("fami: exception caught\n");
+                Console.Write(e.Message ?? "(no message)");
+                Console.Write('\n');
                 return 1;
             }
         }
@@ -163,12 +165,12 @@ namespace Fami
                 for (int i = 0; i < 1000000 && !moves; i++) moves = ReadCounter() != t0;
                 if (!moves)
                 {
-                    AppHost.WriteString("fami: HPET present but STOPPED - running unpaced\n");
+                    Console.Write("fami: HPET present but STOPPED - running unpaced\n");
                     paced = false;
                 }
             }
 
-            AppHost.WriteString(paced
+            Console.Write(paced
                 ? "fami: paced 60 Hz (HPET)\n"
                 : "fami: unpaced, no timing (VBox: modifyvm --hpet on)\n");
 
@@ -212,9 +214,9 @@ namespace Fami
                     {
                         framesTimed = 0;
                         s_unpacedFrames += 60;
-                        AppHost.WriteString("fami: frames ");
-                        AppHost.WriteUInt(s_unpacedFrames);
-                        AppHost.WriteChar('\n');
+                        Console.Write("fami: frames ");
+                        Console.Write(s_unpacedFrames);
+                        Console.Write('\n');
                     }
                 }
                 else if (ShowTiming)
@@ -269,15 +271,15 @@ namespace Fami
 
             ulong loopMs = windowTicks / (ulong)frames / perMs;
 
-            AppHost.WriteString("fami: frame ");
-            AppHost.WriteUInt((uint)loopMs);
-            AppHost.WriteString(" ms (emulate ");
-            AppHost.WriteUInt((uint)(emulateTicks / (ulong)frames / perMs));
-            AppHost.WriteString(" + blit ");
-            AppHost.WriteUInt((uint)(blitTicks / (ulong)frames / perMs));
-            AppHost.WriteString(")  fps ");
-            AppHost.WriteUInt(loopMs == 0 ? 999u : (uint)(1000UL / loopMs));
-            AppHost.WriteChar('\n');
+            Console.Write("fami: frame ");
+            Console.Write((uint)loopMs);
+            Console.Write(" ms (emulate ");
+            Console.Write((uint)(emulateTicks / (ulong)frames / perMs));
+            Console.Write(" + blit ");
+            Console.Write((uint)(blitTicks / (ulong)frames / perMs));
+            Console.Write(")  fps ");
+            Console.Write(loopMs == 0 ? 999u : (uint)(1000UL / loopMs));
+            Console.Write('\n');
         }
 
         // Drain whatever key events are queued and fold them into the button

@@ -69,7 +69,9 @@ namespace OS.Kernel.Diagnostics
         }
 
         private struct Seen { public fixed ulong Rip[32]; }
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static Seen s_seen;
+        #pragma warning restore CS0169
         private static int s_seenCount;
 
         /// <summary>The #DB after a watched write: one line each, the stack once per writer.</summary>

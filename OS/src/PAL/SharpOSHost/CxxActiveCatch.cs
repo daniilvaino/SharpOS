@@ -40,7 +40,9 @@ namespace OS.PAL.SharpOSHost
         private struct Stack
         {
             public int Depth;
+            #pragma warning disable CS0649 // filled by the other side of the ABI, never from C#
             public int Pad;
+            #pragma warning restore CS0649
             // Entry[Capacity] follows.
         }
 

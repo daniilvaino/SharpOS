@@ -3,6 +3,10 @@ using System.Runtime;
 using System.Runtime.CompilerServices;
 using OS.Hal;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace OS.Boot
 {
     // Phase 1 minimal exception path — `throw new X("msg")` now produces a

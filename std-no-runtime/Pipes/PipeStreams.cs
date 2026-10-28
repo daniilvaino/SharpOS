@@ -219,6 +219,13 @@ namespace SharpOS.Std.Pipes
 
         public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
 
+        /// <summary>
+        /// A line longer than this goes in pieces, a message each (step213):
+        /// a file with no line feeds — a boot log's zeroed sectors — was one
+        /// line, and one string past what an object may take.
+        /// </summary>
+        internal const int MaxLineChars = 1 << 16;
+
         public override void Write(char value)
         {
             if (value == '\n')
@@ -227,6 +234,7 @@ namespace SharpOS.Std.Pipes
                 return;
             }
             _line.Append(value);
+            if (_line.Length >= MaxLineChars) SendLine();
         }
 
         public override void Write(string? value)
@@ -235,7 +243,14 @@ namespace SharpOS.Std.Pipes
             int start = 0;
             for (int i = 0; i < value.Length; i++)
             {
-                if (value[i] != '\n') continue;
+                if (value[i] != '\n')
+                {
+                    if (_line.Length + (i - start) < MaxLineChars) continue;
+                    _line.Append(value, start, i - start);
+                    SendLine();
+                    start = i;
+                    continue;
+                }
                 _line.Append(value, start, i - start);
                 SendLine();
                 start = i + 1;

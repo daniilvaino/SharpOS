@@ -1,0 +1,4 @@
+# Copied from dotnet/runtime unmodified, as the directory says: its
+# nullable warnings are upstream's.
+[*.cs]
+dotnet_diagnostic.CS8604.severity = none

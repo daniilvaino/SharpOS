@@ -789,7 +789,7 @@ namespace System
             // Extract sign bit
             uint sign = (bitValue & SingleSignMask) >> 16;
             // Detecting NaN (~0u if a is not NaN)
-            uint realMask = (value != value) /* SharpOS: std float has no IsNaN */ ? 0u : ~0u;
+            uint realMask = float.IsNaN(value) ? 0u : ~0u;
             // Clear sign bit
             value = Math.Abs(value); // SharpOS: float.Abs/Min/Max are Math's here
             // Rectify values that are Infinity in Half. (float.Min now emits vminps instruction if one of two arguments is a constant)

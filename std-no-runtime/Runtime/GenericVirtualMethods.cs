@@ -49,10 +49,14 @@ namespace SharpOS.Std.NoRuntime
     internal static unsafe class GenericVirtualMethods
     {
         /// <summary>The image's ReadyToRun header; null in the kernel, which has no GVM calls.</summary>
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         public static byte* Rtr;
+        #pragma warning restore CS0649
 
         /// <summary>RhpInitialDynamicInterfaceDispatch of this image, for the dispatch cells built here.</summary>
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         public static void* InterfaceDispatchStub;
+        #pragma warning restore CS0649
 
         private const int ArrayMap = 2, CommonFixups = 8, GvmTable = 18, InterfaceGvmTable = 19,
             Templates = 22, NativeLayoutInfo = 30, NativeReferences = 31, GenericsHashtable = 32,

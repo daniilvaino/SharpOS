@@ -1,0 +1,7 @@
+# Upstream code (PROVENANCE.md): its warnings are upstream's, left as they
+# are — the diff against upstream matters more than a quiet build.
+[*.cs]
+dotnet_diagnostic.CS0162.severity = none
+dotnet_diagnostic.CS0168.severity = none
+dotnet_diagnostic.CS0169.severity = none
+dotnet_diagnostic.CS0414.severity = none

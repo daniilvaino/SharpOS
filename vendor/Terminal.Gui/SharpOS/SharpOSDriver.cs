@@ -72,7 +72,9 @@ namespace Terminal.Gui
         // Neither applies here: the kernel's emulator has a fixed grid and no
         // scroll region we grow into. Accepting the flags and ignoring them is
         // right — refusing would stop callers that set them out of habit.
+        [Obsolete ("This API is deprecated and has no impact when enabled.", false)]
         public override bool EnableConsoleScrolling { get; set; }
+        [Obsolete ("This API is deprecated and has no impact when enabled.", false)]
         public override bool HeightAsBuffer { get; set; }
 
         public override void Init(Action terminalResized)
@@ -281,7 +283,13 @@ namespace Terminal.Gui
         /// </remarks>
         public override void Suspend()
         {
+            // Off the alternate screen, onto a cleared main one: a child that
+            // takes the alternate screen itself (a full-screen program started
+            // from a shell started here) leaves it for the main screen, and
+            // with ours still holding the alternate that was the boot log, not
+            // the shell's screen (step213). The boot log is in the log files.
             Write(Esc + "[0m");
+            Write(Esc + "[?1049l");
             Write(Esc + "[2J");
             Write(Esc + "[H");
             Write(Esc + "[?25h");
@@ -301,6 +309,7 @@ namespace Terminal.Gui
         public void Resume()
         {
             Write(Esc + "[0m");
+            Write(Esc + "[?1049h");
             Write(Esc + "[2J");
             Write(Esc + "[H");
             Write(Esc + "[?25l");

@@ -44,12 +44,14 @@ namespace LessApp
             }
 
             var lines = new List<string>();
+            var builder = new LineBuilder(lines);
             string kind = null;
             // A byte stream (cat, READ) comes in chunks that cut lines and even
-            // UTF-8 sequences anywhere. This BCL has no Encoding.GetDecoder, so
-            // the bytes are gathered whole and decoded once at the end.
-            byte[] gathered = null;
-            int gatheredLength = 0;
+            // UTF-8 sequences anywhere. Decoded as it comes, a cut sequence
+            // carried to the next chunk: gathered whole, a 16 MiB boot log was
+            // a 32 MiB array and then a 32 MiB string — each past what one
+            // object may take (step213).
+            var decoder = new Utf8Pieces();
 
             // A writer that ends with a code other than 0 breaks the pipe
             // (step194 §3) — a test battery exits with its passed count. What
@@ -63,26 +65,22 @@ namespace LessApp
                 if (IsByteArray(message))
                 {
                     if (kind == null) kind = "bytes";
-                    int length = message.Length;
-                    if (gathered == null) gathered = new byte[Math.Max(4096, length)];
-                    if (gatheredLength + length > gathered.Length)
-                        Array.Resize(ref gathered, Math.Max(gathered.Length * 2, gatheredLength + length));
-                    for (int i = 0; i < length; i++) gathered[gatheredLength + i] = (byte)message[i];
-                    gatheredLength += length;
+                    builder.Add(decoder.Decode(message));
                     continue;
                 }
                 string text = message.Kind == ViewKind.String ? (string)message : message.ToString();
                 // The type's name is the region's text: keep a copy of our own.
                 if (kind == null) kind = message.Kind == ViewKind.String ? "text" : new string((message.TypeName ?? "null").AsSpan());
-                AddLines(lines, text ?? "null");
+                builder.Add(text ?? "null");
+                builder.EndMessage(empty: text != null && text.Length == 0);
             }
             }
             catch (PipeException e) when (e.IsStandardEndBroken)
             {
                 broken = true;
             }
-            if (gatheredLength > 0)
-                AddLines(lines, Encoding.UTF8.GetString(gathered, 0, gatheredLength));
+            builder.Add(decoder.Finish());
+            builder.EndMessage();
             if (lines.Count == 0)
             {
                 Console.Error.WriteLine("less: the input is empty");
@@ -97,43 +95,141 @@ namespace LessApp
         private static bool IsByteArray(View v)
             => v.Kind == ViewKind.Array && v.TypeName == "System.Byte[]";
 
+        // A screen line longer than this goes on in the next one: a file
+        // without line breaks was one string of all of it.
+        private const int MaxLineChars = 4096;
+
+        // A run of NULs this long or longer is one marker, not "^@" each: the
+        // boot log is a fixed 16 MiB file, its unwritten sectors zeros.
+        private const int NulRunMarked = 16;
+
         // One message may hold many lines (cat sends a file as one): split,
         // expand tabs, and show control characters instead of obeying them.
-        private static void AddLines(List<string> lines, string text)
+        // A byte stream is one text across its chunks; any other message ends
+        // its last line (EndMessage).
+        private sealed class LineBuilder
         {
-            var b = new StringBuilder();
-            for (int i = 0; i < text.Length; i++)
+            private readonly List<string> _lines;
+            private readonly StringBuilder _b = new StringBuilder();
+            private long _nuls;
+            private bool _open;     // something since the last line break
+
+            public LineBuilder(List<string> lines) => _lines = lines;
+
+            public void Add(string text)
             {
-                char c = text[i];
-                if (c == '\n')
+                for (int i = 0; i < text.Length; i++)
                 {
-                    lines.Add(b.ToString());
-                    b.Clear();
-                }
-                else if (c == '\r')
-                {
-                    // CRLF: the \n ends the line.
-                }
-                else if (c == '\t')
-                {
-                    b.Append(' ', TabWidth - b.Length % TabWidth);
-                }
-                else if (c == '\u001b')
-                {
-                    b.Append("^[");
-                }
-                else if (c < ' ')
-                {
-                    b.Append('^').Append((char)(c + '@'));
-                }
-                else
-                {
-                    b.Append(c);
+                    char c = text[i];
+                    if (c == '\0') { _nuls++; _open = true; continue; }
+                    PutNuls();
+                    _open = true;
+                    if (c == '\n')
+                    {
+                        Line();
+                        _open = false;
+                    }
+                    else if (c == '\r')
+                    {
+                        // CRLF: the \n ends the line.
+                    }
+                    else if (c == '\t')
+                    {
+                        Append(new string(' ', TabWidth - _b.Length % TabWidth));
+                    }
+                    else if (c == '\u001b')
+                    {
+                        Append("^[");
+                    }
+                    else if (c < ' ')
+                    {
+                        Append("^" + (char)(c + '@'));
+                    }
+                    else
+                    {
+                        if (_b.Length >= MaxLineChars) Line();
+                        _b.Append(c);
+                    }
                 }
             }
-            // A message's last line, even without \n; but "a\n" is one line, not two.
-            if (b.Length > 0 || text.Length == 0 || text[text.Length - 1] != '\n')
-                lines.Add(b.ToString());
+
+            // A message's last line, even without \n; but "a\n" is one line,
+            // not two, and an empty message is an empty line.
+            public void EndMessage(bool empty = false)
+            {
+                PutNuls();
+                if (_open || empty) Line();
+                _open = false;
+            }
+
+            private void PutNuls()
+            {
+                if (_nuls == 0) return;
+                if (_nuls < NulRunMarked)
+                    for (long i = 0; i < _nuls; i++) Append("^@");
+                else
+                    Append("^@ ×" + _nuls.ToString() + " ");
+                _nuls = 0;
+            }
+
+            private void Append(string s)
+            {
+                if (_b.Length + s.Length > MaxLineChars) Line();
+                _b.Append(s);
+            }
+
+            private void Line()
+            {
+                _lines.Add(_b.ToString());
+                _b.Clear();
+            }
+        }
+
+        // UTF-8 decoded a chunk at a time: a sequence cut at a chunk's end is
+        // kept and finished by the next one. This BCL has no Encoding.GetDecoder.
+        private sealed class Utf8Pieces
+        {
+            private byte[] _buffer = new byte[4096];
+            private int _carried;
+
+            public string Decode(View bytes)
+            {
+                int length = bytes.Length;
+                if (_carried + length > _buffer.Length)
+                {
+                    var grown = new byte[_carried + length];
+                    Array.Copy(_buffer, grown, _carried);
+                    _buffer = grown;
+                }
+                for (int i = 0; i < length; i++) _buffer[_carried + i] = (byte)bytes[i];
+                int total = _carried + length;
+                int whole = CompleteLength(_buffer, total);
+                string text = Encoding.UTF8.GetString(_buffer, 0, whole);
+                _carried = total - whole;
+                Array.Copy(_buffer, whole, _buffer, 0, _carried);
+                return text;
+            }
+
+            public string Finish()
+            {
+                string text = _carried == 0 ? "" : Encoding.UTF8.GetString(_buffer, 0, _carried);
+                _carried = 0;
+                return text;
+            }
+
+            // Where the last whole sequence ends: a lead byte in the last three
+            // whose sequence runs past the end starts the carried part.
+            private static int CompleteLength(byte[] b, int length)
+            {
+                for (int back = 1; back <= 3 && back <= length; back++)
+                {
+                    byte lead = b[length - back];
+                    if ((lead & 0xC0) == 0x80) continue;          // a continuation: look further
+                    int need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+                    return need > back ? length - back : length;
+                }
+                return length;
+            }
         }
 
         private static void PrintHelp()

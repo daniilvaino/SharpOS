@@ -54,7 +54,9 @@ namespace OS.Hal
             public fixed byte Data[EarlySize];
         }
 
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static EarlyBuffer s_early;
+        #pragma warning restore CS0169
         private static int s_earlyUsed;
         private static bool s_earlyOverflowed;
         private static bool s_earlyDrained;
@@ -72,7 +74,9 @@ namespace OS.Hal
             public fixed byte Data[SerialSize];
         }
 
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static SerialBuffer s_serial;
+        #pragma warning restore CS0169
         private static int s_serialUsed;
         private static bool s_serialReady;
         private static bool s_inSerial;

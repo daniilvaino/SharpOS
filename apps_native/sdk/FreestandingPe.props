@@ -26,6 +26,9 @@
          ExcludeNativeAotRuntime (bootstrapper.obj, the EXE one) doesn't strip. -->
     <OutputType>Exe</OutputType>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- As the kernel: std is ported BCL and carries `T?` throughout; without
+         a nullable context every one of them is a CS8632 (≈2000 an app). -->
+    <Nullable Condition="'$(Nullable)' == ''">annotations</Nullable>
     <NoStdLib>true</NoStdLib>
     <NoConfig>true</NoConfig>
     <RuntimeMetadataVersion>v4.0.30319</RuntimeMetadataVersion>

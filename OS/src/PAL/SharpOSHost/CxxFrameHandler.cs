@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using OS.Boot.EH;
 using OS.Hal;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.PAL.SharpOSHost
 {
     // Phase 4 of SEH unwind: MSVC C++ personality routine `__CxxFrameHandler3`.

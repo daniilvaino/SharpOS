@@ -4,6 +4,11 @@
 
 using System;
 
+// The image does not claim CLS compliance; it is said so that the
+// [CLSCompliant(false)] ported BCL code carries on its members is not each a
+// CS3021 ("the assembly does not have a CLSCompliant attribute").
+[assembly: CLSCompliant(false)]
+
 namespace System.Runtime.CompilerServices
 {
     // Required by the compiler for every extension method (`this T` first

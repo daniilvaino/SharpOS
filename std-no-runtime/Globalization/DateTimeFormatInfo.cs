@@ -1888,8 +1888,12 @@ namespace System.Globalization
         internal const string JapaneseLangName = "ja";
         internal const string EnglishLangName = "en";
 
+        #pragma warning disable CS0169 // a field of the BCL original, kept with the port; what uses it was cut
         private static DateTimeFormatInfo? s_jajpDTFI;
+        #pragma warning restore CS0169
+        #pragma warning disable CS0169 // a field of the BCL original, kept with the port; what uses it was cut
         private static DateTimeFormatInfo? s_zhtwDTFI;
+        #pragma warning restore CS0169
 
         /// <summary>
         /// Create a Japanese DTFI which uses JapaneseCalendar.  This is used to parse

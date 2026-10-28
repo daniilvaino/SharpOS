@@ -10,7 +10,7 @@ namespace DataApps
 {
     // DATATEST.EXE [--quick] — external data (step197): READ, WRITE, CONVERT,
     // `>`/`>>`, bytes and text over a pipe, Into<T> from an Expando, pipelines
-    // from code. Exit code = checks passed. --quick leaves out the big files
+    // from code. Exit code = checks failed. --quick leaves out the big files
     // (100 MiB of JSON, 64 MiB copy); --gc-stress N runs everything here
     // stressed. DATATEST --child ROLE is a stage the tests start (Children.cs);
     // DATATEST --perf prints the step's [perf197] measurements.
@@ -98,7 +98,7 @@ namespace DataApps
                   + (Settled(before, after) ? "" : " (before/after " + Stats(before) + " / " + Stats(after) + ")"),
                   Settled(before, after));
             Console.WriteLine("[datatest] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
-            return s_passed;
+            return s_failed;
         }
 
         private static bool Settled(ulong[] before, ulong[] after)

@@ -2,6 +2,8 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace Internal.Runtime
 {
     internal struct MethodTable { }

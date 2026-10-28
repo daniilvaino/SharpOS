@@ -214,7 +214,7 @@ namespace SharpOS.Std.Dynamic
                 if (isChecked)
                 {
                     // Truncation toward zero must land inside the target (§10.3.2).
-                    if (d != d || d <= MinOf(et) - 1 || d >= MaxOf(et) + 1) throw new OverflowException("Arithmetic operation resulted in an overflow.");
+                    if (double.IsNaN(d) || d <= MinOf(et) - 1 || d >= MaxOf(et) + 1) throw new OverflowException("Arithmetic operation resulted in an overflow.");
                 }
                 if (et == GcEETypeElementType.UInt64) return BoxInteger(to, (long)(ulong)d);
                 return BoxInteger(to, (long)d);

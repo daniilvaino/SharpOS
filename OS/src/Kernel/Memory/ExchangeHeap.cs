@@ -51,7 +51,9 @@ namespace OS.Kernel.Memory
             public uint Magic;
             public byte Class;
             public byte Live;
+            #pragma warning disable CS0649 // filled by the other side of the ABI, never from C#
             public ushort Reserved;
+            #pragma warning restore CS0649
             public uint Owner;
             public uint Pages;          // large blocks: pages in the run
             public Header* Prev;        // live list, or the free list it is on

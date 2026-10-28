@@ -175,14 +175,14 @@ namespace SharpOS.Std.Pipes
         /// </summary>
         public static void Print(string line)
         {
-            if (line != null) AppHost.WriteString(line);
-            AppHost.WriteString("\n");
+            if (line != null) AppHost.Terminal.Write(line);
+            AppHost.Terminal.Write("\n");
         }
 
         /// <summary>Text on the terminal as it is, no line added (step197: a file's bytes arrive in pieces).</summary>
         public static void PrintText(string text)
         {
-            if (text != null) AppHost.WriteString(text);
+            if (text != null) AppHost.Terminal.Write(text);
         }
 
         public static PipeStatus Close(int handle)

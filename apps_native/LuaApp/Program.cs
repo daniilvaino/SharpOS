@@ -340,7 +340,7 @@ internal static unsafe class AppEntry
     private static int Interactive()
     {
         var state = NewState();
-        AppHost.WriteString("Lua 5.2 (Lua-CSharp) - an expression prints its value; exit or Ctrl+D leaves\n");
+        AppHost.Terminal.Write("Lua 5.2 (Lua-CSharp) - an expression prints its value; exit or Ctrl+D leaves\n");
         while (true)
         {
             string line = ReadLine("> ");
@@ -382,14 +382,14 @@ internal static unsafe class AppEntry
     // Backspace, Enter; Ctrl+D on an empty line is the end of input.
     private static string ReadLine(string prompt)
     {
-        AppHost.WriteString(prompt);
+        AppHost.Terminal.Write(prompt);
         var line = new System.Text.StringBuilder();
         while (true)
         {
             ConsoleKeyInfo key = Console.ReadKey(intercept: true);
             if (key.Key == ConsoleKey.Enter)
             {
-                AppHost.WriteString("\n");
+                AppHost.Terminal.Write("\n");
                 return line.ToString();
             }
             if (key.Key == ConsoleKey.Backspace)
@@ -397,19 +397,19 @@ internal static unsafe class AppEntry
                 if (line.Length > 0)
                 {
                     line.Length--;
-                    AppHost.WriteString("\b \b");
+                    AppHost.Terminal.Write("\b \b");
                 }
                 continue;
             }
             if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.D && line.Length == 0)
             {
-                AppHost.WriteString("\n");
+                AppHost.Terminal.Write("\n");
                 return null;
             }
             if (key.KeyChar >= ' ')
             {
                 line.Append(key.KeyChar);
-                AppHost.WriteChar(key.KeyChar);
+                AppHost.Terminal.WriteChar(key.KeyChar);
             }
         }
     }

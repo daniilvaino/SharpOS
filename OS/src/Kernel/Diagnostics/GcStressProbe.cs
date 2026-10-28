@@ -14,7 +14,9 @@ namespace OS.Kernel.Diagnostics
     {
         private sealed class Probe2
         {
+            #pragma warning disable CS0649 // a test object: its shape is what the test needs, not the field's value
             public int Value;
+            #pragma warning restore CS0649
         }
 
         private sealed class TwoFields

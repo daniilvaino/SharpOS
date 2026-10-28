@@ -20,6 +20,9 @@ static class Program
 
     static void Fail(string message) => throw new Json2dirException(message);
 
+    // SharpOS cut: what a FAT name cannot hold besides "/" and NUL.
+    static readonly char[] FatForbidden = { '\\', ':', '*', '?', '"', '<', '>', '|' };
+
     static object Parse(byte[] bytes)
     {
         // §3: a byte order mark at the start may be ignored.
@@ -63,12 +66,24 @@ static class Program
                 if (kind == "link" && payload.Contains('\0')) Fail($"{where}: a link target cannot contain NUL");
                 return;
             case JsonObject o:
+                // SharpOS cut: FAT compares names without case — "Aa" and "aA"
+                // are one entry, and the second would overwrite the first.
+                var seen = new HashSet<string>();
                 foreach (var (name, child) in o)
                 {
                     string path = where == "." ? name : where + "/" + name;
                     // §4.2.1: names are used exactly; trailing "/" or "/." forms are rejected, not trimmed.
                     if (name.Length == 0 || name == "." || name == ".." || name.Contains('/') || name.Contains('\0'))
                         Fail($"{path}: invalid name {Show(name)}");
+                    // SharpOS cut: "\" separates paths here as "/" does — "d\..\..\x"
+                    // would leave the directory. The rest FAT cannot store either,
+                    // and a trailing dot or space it drops, so "a." would be "a".
+                    if (name.IndexOfAny(FatForbidden) >= 0 || name[name.Length - 1] == '.' || name[name.Length - 1] == ' ')
+                        Fail($"{path}: invalid name on FAT {Show(name)}");
+                    foreach (char c in name)
+                        if (c < 0x20) Fail($"{path}: invalid name on FAT {Show(name)}");
+                    if (!seen.Add(name.ToUpperInvariant()))
+                        Fail($"{path}: the same name as another without case — FAT keeps one {Show(name)}");
                     Validate(child, path);
                 }
                 return;

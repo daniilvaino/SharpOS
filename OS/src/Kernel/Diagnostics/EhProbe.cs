@@ -1,6 +1,8 @@
 using OS.Hal;
 using OS.Boot.EH;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Diagnostics
 {
     // Exception-handling probe — gradient from "no-throw EH frame" up to

@@ -2,6 +2,8 @@
 using System.Runtime;
 using SharpOS.AppSdk;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace TriCNES
 {
     // TriCNES on SharpOS: cartridge off the ESP, picture to the GOP
@@ -45,15 +47,15 @@ namespace TriCNES
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            AppHost.WriteString("tricnes: start\n");
+            Console.Write("tricnes: start\n");
 
             try
             {
                 if (!AppHost.FileExists(RomPath))
                 {
-                    AppHost.WriteString("tricnes: no ");
-                    AppHost.WriteString(RomPath);
-                    AppHost.WriteChar('\n');
+                    Console.Write("tricnes: no ");
+                    Console.Write(RomPath);
+                    Console.Write('\n');
                     return 2;
                 }
 
@@ -67,9 +69,9 @@ namespace TriCNES
                 cart.Emu = emu;
                 cart.MapperChip.Cart = cart;
 
-                AppHost.WriteString("tricnes: mapper ");
-                AppHost.WriteUInt(cart.MemoryMapper);
-                AppHost.WriteChar('\n');
+                Console.Write("tricnes: mapper ");
+                Console.Write(cart.MemoryMapper);
+                Console.Write('\n');
 
                 emu.Reset();
 
@@ -79,29 +81,29 @@ namespace TriCNES
                         out uint fbStride, out uint fbFormat))
                 {
                     video = new GopVideo(fbBase, fbWidth, fbHeight, fbStride, fbFormat);
-                    AppHost.WriteString("tricnes: video ");
-                    AppHost.WriteUInt(fbWidth);
-                    AppHost.WriteChar('x');
-                    AppHost.WriteUInt(fbHeight);
-                    AppHost.WriteString(" scale ");
-                    AppHost.WriteUInt((uint)video.Scale);
-                    AppHost.WriteChar('\n');
+                    Console.Write("tricnes: video ");
+                    Console.Write(fbWidth);
+                    Console.Write('x');
+                    Console.Write(fbHeight);
+                    Console.Write(" scale ");
+                    Console.Write((uint)video.Scale);
+                    Console.Write('\n');
                 }
                 else
                 {
-                    AppHost.WriteString("tricnes: headless (no framebuffer)\n");
+                    Console.Write("tricnes: headless (no framebuffer)\n");
                 }
 
                 RunLoop(emu, video);
 
-                AppHost.WriteString("tricnes: quit\n");
+                Console.Write("tricnes: quit\n");
                 return 42;
             }
             catch (Exception e)
             {
-                AppHost.WriteString("tricnes: exception: ");
-                AppHost.WriteString(e.Message ?? "(no message)");
-                AppHost.WriteChar('\n');
+                Console.Write("tricnes: exception: ");
+                Console.Write(e.Message ?? "(no message)");
+                Console.Write('\n');
                 return 1;
             }
         }
@@ -131,12 +133,12 @@ namespace TriCNES
                 for (int i = 0; i < 1000000 && !moves; i++) moves = ReadCounter() != t0;
                 if (!moves)
                 {
-                    AppHost.WriteString("tricnes: HPET present but STOPPED - running unpaced\n");
+                    Console.Write("tricnes: HPET present but STOPPED - running unpaced\n");
                     paced = false;
                 }
             }
 
-            AppHost.WriteString(paced
+            Console.Write(paced
                 ? "tricnes: paced 60 Hz (HPET)\n"
                 : "tricnes: unpaced, no timing (VBox: modifyvm --hpet on)\n");
             ulong ticksPerFrame = paced ? frequencyHz / 60UL : 0UL;
@@ -171,9 +173,9 @@ namespace TriCNES
                     {
                         framesTimed = 0;
                         s_unpacedFrames += 60;
-                        AppHost.WriteString("tricnes: frames ");
-                        AppHost.WriteUInt(s_unpacedFrames);
-                        AppHost.WriteChar('\n');
+                        Console.Write("tricnes: frames ");
+                        Console.Write(s_unpacedFrames);
+                        Console.Write('\n');
                     }
                 }
                 else if (ShowTiming)
@@ -232,15 +234,15 @@ namespace TriCNES
 
             ulong loopMs = windowTicks / (ulong)frames / perMs;
 
-            AppHost.WriteString("tricnes: frame ");
-            AppHost.WriteUInt((uint)loopMs);
-            AppHost.WriteString(" ms (emulate ");
-            AppHost.WriteUInt((uint)(emulateTicks / (ulong)frames / perMs));
-            AppHost.WriteString(" + blit ");
-            AppHost.WriteUInt((uint)(blitTicks / (ulong)frames / perMs));
-            AppHost.WriteString(")  fps ");
-            AppHost.WriteUInt(loopMs == 0 ? 999u : (uint)(1000UL / loopMs));
-            AppHost.WriteChar('\n');
+            Console.Write("tricnes: frame ");
+            Console.Write((uint)loopMs);
+            Console.Write(" ms (emulate ");
+            Console.Write((uint)(emulateTicks / (ulong)frames / perMs));
+            Console.Write(" + blit ");
+            Console.Write((uint)(blitTicks / (ulong)frames / perMs));
+            Console.Write(")  fps ");
+            Console.Write(loopMs == 0 ? 999u : (uint)(1000UL / loopMs));
+            Console.Write('\n');
         }
 
         // Drain whatever key events are queued and fold them into the button

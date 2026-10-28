@@ -28,6 +28,8 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace System
 {
     [NonVersionable]

@@ -42,6 +42,14 @@ namespace OS.Boot.EH
         /// <summary>The exit code of a program whose standard end broke: ends without a report.</summary>
         public const int QuietExitCode = 141;
 
+        /// <summary>
+        /// The app gave the exception a code of its own: 141 for a broken
+        /// standard end, 1 for a pipe of another type (step213) — said on its
+        /// error stream already, or nothing to say. No kernel report then.
+        /// </summary>
+        public static bool IsAppsOwnEnd(OS.Kernel.Threading.Thread thread)
+            => thread != null && thread.UnhandledExitCode != 0;
+
         private static void Report(System.Exception ex)
         {
             if (ex == null) return;
@@ -74,7 +82,7 @@ namespace OS.Boot.EH
             {
                 nint exAddress = System.Runtime.CompilerServices.Unsafe.As<System.Exception, nint>(ref ex);
                 thread.UnhandledExitCode = ((delegate* unmanaged<nint, int>)app.ExceptionExitCode)(exAddress);
-                if (thread.UnhandledExitCode == QuietExitCode) return;
+                if (IsAppsOwnEnd(thread)) return;
             }
 
             OS.Hal.Console.Write("\r\n[unhandled] ");

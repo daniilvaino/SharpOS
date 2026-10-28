@@ -72,17 +72,17 @@ namespace Shell
             if (AppHost.TryReadFile(ScriptPath, buffer, MaxScriptBytes, out uint length)
                 != AppServiceStatus.Ok)
             {
-                AppHost.WriteString("[sh] cannot read ");
-                AppHost.WriteString(ScriptPath);
-                AppHost.WriteString("\n");
+                AppHost.Terminal.Write("[sh] cannot read ");
+                AppHost.Terminal.Write(ScriptPath);
+                AppHost.Terminal.Write("\n");
                 return 1;
             }
 
-            AppHost.WriteString("[sh] script ");
-            AppHost.WriteString(ScriptPath);
-            AppHost.WriteString(" bytes=");
-            AppHost.WriteUInt(length);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[sh] script ");
+            AppHost.Terminal.Write(ScriptPath);
+            AppHost.Terminal.Write(" bytes=");
+            AppHost.Terminal.WriteUInt(length);
+            AppHost.Terminal.Write("\n");
 
             // The shell's own output (step212): its commands and builtins write
             // there, each a copy of the end; the screen when none was handed over.
@@ -104,9 +104,9 @@ namespace Shell
                 // launcher is already at the limit and cannot.
                 if (line == "shell") { handOver = true; continue; }
 
-                AppHost.WriteString("[sh] $ ");
-                AppHost.WriteString(line);
-                AppHost.WriteString("\n");
+                AppHost.Terminal.Write("[sh] $ ");
+                AppHost.Terminal.Write(line);
+                AppHost.Terminal.Write("\n");
 
                 ran++;
                 if (executor.RunLine(line) != 0) failed++;
@@ -114,13 +114,14 @@ namespace Shell
             }
 
             // The one line the rig greps for.
-            AppHost.WriteString("[sh] done ran=");
-            AppHost.WriteUInt(ran);
-            AppHost.WriteString(" failed=");
-            AppHost.WriteUInt(failed);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[sh] done ran=");
+            AppHost.Terminal.WriteUInt(ran);
+            AppHost.Terminal.Write(" failed=");
+            AppHost.Terminal.WriteUInt(failed);
+            AppHost.Terminal.Write("\n");
 
             if (handOver && !executor.ExitRequested) return Interactive(executor);
+            if (executor.ExitRequested) return executor.LastExitCode;
 
             return failed == 0 ? 0 : 1;
         }
@@ -146,9 +147,9 @@ namespace Shell
             byte* buffer = stackalloc byte[MaxScriptBytes];
             if (AppHost.TryReadFile(path, buffer, MaxScriptBytes, out uint length) != AppServiceStatus.Ok)
             {
-                AppHost.WriteString("[sh] ENV: cannot read ");
-                AppHost.WriteString(path);
-                AppHost.WriteString("\n");
+                AppHost.Terminal.Write("[sh] ENV: cannot read ");
+                AppHost.Terminal.Write(path);
+                AppHost.Terminal.Write("\n");
                 return;
             }
             uint index = 0;
@@ -165,7 +166,7 @@ namespace Shell
         // of starting the session again from the root.
         private static int Interactive(Executor executor)
         {
-            AppHost.WriteString("\u001b[1;36mSharpOS shell\u001b[0m\u001b[90m — 'help' for what exists, Tab completes, Up/Down for history, 'exit' to leave\u001b[0m\n");
+            AppHost.Terminal.Write("\u001b[1;36mSharpOS shell\u001b[0m\u001b[90m — 'help' for what exists, Tab completes, Up/Down for history, 'exit' to leave\u001b[0m\n");
 
             var reader = new LineReader(new Completion(executor));
             executor.History = reader.History;
@@ -180,7 +181,8 @@ namespace Shell
                 executor.RunLine(line);
             }
 
-            return 0;
+            // `exit N` leaves with N; Ctrl+D with the last command's code, as sh.
+            return executor.LastExitCode;
         }
 
         // The directory in green, the last exit code in red when it was not 0,

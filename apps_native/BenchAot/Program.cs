@@ -48,7 +48,7 @@ namespace BenchAot
             }
             s_frequency = frequency;
 
-            AppHost.WriteString("=== benchaot begin ===\n");
+            Console.Write("=== benchaot begin ===\n");
 
             // The same output again, before anything else has run: `output`
             // proper comes after the tasks, and 48 threads that finished may
@@ -70,7 +70,7 @@ namespace BenchAot
             }
             Measure("output", Output);
 
-            AppHost.WriteString("=== benchaot end ===\n");
+            Console.Write("=== benchaot end ===\n");
             return 0;
         }
 
@@ -189,15 +189,17 @@ namespace BenchAot
             return s_tasksDone;
         }
 
+        // The terminal's own speed, so the terminal and not the standard
+        // output: through a pipe this would time the pipe.
         private static long Output()
         {
             const int Count = 200;
             for (int i = 0; i < Count; i++)
-                AppHost.WriteString("benchaot output line " + i.ToString() + " ................................................\n");
+                AppHost.Terminal.Write("benchaot output line " + i.ToString() + " ................................................\n");
             return Count;
         }
 
         private static void Report(string name, long value)
-            => AppHost.WriteString("[perf] aot." + name + "=" + value.ToString() + "\n");
+            => Console.Write("[perf] aot." + name + "=" + value.ToString() + "\n");
     }
 }

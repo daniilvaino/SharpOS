@@ -6,7 +6,7 @@ using SharpOS.AppSdk;
 namespace GvmApps
 {
     // GVMTEST.EXE — generic virtual methods (step198): the shapes a library
-    // like Kusto's parser combinators uses. Exit code = checks passed.
+    // like Kusto's parser combinators uses. Exit code = checks failed.
     //
     //  1. a virtual generic method overridden, called through the base,
     //     instantiated over a value type (exact code) and a reference type
@@ -71,7 +71,7 @@ namespace GvmApps
             Check("6 not overridden: the base", () => plain.Describe<int>(2) == "Base 2");
 
             Console.WriteLine("[gvmtest] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
-            return s_passed;
+            return s_failed;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

@@ -1,3 +1,5 @@
+#pragma warning disable CS0649 // filled by the other side of the ABI, never from C#
+
 namespace SharpOS.AppSdk
 {
     internal unsafe struct AppStartupBlock

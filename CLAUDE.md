@@ -28,6 +28,7 @@ SharpOS — **experimental unikernel целиком на C#**, собирает�
 
 - **`docs/nativeaot-nostd-kernel-limits.md`** — живой реестр известных ограничений NoStdLib среды: что работает, что нет, workarounds, причины. **Читать перед любой нетривиальной задачей.**
 - **`docs/coreclr-hosted-limits.md`** — то же для CoreCLR-hosted яруса. **`limits.md`** — сводка сломанного по всем ярусам; **`docs/open-symptoms.md`** — симптомы без разобранной причины.
+- **`docs/build-warnings.md`** — сборка без предупреждений; что подавлено и почему. Новое предупреждение — чинить или вносить туда.
 - **`plan.md`** — цели проекта и текущее направление. **`donext.md`** — что делать дальше и как: фронты с ближайшим действием и долги с поводом.
 - **`done/stepNN.md`** — разбор завершённых шагов: архитектура, трассы ошибок, файлы. Последний — наибольший номер в `done/`. Базовая прошивка (EH/GC/threading/CoreCLR-host) — `done/step041..step090`, дальше — bring-up подсистем.
 - **`OS/src/Boot/BootSequence.cs`** — single source of truth для kernel boot ordering. Phase0…Phase5 с явными pre/post conditions. `OS/src/Kernel/Kernel.cs` — пустой shell, делегирует сюда. См. `docs/boot-order.md`.

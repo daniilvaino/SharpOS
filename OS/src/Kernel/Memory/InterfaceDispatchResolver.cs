@@ -27,31 +27,13 @@ namespace OS.Kernel.Memory
         [UnmanagedCallersOnly]
         public static nint Resolve(nint thisPtr, nint cellPtr)
         {
+            // An interface call on a null reference — the ordinary
+            // NullReferenceException, thrown from the caller's frame like the
+            // untranslated key below. It used to panic the system, which made
+            // any app's null dereference through an interface the kernel's end
+            // (step213: a corrupted rbx in KQL came out as a system panic).
             if (thisPtr == 0)
-            {
-                // An interface call on a null reference — the ordinary
-                // NullReferenceException, arriving here because the dispatch
-                // stub sends this case down the normal path so that it can be
-                // reported with real arguments rather than guessed at.
-                var nullCell = (InterfaceDispatchCell*)cellPtr;
-                OS.Hal.Console.Write("[iface-resolve] null this: cell=0x");
-                OS.Hal.Console.WriteHex((ulong)cellPtr);
-
-                if (cellPtr != 0)
-                {
-                    nullCell->GetDispatchCellInfo(out DispatchCellInfo nullInfo);
-                    OS.Hal.Console.Write(" type=");
-                    OS.Hal.Console.WriteUInt((uint)nullInfo.CellType);
-                    OS.Hal.Console.Write(" slot=");
-                    OS.Hal.Console.WriteUInt(nullInfo.InterfaceSlot);
-                    OS.Hal.Console.Write(" iface=0x");
-                    OS.Hal.Console.WriteHex((ulong)(nint)nullInfo.InterfaceType);
-                }
-
-                OS.Hal.Console.WriteLine("");
-                OS.Kernel.Panic.Fail("iface-resolve: interface call on a null reference");
-                return 0;
-            }
+                return NullTarget(cellPtr);
 
             GcMethodTable* thisMT = *(GcMethodTable**)thisPtr;
             InterfaceDispatchCell* cell = (InterfaceDispatchCell*)cellPtr;
@@ -593,6 +575,26 @@ namespace OS.Kernel.Memory
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static void ThrowUntranslatedForKernel() => throw new System.AccessViolationException();
+
+        private static nint NullTarget(nint cellPtr)
+        {
+            delegate*<void> target = OS.Kernel.Exec.JumpStub.IsAppCode((ulong)cellPtr)
+                ? &ThrowNullForApp
+                : &ThrowNullForKernel;
+            return (nint)target;
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void ThrowNullForApp()
+        {
+            if (OS.Kernel.Exec.JumpStub.TryCreateAppException(
+                    OS.Kernel.Exec.JumpStub.HwExceptionNullReference, out object appException))
+                throw System.Runtime.CompilerServices.Unsafe.As<System.Exception>(appException);
+            throw new System.NullReferenceException();
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void ThrowNullForKernel() => throw new System.NullReferenceException();
 
         private static void ReportResolveFailure(
             nint thisPtr, GcMethodTable* thisMT,

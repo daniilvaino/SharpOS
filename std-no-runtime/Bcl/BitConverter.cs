@@ -18,7 +18,10 @@ namespace System
 {
     public static partial class BitConverter
     {
-        public const bool IsLittleEndian = true;
+        // BCL: a static readonly field. Not a const, which made every
+        // big-endian branch of ported code a CS0162; a property ILC inlines
+        // to the same constant, with no static to initialise before the heap.
+        public static bool IsLittleEndian => true;
 
         // Переливание битов между целым и плавающим, без арифметики.
         //

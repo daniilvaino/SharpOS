@@ -27,7 +27,9 @@ namespace PipeApps
 
         private static int Run(string[] args)
         {
-            int min = args.Length > 0 ? int.Parse(args[0]) : 0;
+            if (!NumberArg.TryFirst(args, "PIPEFILT", "PIPEFILT [min] — the records of level min (0) and up", 0, out long level, out int exit))
+                return exit;
+            int min = (int)level;
             Pipe.Read<LogEntry>().Where(e => e.Level >= min).WriteTo();
             return 0;
         }

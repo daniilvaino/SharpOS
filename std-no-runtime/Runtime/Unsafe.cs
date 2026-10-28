@@ -15,6 +15,8 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.Versioning;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace System.Runtime.CompilerServices
 {
     /// <summary>

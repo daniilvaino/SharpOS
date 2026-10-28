@@ -18,7 +18,6 @@ namespace OS.Kernel.Process
         public uint StackPages;
         public ulong MappedImagePages;
         public ulong MappedStackPages;
-        public int ExitCode;
 
         // Physical probes used only for builder/validation internals.
         // Runtime execution uses virtual entry/stack/startup addresses.

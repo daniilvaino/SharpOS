@@ -662,7 +662,12 @@ namespace SharpOS.Std.Pipes
                 // The same struct under the same key, with no references: its bytes.
                 if (target.Key == value.Shape.Key && HasNoReferences(value.Shape))
                 {
-                    MemoryPrimitives.Memcpy((void*)to, (void*)(value.Address + 8), target.BaseSize - 16);
+                    // The value's own size, not BaseSize - 16: that has the box's
+                    // padding to 8 and ran into the next field of the owner.
+                    uint size = TypeKeys.TryTable(target.Key, out ulong table)
+                        ? ((GcMethodTable*)table)->ValueTypeSize
+                        : target.BaseSize - 16;
+                    MemoryPrimitives.Memcpy((void*)to, (void*)(value.Address + 8), size);
                     return;
                 }
                 // By name otherwise; a struct's offsets were measured in its box,

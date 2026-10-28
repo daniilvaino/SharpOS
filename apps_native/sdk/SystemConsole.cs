@@ -117,7 +117,7 @@ namespace System
             {
                 if (string.IsNullOrEmpty(value)) return;
                 if (AppHost.HasErrorStream) AppHost.WriteError(value);
-                else AppHost.WriteString(value);
+                else AppHost.Terminal.Write(value);
             }
             public override void WriteLine(string value) => Write((value ?? "") + "\n");
             public override void WriteLine() => Write("\n");
@@ -131,6 +131,21 @@ namespace System
         public static void Write(object value) => Write(value?.ToString());
 
         public static void WriteLine(object value) => WriteLine(value?.ToString());
+
+        // BCL's value overloads, without the box the object ones take.
+        public static void Write(char value) => Out.Write(value);
+        public static void Write(bool value) => Write(value.ToString());
+        public static void Write(int value) => Write(value.ToString());
+        public static void Write(uint value) => Write(value.ToString());
+        public static void Write(long value) => Write(value.ToString());
+        public static void Write(ulong value) => Write(value.ToString());
+
+        public static void WriteLine(char value) => WriteLine(value.ToString());
+        public static void WriteLine(bool value) => WriteLine(value.ToString());
+        public static void WriteLine(int value) => WriteLine(value.ToString());
+        public static void WriteLine(uint value) => WriteLine(value.ToString());
+        public static void WriteLine(long value) => WriteLine(value.ToString());
+        public static void WriteLine(ulong value) => WriteLine(value.ToString());
 
         /// <summary>
         /// The next key press, waiting for one (step197); echoed unless
@@ -148,7 +163,7 @@ namespace System
                     continue;
                 }
                 if (!TryTranslate(raw, out ConsoleKeyInfo key)) continue;
-                if (!intercept && key.KeyChar >= ' ') AppHost.WriteChar(key.KeyChar);
+                if (!intercept && key.KeyChar >= ' ') AppHost.Terminal.WriteChar(key.KeyChar);
                 return key;
             }
         }
@@ -156,7 +171,7 @@ namespace System
         public static ConsoleKeyInfo ReadKey() => ReadKey(false);
 
         /// <summary>Clears the screen and puts the cursor at its top left (the terminal's ESC [H ESC [2J).</summary>
-        public static void Clear() => AppHost.WriteString("\u001b[H\u001b[2J");
+        public static void Clear() => AppHost.Terminal.Write("\u001b[H\u001b[2J");
 
         // The window (step210), as BCL has it on Unix: the size is what the
         // terminal's owner reports (here the kernel, ConsoleSize — the
@@ -188,7 +203,7 @@ namespace System
                 throw new ArgumentOutOfRangeException(nameof(left), left, "The value must be greater than or equal to zero and less than the console's buffer size in that dimension.");
             if (top < 0 || top >= short.MaxValue)
                 throw new ArgumentOutOfRangeException(nameof(top), top, "The value must be greater than or equal to zero and less than the console's buffer size in that dimension.");
-            AppHost.WriteString("\u001b[" + (top + 1).ToString() + ";" + (left + 1).ToString() + "H");
+            AppHost.Terminal.Write("\u001b[" + (top + 1).ToString() + ";" + (left + 1).ToString() + "H");
         }
 
         private static bool s_cursorVisible = true;
@@ -200,7 +215,7 @@ namespace System
             set
             {
                 s_cursorVisible = value;
-                AppHost.WriteString(value ? "\u001b[?25h" : "\u001b[?25l");
+                AppHost.Terminal.Write(value ? "\u001b[?25h" : "\u001b[?25l");
             }
         }
 
@@ -219,7 +234,7 @@ namespace System
                 if (value.Length > 24500)
                     throw new ArgumentOutOfRangeException(nameof(value), "The console title is too long.");
                 s_title = value;
-                AppHost.WriteString("\u001b]0;" + value + "\u0007");
+                AppHost.Terminal.Write("\u001b]0;" + value + "\u0007");
             }
         }
 
@@ -246,7 +261,7 @@ namespace System
         {
             s_foreground = ConsoleColor.Gray;
             s_background = ConsoleColor.Black;
-            AppHost.WriteString("\u001b[0m");
+            AppHost.Terminal.Write("\u001b[0m");
         }
 
         private static void SetColor(ConsoleColor color, bool background)
@@ -258,7 +273,7 @@ namespace System
             int c = (int)color;
             int ansi = ((c & 1) << 2) | (c & 2) | ((c & 4) >> 2);
             int code = (c < 8 ? 30 : 90) + ansi + (background ? 10 : 0);
-            AppHost.WriteString("\u001b[" + code.ToString() + "m");
+            AppHost.Terminal.Write("\u001b[" + code.ToString() + "m");
         }
 
         // The key service never blocks: a poll with a sleep, below what a

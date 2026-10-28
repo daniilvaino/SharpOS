@@ -169,7 +169,7 @@ public sealed class MessageGenerator : IIncrementalGenerator
     private static bool CheckField(SourceProductionContext ctx, INamedTypeSymbol owner, IFieldSymbol f, bool partial,
                                    SortedDictionary<string, string> arrays, SortedDictionary<string, INamedTypeSymbol> enums)
     {
-        Location where = f.Locations.FirstOrDefault() ?? owner.Locations.FirstOrDefault();
+        Location? where = f.Locations.FirstOrDefault() ?? owner.Locations.FirstOrDefault();
         string fieldName = f.AssociatedSymbol?.Name ?? f.Name;
 
         if (f.AssociatedSymbol is IPropertySymbol)
@@ -186,7 +186,7 @@ public sealed class MessageGenerator : IIncrementalGenerator
     }
 
     private static bool CheckType(SourceProductionContext ctx, INamedTypeSymbol owner, string fieldName, ITypeSymbol t,
-                                  Location where, SortedDictionary<string, string> arrays,
+                                  Location? where, SortedDictionary<string, string> arrays,
                                   SortedDictionary<string, INamedTypeSymbol> enums)
     {
         if (t.TypeKind == TypeKind.Pointer || t.TypeKind == TypeKind.FunctionPointer)
@@ -262,7 +262,7 @@ public sealed class MessageGenerator : IIncrementalGenerator
     private static string PartialHost(INamedTypeSymbol type, string code)
     {
         var sb = new StringBuilder();
-        string ns = type.ContainingNamespace.IsGlobalNamespace ? null : type.ContainingNamespace.ToDisplayString();
+        string? ns = type.ContainingNamespace.IsGlobalNamespace ? null : type.ContainingNamespace.ToDisplayString();
         if (ns != null) sb.Append("namespace ").Append(ns).Append("\n{\n");
         sb.Append("    ").Append(type.IsReadOnly ? "readonly " : "").Append("partial ")
           .Append(type.TypeKind == TypeKind.Struct ? "struct " : "class ").Append(type.Name).Append("\n    {\n");
@@ -274,7 +274,7 @@ public sealed class MessageGenerator : IIncrementalGenerator
     internal static List<IFieldSymbol> InstanceFields(INamedTypeSymbol type)
     {
         var chain = new List<INamedTypeSymbol>();
-        for (INamedTypeSymbol t = type; t != null && t.SpecialType != SpecialType.System_Object
+        for (INamedTypeSymbol? t = type; t != null && t.SpecialType != SpecialType.System_Object
                                         && t.SpecialType != SpecialType.System_ValueType; t = t.BaseType)
             chain.Insert(0, t);
         var fields = new List<IFieldSymbol>();

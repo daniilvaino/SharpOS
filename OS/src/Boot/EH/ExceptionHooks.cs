@@ -15,9 +15,13 @@
     //     Replaceable so tests can capture failure без halting QEMU.
     internal static unsafe class ExceptionHooks
     {
+        #pragma warning disable CS0649 // a hook: nothing installs one yet
         public static delegate*<System.Exception, void> FirstChanceHandler;
+        #pragma warning restore CS0649
         public static delegate*<System.Exception, void> UnhandledHandler;
+        #pragma warning disable CS0649 // a hook: nothing installs one yet
         public static delegate*<void> FailFastHandler;
+        #pragma warning restore CS0649
 
         public static void NotifyFirstChance(System.Exception ex)
         {

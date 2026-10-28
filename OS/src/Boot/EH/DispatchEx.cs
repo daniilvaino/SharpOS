@@ -1,5 +1,9 @@
 using SharpOS.Std.NoRuntime;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace OS.Boot.EH
 {
     // Phase 1 step 5.4+ — managed exception dispatcher.
@@ -76,12 +80,37 @@ namespace OS.Boot.EH
             return StackFrameIteratorOps.IsCalledFunclet(iter) ? funcletIdx : ExInfo.MaxTryRegionIdx;
         }
 
+        // The walk reached a funclet the dispatcher ran for an exception still
+        // in flight (a catch whose body called something that threw): adopt
+        // that exception's frame — the method's own, its SP and registers —
+        // keeping the funclet's PC, as Dispatch does for a throw in the
+        // funclet's body itself. Unwound from the funclet's own SP, the walk
+        // went into the dispatcher's stub and on into the frames of the first
+        // throw, the try body among them (step213).
+        private static void AdoptRunningFunclet(StackFrameIterator* iter, ExInfo* chain)
+        {
+            if (chain == null || NormallyCalledFunclet(iter) != ExInfo.MaxTryRegionIdx) return;
+            ulong pc = iter->ControlPC;
+            if (!CoffEhDecoder.TryFindFuncletProtectedOffset((byte*)pc, out _, out byte* root, out _)) return;
+            for (ExInfo* e = chain; e != null; e = e->PrevExInfo)
+            {
+                if (e->FrameIter.RegDisplay.SP <= iter->RegDisplay.SP) continue;
+                if (!CoffMethodLookup.TryFindMethod((byte*)e->FrameIter.ControlPC, out CoffMethodLookup.MethodInfo m)
+                    || m.ImageBase + m.RootRuntimeFunction->BeginAddress != root)
+                    continue;
+                *iter = e->FrameIter;
+                iter->ControlPC = pc;
+                return;
+            }
+        }
+
         public static FirstPassResult FindFirstPassHandler(
             byte* exceptionPtr,
             GcMethodTable* exceptionType,
             StackFrameIterator* iter,
             uint startIdx = ExInfo.MaxTryRegionIdx,
-            System.Exception traceTarget = null)
+            System.Exception traceTarget = null,
+            ExInfo* chain = null)
         {
             FirstPassResult result = default;
             const int MaxFrames = 100;
@@ -125,11 +154,16 @@ namespace OS.Boot.EH
                 if (ehOk)
                 {
                     uint codeOffset;
+                    uint literalOffset = (uint)((nint)iter->ControlPC - (nint)methodStart);
+                    // The clause whose handler is the funclet this frame is in
+                    // (one the dispatcher ran), or MaxTryRegionIdx.
+                    uint funcletIdx = ExInfo.MaxTryRegionIdx;
                     if (normalFunclet == ExInfo.MaxTryRegionIdx
                         && CoffEhDecoder.TryFindFuncletProtectedOffset(
                         (byte*)iter->ControlPC, out uint synthOffset, out _, out uint funcIdx))
                     {
                         codeOffset = synthOffset;
+                        funcletIdx = funcIdx;
                         if (Trace)
                         {
                             OS.Hal.Log.Begin(OS.Hal.LogLevel.Info);
@@ -143,6 +177,21 @@ namespace OS.Boot.EH
                     else
                     {
                         codeOffset = (uint)((nint)iter->ControlPC - (nint)methodStart);
+                    }
+
+                    // A funclet the dispatcher ran is matched in two parts
+                    // (step213): the tries inside its handler, at the real
+                    // offset and on its own frame — a catch there resumes in
+                    // the funclet; then, on the method's frame, the tries that
+                    // enclose the funclet's own, at the made-up offset.
+                    int parts = funcletIdx != ExInfo.MaxTryRegionIdx ? 2 : 1;
+                    for (int part = 0; part < parts; part++)
+                    {
+                    bool inner = parts == 2 && part == 0;
+                    if (parts == 2 && part == 1)
+                    {
+                        AdoptRunningFunclet(iter, chain);
+                        CoffEhDecoder.EhEnumInit((byte*)iter->ControlPC, out enumState, out _);
                     }
                     uint clauseIdx = 0;
 
@@ -185,11 +234,33 @@ namespace OS.Boot.EH
                             continue;
                         }
 
+                        // A funclet the dispatcher ran, which this exception
+                        // leaves: its own clause is the one running — it does
+                        // not catch what its handler throws (step213: a catch
+                        // whose body threw caught itself again and again, the
+                        // stack ran out, and the kernel double-faulted). As the
+                        // second pass does (InvokeFinalliesOnFrame).
+                        if (clauseIdx == funcletIdx)
+                        {
+                            clauseIdx++;
+                            continue;
+                        }
+
+                        // On the method's frame only the clauses after the
+                        // funclet's: the ones before it are inside its try or
+                        // inside its handler, matched in the first part.
+                        if (parts == 2 && !inner && clauseIdx < funcletIdx)
+                        {
+                            clauseIdx++;
+                            continue;
+                        }
+                        uint offset = inner ? literalOffset : codeOffset;
+
                         // Filter: check IP coverage + invoke filter funclet;
                         // non-zero return → match.
                         if (clause.Kind == CoffEhDecoder.ClauseKind.Filter
-                            && codeOffset >= clause.TryStartOffset
-                            && codeOffset < clause.TryEndOffset)
+                            && offset >= clause.TryStartOffset
+                            && offset < clause.TryEndOffset)
                         {
                             delegate* unmanaged<byte*, byte*, RegDisplay*, int> filterFn =
                                 (delegate* unmanaged<byte*, byte*, RegDisplay*, int>)
@@ -215,15 +286,15 @@ namespace OS.Boot.EH
                                 result.IdxCurClause = clauseIdx;
                                 result.TryRegionIdx = clauseIdx;
                                 result.MethodStart = methodStart;
-                                result.CodeOffset = codeOffset;
+                                result.CodeOffset = offset;
                                 return result;
                             }
                         }
 
                         // Typed: check IP coverage + class hierarchy match.
                         if (clause.Kind == CoffEhDecoder.ClauseKind.Typed
-                            && codeOffset >= clause.TryStartOffset
-                            && codeOffset < clause.TryEndOffset)
+                            && offset >= clause.TryStartOffset
+                            && offset < clause.TryEndOffset)
                         {
                             GcMethodTable* clauseType = (GcMethodTable*)clause.TargetTypeRaw;
                             if (IsAssignableFromClass(clauseType, exceptionType))
@@ -233,7 +304,7 @@ namespace OS.Boot.EH
                                 result.IdxCurClause = clauseIdx;
                                 result.TryRegionIdx = clauseIdx;
                                 result.MethodStart = methodStart;
-                                result.CodeOffset = codeOffset;
+                                result.CodeOffset = offset;
                                 return result;
                             }
                         }
@@ -241,6 +312,7 @@ namespace OS.Boot.EH
                         // Fault clauses don't match catches — they
                         // run during second pass (5.7+).
                         clauseIdx++;
+                    }
                     }
                 }
 
@@ -420,7 +492,8 @@ namespace OS.Boot.EH
 
             // First-pass: find catch handler. Walks frames and appends each
             // one's IP к stack trace as it goes (multi-frame trace).
-            FirstPassResult fp = FindFirstPassHandler(exceptionPtr, exType, &exInfo->FrameIter, startIdx, exObjForTrace);
+            FirstPassResult fp = FindFirstPassHandler(exceptionPtr, exType, &exInfo->FrameIter, startIdx, exObjForTrace,
+                                                      exInfo->PrevExInfo);
 
             if (Trace)
             {
@@ -465,9 +538,9 @@ namespace OS.Boot.EH
                     // is what cost a rig run to tell apart.
                     OS.Hal.Console.WriteLine("[unhandled] no exception object (exceptionPtr == null)");
 
-                // A quiet end (a broken standard end, a killed process) has no report.
+                // A quiet end (an end the app named, a killed process) has no report.
                 OS.Kernel.Threading.Thread failing = OS.Kernel.Threading.Scheduler.Current;
-                if (failing == null || (!failing.KillRequested && failing.UnhandledExitCode != UnhandledExceptionReport.QuietExitCode))
+                if (failing == null || (!failing.KillRequested && !UnhandledExceptionReport.IsAppsOwnEnd(failing)))
                     OS.Hal.Console.Write("\r\n*** unhandled exception (no matching catch) ***\r\n");
                 ExceptionHooks.FailFast();
             }
@@ -555,8 +628,30 @@ namespace OS.Boot.EH
                 uint normalFunclet = NormallyCalledFunclet(&exInfo->FrameIter);
                 uint idxLimit = atCatchFrame ? catchIdx : ExInfo.MaxTryRegionIdx;
                 uint frameStartIdx = atCatchFrame ? startIdx : ExInfo.MaxTryRegionIdx;
-                InvokeFinalliesOnFrame(exInfo, frameStartIdx, idxLimit, skipUpTo,
-                                       realOffset: normalFunclet != ExInfo.MaxTryRegionIdx);
+
+                // A funclet the dispatcher ran: as in the first pass, the
+                // tries inside its handler on its own frame, then the ones
+                // enclosing it on the method's (step213).
+                if (normalFunclet == ExInfo.MaxTryRegionIdx
+                    && CoffEhDecoder.TryFindFuncletProtectedOffset((byte*)exInfo->FrameIter.ControlPC, out _, out _, out _))
+                {
+                    InvokeFinalliesOnFrame(exInfo, frameStartIdx, idxLimit, skipUpTo, part: FramePart.InsideFunclet);
+                    if (atCatchFrame)
+                        break;
+                    AdoptRunningFunclet(&exInfo->FrameIter, exInfo->PrevExInfo);
+                    frameSp = exInfo->FrameIter.RegDisplay.SP;
+                    atCatchFrame = frameSp == handlingFrameSP;
+                    if (frameSp > handlingFrameSP)
+                        break;
+                    idxLimit = atCatchFrame ? catchIdx : ExInfo.MaxTryRegionIdx;
+                    frameStartIdx = atCatchFrame ? startIdx : ExInfo.MaxTryRegionIdx;
+                    InvokeFinalliesOnFrame(exInfo, frameStartIdx, idxLimit, skipUpTo, part: FramePart.AroundFunclet);
+                }
+                else
+                {
+                    InvokeFinalliesOnFrame(exInfo, frameStartIdx, idxLimit, skipUpTo,
+                                           realOffset: normalFunclet != ExInfo.MaxTryRegionIdx);
+                }
 
                 if (atCatchFrame)
                     break;
@@ -581,8 +676,13 @@ namespace OS.Boot.EH
         // method whose normally-called funclet the exception left (step197).
         // realOffset — the frame is such a funclet: its own offset, not the
         // made-up one of a funclet the dispatcher ran.
+        // Which clauses of a frame a call takes: all of them, or — for a
+        // funclet the dispatcher ran — those inside its handler or those
+        // enclosing its own clause (step213).
+        private enum FramePart { Whole, InsideFunclet, AroundFunclet }
+
         private static void InvokeFinalliesOnFrame(ExInfo* exInfo, uint startIdx, uint idxLimit,
-            uint skipUpTo = ExInfo.MaxTryRegionIdx, bool realOffset = false)
+            uint skipUpTo = ExInfo.MaxTryRegionIdx, bool realOffset = false, FramePart part = FramePart.Whole)
         {
             if (!CoffEhDecoder.EhEnumInit((byte*)exInfo->FrameIter.ControlPC,
                 out CoffEhDecoder.EHEnum enumState,
@@ -636,9 +736,19 @@ namespace OS.Boot.EH
                     continue;
                 }
 
+                // Tries inside the funclet's handler at the real offset, on its
+                // own frame; the ones enclosing it at the made-up one, on the
+                // method's — the clauses after the funclet's.
+                if (part == FramePart.AroundFunclet && clauseIdx < funcletClauseIdx)
+                {
+                    clauseIdx++;
+                    continue;
+                }
+                uint offset = part == FramePart.InsideFunclet
+                    ? (uint)((nint)exInfo->FrameIter.ControlPC - (nint)methodStart) : codeOffset;
                 if (clause.Kind == CoffEhDecoder.ClauseKind.Fault
-                    && codeOffset >= clause.TryStartOffset
-                    && codeOffset < clause.TryEndOffset)
+                    && offset >= clause.TryStartOffset
+                    && offset < clause.TryEndOffset)
                 {
                     if (Trace)
                     {

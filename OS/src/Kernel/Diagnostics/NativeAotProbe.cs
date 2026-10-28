@@ -2,6 +2,8 @@ using System;
 using System.Linq;
 using OS.Hal;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace OS.Kernel.Diagnostics
 {
     // Probes for what managed C# features work "for free" under NativeAOT +

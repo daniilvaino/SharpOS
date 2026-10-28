@@ -46,6 +46,10 @@ namespace PipeApps
             for (int i = 0; i < args.Length; i++)
             {
                 if (args[i] == "--append") append = true;
+                else if (NumberArg.IsHelp(args[i])) { Console.WriteLine("usage: WRITE file [--append]"); return 0; }
+                // An option it does not know is not a file name (step213:
+                // `WRITE --help` made a file called that); ./-x names one.
+                else if (args[i].Length > 1 && args[i][0] == '-') return Usage();
                 else if (path == null) path = args[i];
                 else return Usage();
             }

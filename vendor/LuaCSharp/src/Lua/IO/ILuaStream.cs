@@ -32,23 +32,28 @@ public interface ILuaStream : IDisposable
 // SharpOS cut: the default bodies of ILuaStream and its static factories.
 public abstract class LuaStreamDefaults : ILuaStream
 {
-    // Always the implementer's own (it lists ILuaStream again); these only
-    // complete the base's mapping.
-    public virtual bool IsOpen => throw new NotImplementedException();
-    public virtual LuaFileOpenMode Mode => throw new NotImplementedException();
-    public virtual void Dispose() => throw new NotImplementedException();
+    // Explicit implementations, not overridable members: the implementer's
+    // own public members take the mapping (it lists ILuaStream again)
+    // without hiding anything here (CS0114), and every default reaches the
+    // implementer through the interface — a plain Mode or Dispose() here
+    // would be this class's, which throws NotImplementedException.
+    private ILuaStream Self => this;
 
-    public virtual ValueTask<string> ReadAllAsync(CancellationToken cancellationToken)
+    bool ILuaStream.IsOpen => throw new NotImplementedException();
+    LuaFileOpenMode ILuaStream.Mode => throw new NotImplementedException();
+    void IDisposable.Dispose() => throw new NotImplementedException();
+
+    ValueTask<string> ILuaStream.ReadAllAsync(CancellationToken cancellationToken)
     {
-        Mode.ThrowIfNotReadable();
+        Self.Mode.ThrowIfNotReadable();
 
         // Default implementation using ReadStringAsync
         throw new NotImplementedException($"ReadAllAsync must be implemented by {GetType().Name}");
     }
 
-    public virtual ValueTask<double?> ReadNumberAsync(CancellationToken cancellationToken)
+    ValueTask<double?> ILuaStream.ReadNumberAsync(CancellationToken cancellationToken)
     {
-        Mode.ThrowIfNotReadable();
+        Self.Mode.ThrowIfNotReadable();
 
         // Default implementation using ReadStringAsync
         throw new NotImplementedException(
@@ -56,17 +61,17 @@ public abstract class LuaStreamDefaults : ILuaStream
         );
     }
 
-    public virtual ValueTask<string?> ReadLineAsync(bool keepEol, CancellationToken cancellationToken)
+    ValueTask<string?> ILuaStream.ReadLineAsync(bool keepEol, CancellationToken cancellationToken)
     {
-        Mode.ThrowIfNotReadable();
+        Self.Mode.ThrowIfNotReadable();
 
         // Default implementation using ReadStringAsync
         throw new NotImplementedException($"ReadLineAsync must be implemented by {GetType().Name}");
     }
 
-    public virtual ValueTask<string?> ReadAsync(int count, CancellationToken cancellationToken)
+    ValueTask<string?> ILuaStream.ReadAsync(int count, CancellationToken cancellationToken)
     {
-        Mode.ThrowIfNotReadable();
+        Self.Mode.ThrowIfNotReadable();
 
         // Default implementation using ReadAllAsync
         throw new NotImplementedException(
@@ -74,30 +79,30 @@ public abstract class LuaStreamDefaults : ILuaStream
         );
     }
 
-    public virtual ValueTask WriteAsync(ReadOnlyMemory<char> content, CancellationToken cancellationToken)
+    ValueTask ILuaStream.WriteAsync(ReadOnlyMemory<char> content, CancellationToken cancellationToken)
     {
-        Mode.ThrowIfNotWritable();
+        Self.Mode.ThrowIfNotWritable();
 
         throw new NotImplementedException($"WriteAsync must be implemented by {GetType().Name}");
     }
 
-    public virtual ValueTask WriteAsync(string content, CancellationToken cancellationToken)
+    ValueTask ILuaStream.WriteAsync(string content, CancellationToken cancellationToken)
     {
-        return ((ILuaStream)this).WriteAsync(content.AsMemory(), cancellationToken);
+        return Self.WriteAsync(content.AsMemory(), cancellationToken);
     }
 
-    public virtual ValueTask FlushAsync(CancellationToken cancellationToken)
+    ValueTask ILuaStream.FlushAsync(CancellationToken cancellationToken)
     {
         // Default implementation does nothing (no buffering)
         return default;
     }
 
-    public virtual void SetVBuf(LuaFileBufferingMode mode, int size)
+    void ILuaStream.SetVBuf(LuaFileBufferingMode mode, int size)
     {
         // Default implementation does nothing (no configurable buffering)
     }
 
-    public virtual long Seek(SeekOrigin origin, long offset)
+    long ILuaStream.Seek(SeekOrigin origin, long offset)
     {
         throw new NotSupportedException($"Seek is not supported by {GetType().Name}");
     }
@@ -126,9 +131,9 @@ public abstract class LuaStreamDefaults : ILuaStream
         return new CharMemoryStream(content);
     }
 
-    public virtual ValueTask CloseAsync(CancellationToken cancellationToken)
+    ValueTask ILuaStream.CloseAsync(CancellationToken cancellationToken)
     {
-        Dispose();
+        Self.Dispose();
         return default;
     }
 }

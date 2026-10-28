@@ -1,0 +1,8 @@
+# dotnet/runtime's System.Text.Json, compiled into the same image as std
+# rather than as an assembly of its own (PROVENANCE.md). CS0108: std's
+# internal Exception._message is visible here and JsonException's hides
+# it. CS0168, CS0414: what reads the variable or the field was cut.
+[*.cs]
+dotnet_diagnostic.CS0108.severity = none
+dotnet_diagnostic.CS0168.severity = none
+dotnet_diagnostic.CS0414.severity = none

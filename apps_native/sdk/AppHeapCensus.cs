@@ -1,5 +1,7 @@
 using SharpOS.Std.NoRuntime;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace SharpOS.AppSdk
 {
     // What is filling an application's heap.
@@ -47,7 +49,9 @@ namespace SharpOS.AppSdk
             public fixed ulong Bytes[Capacity];
         }
 
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static Table s_table;
+        #pragma warning restore CS0169
         private static uint s_dumps;
 
         /// <summary>

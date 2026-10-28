@@ -11,7 +11,7 @@ namespace KqlApps
 {
     // KQLBABY.EXE — BabyKusto (vendor/BabyKusto) executing KQL on the app
     // tier (step200): a table in memory, queries over it, their rows checked.
-    // Exit code = checks passed.
+    // Exit code = checks failed.
     internal static unsafe class AppEntry
     {
         [RuntimeExport("SharpAppEntry")]
@@ -104,7 +104,7 @@ namespace KqlApps
                   Describe(rows, shape));
 
             Console.WriteLine("[kqlbaby] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
-            return s_passed;
+            return s_failed;
         }
 
         private static InMemoryTableSource MakeTable()

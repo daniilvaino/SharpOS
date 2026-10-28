@@ -1,5 +1,7 @@
 ﻿using OS.Hal;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Diagnostics
 {
     /// <summary>What <see cref="PerfCounters"/> counts.</summary>
@@ -171,7 +173,9 @@ namespace OS.Kernel.Diagnostics
 
         private struct Values { public fixed long V[Slots]; }
 
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static Values s_values;
+        #pragma warning restore CS0169
 
         /// <summary>One counter's current value.</summary>
         /// <remarks>
@@ -187,7 +191,9 @@ namespace OS.Kernel.Diagnostics
             fixed (long* v = s_values.V)
                 return (ulong)System.Threading.Interlocked.Add(ref v[(int)counter], 0);
         }
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static Values s_mark;
+        #pragma warning restore CS0169
         private static ulong s_markCounter;
         private static ulong s_markTsc;
 
@@ -313,8 +319,12 @@ namespace OS.Kernel.Diagnostics
         private const int MaxKeys = 64;
         private struct KeyTicks { public fixed ulong V[MaxKeys]; }
         private struct KeyVks { public fixed ushort V[MaxKeys]; }
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static KeyTicks s_keyTicks;
+        #pragma warning restore CS0169
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static KeyVks s_keyVk;
+        #pragma warning restore CS0169
         private static int s_keyCount;
         private static bool s_keyPending;
         private static ulong s_keyTsc;

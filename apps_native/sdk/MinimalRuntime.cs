@@ -2,6 +2,8 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace Internal.Runtime
 {
     internal struct MethodTable { }
@@ -735,6 +737,7 @@ namespace System.Runtime.InteropServices
 
         public string Value { get; }
 
+        #pragma warning disable CS0649 // set by named arguments where the attribute is applied
         public string EntryPoint;
         public CharSet CharSet;
         public bool SetLastError;
@@ -743,6 +746,7 @@ namespace System.Runtime.InteropServices
         public CallingConvention CallingConvention;
         public bool BestFitMapping;
         public bool ThrowOnUnmappableChar;
+        #pragma warning restore CS0649
     }
 
     internal enum CallingConvention

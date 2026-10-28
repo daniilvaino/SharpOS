@@ -6,6 +6,8 @@ using OS.Kernel.Threading;
 using OS.PAL.SharpOSHost;
 using SharpOS.Std.NoRuntime;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace OS.Boot.EH
 {
     // Phase 1 step 10 — bridges hardware exceptions (CPU traps via IDT)

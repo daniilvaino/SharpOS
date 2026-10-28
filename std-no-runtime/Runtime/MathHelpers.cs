@@ -29,7 +29,7 @@ namespace System.Runtime
         public static float RhpFltRem(float dividend, float divisor)
         {
             if (divisor == 0 || !IsFinite(dividend)) return float.NaN;
-            if (!IsFinite(divisor) && divisor == divisor) return dividend;
+            if (!IsFinite(divisor) && !float.IsNaN(divisor)) return dividend;
             return SharpLibm.Libm.fmodf(dividend, divisor);
         }
 
@@ -37,7 +37,7 @@ namespace System.Runtime
         public static double RhpDblRem(double dividend, double divisor)
         {
             if (divisor == 0 || !IsFinite(dividend)) return double.NaN;
-            if (!IsFinite(divisor) && divisor == divisor) return dividend;
+            if (!IsFinite(divisor) && !double.IsNaN(divisor)) return dividend;
             return SharpLibm.Libm.fmod(dividend, divisor);
         }
 

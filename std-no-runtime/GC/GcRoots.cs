@@ -16,6 +16,8 @@
 
 using System.Runtime.InteropServices;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace SharpOS.Std.NoRuntime
 {
     [StructLayout(LayoutKind.Sequential, Size = GcRoots.Capacity * 8)]
@@ -167,7 +169,9 @@ namespace SharpOS.Std.NoRuntime
         /// Roots the tier keeps outside the registered slots: the kernel's
         /// threads' thread-static storage (ThreadArea). Marked with the statics.
         /// </summary>
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         public static delegate*<void> ExtraRoots;
+        #pragma warning restore CS0649
 
         public static void MarkStaticRootsOnly()
         {

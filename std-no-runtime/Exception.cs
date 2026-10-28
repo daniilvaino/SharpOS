@@ -32,13 +32,17 @@ namespace System
         // declaration order makes future [StructLayout(Sequential)] swap
         // a one-line change.
         internal string _message;
+        #pragma warning disable CS0649 // a field of the BCL original, kept with the port; what uses it was cut
         private object _data;                  // placeholder for IDictionary
+        #pragma warning restore CS0649
         private Exception _innerException;
         private string _helpURL;
         private string _source;
         private int _HResult;
         private string _stackTraceString;
+        #pragma warning disable CS0169 // a field of the BCL original, kept with the port; what uses it was cut
         private string _remoteStackTraceString;
+        #pragma warning restore CS0169
         private IntPtr[] _corDbgStackTrace;
         private int _idxFirstFreeStackTraceEntry;
 
@@ -136,7 +140,9 @@ namespace System
         // and the registry that knows lives there. Null until installed, and
         // then the trace is addresses alone - which is still a trace, and
         // still more than a seven-character marker.
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         internal static unsafe delegate*<ulong, ulong> s_resolveImageBase;
+        #pragma warning restore CS0649
 
         private unsafe string FormatStackTrace()
         {

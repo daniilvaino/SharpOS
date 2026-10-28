@@ -45,7 +45,9 @@ namespace System
         }
 
         /// <summary>The image base names count from; set by the app tier at start (AppRuntime), 0 in the kernel.</summary>
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         internal static ulong ModuleBase;
+        #pragma warning restore CS0649
 
         private string LastResortName
         {

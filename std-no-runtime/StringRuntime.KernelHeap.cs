@@ -16,6 +16,8 @@
 // and the intrinsic both give the real MT. This was confirmed by SUPER-2 phase 0
 // reconnaissance — see gc-experiment/PLAN.md.
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace SharpOS.Std.NoRuntime
 {
     internal static unsafe class StringRuntime

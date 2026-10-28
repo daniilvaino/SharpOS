@@ -50,15 +50,15 @@ namespace AotTests
             string probe = null;
             try { probe = DynamicProbe(); }
             catch (Exception e) { probe = "threw " + e.Message; }
-            AppHost.WriteString("[dyn] probe: " + probe + "\n");
+            AppHost.Terminal.Write("[dyn] probe: " + probe + "\n");
             Check("dynamic: Expando, class member, +=, ++, *, conversions", probe == "t!12line t/6");
 
             // The shared cases (DynamicCases.cs), the same source tools/DynamicReference runs on desktop .NET.
-            int pass = DynamicCases.Run(line => AppHost.WriteString(line + "\n"), out int total);
+            int pass = DynamicCases.Run(line => AppHost.Terminal.Write(line + "\n"), out int total);
             Check("dynamic: " + pass.ToString() + "/" + total.ToString() + " cases as on desktop .NET", pass == total);
 
             // The kernel's probe pipes have fixed names: one battery at a time.
-            if (!s_concurrent)
+            if (OwnKernelProbes)
             {
                 DynamicTarget();
                 DynamicViews();
@@ -67,19 +67,19 @@ namespace AotTests
             DynamicInference();
             DynamicExpando();
             ExpandoTable();
-            if (!s_gcStress && !s_kernelStressed && !s_concurrent) BenchDynamic();
+            if (!s_gcStress && !s_kernelStressed && OwnKernelProbes) BenchDynamic();
         }
 
         private static int RunDynamicOnly()
         {
-            AppHost.WriteString("==== dynamic ====\n");
+            AppHost.Terminal.Write("==== dynamic ====\n");
             CheckDynamic();
-            AppHost.WriteString("==== ");
-            AppHost.WriteUInt(s_pass);
-            AppHost.WriteString("/");
-            AppHost.WriteUInt(s_total);
-            AppHost.WriteString(" passed ====\n");
-            return (int)s_pass;
+            AppHost.Terminal.Write("==== ");
+            AppHost.Terminal.WriteUInt(s_pass);
+            AppHost.Terminal.Write("/");
+            AppHost.Terminal.WriteUInt(s_total);
+            AppHost.Terminal.Write(" passed ====\n");
+            return (int)(s_total - s_pass);
         }
 
         // A reference held only by a stack-passed argument (the fifth and later
@@ -346,7 +346,7 @@ namespace AotTests
                 mixed += x.V;
             }
             int two = DynamicRuntime.Lookups - before;
-            AppHost.WriteString("[dyn] cache: one type " + one.ToString() + " lookup(s), two types " + two.ToString() + "\n");
+            AppHost.Terminal.Write("[dyn] cache: one type " + one.ToString() + " lookup(s), two types " + two.ToString() + "\n");
             Check("dynamic: one type at a call site — the name looked up once", one == 1 && sum == 200);
             Check("dynamic: two types in turn — once each, the right member for each", two == 2 && mixed == 25 * 2 + 25 * 1);
         }
@@ -386,7 +386,7 @@ namespace AotTests
             try { e["Bad"] = new System.Text.StringBuilder(); }
             catch (ArgumentException) { refusedOk = e.Count == 82 && !e.ContainsKey("Bad"); }
             if (!(counts && kinds && order && refusedOk && sumOk))
-                AppHost.WriteString("[expando] table: counts " + counts.ToString() + ", kinds " + kinds.ToString()
+                AppHost.Terminal.Write("[expando] table: counts " + counts.ToString() + ", kinds " + kinds.ToString()
                                     + ", order " + order.ToString() + " (" + string.Join(",", names.ToArray()) + "), refused "
                                     + refusedOk.ToString() + ", sum " + sum.ToString() + "\n");
             Check("Expando: order after removals, a rebuilt table, kinds that change, int stays int, a value that cannot travel refused",
@@ -455,7 +455,7 @@ namespace AotTests
                         view = ns(watch);
                     }
                 }
-            AppHost.WriteString("[bench] dynamic: d.Field — view " + view.ToString() + " ns, Expando " + expando.ToString()
+            AppHost.Terminal.Write("[bench] dynamic: d.Field — view " + view.ToString() + " ns, Expando " + expando.ToString()
                                 + " ns, class " + cls.ToString() + " ns (static " + direct.ToString() + " ns); d.Method() "
                                 + call.ToString() + " ns" + (sink == null ? " SINK NULL" : "") + "\n");
         }

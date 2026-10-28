@@ -17,6 +17,8 @@ using System;
 using System.Runtime;
 using System.Runtime.CompilerServices;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace SharpOS.Std.NoRuntime
 {
     internal static unsafe partial class GcRuntimeExports
@@ -136,10 +138,8 @@ namespace SharpOS.Std.NoRuntime
         // offset RhUnboxNullable reads. Skipped: GC write barriers (the
         // collector is non-generational) and RequiresAlign8.
         //
-        // Copy size: real runtime uses mt->ValueTypeSize; we don't have that
-        // field on GcMethodTable, so we use mt->BaseSize - 8 (BaseSize includes
-        // the MT* header plus padding). That may copy a few bytes of padding
-        // slack, harmless because readers only look at the declared value bytes.
+        // Copy size: mt->ValueTypeSize, as stock. BaseSize - 8 read past the
+        // value — 12 bytes past an int, off the end of the caller's local.
         [RuntimeExport("RhBox")]
         public static object RhBox(Internal.Runtime.MethodTable* mt, ref byte data)
         {
@@ -158,7 +158,7 @@ namespace SharpOS.Std.NoRuntime
             if (obj == null)
                 throw GcHeap.OutOfMemory();
 
-            uint payload = gcMt->BaseSize - 8;
+            uint payload = gcMt->ValueTypeSize;
             byte* dst = (byte*)obj + 8;
             fixed (byte* pData = &data)
             {

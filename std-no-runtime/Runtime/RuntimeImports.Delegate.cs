@@ -9,6 +9,8 @@
 
 using SharpOS.Std.NoRuntime;
 
+#pragma warning disable CS8500 // the runtime takes pointers to managed types by design
+
 namespace System.Runtime
 {
     internal static unsafe partial class RuntimeImports

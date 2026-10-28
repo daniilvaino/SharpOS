@@ -27,7 +27,8 @@ namespace PipeApps
 
         private static int Run(string[] args)
         {
-            long min = args.Length > 0 ? long.Parse(args[0]) : 0;
+            if (!NumberArg.TryFirst(args, "VIEWFILT", "VIEWFILT [min] — the messages whose Level is min (0) or more", 0, out long min, out int exit))
+                return exit;
             Pipe.Read().Where(v => v["Level"] >= min).WriteTo();
             return 0;
         }

@@ -109,7 +109,7 @@ namespace KqlApps
             Check("classification marks operator, column and literal", keyword && column && literal);
 
             Console.WriteLine("[kqltest] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
-            return s_passed;
+            return s_failed;
         }
     }
 }

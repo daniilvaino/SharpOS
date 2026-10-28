@@ -656,7 +656,9 @@ namespace SharpOS.Std.Pipes
         // Next, so a failed pipeline throws out of the finally of a foreach —
         // the path that resumed a catch with the funclet's frame (step197).
         // DataTest 15 keeps it under test; nothing else sets it.
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         internal static bool WaitInDispose;
+        #pragma warning restore CS0649
 
         internal static void Run(ref Action closed)
         {

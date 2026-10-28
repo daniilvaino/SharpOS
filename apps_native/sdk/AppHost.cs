@@ -7,52 +7,121 @@
         // A path goes to the kernel in UTF-8 (step208): up to three bytes a character.
         private const int MaxTempPathBytes = MaxTempPathChars * 3;
 
-        public static void WriteString(byte* text)
+        // The old names for the terminal writes. They go past the standard
+        // output, so a pipe or a redirect after the program never sees what
+        // they print (step213: BENCHAOT and AOTTESTS printing on the screen
+        // through `| kql`). Kept for code that has not moved; a warning at
+        // every call says where to go.
+        private const string PastStandardOutput =
+            "Writes past the standard output: a pipe or a redirect never sees it. " +
+            "Program output goes through Console.Write; drawing on the terminal through AppHost.Terminal.";
+        private const string PastStandardOutputId = "SHARPOS0001";
+
+        [System.Obsolete(PastStandardOutput, DiagnosticId = PastStandardOutputId)]
+        public static void WriteString(byte* text) => Terminal.Write(text);
+
+        [System.Obsolete(PastStandardOutput, DiagnosticId = PastStandardOutputId)]
+        public static void WriteString(string text) => Terminal.Write(text);
+
+        /// <summary>
+        /// The terminal itself, whatever the standard output is: what draws on
+        /// it — a line editor's echo, a prompt, cursor and colour sequences, a
+        /// full-screen interface — and what must reach the screen without an
+        /// allocator (a report from inside a failed allocation).
+        /// </summary>
+        /// <remarks>
+        /// Output a program produces goes through <see cref="System.Console"/>:
+        /// to the pipe when the standard output was handed over, to the
+        /// terminal otherwise.
+        /// </remarks>
+        public static class Terminal
         {
-            AppServiceTable* services = AppRuntime.Services;
-            if (services == null || text == null)
-                return;
-
-            delegate* unmanaged<ulong, void> write = (delegate* unmanaged<ulong, void>)services->WriteStringAddress;
-            if (write == null)
-                return;
-
-            write((ulong)text);
-        }
-
-        public static void WriteString(string text)
-        {
-            if (text == null || text.Length == 0)
-                return;
-
-            AppServiceTable* services = AppRuntime.Services;
-            if (services == null)
-                return;
-
-            // One service call per chunk, encoded as UTF-8.
-            //
-            // This used to hand over one character at a time, which was correct
-            // and expensive: a full-screen repaint became thousands of calls,
-            // and — worse — the kernel paints the screen at the END of a write,
-            // so a stream of single characters never finished a frame. Text
-            // appeared over serial and the display kept the previous picture.
-            //
-            // The ASCII fallback that used to sit here could not carry the box
-            // drawing a UI is made of, which is why the character path existed
-            // at all.
-            if (services->WriteStringAddress != 0)
+            public static void Write(byte* text)
             {
-                WriteUtf8Chunks(text, (delegate* unmanaged<ulong, void>)services->WriteStringAddress);
-                return;
+                AppServiceTable* services = AppRuntime.Services;
+                if (services == null || text == null)
+                    return;
+
+                delegate* unmanaged<ulong, void> write = (delegate* unmanaged<ulong, void>)services->WriteStringAddress;
+                if (write == null)
+                    return;
+
+                write((ulong)text);
             }
 
-            delegate* unmanaged<uint, void> writeChar = (delegate* unmanaged<uint, void>)services->WriteCharAddress;
-            if (writeChar == null) return;
-
-            fixed (char* source = text)
+            public static void Write(string text)
             {
-                for (int i = 0; i < text.Length; i++)
-                    writeChar((uint)source[i]);
+                if (text == null || text.Length == 0)
+                    return;
+
+                AppServiceTable* services = AppRuntime.Services;
+                if (services == null)
+                    return;
+
+                // One service call per chunk, encoded as UTF-8.
+                //
+                // This used to hand over one character at a time, which was correct
+                // and expensive: a full-screen repaint became thousands of calls,
+                // and — worse — the kernel paints the screen at the END of a write,
+                // so a stream of single characters never finished a frame. Text
+                // appeared over serial and the display kept the previous picture.
+                //
+                // The ASCII fallback that used to sit here could not carry the box
+                // drawing a UI is made of, which is why the character path existed
+                // at all.
+                if (services->WriteStringAddress != 0)
+                {
+                    WriteUtf8Chunks(text, (delegate* unmanaged<ulong, void>)services->WriteStringAddress);
+                    return;
+                }
+
+                delegate* unmanaged<uint, void> writeChar = (delegate* unmanaged<uint, void>)services->WriteCharAddress;
+                if (writeChar == null) return;
+
+                fixed (char* source = text)
+                {
+                    for (int i = 0; i < text.Length; i++)
+                        writeChar((uint)source[i]);
+                }
+            }
+
+            public static void WriteChar(char c)
+            {
+                AppServiceTable* services = AppRuntime.Services;
+                if (services == null)
+                    return;
+
+                delegate* unmanaged<uint, void> writeChar = (delegate* unmanaged<uint, void>)services->WriteCharAddress;
+                if (writeChar == null)
+                    return;
+
+                writeChar((uint)c);
+            }
+
+            public static void WriteUInt(uint value)
+            {
+                AppServiceTable* services = AppRuntime.Services;
+                if (services == null)
+                    return;
+
+                delegate* unmanaged<uint, void> write = (delegate* unmanaged<uint, void>)services->WriteUIntAddress;
+                if (write == null)
+                    return;
+
+                write(value);
+            }
+
+            public static void WriteHex(ulong value)
+            {
+                AppServiceTable* services = AppRuntime.Services;
+                if (services == null)
+                    return;
+
+                delegate* unmanaged<ulong, void> write = (delegate* unmanaged<ulong, void>)services->WriteHexAddress;
+                if (write == null)
+                    return;
+
+                write(value);
             }
         }
 
@@ -78,7 +147,7 @@
 
             if (services->WriteErrorAddress == 0)
             {
-                WriteString(text);
+                Terminal.Write(text);
                 return;
             }
 
@@ -245,44 +314,14 @@
             writeBuildId();
         }
 
-        public static void WriteChar(char c)
-        {
-            AppServiceTable* services = AppRuntime.Services;
-            if (services == null)
-                return;
+        [System.Obsolete(PastStandardOutput, DiagnosticId = PastStandardOutputId)]
+        public static void WriteChar(char c) => Terminal.WriteChar(c);
 
-            delegate* unmanaged<uint, void> writeChar = (delegate* unmanaged<uint, void>)services->WriteCharAddress;
-            if (writeChar == null)
-                return;
+        [System.Obsolete(PastStandardOutput, DiagnosticId = PastStandardOutputId)]
+        public static void WriteUInt(uint value) => Terminal.WriteUInt(value);
 
-            writeChar((uint)c);
-        }
-
-        public static void WriteUInt(uint value)
-        {
-            AppServiceTable* services = AppRuntime.Services;
-            if (services == null)
-                return;
-
-            delegate* unmanaged<uint, void> write = (delegate* unmanaged<uint, void>)services->WriteUIntAddress;
-            if (write == null)
-                return;
-
-            write(value);
-        }
-
-        public static void WriteHex(ulong value)
-        {
-            AppServiceTable* services = AppRuntime.Services;
-            if (services == null)
-                return;
-
-            delegate* unmanaged<ulong, void> write = (delegate* unmanaged<ulong, void>)services->WriteHexAddress;
-            if (write == null)
-                return;
-
-            write(value);
-        }
+        [System.Obsolete(PastStandardOutput, DiagnosticId = PastStandardOutputId)]
+        public static void WriteHex(ulong value) => Terminal.WriteHex(value);
 
         public static uint GetAbiVersion()
         {

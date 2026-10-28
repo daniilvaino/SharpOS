@@ -138,7 +138,7 @@ namespace PipeApps
             Tests();
 
             Console.WriteLine("[pipeperf] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
-            return s_passed;
+            return s_failed;
         }
 
         // ---- one phase for the sampler ----

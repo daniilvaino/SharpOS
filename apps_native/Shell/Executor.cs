@@ -57,7 +57,8 @@ namespace Shell
         /// </summary>
         /// <remarks>
         /// ShellSyntaxTree is a safety analyser: it refuses <c>export</c> and
-        /// <c>unset</c> outright, as commands that change bindings. They are
+        /// <c>unset</c> outright, as commands that change bindings, and takes
+        /// <c>read</c> for the bash builtin. They are
         /// renamed before the parse (<see cref="RenameBindingCommands"/>), and
         /// back in <see cref="Split"/>. The parser runs in
         /// IsolatedNonInteractive mode, the one that takes <c>$NAME</c>; what
@@ -157,8 +158,7 @@ namespace Shell
                         commandPlace = op == ";" || op == "|" || op == "&&" || op == "||" || op == "(" || token.IsStatementSeparator;
                         continue;
                     case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Word:
-                        if (commandPlace && (token.Value == "export" || token.Value == "unset")
-                            && token.SourceLength == token.Value.Length)
+                        if (commandPlace && IsRenamed(token.Value) && token.SourceLength == token.Value.Length)
                         {
                             built.Append(line, copied, token.SourceStart - copied);
                             renamedAt.Add(built.Length);
@@ -176,6 +176,10 @@ namespace Shell
             built.Append(line, copied, line.Length - copied);
             return built.ToString();
         }
+
+        // export and unset change bindings; `read` is READ.EXE here, not the
+        // bash builtin the parser takes it for (step213).
+        private static bool IsRenamed(string word) => word == "export" || word == "unset" || word == "read";
 
         // A place in the renamed line as a place in the line typed.
         private int OriginalColumn(int at)
@@ -744,23 +748,33 @@ namespace Shell
 
         // A builtin as the first stage: its text, gathered, to the pipe as a
         // string per line. The next stage leaving early is 141, as for a program.
+        // Into the pipe as it is written (step213): gathered first, `cat` of
+        // a 16 MiB file was one string of 32 MiB — past what an object may take.
         private int RunBuiltinStage(string verb, List<string> args, PipeWriteEnd output)
         {
-            var gathered = new StringBuilder();
-            _capture = gathered;
+            if (output == null)
+            {
+                // The screen, plain as into a pipe.
+                var gathered = new StringBuilder();
+                _capture = gathered;
+                try { return RunBuiltin(verb, args); }
+                finally { _capture = null; Write(gathered.ToString()); }
+            }
             int code;
-            try { code = RunBuiltin(verb, args); }
-            finally { _capture = null; }
-
-            if (output == null) { Write(gathered.ToString()); return code; }
             try
             {
                 using (System.IO.TextWriter writer = output.WriteText())
-                    writer.Write(gathered.ToString());
+                {
+                    _captureWriter = writer;
+                    try { code = RunBuiltin(verb, args); }
+                    finally { _captureWriter = null; }
+                }
             }
-            catch (SharpOS.Std.Pipes.PipeException) { if (code == 0) code = QuietExitCode; }
+            catch (SharpOS.Std.Pipes.PipeException) { code = QuietExitCode; }
             return code;
         }
+
+        private System.IO.TextWriter _captureWriter;
 
         // Where stage k writes when nothing is redirected: the pipe to the next
         // stage, or the shell's own output — a copy, the shell's to close if
@@ -900,7 +914,11 @@ namespace Shell
                 if (element.Role == ClauseElementRole.Verb && verb.Length == 0)
                 {
                     verb = Expand(element.Raw, true);
-                    if (verb == "__export" || verb == "__unset") verb = verb.Substring(2);
+                    if (verb.StartsWith("__") && IsRenamed(verb.Substring(2))) verb = verb.Substring(2);
+                    // FAT names have no case, so neither do programs; the
+                    // builtins answer in any case too (step213).
+                    string lower = verb.ToLowerInvariant();
+                    if (lower != verb && IsBuiltinName(lower)) verb = lower;
                 }
                 else if (element.Role != ClauseElementRole.Redirect)
                 {
@@ -1003,7 +1021,18 @@ namespace Shell
                 // `export NAME` exports a shell variable in bash; this shell
                 // has none, so there is nothing to do.
                 if (eq < 0) continue;
-                System.Environment.SetEnvironmentVariable(name, arg.Substring(eq + 1));
+                // The kernel keeps a block of 64 Ki characters at most: past
+                // that the variable is refused, and the shell stays.
+                try { System.Environment.SetEnvironmentVariable(name, arg.Substring(eq + 1)); }
+                catch (System.InvalidOperationException e)
+                {
+                    Write("sh: export: ");
+                    Write(name);
+                    Write(": ");
+                    Write(e.Message);
+                    Write("\n");
+                    code = 1;
+                }
             }
             return code;
         }
@@ -1180,6 +1209,13 @@ namespace Shell
                     if (System.IO.Directory.Exists(from))
                     {
                         if (!recursive) { Complain("cp", from, "is a directory (cp -r copies it)"); code = 1; continue; }
+                        // A copy inside its own source would copy itself again as it grows.
+                        if (IsWithin(to, from))
+                        {
+                            Complain("cp", from, "cannot copy a directory into itself");
+                            code = 1;
+                            continue;
+                        }
                         CopyTree(from, to);
                     }
                     else System.IO.File.Copy(from, to, true);
@@ -1254,7 +1290,16 @@ namespace Shell
                 string to = intoDirectory ? last + "\\" + LastName(from) : last;
                 try
                 {
-                    if (System.IO.Directory.Exists(from)) System.IO.Directory.Move(from, to);
+                    if (System.IO.Directory.Exists(from))
+                    {
+                        if (IsWithin(to, from))
+                        {
+                            Complain("mv", from, "cannot move a directory into itself");
+                            code = 1;
+                            continue;
+                        }
+                        System.IO.Directory.Move(from, to);
+                    }
                     else System.IO.File.Move(from, to);
                 }
                 catch (System.Exception e) when (e is System.IO.IOException || e is System.PlatformNotSupportedException)
@@ -1264,6 +1309,14 @@ namespace Shell
                 }
             }
             return code;
+        }
+
+        // PATH is DIRECTORY or under it; names compared as FAT does, without case.
+        private static bool IsWithin(string path, string directory)
+        {
+            string p = path.ToUpperInvariant(), d = directory.ToUpperInvariant();
+            if (!d.EndsWith("\\")) d += "\\";
+            return p + "\\" == d || p.StartsWith(d);
         }
 
         private static string LastName(string path)
@@ -1419,9 +1472,15 @@ namespace Shell
 
         private int Exit(List<string> args)
         {
+            // As in sh: `exit` alone keeps the last command's code; a word
+            // that is not a number is 2.
             ExitRequested = true;
-            if (args.Count == 0) return 0;
-            return TryParseInt(args[0], out int code) ? code : 0;
+            if (args.Count == 0) return LastExitCode;
+            if (TryParseInt(args[0], out int code)) return code;
+            Write("sh: exit: not a number: ");
+            Write(args[0]);
+            Write("\n");
+            return 2;
         }
 
         private int Echo(List<string> args)
@@ -1473,10 +1532,27 @@ namespace Shell
                 if (a == "-l") details = true;
                 else paths.Add(a);
             }
-            if (details) return ListDetails(paths.Count == 0 ? _cwd : Resolve(paths[0]));
-            args = paths;
-            string path = args.Count == 0 ? _cwd : Resolve(args[0]);
+            if (paths.Count == 0) paths.Add(_cwd);
 
+            // Several paths: each under its name and a blank line between, as sh.
+            int code = 0;
+            for (int i = 0; i < paths.Count; i++)
+            {
+                string path = Resolve(paths[i]);
+                if (paths.Count > 1)
+                {
+                    if (i > 0) Write("\n");
+                    Write(path);
+                    Write(":\n");
+                }
+                int one = details ? ListDetails(path) : ListNames(path);
+                if (one != 0) code = one;
+            }
+            return code;
+        }
+
+        private int ListNames(string path)
+        {
             byte* name = stackalloc byte[256];
             uint index = 0;
             uint shown = 0;
@@ -1777,16 +1853,18 @@ namespace Shell
 
         private void Write(string text)
         {
-            if (_capture != null) _capture.Append(text);
-            else if (text == "sh: ") AppHost.WriteString("\u001b[31msh:\u001b[0m ");   // the shell's own complaints, marked
-            else AppHost.WriteString(text);
+            if (_captureWriter != null) _captureWriter.Write(text);
+            else if (_capture != null) _capture.Append(text);
+            else if (text == "sh: ") AppHost.Terminal.Write("\u001b[31msh:\u001b[0m ");   // the shell's own complaints, marked
+            else AppHost.Terminal.Write(text);
         }
 
         // Colour for the screen only: a builtin's text going into a pipe stays plain.
         private void WritePainted(string sgr, string text)
         {
-            if (_capture != null) _capture.Append(text);
-            else AppHost.WriteString(sgr + text + "\u001b[0m");
+            if (_captureWriter != null) _captureWriter.Write(text);
+            else if (_capture != null) _capture.Append(text);
+            else AppHost.Terminal.Write(sgr + text + "\u001b[0m");
         }
 
         private void WriteInt(int value) => Write(value.ToString());

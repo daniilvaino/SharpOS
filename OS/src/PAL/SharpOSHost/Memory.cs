@@ -5,6 +5,8 @@ using OS.Hal;
 using OS.Kernel;
 using OS.Kernel.Paging;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.PAL.SharpOSHost
 {
     // L3 Memory surface — per D9 (memory forward to SharpOSHost) и

@@ -78,6 +78,10 @@ namespace Terminal.Gui
             if (s_ctrl && ch >= 'a' && ch <= 'z') return (Key)(ch - 'a' + 1) | Key.CtrlMask;
             if (s_ctrl && ch >= 'A' && ch <= 'Z') return (Key)(ch - 'A' + 1) | Key.CtrlMask;
 
+            // Alt+letter as the stock drivers give it — the capital: the menu
+            // bar compares its hotkeys upper-cased, and Alt+F never matched.
+            if (s_alt && ch >= 'a' && ch <= 'z') return (Key)(ch - 'a' + 'A');
+
             return (Key)ch;
         }
 

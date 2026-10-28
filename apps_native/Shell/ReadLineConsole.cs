@@ -62,20 +62,20 @@ namespace Internal.ReadLine.Abstractions
         {
             if (string.IsNullOrEmpty(value)) return;
             if (PasswordMode) value = new string('*', value.Length);
-            AppHost.WriteString(value);
+            AppHost.Terminal.Write(value);
             for (int i = 0; i < value.Length; i++)
             {
                 if (++_left < _width) continue;
                 _left = 0;
                 _top++;
             }
-            if (_left == 0) AppHost.WriteString(" \r");
+            if (_left == 0) AppHost.Terminal.Write(" \r");
         }
 
         public void WriteLine(string value)
         {
             Write(value);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("\n");
             _left = 0;
             _top++;
         }
@@ -84,9 +84,9 @@ namespace Internal.ReadLine.Abstractions
         private static void Move(int by, char forward, char back)
         {
             if (by == 0) return;
-            AppHost.WriteString("\u001b[");
-            AppHost.WriteString((by > 0 ? by : -by).ToString());
-            AppHost.WriteChar(by > 0 ? forward : back);
+            AppHost.Terminal.Write("\u001b[");
+            AppHost.Terminal.Write((by > 0 ? by : -by).ToString());
+            AppHost.Terminal.WriteChar(by > 0 ? forward : back);
         }
     }
 }

@@ -8,5 +8,6 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="..\PipeGen\StressArgs.cs" />
   </ItemGroup>
 </Project>

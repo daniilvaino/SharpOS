@@ -36,8 +36,12 @@ namespace System
 
         // Set fallback values using abbreviations, base offset, and id
         // These are expected in environments without time zone globalization data
+        #pragma warning disable CS0649 // a field of the BCL original, kept with the port; what uses it was cut
         private string? _standardAbbrevName;
+        #pragma warning restore CS0649
+        #pragma warning disable CS0649 // a field of the BCL original, kept with the port; what uses it was cut
         private string? _daylightAbbrevName;
+        #pragma warning restore CS0649
 
         // Verbatim from TimeZoneInfo.Unix.cs.
         // Handle UTC and its aliases per https://github.com/unicode-org/cldr/blob/master/common/bcp47/timezone.xml

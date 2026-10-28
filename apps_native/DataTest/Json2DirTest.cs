@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using SharpOS.AppSdk;
 
@@ -42,6 +43,12 @@ namespace DataApps
             Check("27: a root that is not an object: refused (1)", Sh("cd t27 && READ $HOME/t27.json | JSON2DIR") == 1);
             File.WriteAllText("t27.json", "{ \"a/b\": \"x\" }");
             Check("27: a name with /: refused (1)", Sh("cd t27 && READ $HOME/t27.json | JSON2DIR") == 1);
+            File.WriteAllText("t27.json", "{ \"first.txt\": \"x\", \"d\\\\..\\\\..\\\\evil\": \"pwn\" }");
+            Check("27: a name with \\ (out of the directory): refused (1), nothing written",
+                  Sh("cd t27 && READ $HOME/t27.json | JSON2DIR") == 1 && !File.Exists(Root + "/first.txt") && !File.Exists("evil"));
+            File.WriteAllText("t27.json", "{ \"Aa\": \"1\", \"aA\": \"2\" }");
+            Check("27: names equal without case: refused (1), nothing written",
+                  Sh("cd t27 && READ $HOME/t27.json | JSON2DIR") == 1 && !File.Exists(Root + "/Aa"));
             File.WriteAllText("t27.json", "{ \"a.txt\": \"x\", ");
             Check("27: JSON cut short: refused (1)", Sh("cd t27 && READ $HOME/t27.json | JSON2DIR") == 1);
             File.WriteAllText("t27.json", "{ \"dir\": \"a file where a directory is\" }");
@@ -51,6 +58,15 @@ namespace DataApps
 
             Check("27: READ --externalpipe of a file that is not one: 1",
                   Sh("READ t27.json --externalpipe") == 1 && Sh("READ t27.json --bytes --externalpipe") == 2);
+
+            // --lines (step213): a string a line, CRLF's \r dropped, the last
+            // line without \n kept, a character cut by the piece's end whole.
+            File.WriteAllText("t27.txt", "первая\r\nвторая\nтретья");
+            List<string> lines = Lines("READ t27.txt --lines --chunk 3");
+            Check("27: READ --lines: three lines, whole across 3-byte pieces",
+                  lines.Count == 3 && lines[0] == "первая" && lines[1] == "вторая" && lines[2] == "третья");
+            Check("27: READ --lines with --bytes: usage (2)", Sh("READ t27.txt --lines --bytes") == 2);
+            File.Delete("t27.txt");
 
             Directory.Delete(Root, true);
             File.Delete("t27.json");

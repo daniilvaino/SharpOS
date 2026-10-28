@@ -9,7 +9,7 @@ namespace System.Diagnostics
 {
     internal static class DebugOutput
     {
-        internal static void Write(string message) => AppHost.WriteString(message);
-        internal static void WriteChar(char c) => AppHost.WriteChar(c);
+        internal static void Write(string message) => AppHost.Terminal.Write(message);
+        internal static void WriteChar(char c) => AppHost.Terminal.WriteChar(c);
     }
 }

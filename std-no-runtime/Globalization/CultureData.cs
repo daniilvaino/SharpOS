@@ -26,7 +26,9 @@ namespace System.Globalization
 
         // Override flag
         private string _sRealName = null!; // Name you passed in (ie: en-US, en, or de-DE_phoneb). Initialized by helper called during initialization.
+        #pragma warning disable CS0414 // a field of the BCL original, kept with the port; what uses it was cut
         private string? _sWindowsName; // Name OS thinks the object is (ie: de-DE_phoneb, or en-US (even if en was passed in))
+        #pragma warning restore CS0414
 
         // Identity
         private string? _sName; // locale name (ie: en-us, NO sort info, but could be neutral)
@@ -46,9 +48,13 @@ namespace System.Globalization
         private int _iFirstWeekOfYear = undef; // (user can override) first week of year (gregorian really)
         private CalendarId[]? _waCalendars; // all available calendar type(s).  The first one is the default calendar
 
+        #pragma warning disable CS0414 // a field of the BCL original, kept with the port; what uses it was cut
         private bool _bUseOverrides; // use user overrides? this depends on user setting and if is user default locale.
+        #pragma warning restore CS0414
         private bool _bUseOverridesUserSetting; // the setting the user requested for.
+        #pragma warning disable CS0414 // a field of the BCL original, kept with the port; what uses it was cut
         private bool _bNeutral; // Flags for the culture (ie: neutral or not right now)
+        #pragma warning restore CS0414
 
         private static CultureData? s_Invariant;
 

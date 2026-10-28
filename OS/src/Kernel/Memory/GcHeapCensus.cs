@@ -31,7 +31,9 @@ namespace OS.Kernel.Memory
 
         // Static storage, not an array: no allocation, and no class
         // constructor to run (limits §1).
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static Table s_table;
+        #pragma warning restore CS0169
         private static bool s_running;
 
         /// <summary>

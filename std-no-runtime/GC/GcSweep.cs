@@ -125,7 +125,9 @@ namespace SharpOS.Std.NoRuntime
         // has already marked live objects. After Run, mark bits are cleared
         // (ready for next GC pass) and dead objects replaced with free markers.
         /// <summary>Fill freed blocks with 0xCC (FlushRun). Off: a debugging detector.</summary>
+        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
         public static bool PoisonFreed;
+        #pragma warning restore CS0649
 
         public static void Run()
         {

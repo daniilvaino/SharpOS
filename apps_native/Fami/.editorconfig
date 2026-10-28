@@ -1,0 +1,7 @@
+# Fami/ is the upstream emulator (a submodule), compiled as it is: its
+# warnings are upstream's, and the submodule is not edited to silence them.
+[Fami/**.cs]
+dotnet_diagnostic.CS0168.severity = none
+dotnet_diagnostic.CS0169.severity = none
+dotnet_diagnostic.CS0414.severity = none
+dotnet_diagnostic.CS0675.severity = none

@@ -68,7 +68,7 @@ namespace UsbTest
             Application.Run(top);
             Application.Shutdown();
 
-            AppHost.WriteString("[usbtest] exited\n");
+            Console.Write("[usbtest] exited\n");
             return 0;
         }
     }

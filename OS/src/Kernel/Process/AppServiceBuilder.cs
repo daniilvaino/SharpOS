@@ -915,11 +915,11 @@ namespace OS.Kernel.Process
         /// asking the app, because the app already said so: it switched to the
         /// alternate screen.
         ///
-        /// Only the process that switched. The launcher hands the screen to a
-        /// child while staying in the alternate screen (leaving it would bring
-        /// the boot log back), and "the screen is alternate" alone then read
-        /// the child's ordinary lines as the launcher's frames: an AOTTESTS run
-        /// reached the display and no log at all.
+        /// Only the process that switched. The launcher used to hand the screen
+        /// to a child while staying in the alternate screen, and "the screen is
+        /// alternate" alone then read the child's ordinary lines as the
+        /// launcher's frames: an AOTTESTS run reached the display and no log at
+        /// all. Since step213 it leaves the alternate screen for the child.
         /// </remarks>
         private static OS.Hal.OutputChannel AppOutputChannel()
             => OS.Hal.TerminalConsole.IsAlternateScreen && s_alternateScreenOwner == (int)(AppProcesses.Current?.Id ?? 0)
@@ -944,11 +944,24 @@ namespace OS.Kernel.Process
         /// </remarks>
         private static void NoteAlternateScreenOwner()
         {
-            if (!OS.Hal.TerminalConsole.IsAlternateScreen)
+            bool alternate = OS.Hal.TerminalConsole.IsAlternateScreen;
+            if (!alternate)
                 s_alternateScreenOwner = -1;
             else if (s_alternateScreenOwner < 0)
                 s_alternateScreenOwner = (int)(AppProcesses.Current?.Id ?? 0);
+
+            // A switch of screens repaints all of it, the margins around the
+            // cells too: a program that drew on the framebuffer itself (DOOM,
+            // the emulators) left its picture there, and the launcher taking
+            // the screen back cleared only the cells (step213).
+            if (alternate != s_wasAlternate)
+            {
+                s_wasAlternate = alternate;
+                OS.Hal.TerminalConsole.Redraw();
+            }
         }
+
+        private static bool s_wasAlternate;
 
         // The number services are an application's output like WriteString, and
         // go where it goes. Through UiText they were the kernel's: a label

@@ -145,6 +145,24 @@ namespace SharpOS.Std.NoRuntime
             }
         }
 
+        // BaseSize rounds a value type up to the heap's 8; the padding says by
+        // how much (NativeAOT MethodTable.ValueTypeFieldPadding, release/8.0).
+        public uint ValueTypeFieldPadding
+        {
+            get
+            {
+                byte* optional = GetOptionalFieldsPtr();
+                if (optional == null) return 0;
+                uint data = OptionalFieldsReader.GetInlineField(optional, EETypeOptionalFieldTag.ValueTypeFieldPadding, 0);
+                // Low 3 bits: the padding; the bits from 8 up: more of it, in 8s.
+                return (data & 0x7) | ((data & 0xFFFFFF00) >> (8 - 3));
+            }
+        }
+
+        // The size of a value type as a local, a field or an array element:
+        // BaseSize less the object header, the MT and the padding.
+        public uint ValueTypeSize => BaseSize - (16 + ValueTypeFieldPadding);
+
         public GcEETypeElementType ElementType =>
             (GcEETypeElementType)((Flags & ElementTypeMask) >> ElementTypeShift);
 

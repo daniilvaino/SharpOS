@@ -6,6 +6,8 @@ using System.Runtime;
 using SharpOS.Std.Exchange;
 using SharpOS.Std.Exchange.Probe;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace AotTests
 {
     // A standalone NativeAOT test-battery app (step138): a freestanding win-x64
@@ -51,6 +53,7 @@ namespace AotTests
                 for (int i = 0; i < rest.Length; i++) rest[i] = arguments[i + 3];
 
                 ulong* before = stackalloc ulong[2];
+                before[0] = before[1] = 0;
                 Probe(11, kernel | (1UL << 32), before);
                 SharpOS.Std.NoRuntime.GcSweep.PoisonFreed = true;
                 SharpOS.Std.NoRuntime.GcStress.VerifyHeap = true;
@@ -61,8 +64,9 @@ namespace AotTests
 
                 SharpOS.Std.NoRuntime.GcStress.Every = 0;
                 ulong* kernelRan = stackalloc ulong[2];
+                kernelRan[0] = kernelRan[1] = 0;
                 Probe(11, before[1], kernelRan);
-                AppHost.WriteString("[gcstress] app every " + app.ToString() + ": "
+                AppHost.Terminal.Write("[gcstress] app every " + app.ToString() + ": "
                                     + SharpOS.Std.NoRuntime.GcStress.Collections.ToString() + " collections; kernel every "
                                     + kernel.ToString() + ": " + (kernelRan[0] - before[0]).ToString() + " collections\n");
                 return result;
@@ -101,11 +105,11 @@ namespace AotTests
             {
                 for (int i = 0; i < arguments.Length; i++)
                 {
-                    AppHost.WriteString("[args] ");
-                    AppHost.WriteUInt((uint)i);
-                    AppHost.WriteString(" '");
-                    AppHost.WriteString(arguments[i]);
-                    AppHost.WriteString("'\n");
+                    AppHost.Terminal.Write("[args] ");
+                    AppHost.Terminal.WriteUInt((uint)i);
+                    AppHost.Terminal.Write(" '");
+                    AppHost.Terminal.Write(arguments[i]);
+                    AppHost.Terminal.Write("'\n");
                 }
 
                 // autorun.sh passes exactly these; anything else arrived damaged.
@@ -126,6 +130,15 @@ namespace AotTests
             if (arguments.Length > 0 && arguments[0] == "--dynamic")
                 return RunDynamicOnly();
 
+            // The modes below are the kernel probes' own; an image built
+            // without the tests has nothing for them to talk to.
+            if (!KernelProbes && arguments.Length > 0
+                && (arguments[0] == "--pipe-stress" || arguments[0] == "--pipe-writer-dies"))
+            {
+                AppHost.Terminal.Write("[skip] " + arguments[0] + ": the kernel was built without its test probes\n");
+                return 0;
+            }
+
             if (arguments.Length > 1 && arguments[0] == "--pipe-stress")
                 return RunPipeStress(int.Parse(arguments[1]));
 
@@ -137,7 +150,9 @@ namespace AotTests
 
             s_concurrent = arguments.Length > 0 && arguments[0] == "--concurrent";
 
-            AppHost.WriteString("==== AOT app test battery ====\n");
+            AppHost.Terminal.Write("==== AOT app test battery ====\n");
+            if (!KernelProbes)
+                AppHost.Terminal.Write("[skip] regions, pipes and kernel-fed dynamic: the kernel was built without its test probes\n");
 
             // GC allocation.
             Check("new object()", new object() != null);
@@ -195,7 +210,7 @@ namespace AotTests
             // Fully qualified: a using for the std namespace would make plain
             // `GC` ambiguous against System.GC everywhere else in this file.
             // Under --gc-stress the allocation before it already collected.
-            if (s_gcStress) AppHost.WriteString("[gcstress] reclaimed check not meaningful under stress\n");
+            if (s_gcStress) AppHost.Terminal.Write("[gcstress] reclaimed check not meaningful under stress\n");
             Check("collect reclaimed something",
                 SharpOS.Std.NoRuntime.GcSweep.LastSweptCount > 0 || s_gcStress);
 
@@ -345,6 +360,8 @@ namespace AotTests
             catch (FormatException) { which = 2; }
             Check("multi-catch select", which == 2);
 
+            CheckThrowFromCatch();
+
             CheckStelem();
             CheckArrayCasts();
             CheckNumberFormatting();
@@ -358,7 +375,7 @@ namespace AotTests
             CheckClockAdvances();
             CheckStackTraceText();
             CheckStackTraceOwnership();
-            if (!s_concurrent)
+            if (OwnKernelProbes)
             {
                 CheckRegion();
                 CheckRegionFromKernel();
@@ -372,21 +389,25 @@ namespace AotTests
             Check("error stream published", AppHost.HasErrorStream);
             AppHost.WriteError("[stderr] aot marker\n");
 
-            AppHost.WriteString("==== ");
-            AppHost.WriteUInt(s_pass);
-            AppHost.WriteString("/");
-            AppHost.WriteUInt(s_total);
-            AppHost.WriteString(" passed ====\n");
+            AppHost.Terminal.Write("==== ");
+            AppHost.Terminal.WriteUInt(s_pass);
+            AppHost.Terminal.Write("/");
+            AppHost.Terminal.WriteUInt(s_total);
+            AppHost.Terminal.Write(" passed ====\n");
 
             // After the summary: a fault nobody catches stops the machine, and
             // the battery's results must already be in the log by then.
             if (HwFaultProbe != 0)
                 RunHwFaultProbe();
 
-            // Exit code = pass count (all-green => equals total); under
-            // --concurrent the count of failures.
-            return s_concurrent ? (int)(s_total - s_pass) : (int)s_pass;
+            // Exit code = the number of checks that failed: 0 is green, and a
+            // battery in a pipeline ends its writer the way a clean run does.
+            return (int)(s_total - s_pass);
         }
+
+        // The kernel's probes are there and this battery may use them: their
+        // pipes have fixed names, so a concurrent battery leaves them alone.
+        private static bool OwnKernelProbes => KernelProbes && !s_concurrent;
 
         // ConcurrentDictionary<K,V>: the BCL port in std-no-runtime/Bcl. Lock
         // striping, volatile bucket writes and the resize all run here even on
@@ -515,6 +536,48 @@ namespace AotTests
                     GC.Collect();
             }
         }
+
+        // An exception thrown by a call inside a catch block (step213): it
+        // leaves for the caller, and that catch runs once. The kernel's first
+        // pass matched the catch's own clause at its funclet's frame, and the
+        // catch caught what it threw until the stack ran out — PROCTEST piped
+        // into `KQL "take 2"`, its Console.WriteLine in a catch meeting the
+        // closed pipe, took the machine down. A try inside the catch still
+        // catches its own.
+        private static int s_catchRuns;
+
+        private static void CheckThrowFromCatch()
+        {
+            s_catchRuns = 0;
+            string got = null;
+            try { CatchThatThrows(); }
+            catch (Exception e) { got = e.Message; }
+            Check("throw from a call inside a catch: out to the caller, the catch run once",
+                  got == "second" && s_catchRuns == 1);
+
+            string inner = null;
+            try { throw new InvalidOperationException("first"); }
+            catch (InvalidOperationException)
+            {
+                try { ThrowSecond(); }
+                catch (FormatException e) { inner = e.Message; }
+            }
+            Check("a try inside a catch catches its own", inner == "second");
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void CatchThatThrows()
+        {
+            try { throw new InvalidOperationException("first"); }
+            catch (Exception)
+            {
+                if (++s_catchRuns > 3) return;
+                ThrowSecond();
+            }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void ThrowSecond() => throw new FormatException("second");
 
         private static void ThrowAndCatch(string tag)
         {
@@ -839,7 +902,7 @@ namespace AotTests
             Check("region: graph laid out", plan != null);
             if (plan == null)
             {
-                AppHost.WriteString("[region] " + complaint + "\n");
+                AppHost.Terminal.Write("[region] " + complaint + "\n");
                 return;
             }
 
@@ -848,7 +911,7 @@ namespace AotTests
             if (block == null)
                 return;
             Region.Write(plan, block);
-            AppHost.WriteString("[region] " + plan.Count.ToString() + " objects, " + plan.Size.ToString() + " bytes\n");
+            AppHost.Terminal.Write("[region] " + plan.Count.ToString() + " objects, " + plan.Size.ToString() + " bytes\n");
 
             CheckUntranslated((ulong)block + Region.HeaderSize);
 
@@ -881,19 +944,19 @@ namespace AotTests
             for (int i = 0; i < schemaBytes.Length; i++)
                 schemaBytes[i] = schema[i];
             int printed = RegionSchema.Print(region, length, schemaBytes,
-                line => AppHost.WriteString("[region-print] " + line + "\n"), out string printComplaint);
+                line => AppHost.Terminal.Write("[region-print] " + line + "\n"), out string printComplaint);
             Check("region from kernel: printed by the schema alone", printed > 0);
 
             RegionProbeGraph.Declare();
             bool resolved = Region.Resolve(region, length, out object root, out string complaint);
             if (!resolved)
-                AppHost.WriteString("[region] resolve refused: " + complaint + "\n");
+                AppHost.Terminal.Write("[region] resolve refused: " + complaint + "\n");
             Check("region from kernel: translated in place", resolved);
             if (!resolved)
                 return;
             Check("region from kernel: graph checks out",
                   RegionProbeGraph.Check(root, RegionProbeGraph.Numbers,
-                      line => AppHost.WriteString("[region] " + line + "\n")) == 0);
+                      line => AppHost.Terminal.Write("[region] " + line + "\n")) == 0);
 
             ulong before = RegionChecksum(region, length);
             object own = RegionProbeGraph.Build(RegionProbeGraph.Numbers);
@@ -940,7 +1003,7 @@ namespace AotTests
             while (s_regionRunning > 0 && wait.ElapsedMilliseconds < waitLimit)
                 System.Threading.Thread.Sleep(1);
 
-            AppHost.WriteString("[region] app load: " + reads.ToString() + " reads, "
+            AppHost.Terminal.Write("[region] app load: " + reads.ToString() + " reads, "
                                 + s_regionAllocations.ToString() + " allocations, "
                                 + (AppGC.Collections - collectionsBefore).ToString() + " collections" + "\n");
             Check("region from kernel: reader, allocators and collector all ran",
@@ -999,14 +1062,14 @@ namespace AotTests
             string how = "returned";
             try { VirtualOnUntranslated(untranslated); }
             catch (Exception e) { how = ExceptionName(e); }
-            AppHost.WriteString("[untranslated] virtual call: " + how + "\n");
+            AppHost.Terminal.Write("[untranslated] virtual call: " + how + "\n");
             Check("untranslated: virtual call throws, caught here", how != "returned");
 
             how = "no fault";
             bool answer = false;
             try { answer = CastOnUntranslated(untranslated); }
             catch (Exception e) { how = ExceptionName(e); }
-            AppHost.WriteString("[untranslated] cast to a class: " + how + (how == "no fault" ? (answer ? ", yes" : ", no") : "") + "\n");
+            AppHost.Terminal.Write("[untranslated] cast to a class: " + how + (how == "no fault" ? (answer ? ", yes" : ", no") : "") + "\n");
             Check("untranslated: cast throws or answers no", how != "no fault" || !answer);
 
             // The key-form object is still in a local: the app's collector
@@ -1046,7 +1109,7 @@ namespace AotTests
                 how = ExceptionName(e);
                 result = 1;
             }
-            AppHost.WriteString("[untranslated] interface call, " + implementations.ToString()
+            AppHost.Terminal.Write("[untranslated] interface call, " + implementations.ToString()
                                 + " implementation(s): " + how + "\n");
             return result;
         }
@@ -1101,9 +1164,9 @@ namespace AotTests
 
         private static void RunHwFaultProbe()
         {
-            AppHost.WriteString("[hwfault] mode ");
-            AppHost.WriteUInt((uint)HwFaultProbe);
-            AppHost.WriteString(HwFaultProbe == 3 ? ": throwing with no handler\n" : ": reading a non-canonical address\n");
+            AppHost.Terminal.Write("[hwfault] mode ");
+            AppHost.Terminal.WriteUInt((uint)HwFaultProbe);
+            AppHost.Terminal.Write(HwFaultProbe == 3 ? ": throwing with no handler\n" : ": reading a non-canonical address\n");
 
             if (HwFaultProbe == 3)
                 throw new InvalidOperationException("unhandled on purpose (HwFaultProbe = 3)");
@@ -1111,9 +1174,9 @@ namespace AotTests
             if (HwFaultProbe == 2)
             {
                 ulong value = ReadAt(FaultAddress());
-                AppHost.WriteString("[hwfault] read returned, no fault: ");
-                AppHost.WriteUInt((uint)value);
-                AppHost.WriteString("\n");
+                AppHost.Terminal.Write("[hwfault] read returned, no fault: ");
+                AppHost.Terminal.WriteUInt((uint)value);
+                AppHost.Terminal.Write("\n");
                 return;
             }
 
@@ -1121,22 +1184,24 @@ namespace AotTests
             try
             {
                 ulong value = ReadAt(FaultAddress());
-                AppHost.WriteString("[hwfault] read returned, no fault: ");
-                AppHost.WriteUInt((uint)value);
-                AppHost.WriteString("\n");
+                AppHost.Terminal.Write("[hwfault] read returned, no fault: ");
+                AppHost.Terminal.WriteUInt((uint)value);
+                AppHost.Terminal.Write("\n");
             }
             catch (Exception)
             {
                 how = 1;
             }
+#pragma warning disable CS1058 // the general catch is the case under test: what reaches it was not an Exception
             catch
             {
                 how = 2;
             }
+#pragma warning restore CS1058
 
             // No virtual call on the caught object: if it is the kernel's, its
             // slots are not ours.
-            AppHost.WriteString(how == 1 ? "[hwfault] caught by catch (Exception)\n"
+            AppHost.Terminal.Write(how == 1 ? "[hwfault] caught by catch (Exception)\n"
                               : how == 2 ? "[hwfault] caught by catch-all only\n"
                               : "[hwfault] not caught, execution continued\n");
 
@@ -1144,7 +1209,7 @@ namespace AotTests
             // handler left with interrupts off never sees the timer again
             // (pipe_plan.md, item 5).
             System.Threading.Thread.Sleep(50);
-            AppHost.WriteString("[hwfault] a sleep after the catch returned\n");
+            AppHost.Terminal.Write("[hwfault] a sleep after the catch returned\n");
         }
 
         // Threads and tasks in an app (ABI V3).
@@ -1213,11 +1278,11 @@ namespace AotTests
             ulong guarded = guardedAfter - guardedBefore;
             ulong plain = plainAfter - plainBefore;
 
-            AppHost.WriteString("[folding] guarded=");
-            AppHost.WriteUInt((uint)guarded);
-            AppHost.WriteString(" plain=");
-            AppHost.WriteUInt((uint)plain);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[folding] guarded=");
+            AppHost.Terminal.WriteUInt((uint)guarded);
+            AppHost.Terminal.Write(" plain=");
+            AppHost.Terminal.WriteUInt((uint)plain);
+            AppHost.Terminal.Write("\n");
 
             Check("a guarded counter read is taken again after an allocation",
                   guarded >= 1UL
@@ -1245,20 +1310,20 @@ namespace AotTests
             SharpOS.Std.NoRuntime.GcHeap.GetFreeStats(
                 out ulong freeBytes, out uint blocks, out uint largest);
 
-            AppHost.WriteString("[allocclass] free=");
-            AppHost.WriteUInt((uint)freeBytes);
-            AppHost.WriteString(" blocks=");
-            AppHost.WriteUInt(blocks);
-            AppHost.WriteString(" largest=");
-            AppHost.WriteUInt(largest);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[allocclass] free=");
+            AppHost.Terminal.WriteUInt((uint)freeBytes);
+            AppHost.Terminal.Write(" blocks=");
+            AppHost.Terminal.WriteUInt(blocks);
+            AppHost.Terminal.Write(" largest=");
+            AppHost.Terminal.WriteUInt(largest);
+            AppHost.Terminal.Write("\n");
 
             // The point of the interleaving: many small free blocks, which is
             // what makes the next check mean something. If they all merged
             // anyway, the check below would pass for the wrong reason.
             // Under --gc-stress the garbage is collected at the next
             // allocation and its blocks reused: the precondition never forms.
-            if (s_gcStress) AppHost.WriteString("[gcstress] small-blocks check not meaningful under stress\n");
+            if (s_gcStress) AppHost.Terminal.Write("[gcstress] small-blocks check not meaningful under stress\n");
             Check("live objects between dead ones leave many small blocks",
                   blocks >= 64 || s_gcStress);
 
@@ -1283,17 +1348,17 @@ namespace AotTests
             ulong probes = SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount - probesBefore;
             ulong reused = SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount - reuseBefore;
 
-            AppHost.WriteString("[allocclass] mask=");
-            AppHost.WriteHex(maskBefore);
-            AppHost.WriteString(" bucketOfLargest=");
-            AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.BucketIndexOf(largest));
-            AppHost.WriteString(" bucketOfRequest=");
-            AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.BucketIndexOf(4128));
-            AppHost.WriteString(" probes=");
-            AppHost.WriteUInt((uint)probes);
-            AppHost.WriteString(" reused=");
-            AppHost.WriteUInt((uint)reused);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[allocclass] mask=");
+            AppHost.Terminal.WriteHex(maskBefore);
+            AppHost.Terminal.Write(" bucketOfLargest=");
+            AppHost.Terminal.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.BucketIndexOf(largest));
+            AppHost.Terminal.Write(" bucketOfRequest=");
+            AppHost.Terminal.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.BucketIndexOf(4128));
+            AppHost.Terminal.Write(" probes=");
+            AppHost.Terminal.WriteUInt((uint)probes);
+            AppHost.Terminal.Write(" reused=");
+            AppHost.Terminal.WriteUInt((uint)reused);
+            AppHost.Terminal.Write("\n");
 
             // The same request a second time, with nothing beside it at all.
             //
@@ -1315,38 +1380,38 @@ namespace AotTests
             ulong probes2 = SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount - probesBefore2;
             ulong reused2 = SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount - reuseBefore2;
 
-            AppHost.WriteString("[allocclass] repeat probes=");
-            AppHost.WriteUInt((uint)probes2);
-            AppHost.WriteString(" reused=");
-            AppHost.WriteUInt((uint)reused2);
-            AppHost.WriteString(" len=");
-            AppHost.WriteUInt((uint)again.Length);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[allocclass] repeat probes=");
+            AppHost.Terminal.WriteUInt((uint)probes2);
+            AppHost.Terminal.Write(" reused=");
+            AppHost.Terminal.WriteUInt((uint)reused2);
+            AppHost.Terminal.Write(" len=");
+            AppHost.Terminal.WriteUInt((uint)again.Length);
+            AppHost.Terminal.Write("\n");
 
             // The bucket layout either side of the printing between the two
             // requests. It answered the question it was added for: the mask
             // does not change, so no class is being drained and the splitting
             // policy is not at fault. Kept because "where the free memory is"
             // is the one thing the other numbers cannot say.
-            AppHost.WriteString("[allocclass] mask before=");
-            AppHost.WriteHex(maskBefore);
-            AppHost.WriteString(" after=");
-            AppHost.WriteHex(maskBefore2);
-            AppHost.WriteString(" nodes=");
-            AppHost.WriteUInt(nodesBefore2);
-            AppHost.WriteString(" splits=");
-            AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.FreelistSplitCount);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[allocclass] mask before=");
+            AppHost.Terminal.WriteHex(maskBefore);
+            AppHost.Terminal.Write(" after=");
+            AppHost.Terminal.WriteHex(maskBefore2);
+            AppHost.Terminal.Write(" nodes=");
+            AppHost.Terminal.WriteUInt(nodesBefore2);
+            AppHost.Terminal.Write(" splits=");
+            AppHost.Terminal.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.FreelistSplitCount);
+            AppHost.Terminal.Write("\n");
 
             // And the three addresses. One table or three is a fact, not a
             // matter of opinion about how ILC expands Unsafe.AsPointer.
-            AppHost.WriteString("[allocclass] heads alloc=");
-            AppHost.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.HeadsAddrAlloc);
-            AppHost.WriteString(" link=");
-            AppHost.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.HeadsAddrLink);
-            AppHost.WriteString(" stats=");
-            AppHost.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.HeadsAddrStats);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[allocclass] heads alloc=");
+            AppHost.Terminal.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.HeadsAddrAlloc);
+            AppHost.Terminal.Write(" link=");
+            AppHost.Terminal.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.HeadsAddrLink);
+            AppHost.Terminal.Write(" stats=");
+            AppHost.Terminal.WriteHex((ulong)SharpOS.Std.NoRuntime.GcHeap.HeadsAddrStats);
+            AppHost.Terminal.Write("\n");
 
             Check("the bucket table is one table, not one per call site",
                   SharpOS.Std.NoRuntime.GcHeap.HeadsAddrAlloc
@@ -1427,11 +1492,11 @@ namespace AotTests
                 sink += (nuint)SharpOS.Std.NoRuntime.GcHeap.FindSegmentContaining(heapAddress);
             ulong steps = SharpOS.Std.NoRuntime.GcHeap.SegmentScanSteps - before;
 
-            AppHost.WriteString("[seglookup] steps=");
-            AppHost.WriteUInt((uint)steps);
-            AppHost.WriteString(" per=1000 segments=");
-            AppHost.WriteUInt(SharpOS.Std.NoRuntime.GcHeap.SegmentCount);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[seglookup] steps=");
+            AppHost.Terminal.WriteUInt((uint)steps);
+            AppHost.Terminal.Write(" per=1000 segments=");
+            AppHost.Terminal.WriteUInt(SharpOS.Std.NoRuntime.GcHeap.SegmentCount);
+            AppHost.Terminal.Write("\n");
 
             Check("a heap address is found without rescanning the segment list",
                   steps <= 1000UL && sink != 0 && inHeap.Length == 64);
@@ -1464,13 +1529,13 @@ namespace AotTests
             // Printed as well as asserted: the numbers are the evidence, and
             // a log from before the sweep learned to join blocks can be held
             // next to one from after.
-            AppHost.WriteString("[allocshape] free=");
-            AppHost.WriteUInt((uint)freeBytes);
-            AppHost.WriteString(" blocks=");
-            AppHost.WriteUInt(blocks);
-            AppHost.WriteString(" largest=");
-            AppHost.WriteUInt(largest);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[allocshape] free=");
+            AppHost.Terminal.WriteUInt((uint)freeBytes);
+            AppHost.Terminal.Write(" blocks=");
+            AppHost.Terminal.WriteUInt(blocks);
+            AppHost.Terminal.Write(" largest=");
+            AppHost.Terminal.WriteUInt(largest);
+            AppHost.Terminal.Write("\n");
 
             // 64 KiB went in; half of it in one piece is a generous floor that
             // still cannot be met by a heap that never joins anything.
@@ -1489,13 +1554,13 @@ namespace AotTests
             // while they said a 256 KiB block was there.
             SharpOS.Std.NoRuntime.GcHeap.GetFreeStats(
                 out ulong preFree, out uint preBlocks, out uint preLargest);
-            AppHost.WriteString("[allocshape] pre-big free=");
-            AppHost.WriteUInt((uint)preFree);
-            AppHost.WriteString(" blocks=");
-            AppHost.WriteUInt(preBlocks);
-            AppHost.WriteString(" largest=");
-            AppHost.WriteUInt(preLargest);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[allocshape] pre-big free=");
+            AppHost.Terminal.WriteUInt((uint)preFree);
+            AppHost.Terminal.Write(" blocks=");
+            AppHost.Terminal.WriteUInt(preBlocks);
+            AppHost.Terminal.Write(" largest=");
+            AppHost.Terminal.WriteUInt(preLargest);
+            AppHost.Terminal.Write("\n");
 
             // Snapshotted LAST, with nothing between them and the request.
             // Taken any earlier, an allocation made by the printing above
@@ -1509,13 +1574,13 @@ namespace AotTests
             big[0] = 1;
             big[big.Length - 1] = 2;
 
-            AppHost.WriteString("[allocshape] post-big reuse=");
-            AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount);
-            AppHost.WriteString(" probes=");
-            AppHost.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount);
-            AppHost.WriteString(" segments=");
-            AppHost.WriteUInt(SharpOS.Std.NoRuntime.GcHeap.SegmentCount);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write("[allocshape] post-big reuse=");
+            AppHost.Terminal.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount);
+            AppHost.Terminal.Write(" probes=");
+            AppHost.Terminal.WriteUInt((uint)SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount);
+            AppHost.Terminal.Write(" segments=");
+            AppHost.Terminal.WriteUInt(SharpOS.Std.NoRuntime.GcHeap.SegmentCount);
+            AppHost.Terminal.Write("\n");
 
             Check("a large request is served from freed memory",
                   SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount > reuseBefore
@@ -1864,6 +1929,17 @@ namespace AotTests
             for (int i = 0; i < 200; i++) { int r = System.Security.Cryptography.RandomNumberGenerator.GetInt32(3, 10); inRange &= r >= 3 && r < 10; }
             Check("cryptographic random: GetInt32 stays in range", inRange);
 
+            // (T?)obj writes the Nullable's own bytes and no more (step213).
+            // An int into an int? copied 8 bytes from offset 4 — 4 past the
+            // nullable, into a neighbour here and the caller's saved rbx in
+            // KQL's summarize; null into a bool? cleared 8 bytes of 2.
+            var intSlot = new IntSlot { After = 77 };
+            UnboxInto(ref intSlot, (object)5);
+            Check("unbox to int? stays inside it", intSlot.Value == 5 && intSlot.After == 77);
+            var boolSlot = new BoolSlot { Value = true, After = 77 };
+            UnboxInto(ref boolSlot, null);
+            Check("unbox null to bool? stays inside it", boolSlot.Value == null && boolSlot.After == 77);
+
             int mainId = System.Threading.ManagedThreadIds.Current;
             s_otherId = 0;
             var idTask = System.Threading.Tasks.Task.Run(
@@ -1956,6 +2032,18 @@ namespace AotTests
 
         private static int s_counted;
 
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct IntSlot { public int? Value; public int After; }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct BoolSlot { public bool? Value; public byte After; }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void UnboxInto(ref IntSlot slot, object value) => slot.Value = (int?)value;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void UnboxInto(ref BoolSlot slot, object value) => slot.Value = (bool?)value;
+
         private const int HammerIterations = 5000;
         private static object s_gate = null!;
         private static volatile int s_guarded;
@@ -2003,9 +2091,9 @@ namespace AotTests
         {
             s_total++;
             if (ok) s_pass++;
-            AppHost.WriteString(ok ? "  ok   " : "  FAIL ");
-            AppHost.WriteString(name);
-            AppHost.WriteString("\n");
+            AppHost.Terminal.Write(ok ? "  ok   " : "  FAIL ");
+            AppHost.Terminal.Write(name);
+            AppHost.Terminal.Write("\n");
 
             // A failure goes to the error stream as well, so the error log is
             // the list of what broke — while the output keeps every line in order.

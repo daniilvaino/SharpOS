@@ -159,30 +159,36 @@ namespace AotTests
             SharpOS.Std.NoRuntime.GcStress.VerifyHeap = true;
             MessageCatalog.Ensure();
             nint statics = TypeKeys.StaticsAddress;
-            AppHost.WriteString("[stress] TypeKeys statics at 0x" + ((ulong)statics).ToString("x") + " rooted "
+            AppHost.Terminal.Write("[stress] TypeKeys statics at 0x" + ((ulong)statics).ToString("x") + " rooted "
                                 + (SharpOS.Std.NoRuntime.GcRoots.CoversAddress(statics) ? "yes" : "NO") + ", slots "
                                 + SharpOS.Std.NoRuntime.GcRoots.Count.ToString() + "\n");
             s_pipeCollectMask = 3;
             s_stress = true;
+            ulong* a = stackalloc ulong[6];
             for (int i = 0; i < rounds && s_pipeBroken == 0; i++)
             {
                 s_round = i;
-                ulong* a = stackalloc ulong[6];
                 Probe(6, 0, a);
-                AppHost.WriteString("[stress] round " + i.ToString() + " blocks " + a[0].ToString() + " pipes "
+                AppHost.Terminal.Write("[stress] round " + i.ToString() + " blocks " + a[0].ToString() + " pipes "
                                     + a[1].ToString() + " carved pages " + a[2].ToString() + " threads " + a[3].ToString()
                                     + " runnable " + a[4].ToString() + " kernel " + a[5].ToString() + "\n");
                 CheckPipes();
             }
-            AppHost.WriteString(s_pipeBroken == 0 ? "[stress] clean\n" : "[stress] BROKEN\n");
+            AppHost.Terminal.Write(s_pipeBroken == 0 ? "[stress] clean\n" : "[stress] BROKEN\n");
             return s_pipeBroken == 0 ? 0 : 1;
         }
 
         private static bool s_stress;
         private static int s_round;
 
+        // The kernel publishes its probes only when built with the tests
+        // (Probes.PipeProbe); without them a call is refused, not made at 0.
+        private static bool KernelProbes => AppRuntime.Services->PipeProbeAddress != 0;
+
         private static int Probe(int op, ulong argument, ulong* answer)
-            => ((delegate* unmanaged<int, ulong, ulong*, int>)AppRuntime.Services->PipeProbeAddress)(op, argument, answer);
+            => KernelProbes
+               ? ((delegate* unmanaged<int, ulong, ulong*, int>)AppRuntime.Services->PipeProbeAddress)(op, argument, answer)
+               : -1;
 
         private static ulong LiveBlocks()
         {
@@ -222,20 +228,20 @@ namespace AotTests
             s_pipeLoadRunning = 1;
             System.Threading.Tasks.Task.Run(() =>
             {
-                if (s_stress) AppHost.WriteString("[stress] load task started" + "\n");
+                if (s_stress) AppHost.Terminal.Write("[stress] load task started" + "\n");
                 int n = 0;
                 while (s_pipeLoad != 0)
                 {
                     byte[] garbage = new byte[64 + n++ % 128];
                     if (garbage.Length > 0 && (n & s_pipeCollectMask) == 0)
                     {
-                        if (s_stress && s_pipeCollections < 3) AppHost.WriteString("[stress] load collect" + "\n");
+                        if (s_stress && s_pipeCollections < 3) AppHost.Terminal.Write("[stress] load collect" + "\n");
                         GC.Collect();
                         s_pipeCollections++;
                     }
                     System.Threading.Thread.Sleep(1);
                 }
-                if (s_stress) AppHost.WriteString("[stress] load task done, collections " + s_pipeCollections.ToString() + "\n");
+                if (s_stress) AppHost.Terminal.Write("[stress] load task done, collections " + s_pipeCollections.ToString() + "\n");
                 s_pipeLoadRunning = 0;
             });
 
@@ -289,7 +295,7 @@ namespace AotTests
             HeapWhole("after " + name);
             ulong after = LiveBlocks();
             if (after != before)
-                AppHost.WriteString("[pipe] " + name + ": blocks " + before.ToString() + " -> " + after.ToString() + "\n");
+                AppHost.Terminal.Write("[pipe] " + name + ": blocks " + before.ToString() + " -> " + after.ToString() + "\n");
             Check("pipe " + name + ": exchange blocks back where they were", after == before);
         }
 
@@ -299,7 +305,7 @@ namespace AotTests
             if (bad >= 0)
                 s_pipeBroken = 1;
             if (bad >= 0)
-                AppHost.WriteString("[pipe] CATALOG BROKEN " + when + ": entry " + bad.ToString() + " at 0x"
+                AppHost.Terminal.Write("[pipe] CATALOG BROKEN " + when + ": entry " + bad.ToString() + " at 0x"
                                     + address.ToString("x") + " table 0x" + word.ToString("x") + "\n");
         }
 
@@ -354,14 +360,14 @@ namespace AotTests
             if (bad != 0)
                 s_pipeBroken = 1;
             if (SharpOS.Std.NoRuntime.GcStress.FirstBroken != 0)
-                AppHost.WriteString("[pipe] collector check: first broken 0x" + ((ulong)SharpOS.Std.NoRuntime.GcStress.FirstBroken).ToString("x")
+                AppHost.Terminal.Write("[pipe] collector check: first broken 0x" + ((ulong)SharpOS.Std.NoRuntime.GcStress.FirstBroken).ToString("x")
                                     + (SharpOS.Std.NoRuntime.GcStress.BrokenPhase == 1 ? " found BEFORE a mark (the program wrote it)"
                                                               : " found AFTER a sweep (the collector wrote it)") + "\n");
             if (bad != 0)
             {
-                AppHost.WriteString("[pipe] HEAP BROKEN " + when + ": object 0x" + bad.ToString("x") + " table 0x"
+                AppHost.Terminal.Write("[pipe] HEAP BROKEN " + when + ": object 0x" + bad.ToString("x") + " table 0x"
                                     + word.ToString("x") + " after " + objects.ToString() + " objects\n");
-                AppHost.WriteString("[pipe]   words: " + (*(ulong*)bad).ToString("x") + " " + (*(ulong*)(bad + 8)).ToString("x")
+                AppHost.Terminal.Write("[pipe]   words: " + (*(ulong*)bad).ToString("x") + " " + (*(ulong*)(bad + 8)).ToString("x")
                                     + " " + (*(ulong*)(bad + 16)).ToString("x") + " " + (*(ulong*)(bad + 24)).ToString("x")
                                     + "; previous 0x" + prev.ToString("x") + " table 0x" + prevMt.ToString("x")
                                     + " size " + prevSize.ToString() + " free table 0x"
@@ -390,7 +396,7 @@ namespace AotTests
             {
                 ulong* blocks = stackalloc ulong[6];
                 Probe(6, 0, blocks);
-                AppHost.WriteString("[pipe] journal: done " + (done ? "1" : "0") + " sent " + sent.ToString() + " first refusal "
+                AppHost.Terminal.Write("[pipe] journal: done " + (done ? "1" : "0") + " sent " + sent.ToString() + " first refusal "
                                     + ((int)firstBad).ToString() + " " + (writer.LastError ?? "") + " count " + count.ToString()
                                     + " ok " + (ok ? "1" : "0") + " end " + ((int)end).ToString() + " blocks " + blocks[0].ToString()
                                     + " carved pages " + blocks[2].ToString() + "\n");
@@ -443,7 +449,7 @@ namespace AotTests
             }
             writer.Dispose();
             bool done = Verdict(3, out int count, out bool ok, out PipeStatus end, out long dropped);
-            AppHost.WriteString("[pipe] limit: " + waited.ToString() + " of 60 sends waited\n");
+            AppHost.Terminal.Write("[pipe] limit: " + waited.ToString() + " of 60 sends waited\n");
             Check("pipe 3: the writer waited at the limit, nothing lost, order kept",
                   done && sent == 60 && waited > 0 && count == 60 && ok && dropped == 0 && end == PipeStatus.EndOfStream);
         }
@@ -507,7 +513,7 @@ namespace AotTests
                 }
             }
             dropped += reader.DroppedAtEnd;
-            AppHost.WriteString("[pipe] losses (" + name + "): sent " + answer[0].ToString() + ", received "
+            AppHost.Terminal.Write("[pipe] losses (" + name + "): sent " + answer[0].ToString() + ", received "
                                 + received.ToString() + ", dropped " + dropped.ToString() + ", seq "
                                 + first.ToString() + ".." + last.ToString() + "\n");
             bool window = policy == PipeOverflow.DropOldest ? first == 42 && last == 49 : first == 0 && last == 7;
@@ -539,7 +545,7 @@ namespace AotTests
                 moved = output.Move(region);
                 if (moved != PipeStatus.Ok)
                 {
-                    AppHost.WriteString("[pipe] echo move: " + output.LastError + "\n");
+                    AppHost.Terminal.Write("[pipe] echo move: " + output.LastError + "\n");
                     region.Dispose();
                 }
             }
@@ -606,7 +612,7 @@ namespace AotTests
                 failed = e.GetType().Name + ": " + e.Message;
             }
             bool done = Verdict(26, out int count, out bool ok, out PipeStatus end, out _);
-            AppHost.WriteString("[pipe] expando edits: in place " + inPlace.ToString() + ", tail " + tail.ToString()
+            AppHost.Terminal.Write("[pipe] expando edits: in place " + inPlace.ToString() + ", tail " + tail.ToString()
                                 + ", grown " + grown.ToString() + ", compacted " + compacted.ToString()
                                 + (failed != null ? ", " + failed : "") + "\n");
             Check("pipe 20: Expandos edited in place in their blocks — kinds, strings, removals, additions — read back by the kernel",
@@ -665,7 +671,7 @@ namespace AotTests
             // reference cannot leave this image.
             bool literalAtStore = Throws(() => LiteralInto(three.Root));
             PipeStatus literalMoved = w.Move(three);
-            AppHost.WriteString("[pipe] literal into a region: " + (literalAtStore ? "refused at the store" : "stored")
+            AppHost.Terminal.Write("[pipe] literal into a region: " + (literalAtStore ? "refused at the store" : "stored")
                                 + "; Move: " + ((int)literalMoved).ToString() + " " + (w.LastError ?? "") + "\n");
             Check("pipe 7: a literal into a field is refused (at the store, or at Move when ILC stores it without a barrier)",
                   literalAtStore || (literalMoved == PipeStatus.Refused && w.LastError != null && w.LastError.Contains("outside the block")));
@@ -739,7 +745,7 @@ namespace AotTests
                 region.Dispose();
             }
             if (inPlace != null || copied != null)
-                AppHost.WriteString("[pipe] std expando: in place " + (inPlace ?? "ok") + ", copied " + (copied ?? "ok") + "\n");
+                AppHost.Terminal.Write("[pipe] std expando: in place " + (inPlace ?? "ok") + ", copied " + (copied ?? "ok") + "\n");
             Check("pipe 12: an Expando with every std structure arrives whole, read in place", inPlace == null);
             Check("pipe 12: ToHeap gives a real Expando", copied == null);
             Check("pipe 12: a number into a received Expando goes in place; a new string is refused, the field unchanged",
@@ -800,7 +806,7 @@ namespace AotTests
                 textFromKernel.Dispose();
             }
             if (kernelExpando != null)
-                AppHost.WriteString("[pipe] std expando from the kernel: " + kernelExpando + "\n");
+                AppHost.Terminal.Write("[pipe] std expando from the kernel: " + kernelExpando + "\n");
             Check("pipe 12: an Expando and a string from the kernel", sent == 0 && kernelExpando == null && kernelText);
         }
 
@@ -848,7 +854,7 @@ namespace AotTests
 
         private static void Report(string what, string bad)
         {
-            if (bad != null) AppHost.WriteString("[pipe] " + what + ": " + bad + "\n");
+            if (bad != null) AppHost.Terminal.Write("[pipe] " + what + ": " + bad + "\n");
         }
 
         // Tests 13: views over a class the app does not have; the same over an
@@ -1014,7 +1020,7 @@ namespace AotTests
             watch.Restart();
             for (int i = 0; i < Copies; i++) v.ToExpando();
             long expandoNs = watch.ElapsedTicks * 1_000_000_000L / Stopwatch.Frequency / Copies;
-            AppHost.WriteString("[bench] view: field " + readNs.ToString() + " ns; Into<ReportLite> " + intoNs.ToString()
+            AppHost.Terminal.Write("[bench] view: field " + readNs.ToString() + " ns; Into<ReportLite> " + intoNs.ToString()
                                 + " ns; ToExpando " + expandoNs.ToString() + " ns per report (22 fields, 5 objects, 4 arrays)"
                                 + (sum == (long)ViewProbe.I * Reads ? "" : " SUM WRONG") + "\n");
         }
@@ -1027,7 +1033,7 @@ namespace AotTests
             RawPipeReader reference = Pipe.Read("probe.bad.ref");
             int sent = Probe(17, 0, null);
             string a = Refusal(key), b = Refusal(size), c = Refusal(reference);
-            AppHost.WriteString("[pipe] spoiled blocks: " + a + " | " + b + " | " + c + "\n");
+            AppHost.Terminal.Write("[pipe] spoiled blocks: " + a + " | " + b + " | " + c + "\n");
             Check("pipe 14: a spoiled block — unknown key, size past the end, reference outside — refused where it is read",
                   sent == 0 && a != null && a.Contains("not in the pipe's description") && b != null && b.Contains("runs past")
                   && c != null && c.Contains("is not a record"));
@@ -1120,7 +1126,7 @@ namespace AotTests
             Probe(6, 0, now);
             bool same = now[0] == before[0] && now[1] == before[1];
             if (!same)
-                AppHost.WriteString("[pipe] loop left blocks " + before[0].ToString() + " -> " + now[0].ToString()
+                AppHost.Terminal.Write("[pipe] loop left blocks " + before[0].ToString() + " -> " + now[0].ToString()
                                     + ", pipes " + before[1].ToString() + " -> " + now[1].ToString() + "\n");
             return same;
         }
@@ -1257,7 +1263,7 @@ namespace AotTests
             string b = "nothing", c = "nothing";
             foreach (DevirtB received in typed) b = DescribeDevirt(Opaque(received));
             foreach (View v in raw) c = DescribeDevirt(Opaque(v.Into<DevirtC>()));
-            AppHost.WriteString("[devirt] constructed A: " + a + "\n[devirt] received B: " + b + "\n[devirt] Into C: " + c + "\n");
+            AppHost.Terminal.Write("[devirt] constructed A: " + a + "\n[devirt] received B: " + b + "\n[devirt] Into C: " + c + "\n");
             Check("pipe 19: a constructed type answers its own (control)",
                   a == "isA=1 isB=0 isC=0 asBase=1 asI=1 Value=101 Name=A Kind=1");
             Check("pipe 19: a type only received through a pipe: is, as, its own virtual and interface methods",
@@ -1335,7 +1341,7 @@ namespace AotTests
             Action code = () => s_pipeCollections++;
             PipeStatus withDelegate = w.Copy(new Envelope { Payload = code });
             string delegateWhy = w.LastError;
-            AppHost.WriteString("[pipe] refusal: " + strangerWhy + " / " + delegateWhy + "\n");
+            AppHost.Terminal.Write("[pipe] refusal: " + strangerWhy + " / " + delegateWhy + "\n");
             Check("pipe 10: a type outside the catalog is refused at send",
                   stranger == PipeStatus.Refused && strangerWhy != null && strangerWhy.StartsWith("type outside the catalog"));
             Check("pipe 10: a delegate is refused at send",
@@ -1376,13 +1382,13 @@ namespace AotTests
                     shadesOk = region != null && region.Root.One == Shade.Deep && region.Root.Many.Length == 2
                                && region.Root.Many[0] == Shade.Dark && region.Root.Many[1] == Shade.Pale;
             else
-                AppHost.WriteString("[pipe] enum array: " + ((int)shadesSent).ToString() + " " + (sw.LastError ?? "") + "\n");
+                AppHost.Terminal.Write("[pipe] enum array: " + ((int)shadesSent).ToString() + " " + (sw.LastError ?? "") + "\n");
             sw.Dispose();
             sr.Dispose();
             Check("pipe 11: an array of an enum passes as a field", shadesOk);
 
             for (int i = 0; i < MessageCatalog.Problems.Count; i++)
-                AppHost.WriteString("[pipe] catalog problem: " + MessageCatalog.Problems[i] + "\n");
+                AppHost.Terminal.Write("[pipe] catalog problem: " + MessageCatalog.Problems[i] + "\n");
             Check("pipe 11: the catalog registered every type without a collision", MessageCatalog.Problems.Count == 0);
         }
 
@@ -1405,7 +1411,7 @@ namespace AotTests
             }
             long ticks = Stopwatch.GetTimestamp() - start;
             long ns = ticks * 1_000_000_000L / Stopwatch.Frequency / ((long)Rounds * objects);
-            AppHost.WriteString("[bench] copy -> send -> receive -> dispose: " + ns.ToString() + " ns per object ("
+            AppHost.Terminal.Write("[bench] copy -> send -> receive -> dispose: " + ns.ToString() + " ns per object ("
                                 + objects.ToString() + " objects x " + Rounds.ToString() + ")\n");
             w.Dispose();
             r.Dispose();
@@ -1422,7 +1428,7 @@ namespace AotTests
             FieldLoop(box, "s", Stores);
             ticks = Stopwatch.GetTimestamp() - start;
             long psField = ticks * 1_000_000_000_000L / Stopwatch.Frequency / Stores;
-            AppHost.WriteString("[bench] heap reference store: element " + ps.ToString() + " ps, field "
+            AppHost.Terminal.Write("[bench] heap reference store: element " + ps.ToString() + " ps, field "
                                 + psField.ToString() + " ps\n");
         }
 

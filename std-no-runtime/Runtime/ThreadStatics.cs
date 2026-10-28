@@ -26,8 +26,12 @@ namespace Internal.Runtime.CompilerHelpers
     // check returning a thread-static base), so the namespace is BCL's.
     internal unsafe struct TypeManagerSlot
     {
+        #pragma warning disable CS0649 // laid out for ILC, read through a pointer
         public IntPtr TypeManager;
+        #pragma warning restore CS0649
+        #pragma warning disable CS0649 // laid out for ILC, read through a pointer
         public int ModuleIndex;
+        #pragma warning restore CS0649
     }
 }
 

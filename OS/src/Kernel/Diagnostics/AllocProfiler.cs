@@ -39,7 +39,9 @@ namespace OS.Kernel.Diagnostics
             public fixed uint Count[Slots];
         }
 
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
         private static Table s_table;
+        #pragma warning restore CS0169
         private static bool s_running;
         private static ulong s_samples;
         private static ulong s_dropped;

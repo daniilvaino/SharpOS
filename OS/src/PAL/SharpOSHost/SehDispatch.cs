@@ -6,6 +6,8 @@ using OS.Hal;
 using OS.Kernel;
 using OS.Kernel.Memory;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.PAL.SharpOSHost
 {
     // Phase 5 of SEH unwind: exception dispatch + raise driver.
@@ -1492,7 +1494,9 @@ namespace OS.PAL.SharpOSHost
         /// A kernel fault during boot then took a second fault in its own
         /// dispatch, and the log showed that one instead of the cause (step169).
         /// </remarks>
+        #pragma warning disable CS0649 // set by CoreClrProbe, which -SkipCoreClr leaves out
         internal static bool FrameChainAvailable;
+        #pragma warning restore CS0649
 
         private static bool TryActivateFrameChain(Context* ctx, ref ulong frameCursor)
         {

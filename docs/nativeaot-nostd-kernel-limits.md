@@ -553,6 +553,11 @@ done/step141.md).
 управляемое исключение (`#PF` → `NullReferenceException`, `#DE` →
 `DivideByZeroException`), `Exception.StackTrace` через обход `.pdata`.
 
+Исключение из `catch`-фанклета (прямо или из вызова в нём) с step213 идёт к
+обработчикам снаружи и не ловится своим же `catch`; `try` внутри `catch`
+ловит своё (`DispatchEx.AdoptRunningFunclet`, проверки в AOTTESTS). До
+step213 — переполнение стека, на втором круге `#DF`.
+
 Практическое следствие для портов из BCL: **бросать по-настоящему**.
 `ArgumentException`, `InvalidOperationException` и прочие пишутся как в
 оригинале, а не подменяются на `Panic.Fail`. Halt остаётся только для
@@ -778,6 +783,10 @@ SCSI 0x35) при закрытии файла, правке каталога и 
 память, носитель, ввод, экран, таймеры, шины, питание), ядро шлёт её по трубе
 (служба процесса, операция 21); программа SYSINFO. Старая маска
 `PlatformCapabilities` (что умела прошивка до ExitBootServices) пока на месте.
+
+**`AppHost.WriteString`/`WriteChar`/`WriteUInt`/`WriteHex` — устарели (step213):**
+пишут мимо стандартного выхода, при сборке — предупреждение `SHARPOS0001`.
+Вывод программы — `Console`; рисование на терминале — `AppHost.Terminal`.
 
 **`Console` — стандартный выход (step212, 🟡):** `Console.Out`/`Write`/`WriteLine`
 — труба строк, сообщение на строку (`Pipe.ConsoleText`), если выход отдан трубе

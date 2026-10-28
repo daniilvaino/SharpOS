@@ -9,7 +9,7 @@ namespace PipeApps
 {
     // PROCTEST.EXE — processes and the pipes between them (step194 §7).
     //
-    //   PROCTEST.EXE [--gc-stress N] [--quick]   the tests; exit code = passed
+    //   PROCTEST.EXE [--gc-stress N] [--quick]   the tests; exit code = failed
     //   PROCTEST.EXE --child ROLE ...            one side of a test (Children.cs)
     //
     // Under --gc-stress the children this program starts of itself run with
@@ -95,7 +95,7 @@ namespace PipeApps
                   SameStats(before, after));
 
             Console.WriteLine("[proctest] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
-            return s_passed;
+            return s_failed;
         }
 
         // A test that throws fails, and the next one runs.
