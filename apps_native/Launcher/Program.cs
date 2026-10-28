@@ -51,7 +51,7 @@ namespace Launcher
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            return Run();
+            return AppRuntime.Finish(Run());
         }
 
         [RuntimeExport("SharpAppBootstrap")]

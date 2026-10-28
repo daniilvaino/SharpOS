@@ -56,7 +56,7 @@ namespace TriCNES
                     Console.Write("tricnes: no ");
                     Console.Write(RomPath);
                     Console.Write('\n');
-                    return 2;
+                    return AppRuntime.Finish(2);
                 }
 
                 Emulator emu = new Emulator();
@@ -97,14 +97,14 @@ namespace TriCNES
                 RunLoop(emu, video);
 
                 Console.Write("tricnes: quit\n");
-                return 42;
+                return AppRuntime.Finish(42);
             }
             catch (Exception e)
             {
                 Console.Write("tricnes: exception: ");
                 Console.Write(e.Message ?? "(no message)");
                 Console.Write('\n');
-                return 1;
+                return AppRuntime.Finish(1);
             }
         }
 

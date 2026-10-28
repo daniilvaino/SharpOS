@@ -101,7 +101,7 @@ namespace DoomApp
                 }
 
                 Console.Write("doom: quit from menu\n");
-                return 42;
+                return AppRuntime.Finish(42);
             }
             catch (Exception e)
             {
@@ -116,7 +116,7 @@ namespace DoomApp
                     Console.Write(trace);
                     Console.Write('\n');
                 }
-                return 1;
+                return AppRuntime.Finish(1);
             }
         }
 

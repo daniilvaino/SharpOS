@@ -10,7 +10,7 @@ namespace System
         /// <summary>Terminates this process and returns <paramref name="exitCode"/> to the kernel.</summary>
         public static void Exit(int exitCode)
         {
-            AppHost.Exit(exitCode);
+            AppHost.Exit(AppRuntime.Finish(exitCode));
 
             // The service is missing (an old kernel) or returned: Exit does not return in the BCL either.
             throw new PlatformNotSupportedException("Environment.Exit: the kernel offers no exit service.");

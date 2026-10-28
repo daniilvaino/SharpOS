@@ -167,8 +167,16 @@ namespace OS.Kernel.Process
         public const ulong HeapRegionOffset = 64UL << 20;
         public const ulong HeapRegionBytes = 640UL << 20;
 
-        /// <summary>Pages an app's heap may hold at once: the old pool's 64 MiB.</summary>
-        public const ulong HeapBudgetBytes = 64UL << 20;
+        /// <summary>
+        /// Pages an app's heap may hold at once: its whole range (step214; it
+        /// was the old pool's 64 MiB, and `summarize` over 100 000 rows ran out
+        /// with 48 MB of it free but broken up). The machine is guarded by
+        /// <see cref="KernelReserveBytes"/>, not by this.
+        /// </summary>
+        public const ulong HeapBudgetBytes = HeapRegionBytes;
+
+        /// <summary>Physical memory a heap commit leaves to the kernel: its heap, page tables, programs being started.</summary>
+        public const ulong KernelReserveBytes = 64UL << 20;
         public const ulong StackWindowBytes = 4UL << 20;
         public const int StackWindows = 64;
         public const ulong MainStackBytes = 1UL << 20;

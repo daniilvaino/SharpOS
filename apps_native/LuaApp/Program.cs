@@ -26,7 +26,20 @@ internal static unsafe class AppEntry
     private static int SharpAppEntry(ulong startupPointer)
     {
         AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-        return Run();
+        int code = Run();
+        FlushOutput();
+        return AppRuntime.Finish(code);
+    }
+
+    // Lua's standard output is buffered, as C's stdio is, and lua.c gets it
+    // flushed at exit by the C runtime. Nothing does that here: io.write
+    // without io.flush was lost when the program ended (step214).
+    private static Lua.IO.BufferedOutputStream s_output;
+
+    private static void FlushOutput()
+    {
+        try { s_output?.FlushAsync().AsTask().GetAwaiter().GetResult(); }
+        catch (SharpOS.Std.Pipes.PipeException) { }
     }
 
     [RuntimeExport("SharpAppBootstrap")]
@@ -141,7 +154,7 @@ internal static unsafe class AppEntry
         public Lua.IO.ILuaStream Input => _input ??= new Lua.IO.StringStream("");
 
         public Lua.IO.ILuaStream Output =>
-            _output ??= new Lua.IO.BufferedOutputStream(text => Console.Error.Write(text.ToString()));
+            _output ??= s_output = new Lua.IO.BufferedOutputStream(text => Console.Error.Write(text.ToString()));
 
         public Lua.IO.ILuaStream Error => Output;
     }
@@ -161,7 +174,7 @@ internal static unsafe class AppEntry
             Console.OpenStandardInput(), Lua.IO.LuaFileOpenMode.Read, Lua.LuaStringMode.Utf16);
 
         public Lua.IO.ILuaStream Output =>
-            _output ??= new Lua.IO.BufferedOutputStream(text => Console.Write(text.ToString()));
+            _output ??= s_output = new Lua.IO.BufferedOutputStream(text => Console.Write(text.ToString()));
 
         public Lua.IO.ILuaStream Error =>
             _error ??= new Lua.IO.BufferedOutputStream(text => Console.Error.Write(text.ToString()));

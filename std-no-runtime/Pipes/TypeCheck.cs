@@ -16,6 +16,30 @@ namespace SharpOS.Std.Pipes
     {
         /// <summary>Null when the reader may read what the writer sends; otherwise why not.</summary>
         public static string Compare(byte[] writerSchema, ulong writerKey, byte[] readerSchema, ulong readerKey)
+            => Compare(writerSchema, writerKey, readerSchema, readerKey, Sides.WriterReader);
+
+        /// <summary>
+        /// Null when a second writer of a pipe declared the type the first
+        /// one did; otherwise why not, in those words (step214: it said
+        /// "writer sends …, reader expects …" about two writers).
+        /// </summary>
+        public static string CompareWriters(byte[] firstSchema, ulong firstKey, byte[] thisSchema, ulong thisKey)
+            => Compare(firstSchema, firstKey, thisSchema, thisKey, Sides.TwoWriters);
+
+        private sealed class Sides
+        {
+            public static readonly Sides WriterReader = new Sides("writer sends ", ", reader expects ", "writer ", "reader ");
+            public static readonly Sides TwoWriters = new Sides("the first writer declared ", ", this one ", "first writer ", "this writer ");
+
+            public readonly string FirstType, SecondType, First, Second;
+
+            private Sides(string firstType, string secondType, string first, string second)
+            {
+                FirstType = firstType; SecondType = secondType; First = first; Second = second;
+            }
+        }
+
+        private static string Compare(byte[] writerSchema, ulong writerKey, byte[] readerSchema, ulong readerKey, Sides sides)
         {
             // A reader without a type reads by the description; a side that has
             // not declared yet is checked when it does.
@@ -29,7 +53,7 @@ namespace SharpOS.Std.Pipes
                        + ", reader key 0x" + Hex(readerKey) + ")";
 
             if (writer.Name != reader.Name)
-                return "different types: writer sends " + writer.Name + ", reader expects " + reader.Name;
+                return "different types: " + sides.FirstType + writer.Name + sides.SecondType + reader.Name;
 
             int count = writer.Fields.Length > reader.Fields.Length ? writer.Fields.Length : reader.Fields.Length;
             for (int i = 0; i < count; i++)
@@ -37,12 +61,12 @@ namespace SharpOS.Std.Pipes
                 string w = i < writer.Fields.Length ? Field(writer.Fields[i]) : "(none)";
                 string r = i < reader.Fields.Length ? Field(reader.Fields[i]) : "(none)";
                 if (w != r)
-                    return "type " + writer.Name + ": field #" + i.ToString() + " differs: writer " + w + ", reader " + r;
+                    return "type " + writer.Name + ": field #" + i.ToString() + " differs: " + sides.First + w + ", " + sides.Second + r;
             }
 
             if (writer.BaseSize != reader.BaseSize || writer.ComponentSize != reader.ComponentSize)
-                return "type " + writer.Name + ": size differs: writer " + writer.BaseSize.ToString()
-                       + ", reader " + reader.BaseSize.ToString();
+                return "type " + writer.Name + ": size differs: " + sides.First + writer.BaseSize.ToString()
+                       + ", " + sides.Second + reader.BaseSize.ToString();
 
             return "type " + writer.Name + ": layouts differ outside the fields (GC series)";
         }

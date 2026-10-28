@@ -18,7 +18,7 @@ internal static unsafe class AppEntry
     private static int SharpAppEntry(ulong startupPointer)
     {
         AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-        return Program.Main(AppHost.Arguments);
+        return AppRuntime.Finish(Program.Main(AppHost.Arguments));
     }
 
     [RuntimeExport("SharpAppBootstrap")]

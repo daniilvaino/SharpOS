@@ -21,7 +21,7 @@ namespace PipeApps
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            return Run(StressArgs.Apply(AppHost.Arguments));
+            return AppRuntime.Finish(Run(StressArgs.Apply(AppHost.Arguments)));
         }
 
         [RuntimeExport("SharpAppBootstrap")]
@@ -58,7 +58,7 @@ namespace PipeApps
             // The task pool's thread is this program's for good: started
             // before the count, not counted as something a test left behind.
             System.Threading.Tasks.Task.Run(() => { }).Wait();
-            ulong[] before = Process.KernelStats();
+            ulong[] before = StableStats();
 
             // Under --gc-stress (test 13): everything but 12 and 14, which are
             // long and measure. 7 and 8 run too since step196: a tick that
@@ -88,7 +88,7 @@ namespace PipeApps
             if (full) Run("14 measurements", Measurements);
 
             Settle();
-            ulong[] after = Process.KernelStats();
+            ulong[] after = StableStats();
             Print("before the tests", before);
             Print("after the tests", after);
             Check("all: pages, processes, records, blocks, pipes, names, threads as before the tests",
@@ -236,10 +236,10 @@ namespace PipeApps
             Check("3: Into<Seq>: 40 copies of this program's own", Finish(w) == 0 && n == 40 && sum == 39 * 40 / 2);
 
             // A writer that closes before any reader came: what it wrote is lost.
-            ulong blocks = Process.KernelStats()[3];
+            ulong blocks = StableStats()[3];
             w = Start("PROCTEST.EXE", A("--child", "name-seq", "t3.lost", "5"));
             int lostCode = Finish(w);
-            bool back = Process.KernelStats()[3] == blocks;
+            bool back = StableStats()[3] == blocks;
             PipeReader<Seq> late = Pipe.Read<Seq>("t3.lost");
             Process again = Start("PROCTEST.EXE", A("--child", "name-seq", "t3.lost", "3"));
             n = 0;
@@ -526,12 +526,12 @@ namespace PipeApps
         // processes go on — this one starts more, and the kernel's books close.
         private static void StackOverflow()
         {
-            ulong[] before = Process.KernelStats();
+            ulong[] before = StableStats();
             int main = Finish(Start("PROCTEST.EXE", A("--child", "overflow", "main")));
             int worker = Finish(Start("PROCTEST.EXE", A("--child", "overflow", "worker")));
             int after = Finish(Start("PROCTEST.EXE", A("--child", "nop")));
             Settle();
-            ulong[] now = Process.KernelStats();
+            ulong[] now = StableStats();
             Check("16: a stack overflow on the main thread ends the process with 134", main == 134);
             Check("16: on a worker thread too", worker == 134);
             Check("16: and the machine goes on: another process runs, the kernel's books close",
@@ -545,10 +545,10 @@ namespace PipeApps
         // heap's pages go back when it ends.
         private static void LargeObjects()
         {
-            ulong[] before = Process.KernelStats();
+            ulong[] before = StableStats();
             int got = Finish(Start("PROCTEST.EXE", A("--child", "large")));
             Settle();
-            ulong[] now = Process.KernelStats();
+            ulong[] now = StableStats();
             Check("17: after 10 000 small allocations and collections: new byte[8 << 20]", (got & 1) != 0);
             Check("17: a List<int> of a million", (got & 2) != 0);
             Check("17: a StringBuilder of a megabyte", (got & 4) != 0);
@@ -919,7 +919,7 @@ namespace PipeApps
         private static void ResourcesBack()
         {
             Settle();
-            ulong[] before = Process.KernelStats();
+            ulong[] before = StableStats();
             int launches = s_quick || StressArgs.Every != 0 ? 20 : 200;
             int pipelines = s_quick || StressArgs.Every != 0 ? 5 : 50;
             int bad = 0;
@@ -935,7 +935,7 @@ namespace PipeApps
                 if (Finish(a) != 0 || Finish(b) != 0 || n != 8) bad++;
             }
             Settle();
-            ulong[] after = Process.KernelStats();
+            ulong[] after = StableStats();
             Print("before", before);
             Print("after", after);
             Check("12: " + launches.ToString() + " launches and " + pipelines.ToString() + " pipelines, all fine", bad == 0);
@@ -977,6 +977,25 @@ namespace PipeApps
             long pages = (long)b[0] - (long)a[0];
             return pages >= -64 && pages <= 256 && a[1] == b[1] && a[2] == b[2] && a[3] == b[3]
                    && a[4] == b[4] && a[5] == b[5] && a[6] == b[6];
+        }
+
+        // The kernel's books, once this program's own output has stopped
+        // moving. Under `> f` or `| …` the report lines are exchange blocks
+        // until the next stage frees them, and it does so when it gets to
+        // them — inside a measured window, a count of blocks that are not
+        // the test's at all (step214: 80/5 instead of 84/1). Nothing is
+        // printed inside a window, so once the count holds still it stays.
+        private static ulong[] StableStats()
+        {
+            ulong[] stats = Process.KernelStats();
+            for (int i = 0; i < 50; i++)
+            {
+                Thread.Sleep(20);
+                ulong[] again = Process.KernelStats();
+                if (again[3] == stats[3]) return again;
+                stats = again;
+            }
+            return stats;
         }
 
         // Threads of ended processes leave the machine a moment after their

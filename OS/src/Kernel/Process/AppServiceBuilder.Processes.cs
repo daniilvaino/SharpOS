@@ -876,6 +876,7 @@ namespace OS.Kernel.Process
             AppProcess p = AppProcesses.Current;
             if (p == null || !InHeap(p, address, bytes)) return (int)AppServiceStatus.InvalidParameter;
             if (p.HeapCommitted + bytes > AppProcesses.HeapBudgetBytes) return (int)AppServiceStatus.LimitReached;
+            if (PhysicalMemory.AvailablePages() * 4096 < bytes + AppProcesses.KernelReserveBytes) return (int)AppServiceStatus.LimitReached;
             for (ulong va = address; va < address + bytes; va += 4096)
             {
                 ulong pa = PhysicalMemory.AllocPage();

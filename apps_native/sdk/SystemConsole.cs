@@ -28,6 +28,19 @@ namespace System
         public static void WriteLine() => Out.WriteLine();
 
         /// <summary>
+        /// The unfinished lines of the standard output, the error stream and
+        /// stdtext, sent as the program ends (AppRuntime.Finish): a text
+        /// writer on a pipe sends a line when it ends, and one without a
+        /// line break was otherwise lost with the process.
+        /// </summary>
+        internal static void FlushAtExit()
+        {
+            s_out?.Flush();
+            s_error?.Flush();
+            SharpOS.Std.Pipes.Pipe.FlushText();
+        }
+
+        /// <summary>
         /// The error stream (step208): the kernel's error port (COM4), or the
         /// console when the kernel has no such service.
         /// </summary>

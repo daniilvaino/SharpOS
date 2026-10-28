@@ -109,7 +109,18 @@ namespace OS.Hal
             s_writing++;
             OS.Kernel.Threading.Preemption.Suppress();
             try { WriteCharCore(value, channel); }
-            finally { OS.Kernel.Threading.Preemption.Allow(); s_writing--; }
+            finally
+            {
+                // The count first. Allow takes a tick deferred by the section
+                // and switches threads right there (step196): with the count
+                // still raised, every writer in the meantime went to the raw
+                // port and off the screen, and a thread leaving the machine
+                // reset the count under this one, which then took it to -1 —
+                // all output, the launcher's frames too, on COM1 for good
+                // (step214, a long pipeline ending in `take`).
+                s_writing--;
+                OS.Kernel.Threading.Preemption.Allow();
+            }
         }
 
         private static int s_writing;

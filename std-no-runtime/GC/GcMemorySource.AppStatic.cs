@@ -7,7 +7,8 @@
 // nothing larger than a segment could be allocated, however much was free.
 //
 // Now the kernel gives a range of addresses (HeapBase/HeapBytes, 640 MiB)
-// and a budget of pages (HeapBudget, 64 MiB). A block takes addresses —
+// and a budget of pages (HeapBudget: the whole range since step214; the
+// kernel refuses pages once the machine is down to its reserve). A block takes addresses —
 // freed ones first, first fit, else fresh — and asks for zeroed pages under
 // them (HeapCommit); a block the collector lets go (an empty segment) gives
 // its pages back (HeapRelease) and its addresses to the free list. A large

@@ -22,6 +22,9 @@ namespace OS.Hal
 
             switch (ch)
             {
+                // The ellipsis has no CP437 glyph; the font draws one of its own.
+                case (char)0x2026: return Ellipsis;   // …
+
                 // Single-line box drawing.
                 case (char)0x2500: return 0xC4;   // ─
                 case (char)0x2502: return 0xB3;   // │

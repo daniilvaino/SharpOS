@@ -15,7 +15,7 @@ namespace LessApp
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            return Run(PipeApps.StressArgs.Apply(AppHost.Arguments));
+            return AppRuntime.Finish(Run(PipeApps.StressArgs.Apply(AppHost.Arguments)));
         }
 
         [RuntimeExport("SharpAppBootstrap")]
@@ -139,7 +139,16 @@ namespace LessApp
                     }
                     else if (c == '\u001b')
                     {
-                        Append("^[");
+                        // Colours pass, as `less -R` lets them (step214): an
+                        // SGR sequence (ESC [ digits ; … m) is kept whole and
+                        // takes no column; any other escape shows as ^[.
+                        int end = SgrEnd(text, i);
+                        if (end > i)
+                        {
+                            Append(text.Substring(i, end - i + 1));
+                            i = end;
+                        }
+                        else Append("^[");
                     }
                     else if (c < ' ')
                     {
@@ -183,6 +192,56 @@ namespace LessApp
                 _lines.Add(_b.ToString());
                 _b.Clear();
             }
+        }
+
+        // The index of the 'm' ending an SGR sequence that starts at
+        // text[at] (ESC [ digits and semicolons m), or -1 when it is not one
+        // or does not end in this piece of text.
+        private static int SgrEnd(string text, int at)
+        {
+            if (at + 2 >= text.Length || text[at] != '\u001b' || text[at + 1] != '[') return -1;
+            for (int i = at + 2; i < text.Length && i < at + 32; i++)
+            {
+                char c = text[i];
+                if (c == 'm') return i;
+                if ((c < '0' || c > '9') && c != ';') return -1;
+            }
+            return -1;
+        }
+
+        // The columns [left, left + width) of a line that may carry SGR
+        // sequences: they take no column, and the ones before `left` are kept
+        // too, so a line scrolled sideways keeps its colour. Sets the number
+        // of columns the slice fills.
+        private static string VisibleSlice(string line, int left, int width, out int columns)
+        {
+            columns = 0;
+            if (line.IndexOf('\u001b') < 0)
+            {
+                string part = left >= line.Length ? "" : line.Substring(left, Math.Min(width, line.Length - left));
+                columns = part.Length;
+                return part;
+            }
+            var slice = new StringBuilder();
+            int column = 0;
+            for (int i = 0; i < line.Length && columns < width; i++)
+            {
+                int end = SgrEnd(line, i);
+                if (end > i)
+                {
+                    slice.Append(line, i, end - i + 1);
+                    i = end;
+                    continue;
+                }
+                if (column >= left)
+                {
+                    slice.Append(line[i]);
+                    columns++;
+                }
+                column++;
+            }
+            slice.Append("\u001b[0m");
+            return slice.ToString();
         }
 
         // UTF-8 decoded a chunk at a time: a sequence cut at a chunk's end is
@@ -411,10 +470,10 @@ namespace LessApp
                         Console.ResetColor();
                         continue;
                     }
-                    string line = _lines[i];
-                    string part = _left >= line.Length ? "" : line.Substring(_left, Math.Min(usable, line.Length - _left));
-                    WriteHighlighted(part);
-                    if (part.Length < usable) Console.Write(new string(' ', usable - part.Length));
+                    string part = VisibleSlice(_lines[i], _left, usable, out int columns);
+                    if (columns != part.Length) Console.Write(part);   // coloured: no search highlight inside it
+                    else WriteHighlighted(part);
+                    if (columns < usable) Console.Write(new string(' ', usable - columns));
                 }
                 DrawStatus();
             }

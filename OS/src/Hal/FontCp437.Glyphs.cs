@@ -285,8 +285,18 @@ namespace OS.Hal
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 0xFF
         };
 
+        /// <summary>
+        /// One glyph past CP437, drawn here rather than added to the table
+        /// above (which stays the font as it was taken): the horizontal
+        /// ellipsis, which pipe views print for whatever they cut short
+        /// (step214: `{ … }` read on screen as `{ ? }`).
+        /// </summary>
+        public const int Ellipsis = CharCount;
+
         public static byte Row(int glyph, int row)
         {
+            // Three dots of the period's size (rows 10-11, two columns each).
+            if (glyph == Ellipsis) return row == 10 || row == 11 ? (byte)0xDB : (byte)0;
             if ((uint)glyph >= CharCount) glyph = '?';
             return Glyphs[glyph * CharHeight + row];
         }

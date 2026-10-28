@@ -5,6 +5,22 @@ namespace SharpOS.AppSdk
         private static AppStartupBlock* s_startup;
         private static AppServiceTable* s_services;
 
+        /// <summary>
+        /// The program has returned <paramref name="exitCode"/>: what its text
+        /// writers still hold goes out before the process ends. Every app's
+        /// SharpAppEntry returns through here — the image's real entry: the
+        /// last /ENTRY on the link line wins, and the SDK's EntryPointSymbol
+        /// comes after /ENTRY:SharpAppBootstrap.
+        /// </summary>
+        public static int Finish(int exitCode)
+        {
+            // The reader may be gone (`| take`): the line has nowhere to go,
+            // and the code the program chose stays its code.
+            try { System.Console.FlushAtExit(); }
+            catch (SharpOS.Std.Pipes.PipeException) { }
+            return exitCode;
+        }
+
         public static void Initialize(AppStartupBlock* startup)
         {
             // FIRST, before anything that might own a page-crossing frame:
@@ -211,6 +227,7 @@ namespace SharpOS.AppSdk
             // from the static roots the step above just materialised — before
             // that there is nothing to keep alive and nothing to sweep.
             AppGC.Install();
+            SharpOS.Std.NoRuntime.GcHeap.CollectBeforeGrowing = true;
 
             // What this program was started with (needs the heap: strings).
             AppHost.LoadArguments(s_services);
@@ -317,13 +334,15 @@ namespace SharpOS.AppSdk
         {
             object ex = System.Runtime.CompilerServices.Unsafe.As<nint, object>(ref exception);
             if (ex is SharpOS.Std.Pipes.PipeException pipe && pipe.IsStandardEndBroken) return 141;
-            // A stage given another type than it reads (step213): a mistake in
-            // the command line, not in the program — what does not match, and 1.
+            // A stage given another type than it reads, or two writers of one
+            // pipe with two types (step213): a mistake in the command line,
+            // not in the program — what does not match, and 1. The message
+            // says which ends.
             if (ex is SharpOS.Std.Pipes.PipeException mismatch && mismatch.Status == SharpOS.Std.Pipes.PipeStatus.TypeMismatch)
             {
                 AppHost.WriteError("\u001b[31m");
                 AppHost.WriteError(AppBuildInfo.Name);
-                AppHost.WriteError(": the input is of another type: ");
+                AppHost.WriteError(": types do not match: ");
                 AppHost.WriteError(mismatch.Message);
                 AppHost.WriteError("\u001b[0m\n");
                 return 1;

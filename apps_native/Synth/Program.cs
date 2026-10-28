@@ -28,7 +28,7 @@ namespace PipeApps
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            return Run(AppHost.Arguments);
+            return AppRuntime.Finish(Run(AppHost.Arguments));
         }
 
         [RuntimeExport("SharpAppBootstrap")]

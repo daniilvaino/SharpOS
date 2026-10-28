@@ -226,6 +226,9 @@ namespace SharpOS.Std.Pipes
         /// </summary>
         public static TextWriter Text => s_text ??= HandedText(TextEnd, "stdtext") ?? new TerminalTextWriter();
 
+        /// <summary>stdtext's unfinished line, sent at the program's end (AppRuntime.Finish).</summary>
+        internal static void FlushText() => s_text?.Flush();
+
         /// <summary>
         /// The error stream as a pipe of strings when an end was handed under
         /// <see cref="ErrorEnd"/> (`2> file`); null when none was, and the

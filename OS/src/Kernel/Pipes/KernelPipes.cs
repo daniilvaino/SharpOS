@@ -230,10 +230,10 @@ namespace OS.Kernel.Pipes
                     // type a pipe, whoever of the copies declared it first.
                     if (p.Writers > 1 && p.Schema != null)
                     {
-                        error = TypeCheck.Compare(p.Schema, p.RootKey, schema, rootKey);
+                        error = TypeCheck.CompareWriters(p.Schema, p.RootKey, schema, rootKey);
                         if (error != null)
                         {
-                            error = "a pipe has one type, and another writer of this one declared it first: " + error;
+                            error = "a pipe has one type: " + error;
                             return PipeStatus.TypeMismatch;
                         }
                     }

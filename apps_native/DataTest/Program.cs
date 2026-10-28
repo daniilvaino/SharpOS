@@ -20,7 +20,7 @@ namespace DataApps
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            return Run(PipeApps.StressArgs.Apply(AppHost.Arguments));
+            return AppRuntime.Finish(Run(PipeApps.StressArgs.Apply(AppHost.Arguments)));
         }
 
         [RuntimeExport("SharpAppBootstrap")]

@@ -72,7 +72,7 @@ namespace Fami
                     Console.Write("fami: no ");
                     Console.Write(RomPath);
                     Console.Write('\n');
-                    return 2;
+                    return AppRuntime.Finish(2);
                 }
 
                 // Start-up is stepped out loud on purpose. Each of these calls
@@ -127,7 +127,7 @@ namespace Fami
                 RunLoop(nes, video);
 
                 Console.Write("fami: quit\n");
-                return 42;
+                return AppRuntime.Finish(42);
             }
             catch (Exception e)
             {
@@ -139,7 +139,7 @@ namespace Fami
                 Console.Write("fami: exception caught\n");
                 Console.Write(e.Message ?? "(no message)");
                 Console.Write('\n');
-                return 1;
+                return AppRuntime.Finish(1);
             }
         }
 

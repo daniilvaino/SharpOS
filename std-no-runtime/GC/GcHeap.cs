@@ -40,14 +40,14 @@ namespace SharpOS.Std.NoRuntime
         /// <summary>
         /// Collect before growing once the segment count has doubled since the
         /// last collection, and at least four segments were added (step194).
-        /// Off by default — an app's heap is bounded by its page budget,
-        /// running out of it collects anyway, and the empty segments a
-        /// collection finds are given back; the kernel turns it on: its heap
-        /// takes pages from the same machine processes are loaded into, never gives them back, and otherwise grew by every
-        /// launch's garbage until a start found no memory, with no collection
-        /// asked for on that path.
+        /// The kernel turns it on: its heap takes pages from the same machine
+        /// processes are loaded into, never gives them back, and otherwise grew
+        /// by every launch's garbage until a start found no memory. Apps turn
+        /// it on too (step214): their pages are committed as the heap grows,
+        /// and without it every stage of a pipeline held its whole budget in
+        /// garbage before its first collection.
         /// </summary>
-        #pragma warning disable CS0649 // std compiles into the kernel and the apps; one of them sets this, the other leaves it unset
+        #pragma warning disable CS0649 // set by the kernel and by the app SDK, not by std itself
         public static bool CollectBeforeGrowing;
         #pragma warning restore CS0649
 

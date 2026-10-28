@@ -26,7 +26,7 @@ namespace AotTests
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            return Main();
+            return AppRuntime.Finish(Main());
         }
 
         [RuntimeExport("SharpAppBootstrap")]

@@ -917,10 +917,15 @@ namespace SharpOS.Std.Pipes
                     Paint(text, colour, Dim, "[" + Length.ToString() + "]");
                     if (depth <= 0) return;
                     Paint(text, colour, Dim, " { ");
+                    // The elements are as deep as the array: a list of
+                    // objects showed each as `{ … }` one level down (step214,
+                    // SYSINFO's Storage). An array in an array still costs a
+                    // level — an array that holds itself would never end.
                     for (int i = 0; i < Length && i < 8; i++)
                     {
                         if (i > 0) Paint(text, colour, Dim, ", ");
-                        this[i].AppendNested(text, depth - 1, colour);
+                        View element = this[i];
+                        element.AppendNested(text, element.Kind == ViewKind.Array ? depth - 1 : depth, colour);
                     }
                     if (Length > 8) Paint(text, colour, Dim, ", …");
                     Paint(text, colour, Dim, " }");

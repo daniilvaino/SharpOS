@@ -75,7 +75,7 @@ namespace PipeApps
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            return Run(StressArgs.Apply(AppHost.Arguments));
+            return AppRuntime.Finish(Run(StressArgs.Apply(AppHost.Arguments)));
         }
 
         [RuntimeExport("SharpAppBootstrap")]
@@ -104,7 +104,9 @@ namespace PipeApps
             if (s_reported || s_start == 0) return;
             s_reported = true;
             long now = Stopwatch.GetTimestamp();
-            Console.Error.Write("[kql] start ms: declared=" + Ms(s_start, s_declared) + " bind1=" + Ms(s_declared, s_firstBound)
+            // The log only (step214): on the error stream it reached the screen
+            // after every query, and `2>` caught a measurement as an error.
+            AppHost.WriteDiagnostic("[kql] start ms: declared=" + Ms(s_start, s_declared) + " bind1=" + Ms(s_declared, s_firstBound)
                                 + " bind2=" + Ms(s_firstBound, s_bound) + " first=" + Ms(s_bound, now) + " total=" + Ms(s_start, now) + "\n");
         }
 
