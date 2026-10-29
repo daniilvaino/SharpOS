@@ -29,6 +29,12 @@ namespace OS.Hal
     //     every row (the engine marks the whole screen dirty on a scroll, and
     //     a boot log scrolls constantly);
     //   - FbConsole.DrawCharFast for the common scale-1, fully-inside glyph.
+    /// <summary>The engine's answers to queries go to the terminal's input (step217).</summary>
+    internal sealed class AnswersToInput : XtermSharp.SimpleTerminalDelegate
+    {
+        public override void Send(byte[] data) => OS.Kernel.Input.TerminalInput.Answer(data);
+    }
+
     internal static unsafe class TerminalConsole
     {
         private const int Margin = 8;
@@ -50,16 +56,14 @@ namespace OS.Hal
         private static Terminal s_terminal;
         private static bool s_ready;
         private static bool s_rendering;              // re-entrancy guard
-        // Set while a character is being fed to the engine. The engine
+        // Set while queued bytes are being fed to the engine. The engine
         // allocates as it scrolls, an allocation can grow the kernel heap, and
-        // growing the heap logs a line — which came back into Putc on the same
-        // thread, found the engine lock taken by itself and spun out its whole
-        // bound before dropping each character. Four such lines cost a
-        // NativeAOT app printing 400 lines 108 spins and about a third of its
-        // output time (step169). A line written from inside the engine still
-        // reaches every other sink; it cannot reach this one either way.
-        // Global rather than per thread: Putc runs with preemption suppressed
-        // (Platform.WriteChar), so while one thread feeds no other can get here.
+        // growing the heap logs a line — which came back on the same thread,
+        // found the engine lock taken by itself and spun out its whole bound
+        // (step169). Now the line is queued after the write being fed, and the
+        // feeding loop takes it. Global rather than per thread: feeding runs
+        // with preemption suppressed, so while one thread feeds no other can
+        // get here.
         private static bool s_feeding;
         // Feeding and painting both mutate engine state that is shared across
         // threads — the parser's ReadingBuffer holds a raw pointer that only
@@ -67,7 +71,7 @@ namespace OS.Hal
         // read through a null buffer. Feeding waits for it (bounded), painting
         // does not: a skipped repaint is invisible, a skipped character is not.
         private static int s_engineLock;
-        // Set when text has been fed, cleared once it is on screen. Read without
+        // Set when text has been queued, cleared once it is on screen. Read without
         // the lock so an idle reader can skip Flush entirely instead of taking
         // the lock on every poll and starving the thread doing the writing.
         private static volatile bool s_dirty;
@@ -87,7 +91,6 @@ namespace OS.Hal
         private static int s_fed;
         private static int s_bailRendering;
         private static int s_bailFeeding;
-        private static byte[] s_encode;               // reused UTF-8 scratch
         private static byte s_bgR, s_bgG, s_bgB;
 
         // Shadow of the painted grid: glyph + resolved colours per cell.
@@ -166,8 +169,11 @@ namespace OS.Hal
                 Scrollback = ScrollbackLines
             };
 
-            s_terminal = new Terminal(null, options);
-            s_encode = new byte[4];
+            // Its answers (cursor position, device attributes) are the
+            // terminal's input, as on Unix: the reader of the terminal gets
+            // them (step217, TerminalInput).
+            s_terminal = new Terminal(new AnswersToInput(), options);
+            s_queue = new byte[QueueBytes];
             s_cols = cols;
             s_rows = rows;
             s_bgR = br; s_bgG = bg; s_bgB = bb;
@@ -193,104 +199,135 @@ namespace OS.Hal
         public static bool IsAlternateScreen
             => s_ready && s_terminal != null && s_terminal.Buffers.IsAlternateBuffer;
 
-        /// <summary>Feeds one character; nothing is drawn until Flush.</summary>
+        // The pipe to the screen (step218). Writers queue bytes; the engine
+        // gets them in one go (Feed), and the screen is painted when the
+        // queue is empty (Flush) — by whoever asks: the input pump every
+        // interval, a reader waiting for a key, the end of a kernel string.
+        //
+        // It replaced four rules for when to paint, each written for one
+        // symptom (paint at the end of a write; except one ending a line,
+        // step169; not "when due" for everything; not "all but the first
+        // write of a burst"). Painting at the end of every write put each
+        // 4 KiB piece of a launcher frame on screen alone, the cursor drawn
+        // wherever that piece's last move had left it — the black block
+        // flickering about the screen. Now nothing is painted while there is
+        // more to feed, and a program printing lines is painted once per
+        // pump interval, not once per line.
+        //
+        // One writer at a time, as before: Platform.WriteChar suppresses
+        // preemption and turns away a nested call, so the queue needs no lock
+        // on the writing side. The reading side moves only under the engine
+        // lock.
+        private const int QueueBytes = 64 * 1024;               // a power of two
+        private static byte[] s_queue;
+        private static volatile uint s_queueHead;               // next byte to feed
+        private static volatile uint s_queueTail;               // next byte to fill
+
+        /// <summary>Queues one character for the screen.</summary>
         public static void Putc(char ch)
         {
             if (!s_ready) return;
-            if (s_rendering) { s_bailRendering++; return; }
-            if (s_feeding) { s_bailFeeding++; return; }
-            // Text must not be dropped: a lost character desynchronises whatever
-            // wrote it from what it later reads back, and PSReadLine answers that
-            // by redrawing forever. Painting may be skipped, feeding may not.
-            ulong waitStarted = OS.Kernel.Diagnostics.PerfCounters.SinkClock();
-            if (!Enter())
+
+            byte* encoded = stackalloc byte[4];
+            int length = EncodeUtf8(ch, encoded);
+            Enqueue(encoded, length);
+
+            // Before the pump nobody paints at intervals, and Log writes its
+            // lines a character at a time, never reaching Platform.Write's
+            // flush: a line break paints.
+            if (ch == '\n' && !s_pumped)
+                Flush();
+        }
+
+        private static void Enqueue(byte* bytes, int length)
+        {
+            if (s_queueTail - s_queueHead + (uint)length > QueueBytes)
             {
-                OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.TerminalDrops);
-                return;
+                // Full: the writer feeds what is there itself. Text must not
+                // be dropped — a lost character desynchronises whatever wrote
+                // it from what it later reads back, and PSReadLine answers
+                // that by redrawing forever. Dropped only when the engine is
+                // held by the code this write interrupted.
+                Feed();
+                if (s_queueTail - s_queueHead + (uint)length > QueueBytes)
+                {
+                    OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.TerminalDrops);
+                    return;
+                }
             }
-            OS.Kernel.Diagnostics.PerfCounters.CountTsc(OS.Kernel.Diagnostics.PerfCounter.TerminalLockTsc, waitStarted);
 
-            int length = EncodeUtf8(ch, s_encode);
-            ulong feedStarted = OS.Kernel.Diagnostics.PerfCounters.SinkClock();
-            s_feeding = true;
-            s_terminal.Feed(s_encode, length);
-            s_feeding = false;
-            OS.Kernel.Diagnostics.PerfCounters.CountTsc(OS.Kernel.Diagnostics.PerfCounter.TerminalFeedTsc, feedStarted);
+            uint tail = s_queueTail;
+            for (int i = 0; i < length; i++)
+                s_queue[(int)((tail + (uint)i) & (QueueBytes - 1))] = bytes[i];
+            s_queueTail = tail + (uint)length;
             s_dirty = true;
-            s_fed++;
-
-            // Callers that go through Platform.WriteChar one character at a time (Log's
-            // Begin/EndLine pair, for instance) never reach Platform.Write's flush, so a
-            // line break paints what is pending — unless a paint went out moments ago;
-            // see CoalescePaints.
-            if (ch == '\n' && PaintDue())
-                Paint();
-
-            Exit();
         }
 
-        // Paints at most this often from line breaks while a pump is there to
-        // finish the job. Faster than a screen refreshes; slow enough that a
-        // program printing lines scrolls once per batch, not once per line.
-        private const ulong LineBreakPaintsPerSecond = 60;
+        // Callers hold the engine lock. Until the queue is empty: bytes a log
+        // line adds while the engine works (it allocates, and a growing heap
+        // logs) go after the write being fed, never inside it. A character cut
+        // at the end of the ring is carried over by the engine itself.
+        private static void FeedQueued()
+        {
+            ulong started = OS.Kernel.Diagnostics.PerfCounters.SinkClock();
+            while (true)
+            {
+                uint head = s_queueHead;
+                uint pending = s_queueTail - head;
+                if (pending == 0) break;
 
-        private static bool s_coalesce;
-        private static ulong s_lastPaint;
+                int at = (int)(head & (QueueBytes - 1));
+                int length = (int)pending;
+                if (length > QueueBytes - at) length = QueueBytes - at;
+
+                s_feeding = true;
+                fixed (byte* queue = s_queue)
+                    s_terminal.Feed((System.IntPtr)(queue + at), length);
+                s_feeding = false;
+
+                s_queueHead = head + (uint)length;
+                s_fed += length;
+            }
+            OS.Kernel.Diagnostics.PerfCounters.CountTsc(OS.Kernel.Diagnostics.PerfCounter.TerminalFeedTsc, started);
+        }
 
         /// <summary>
-        /// Lets line breaks skip painting when the screen was painted less than a
-        /// frame ago; the caller promises to call <see cref="Flush"/> regularly.
+        /// Gives the engine everything queued, without painting.
         /// </summary>
         /// <remarks>
-        /// Every line break used to paint, and a paint that follows new lines at
-        /// the bottom moves the whole screen up. A program printing 200 lines
-        /// paid for 200 full-screen moves — half a millisecond each under QEMU,
-        /// two thirds of what its output cost (step169). Batched, ten lines are
-        /// one move of ten rows, which costs the same as a move of one.
-        ///
-        /// Only line breaks and the end of an application's write that ends a
-        /// line (<see cref="FlushWhenDue"/>) are deferred. An explicit Flush —
-        /// the end of a kernel string or of any other application write, a
-        /// wait for input — still paints at once, so a panic, a frame or an
-        /// echoed key is never late. Until someone promises to
-        /// flush, nothing changes: early boot has no pump, and a deferred line
-        /// there would sit unpainted.
+        /// At the end of an application's write: what the program said has to
+        /// be in the engine before anyone asks it a question — whether the
+        /// alternate screen is on (who owns the screen, where the output
+        /// goes), where the cursor is.
         /// </remarks>
-        public static void CoalescePaints() => s_coalesce = true;
+        public static void Feed()
+        {
+            if (!s_ready || s_queueTail == s_queueHead) return;
+            // Asked from inside the engine (a log line while it feeds or
+            // paints): the lock is this thread's own, and the loop already
+            // running takes the bytes.
+            if (s_feeding) { s_bailFeeding++; return; }
+            if (s_rendering) { s_bailRendering++; return; }
+
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
+            {
+                ulong waitStarted = OS.Kernel.Diagnostics.PerfCounters.SinkClock();
+                if (!Enter()) return;
+                OS.Kernel.Diagnostics.PerfCounters.CountTsc(OS.Kernel.Diagnostics.PerfCounter.TerminalLockTsc, waitStarted);
+                FeedQueued();
+                Exit();
+            }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
+
+        private static bool s_pumped;
 
         /// <summary>
-        /// Paints now, unless the screen was painted less than a frame ago and
-        /// a pump will get to it within one interval.
+        /// The input pump paints what is queued every interval from now on;
+        /// line breaks no longer have to.
         /// </summary>
-        /// <remarks>
-        /// For the end of an application's write that ends a line. A paint at
-        /// the end of every write turned each line a NativeAOT app printed into
-        /// its own full-screen move: BenchAot's 200 lines cost 283 paints and
-        /// 1.4 ms a line, against 21 paints for the same work on the hosted
-        /// runtime, whose writes never forced a paint (step169).
-        ///
-        /// Lines only. A full-screen interface's writes keep painting at once:
-        /// deferring them showed the first piece of each redrawn frame alone,
-        /// and a launcher that redraws unchanged frames flickered.
-        /// </remarks>
-        public static void FlushWhenDue()
-        {
-            if (!PaintDue())
-                return;
-            Flush();
-        }
-
-        private static bool PaintDue()
-        {
-            if (!s_coalesce)
-                return true;
-
-            ulong hz = OS.Hal.Timer.Hpet.FrequencyHz;
-            if (hz == 0)
-                return true;
-
-            return OS.Hal.Timer.Hpet.ReadCounter() - s_lastPaint >= hz / LineBreakPaintsPerSecond;
-        }
+        public static void PumpStarted() => s_pumped = true;
 
         private static bool TryEnter()
         {
@@ -343,12 +380,13 @@ namespace OS.Hal
         }
 
         /// <summary>
-        /// Paints what changed since the last call. Scrolling is handled first, as a
-        /// pixel move, so the rows that merely shifted are not re-rendered.
+        /// Feeds what is queued, then paints what changed since the last call.
+        /// Scrolling is handled first, as a pixel move, so the rows that merely
+        /// shifted are not re-rendered.
         /// </summary>
         public static void Flush()
         {
-            if (!s_ready || s_rendering) return;
+            if (!s_ready || s_rendering || s_feeding) return;
 
             // Preemption off across the whole critical section, as it already is
             // for the paint Putc does — Putc runs inside Platform.WriteChar,
@@ -366,13 +404,15 @@ namespace OS.Hal
             try
             {
                 if (!TryEnter()) { s_paintSkips++; return; }
+                FeedQueued();
                 Paint();
                 Exit();
             }
             finally { OS.Kernel.Threading.Preemption.Allow(); }
         }
 
-        // Callers hold the engine lock.
+        // Callers hold the engine lock and have fed the queue: the cursor is
+        // drawn where the last byte left it, not where a piece of a frame did.
         private static void Paint()
         {
             if (s_rendering) return;
@@ -436,14 +476,13 @@ namespace OS.Hal
                 (long)(OS.Kernel.Diagnostics.PerfCounters.Now() - phase));
 
             s_rendering = false;
-            s_lastPaint = OS.Hal.Timer.Hpet.ReadCounter();
             OS.Kernel.Diagnostics.PerfCounters.CountScreen(started);
         }
 
         /// <summary>Repaints every row — after a resize or a mode switch.</summary>
         public static void Redraw()
         {
-            if (!s_ready || s_rendering) return;
+            if (!s_ready || s_rendering || s_feeding) return;
 
             // Suppressed for the same reason as Flush: this holds the engine
             // lock across a full-screen repaint.
@@ -452,7 +491,9 @@ namespace OS.Hal
             {
                 if (!TryEnter()) { s_paintSkips++; return; }
 
+                FeedQueued();
                 s_rendering = true;
+                s_dirty = false;
                 FbConsole.Clear(s_bgR, s_bgG, s_bgB);
                 for (int i = 0; i < s_shadowValid.Length; i++)
                     s_shadowValid[i] = false;
@@ -724,7 +765,7 @@ namespace OS.Hal
             return isForeground ? FbConsole.Pack(200, 200, 200) : FbConsole.Pack(s_bgR, s_bgG, s_bgB);
         }
 
-        private static int EncodeUtf8(char ch, byte[] destination)
+        private static int EncodeUtf8(char ch, byte* destination)
         {
             uint value = ch;
             if (value < 0x80)

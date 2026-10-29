@@ -54,9 +54,9 @@ namespace OS.Kernel.Input
                 ScancodeSource.PumpStarted();
             }
 
-            // From here on the pump flushes the screen every interval, so line
+            // From here on the pump paints the screen every interval, so line
             // breaks no longer have to paint one by one.
-            TerminalConsole.CoalescePaints();
+            TerminalConsole.PumpStarted();
         }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
@@ -114,9 +114,9 @@ namespace OS.Kernel.Input
                     ScancodeSource.Push(sc);
                 }
 
-                // Paints the lines TerminalConsole deferred (CoalescePaints):
-                // the last line of a burst of output is on screen within one
-                // interval even when nothing else flushes.
+                // Paints what was written since the last pass (the pipe to
+                // the screen, step218): a program printing lines is painted
+                // once per interval, not once per line.
                 if (TerminalConsole.HasPendingOutput)
                     TerminalConsole.Flush();
 

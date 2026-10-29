@@ -344,6 +344,11 @@ namespace SharpOS.AppSdk
         // int RandomFill(byte* buffer, int count): cryptographic random bytes
         // (the kernel's RDRAND). Zero: an older kernel; no RandomNumberGenerator.
         public ulong RandomFillAddress;
+
+        // int TerminalRead(byte* buffer, int capacity) (step217): the
+        // terminal's input as bytes, without waiting; 0 when there is nothing,
+        // negative without a keyboard. Zero: an older kernel (TryReadKey then).
+        public ulong TerminalReadAddress;
     }
 
     /// <summary>

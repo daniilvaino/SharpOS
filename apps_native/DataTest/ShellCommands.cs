@@ -77,6 +77,12 @@ namespace DataApps
             Check("19: FETCH 3>&1 >&-: the panel (" + panel.Count.ToString() + " lines)",
                   panel.Count > 10 && Join(panel).Contains("processors"));
 
+            // `1>&2` with 2 not redirected (step218): the output goes where
+            // the error stream does, the screen — not down the pipe.
+            List<string> toErrors = Lines("PIPEGEN 3 1>&2 | PIPECNT");
+            Check("19: PIPEGEN 3 1>&2 | PIPECNT: nothing down the pipe (" + Escaped(Join(toErrors)) + ")",
+                  Join(toErrors) == "0\n");
+
             File.WriteAllText(home + "/t19.txt", "old");
             Check("19: echo hello > $HOME/$T19D.txt", Sh("export T19D=t19; echo hello > $HOME/$T19D.txt") == 0);
             Check("19: the file", Text(home + "/t19.txt").StartsWith("hello"));

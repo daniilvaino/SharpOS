@@ -234,13 +234,6 @@ namespace OS.Hal
         /// </remarks>
         public static void FlushConsole() => TerminalConsole.Flush();
 
-        /// <summary>
-        /// <see cref="FlushConsole"/>, unless the screen was painted moments ago
-        /// and the input pump will paint what is pending; see
-        /// <see cref="TerminalConsole.FlushWhenDue"/>.
-        /// </summary>
-        public static void FlushConsoleWhenDue() => TerminalConsole.FlushWhenDue();
-
         public static void WriteLine(string text)
         {
             Write(text);
@@ -330,7 +323,10 @@ namespace OS.Hal
                         case Ps2Keyboard.KeyKind.Down: scanCode = 0x02; break;
                         case Ps2Keyboard.KeyKind.Right: scanCode = 0x03; break;
                         case Ps2Keyboard.KeyKind.Left: scanCode = 0x04; break;
-                        default: scanCode = NavigationScanCode(kind); break;
+                        default:
+                            scanCode = NavigationScanCode(kind);
+                            if (scanCode == 0 && !extended) scanCode = FunctionScanCode(make);
+                            break;
                     }
                 }
 
@@ -355,6 +351,16 @@ namespace OS.Hal
                 case Ps2Keyboard.KeyKind.PageDown: return 0x0A;
                 default: return 0;
             }
+        }
+
+        // F1–F12 (step217): set-1 make codes 0x3B–0x44, 0x57, 0x58, as UEFI
+        // scan codes 0x0B–0x16; 0 for anything else.
+        private static ushort FunctionScanCode(byte make)
+        {
+            if (make >= 0x3B && make <= 0x44) return (ushort)(0x0B + make - 0x3B);
+            if (make == 0x57) return 0x15;
+            if (make == 0x58) return 0x16;
+            return 0;
         }
 
         public static KeyboardReadStatus TryReadKey(out ushort unicodeChar, out ushort scanCode)

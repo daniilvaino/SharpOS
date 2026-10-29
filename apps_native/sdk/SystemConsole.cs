@@ -3,8 +3,9 @@
 // otherwise; Error to the error stream. ReadKey, Clear, colours, window size,
 // cursor and title talk to the terminal itself — the subset ported app code
 // (ManagedDoom's logging, the shell's line editor, a full-screen pager) uses.
-// Not here: CursorLeft/CursorTop, which need the terminal's answer to ESC [6n
-// in the input (donext, "Ввод программы — поток байт терминала").
+// Keys are the terminal's input as bytes since step217 (TerminalKeys), as on
+// Unix; CursorLeft/CursorTop ask the terminal (ESC [6n) and read its answer
+// there.
 
 using SharpOS.AppSdk;
 
@@ -163,11 +164,19 @@ namespace System
         /// <summary>
         /// The next key press, waiting for one (step197); echoed unless
         /// <paramref name="intercept"/>. Ctrl+letter arrives as its control
-        /// character with the letter's key and Control set, as on a terminal.
-        /// Shift and Alt are reported only where the character shows them.
+        /// character with the letter's key and Control set, as on a terminal;
+        /// Ctrl+C is 0x03. Since step217 parsed from the terminal's bytes:
+        /// modifiers on the arrows, the navigation keys and F1–F12, Alt as an
+        /// ESC before a key.
         /// </summary>
         public static ConsoleKeyInfo ReadKey(bool intercept)
         {
+            if (TerminalKeys.Available)
+            {
+                TerminalKeys.TryRead(-1, out ConsoleKeyInfo read);
+                if (!intercept && read.KeyChar >= ' ') AppHost.Terminal.WriteChar(read.KeyChar);
+                return read;
+            }
             while (true)
             {
                 if (AppHost.TryReadKey(out KeyInfo raw) != AppServiceStatus.Ok)
@@ -182,6 +191,32 @@ namespace System
         }
 
         public static ConsoleKeyInfo ReadKey() => ReadKey(false);
+
+        /// <summary>Whether a key press is waiting to be read.</summary>
+        public static bool KeyAvailable => TerminalKeys.Available && TerminalKeys.KeyAvailable;
+
+        /// <summary>
+        /// The cursor's column and row, from 0, as the terminal reports them
+        /// (ESC [6n); (0, 0) when no answer comes — BCL on Unix gives the same
+        /// when nothing answers.
+        /// </summary>
+        public static (int Left, int Top) GetCursorPosition()
+        {
+            if (TerminalKeys.Available && TerminalKeys.TryGetCursorPosition(out int left, out int top)) return (left, top);
+            return (0, 0);
+        }
+
+        public static int CursorLeft
+        {
+            get => GetCursorPosition().Left;
+            set => SetCursorPosition(value, GetCursorPosition().Top);
+        }
+
+        public static int CursorTop
+        {
+            get => GetCursorPosition().Top;
+            set => SetCursorPosition(GetCursorPosition().Left, value);
+        }
 
         /// <summary>Clears the screen and puts the cursor at its top left (the terminal's ESC [H ESC [2J).</summary>
         public static void Clear() => AppHost.Terminal.Write("\u001b[H\u001b[2J");

@@ -574,7 +574,10 @@ namespace Shell
                         Write(" has only its output, for `> file` or `>&-`\n");
                         return 2;
                     }
-                    if (copyOf > 0 && !named[copyOf])
+                    // 2 and 3 not redirected are the screen, as 1 is at the
+                    // end of a pipeline: `1>&2` sends the output there
+                    // (step218). From 4 there is nothing to copy.
+                    if (copyOf > 3 && !named[copyOf])
                     {
                         Write("sh: `" + element.Raw + "`: " + copyOf.ToString()
                               + " is not redirected before it on this stage\n");

@@ -408,6 +408,13 @@ namespace OS.Kernel.Process
         // RDRAND (HardwareRandom); Unsupported on a CPU without it. Behind
         // RandomNumberGenerator in the app. Zero: an older kernel.
         public ulong RandomFillAddress;
+
+        // int TerminalRead(byte* buffer, int capacity) (step217): the
+        // terminal's input as bytes — keys as a terminal sends them and the
+        // terminal's answers — without waiting; 0 when there is nothing,
+        // negative without a keyboard. Console.ReadKey parses it. Zero: an
+        // older kernel; the SDK falls back to TryReadKey.
+        public ulong TerminalReadAddress;
     }
 
     /// <summary>

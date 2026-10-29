@@ -25,6 +25,7 @@
     <Compile Include="InPlace.cs" />
     <Compile Include="Json2DirTest.cs" />
     <Compile Include="ProgramCacheTest.cs" />
+    <Compile Include="TerminalInputTest.cs" />
     <Compile Include="..\PipeGen\StressArgs.cs" />
   </ItemGroup>
 </Project>

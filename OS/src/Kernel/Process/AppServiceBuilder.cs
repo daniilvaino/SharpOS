@@ -363,6 +363,7 @@ namespace OS.Kernel.Process
                 table.PipeWaitSchemaAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.WaitSchema;
                 table.PipeDuplicateAddress = (ulong)(nint)(delegate* unmanaged<int, int*, int>)&OS.Kernel.Pipes.PipeServices.Duplicate;
             table.RandomFillAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&HardwareRandom.Fill;
+            table.TerminalReadAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&TerminalRead;
                 table.ExceptionHeadAddress = (ulong)OS.Boot.EH.ExInfoHead.GetHeadAddress();
                 table.ProcessAddress = (ulong)(nint)(delegate* unmanaged<int, ulong*, int>)&ProcessService;
                 if (OS.Kernel.Diagnostics.Probes.PipeProbe)
@@ -816,12 +817,11 @@ namespace OS.Kernel.Process
 
             ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
             int characters = 0;
-            uint last = 0;
 
             // One write, whole (step216): switching was suppressed per
             // character only, and two programs starting together cut each
             // other's banners mid-word ("build 9c96ade-pi[app] PipeCnt ...").
-            // The pipe to the screen (donext) replaces this.
+            // Every sink gets the write in one piece, the screen's queue too.
             OS.Kernel.Threading.Preemption.Suppress();
             try
             {
@@ -868,7 +868,6 @@ namespace OS.Kernel.Process
                     if (truncated) { i++; continue; }
                     i += length;
                     characters++;
-                    last = codepoint;
 
                     if (codepoint <= 0xFFFF)
                     {
@@ -884,30 +883,12 @@ namespace OS.Kernel.Process
                     }
                 }
 
-                // Paint once, at the end of the write — the same batching
-                // Platform.Write uses for kernel output.
-                //
-                // Without this a full-screen app draws nothing: the terminal engine
-                // paints on a line break, and a text UI never writes one. Its
-                // escape sequences were reaching the engine and changing the grid,
-                // while the framebuffer kept showing the frame before.
-                //
-                //
-                // Except after a write that ends a line: that is a program printing
-                // lines, and a paint per write made it pay one full-screen move per
-                // line (step169). Its line break already painted if one was due;
-                // the rest waits for the pump, the next write or a key read.
-                //
-                // Not "paint when due" for everything. A text UI sends a frame in
-                // several writes and redraws it whole even when nothing changed;
-                // painted at the end of every write, identical frames are
-                // invisible. Deferring all but the first write of a burst put the
-                // first piece of each new frame on screen alone — the launcher
-                // flickered, and came up half-drawn until a key was pressed.
-                if (last == '\n')
-                    OS.Hal.Platform.FlushConsoleWhenDue();
-                else
-                    OS.Hal.Platform.FlushConsole();
+                // Into the engine, not onto the screen (the pipe to the screen,
+                // step218): who owns the screen is read from the engine right
+                // after this write. Painting is the pump's, or a reader's
+                // waiting for a key — a frame sent in several writes is not
+                // painted piece by piece.
+                OS.Hal.TerminalConsole.Feed();
             }
             finally
             {
@@ -1000,7 +981,7 @@ namespace OS.Kernel.Process
             for (int i = 0; i < text.Length; i++)
                 OS.Hal.Platform.WriteChar(text[i], channel);
 
-            OS.Hal.Platform.FlushConsole();
+            OS.Hal.TerminalConsole.Feed();
             OS.Kernel.Diagnostics.PerfCounters.CountProgramWrite(started, text.Length);
         }
 
@@ -1012,6 +993,7 @@ namespace OS.Kernel.Process
                 return;
 
             OS.Hal.Platform.WriteChar((char)codePoint, AppOutputChannel());
+            OS.Hal.TerminalConsole.Feed();
             NoteAlternateScreenOwner();
         }
 
@@ -1369,6 +1351,18 @@ namespace OS.Kernel.Process
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static int AppRegionFromKernel(ulong* answer)
             => OS.Kernel.Diagnostics.RegionIntakeProbe.Give(answer);
+
+        // The terminal's input as bytes (step217); see TerminalInput.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int TerminalRead(byte* buffer, int capacity)
+        {
+            if (buffer == null || capacity <= 0) return -(int)AppServiceStatus.InvalidParameter;
+            // As TryReadKey: the output before a read is on screen first.
+            if (OS.Hal.TerminalConsole.HasPendingOutput)
+                OS.Hal.Platform.FlushConsole();
+            int n = OS.Kernel.Input.TerminalInput.Read(buffer, capacity);
+            return n < 0 ? -(int)AppServiceStatus.Unsupported : n;
+        }
 
         private static uint TryReadKey(ulong requestAddress)
         {

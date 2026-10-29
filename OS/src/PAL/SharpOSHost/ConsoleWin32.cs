@@ -237,6 +237,8 @@ namespace OS.PAL.SharpOSHost
             short curY = 0;
             if (OS.Hal.TerminalConsole.IsReady)
             {
+                // The cursor is where the queued output leaves it (step218).
+                OS.Hal.TerminalConsole.Feed();
                 var engine = OS.Hal.TerminalConsole.Engine;
                 cols = (short)engine.Cols;
                 rows = (short)engine.Rows;
