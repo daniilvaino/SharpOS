@@ -61,13 +61,13 @@ namespace SharpOS.Std.NoRuntime
 
         public static string GetDirectory()
         {
-            if (!Available) return "\\";
+            if (!Available) return "/";
             // UTF-8 (step208; before, a byte a character): up to three bytes each.
             ulong* request = stackalloc ulong[4];
             byte* buffer = stackalloc byte[MaxPath * 3];
             request[0] = (ulong)buffer;
             request[1] = MaxPath * 3;
-            if (Call(OpGetDirectory, request) != AppServiceStatus.Ok || request[2] > MaxPath * 3 || request[2] == 0) return "\\";
+            if (Call(OpGetDirectory, request) != AppServiceStatus.Ok || request[2] > MaxPath * 3 || request[2] == 0) return "/";
             return System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(buffer, (int)request[2]));
         }
 

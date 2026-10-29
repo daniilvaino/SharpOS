@@ -16,7 +16,7 @@ namespace OS.Kernel.Diagnostics
     // that got slower for it shows.
     internal static unsafe class DiskYieldProbe
     {
-        private const string Path = "\\EFI\\BOOT\\BOOTX64.EFI";
+        private const string Path = "/EFI/BOOT/BOOTX64.EFI";
 
         private static volatile bool s_stop;
         private static volatile bool s_done;

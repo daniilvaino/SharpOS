@@ -13,7 +13,7 @@ namespace SharpOS.Std.NoRuntime
 
         public static void SetAll(string[] environment) => global::OS.Kernel.Process.ProcessEnvironment.Boot = environment;
 
-        public static string GetDirectory() => "\\";
+        public static string GetDirectory() => "/";
 
         public static void SetDirectory(string path)
             => throw new PlatformNotSupportedException("kernel code has no working directory");

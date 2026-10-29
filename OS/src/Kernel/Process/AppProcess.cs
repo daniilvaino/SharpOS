@@ -33,8 +33,8 @@ namespace OS.Kernel.Process
         public string Name;
 
         // Where its relative paths start (step197): its launcher's at the
-        // start, "\" for what the kernel starts; the shell's `cd` moves it.
-        public string WorkingDirectory = "\\";
+        // start, "/" for what the kernel starts; the shell's `cd` moves it.
+        public string WorkingDirectory = "/";
 
         // Its environment (step207): NAME=value, never changed in place. Its
         // launcher's at the start, or what the start asked for; null for none

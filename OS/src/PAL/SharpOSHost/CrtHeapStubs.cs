@@ -118,8 +118,8 @@ namespace OS.PAL.SharpOSHost
         }
 
         // SharpOSHost_GetFullPathName — fork's GetFullPathNameW forwarder.
-        // Marshals wchar input → managed string, calls BCL System.IO.Path.
-        // GetFullPath (pure string normalization, no FS probe), copies result
+        // Marshals wchar input → managed string, calls WindowsPath.GetFullPath
+        // (pure string normalization, no FS probe), copies result
         // back. Returns char count written (excluding null), or required size
         // when outBuf too small. Per CLAUDE.md invariant 1, path logic in C#.
         [RuntimeExport("SharpOSHost_GetFullPathName")]
@@ -134,7 +134,7 @@ namespace OS.PAL.SharpOSHost
             // FromUtf16(char* + len) constructs a managed string без the
             // string-from-char[] ctor that ILC doesn't link in our config.
             string input = String.FromUtf16(lpFileName, inLen);
-            string full = System.IO.Path.GetFullPath(input);
+            string full = WindowsPath.GetFullPath(input);
             int outLen = full.Length;
 
             if (lpBuffer == null || nBufferLength == 0)

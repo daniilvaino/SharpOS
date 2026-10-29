@@ -79,9 +79,9 @@ namespace Launcher
     /// </summary>
     internal static class Tiles
     {
-        internal const string ShellPath = "\\bin\\SHELL.EXE";
+        internal const string ShellPath = "/bin/SHELL.EXE";
         internal const string PowerShellPath = "\\sharpos\\PowerShellBootstrap.dll";
-        internal const string GamesDirectory = "\\games";
+        internal const string GamesDirectory = "/games";
 
         // A name on a tile says more than a file name: DOOM is ManagedDoom.
         private static readonly string[][] Known =

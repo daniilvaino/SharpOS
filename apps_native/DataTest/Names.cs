@@ -37,7 +37,7 @@ namespace DataApps
             File.WriteAllText(Root + "/Папка/файл.txt", "ф");
             string[] inside = Directory.GetFiles(Root + "/Папка");
             Check("25: a Cyrillic directory and a file in it (" + (inside.Length > 0 ? inside[0] : "none") + ")",
-                  inside.Length == 1 && inside[0].EndsWith("Папка\\файл.txt") && new FileInfo(Root + "/Папка/файл.txt").Length == 2);
+                  inside.Length == 1 && inside[0].EndsWith("Папка/файл.txt") && new FileInfo(Root + "/Папка/файл.txt").Length == 2);
 
             File.Move(Report, Root + "/report.txt");
             File.Move(Root + "/report.txt", Root + "/Итог.txt");

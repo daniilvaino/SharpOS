@@ -24,13 +24,13 @@
 
 ```
 .\build.ps1 shell                    # если менялась оболочка
-.\run_build.ps1 -Autorun             # кладёт батарею в \config\autorun.sh
+.\run_build.ps1 -Autorun             # кладёт батарею в /config/autorun.sh
 C:\android-home\rig\deploy.ps1       # шлёт изменившееся на телефон
 C:\android-home\rig\plug.ps1 pulse   # питание на минуту — ноутбук стартует
 ```
 
 `-Autorun` — единственный переключатель (step207): `run_build.ps1` пишет в
-`\config\system.env` строку `INIT=\bin\SHELL.EXE \config\autorun.sh`, ядро запускает
+`/config/system.env` строку `INIT=/bin/SHELL.EXE /config/autorun.sh`, ядро запускает
 оболочку вместо лаунчера. Оболочка прогоняет строки, выходит, ядро гасит
 машину. Без ключа `INIT` — лаунчер.
 

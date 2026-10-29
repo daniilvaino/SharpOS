@@ -1,13 +1,13 @@
 # The battery the machine runs by itself.
 #
-# Staged to \config\autorun.sh by run_build.ps1 -Autorun, which also makes
-# INIT in \config\system.env the shell with this script (step207): the kernel
+# Staged to /config/autorun.sh by run_build.ps1 -Autorun, which also makes
+# INIT in /config/system.env the shell with this script (step207): the kernel
 # starts SHELL.EXE instead of LAUNCHER.EXE, the shell runs these lines and
 # exits, and the batch ends the way it always does — by powering the machine
 # off. Without the switch, a build boots to the launcher.
 #
-# Programs are named bare and found along PATH (\bin;\tests;\games); the
-# shell starts in HOME (\home), where the tests write their files.
+# Programs are named bare and found along PATH (/bin;/tests;/games); the
+# shell starts in HOME (/home), where the tests write their files.
 #
 # One command per line, '#' for comments. The line worth grepping for is
 #
@@ -76,11 +76,8 @@
 # that ends at once. KQLBABY.EXE checks the engine itself on a table in
 # memory — exit code = checks failed.
 #
-# A path, when one is needed, uses FORWARD slashes. This is bash syntax — the
-# parser is a bash parser — and in bash a backslash escapes the next
-# character, so \tests\AOTTESTS.EXE arrives as testsAOTTESTS.EXE with the
-# separators eaten. The shell converts forward slashes to the kernel's own
-# separator on the way to the file system.
+# Paths are written with '/', the system's separator (step215); a backslash
+# escapes the next character, as in bash.
 
 expect 0 AOTTESTS.EXE --pipe-writer-dies normal
 expect 134 AOTTESTS.EXE --pipe-writer-dies crash

@@ -62,7 +62,7 @@ namespace OS.Kernel.Process
             hit = false;
             if (Fs.Current == null || path == null) return false;
 
-            string key = path.ToUpperInvariant();
+            string key = Fat32.PathKey(path);
             bool located = Fat32.Locate(path, out uint first, out uint locatedSize);
             Preemption.Suppress();
             Entry kept = located ? Find(key) : null;

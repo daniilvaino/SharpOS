@@ -46,7 +46,7 @@ namespace DataApps
             if (Directory.Exists(Root)) Directory.Delete(Root, true);
 
             // Files the test does not touch: their bytes must not change.
-            string[] witnesses = { "\\bin\\SHELL.EXE", "\\tests\\DATATEST.EXE" };
+            string[] witnesses = { "/bin/SHELL.EXE", "/tests/DATATEST.EXE" };
             var before = new List<ulong>();
             foreach (string w in witnesses) before.Add(Fnv(File.ReadAllBytes(w)));
 

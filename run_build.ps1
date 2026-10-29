@@ -22,8 +22,8 @@
     [switch]$NoBuild,
     [switch]$NoRun,
     [switch]$Stop,
-    # Stage apps_native\Shell\autorun.sh as \config\autorun.sh and make INIT
-    # in \config\system.env the shell with it: it runs the script and
+    # Stage apps_native\Shell\autorun.sh as /config/autorun.sh and make INIT
+    # in /config/system.env the shell with it: it runs the script and
     # the machine powers itself off. That is the unattended shape the test rig
     # needs; without the switch a build boots to the launcher as before.
     [switch]$Autorun,
@@ -387,13 +387,13 @@ if (-not $builtEfi -or -not (Test-Path -LiteralPath $builtEfi)) {
 $espBootDir = Join-Path $qemuWorkDir "esp\EFI\BOOT"
 New-Item -ItemType Directory -Force -Path $espBootDir | Out-Null
 
-# The volume's layout (step207). \EFI\BOOT is where UEFI looks for
+# The volume's layout (step207). /EFI/BOOT is where UEFI looks for
 # BOOTX64.EFI and nothing else belongs there; the rest:
-#   \bin     programs        \tests   the battery and its data
-#   \games   games and data  \config  system.env, the battery script
-#   \home    the working directory to start in
-#   \system  for the system beyond the kernel — empty for now
-#   \sharpos the kernel's boot log and write probe; the hosted runtime
+#   /bin     programs        /tests   the battery and its data
+#   /games   games and data  /config  system.env, the battery script
+#   /home    the working directory to start in
+#   /system  for the system beyond the kernel — empty for now
+#   /sharpos the kernel's boot log and write probe; the hosted runtime
 #            (CoreCLR) unless -SkipCoreClr
 # Where each app goes is its .csproj's <SharpOsCategory> (tools/Apps.ps1).
 # \apps, where everything lay before, is removed: an old copy there would be
@@ -882,14 +882,14 @@ foreach ($peApp in $peApps) {
 # launcher. Written every build, so a normal build after an -Autorun one does
 # not keep booting headless.
 $autorunDst = Join-Path $espDirs['config'] "autorun.sh"
-$init = '\bin\LAUNCHER.EXE'
+$init = '/bin/LAUNCHER.EXE'
 $buildInfo = 'off'
 if (Test-Path -LiteralPath $autorunDst) { Remove-Item -LiteralPath $autorunDst -Force }
 if ($Autorun) {
     $autorunSrc = if ($AutorunScript) { (Resolve-Path -LiteralPath $AutorunScript).Path } else { Join-Path $repoRoot "apps_native\Shell\autorun.sh" }
     if (Test-Path -LiteralPath $autorunSrc) {
         Copy-Item -LiteralPath $autorunSrc -Destination $autorunDst -Force
-        $init = '\bin\SHELL.EXE \config\autorun.sh'
+        $init = '/bin/SHELL.EXE /config/autorun.sh'
         $buildInfo = 'on'
         Write-Host "Prepared autorun script: $autorunDst"
     } else {
@@ -901,8 +901,8 @@ $systemEnv = @(
     '# everything it starts (OS/src/Kernel/Process/BootConfig.cs). Written by',
     '# run_build.ps1. The .env format of Docker Compose: NAME=value, quotes,',
     '# $NAME and ${NAME:-default} (std-no-runtime/Formats/Dotenv).',
-    'PATH=\bin;\tests;\games',
-    'HOME=\home',
+    'PATH=/bin;/tests;/games',
+    'HOME=/home',
     "INIT=$init",
     "BUILDINFO=$buildInfo"
 ) -join "`n"

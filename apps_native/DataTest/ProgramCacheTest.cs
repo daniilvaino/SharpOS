@@ -14,7 +14,7 @@ namespace DataApps
         {
             if (Directory.Exists("t28")) Directory.Delete("t28", true);
             Directory.CreateDirectory("t28");
-            const string program = "t28\\GEN.EXE";
+            const string program = "t28/GEN.EXE";
             File.Copy(Process.FindProgram("PIPEGEN"), program);
             Check("28: the copy is big enough to be kept (" + new FileInfo(program).Length.ToString() + " bytes)",
                   new FileInfo(program).Length >= 64 * 1024);
@@ -26,8 +26,8 @@ namespace DataApps
             Check("28: the second start comes from the cache (" + Counts(first, second) + ")",
                   second[0] == first[0] + 1 && second[1] == first[1]);
 
-            File.WriteAllText("t28\\other.txt", "a write to another file");
-            File.AppendAllText("t28\\other.txt", ", and another");
+            File.WriteAllText("t28/other.txt", "a write to another file");
+            File.AppendAllText("t28/other.txt", ", and another");
             StartAndWait(program);
             ulong[] third = Process.ProgramCacheCounts();
             Check("28: writes to another file keep it (" + Counts(second, third) + ")",

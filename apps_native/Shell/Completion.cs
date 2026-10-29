@@ -50,10 +50,10 @@ namespace Shell
                 foreach (string builtin in Executor.Builtins)
                     if (StartsWith(builtin, word)) found.Add(builtin);
                 string path = System.Environment.GetEnvironmentVariable("PATH") ?? "";
-                foreach (string directory in path.Split(';'))
+                foreach (string directory in Process.SplitPathList(path))
                 {
                     if (directory.Length == 0) continue;
-                    foreach (Entry e in Entries(directory.Replace('/', '\\')))
+                    foreach (Entry e in Entries(directory))
                     {
                         if (e.IsDirectory || !EndsWith(e.Name, ".EXE")) continue;
                         string program = e.Name.Substring(0, e.Name.Length - 4);
@@ -67,7 +67,7 @@ namespace Shell
                 string directoryPart = slash >= 0 ? word.Substring(0, slash + 1) : "";
                 string namePart = word.Substring(slash + 1);
                 string directory = directoryPart.Length == 0 ? _executor.WorkingDirectory
-                                 : directoryPart == "/" ? "\\"
+                                 : directoryPart == "/" ? "/"
                                  : _executor.Resolve(directoryPart.Substring(0, directoryPart.Length - 1));
                 foreach (Entry e in Entries(directory))
                     if (StartsWith(e.Name, namePart))

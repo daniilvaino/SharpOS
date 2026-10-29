@@ -292,7 +292,7 @@ namespace System
         /// <summary>
         /// The process's working directory (step197): where relative paths
         /// start, inherited from the process that started it. The kernel keeps
-        /// it (EnvironmentStore); kernel code has none and sees "\".
+        /// it (EnvironmentStore); kernel code has none and sees "/".
         /// </summary>
         public static string CurrentDirectory
         {

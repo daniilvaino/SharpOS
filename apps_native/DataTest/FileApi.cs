@@ -22,14 +22,26 @@ namespace DataApps
             File.WriteAllText(Root + "/sub/c.txt", "delta");
 
             Check("24: GetFiles: the files, each as path + name",
-                  Same(Directory.GetFiles(Root), Root + "\\a.txt", Root + "\\b.log", Root + "\\a longer name.txt"));
-            Check("24: GetFiles with *.txt", Same(Directory.GetFiles(Root, "*.txt"), Root + "\\a.txt", Root + "\\a longer name.txt"));
-            Check("24: GetFiles with ?.log", Same(Directory.GetFiles(Root, "?.LOG"), Root + "\\b.log"));
+                  Same(Directory.GetFiles(Root), Root + "/a.txt", Root + "/b.log", Root + "/a longer name.txt"));
+            Check("24: GetFiles with *.txt", Same(Directory.GetFiles(Root, "*.txt"), Root + "/a.txt", Root + "/a longer name.txt"));
+            Check("24: GetFiles with ?.log", Same(Directory.GetFiles(Root, "?.LOG"), Root + "/b.log"));
             Check("24: GetFiles, all directories",
                   Same(Directory.GetFiles(Root, "*.txt", SearchOption.AllDirectories),
-                       Root + "\\a.txt", Root + "\\a longer name.txt", Root + "\\sub\\c.txt"));
+                       Root + "/a.txt", Root + "/a longer name.txt", Root + "/sub/c.txt"));
             Check("24: GetDirectories and GetFileSystemEntries",
-                  Same(Directory.GetDirectories(Root), Root + "\\sub") && Directory.GetFileSystemEntries(Root).Length == 4);
+                  Same(Directory.GetDirectories(Root), Root + "/sub") && Directory.GetFileSystemEntries(Root).Length == 4);
+            // step215: '/' is the separator; a '\' handed in is taken for one, never given back.
+            Check("24: a path with '\\' reaches the same file", File.ReadAllText(Root + "\\sub\\c.txt") == "delta");
+            Check("24: ... and resolves with '/' (" + Process.ResolvePath(Root + "\\sub\\..\\sub") + ")",
+                  Process.ResolvePath(Root + "\\sub\\..\\sub") == Process.ResolvePath(Root + "/sub")
+                  && Process.ResolvePath("\\bin\\..\\tests") == "/tests" && Process.ResolvePath(Root).IndexOf('\\') < 0);
+            Check("24: Path is the Unix one",
+                  Path.DirectorySeparatorChar == '/' && Path.PathSeparator == ';'
+                  && Path.Combine("/a", "b") == "/a/b" && Path.Combine("/a/", "/b") == "/b"
+                  && Path.GetDirectoryName("/a") == "/" && Path.GetDirectoryName("/") == null
+                  && Path.GetDirectoryName("a//b/c") == "a/b" && Path.GetFileName("/a/b.txt") == "b.txt"
+                  && Path.GetFullPath("/a/./b/../c") == "/a/c" && Path.GetFullPath("/..") == "/"
+                  && Path.GetFullPath(Root) == Process.ResolvePath(Root) && Path.IsPathRooted("/x") && !Path.IsPathRooted("x"));
             Check("24: GetFiles of a missing directory: DirectoryNotFoundException",
                   Throws(e => e is DirectoryNotFoundException, () => Directory.GetFiles(Root + "/none")));
 
@@ -57,7 +69,7 @@ namespace DataApps
             Check("24: DirectoryInfo: files, parent, name",
                   dir.GetFiles().Length == 2 && dir.Parent.FullName == Process.ResolvePath(Root) && dir.Name == "sub");
 
-            var drive = new DriveInfo("\\");
+            var drive = new DriveInfo("/");
             long free = drive.TotalFreeSpace;
             File.WriteAllBytes(Root + "/mega.bin", new byte[1024 * 1024]);
             long after = drive.TotalFreeSpace;
@@ -70,7 +82,7 @@ namespace DataApps
             bool sizeShown = false, dirShown = false;
             foreach (string l in ls)
             {
-                if (l.IndexOf("<DIR>") >= 0 && l.EndsWith("sub\\", StringComparison.OrdinalIgnoreCase)) dirShown = true;
+                if (l.IndexOf("<DIR>") >= 0 && l.EndsWith("sub/", StringComparison.OrdinalIgnoreCase)) dirShown = true;
                 if (l.IndexOf(" 204817 ") >= 0 && l.EndsWith("big.bin", StringComparison.OrdinalIgnoreCase)) sizeShown = true;
             }
             Check("24: sh: ls -l shows sizes and directories", sizeShown && dirShown);

@@ -39,7 +39,7 @@ namespace Shell
             // The working directory is the process's: inherited, and what the
             // stages started from here inherit. A shell the kernel started
             // begins at HOME — the kernel starts it there (step207).
-            _cwd = Process.WorkingDirectory;
+            _cwd = Process.NormalizePath(Process.WorkingDirectory);
         }
 
         /// <summary>Whether the shell runs a line for a caller, its ends being the caller's pipe.</summary>
@@ -73,7 +73,7 @@ namespace Shell
             string source = RenameBindingCommands(line, out _renamedAt);
             var parser = new BashParser(new BashParserOptions
             {
-                WorkingDirectory = _cwd.Replace('\\', '/'),
+                WorkingDirectory = _cwd,
                 InitialStateMode = BashInitialStateMode.IsolatedNonInteractive,
             });
             ParsedCommand parsed = parser.Parse(source);
@@ -1159,7 +1159,7 @@ namespace Shell
                 Write("   <DIR>  ");
                 Write(Stamp(info.LastWriteTime));
                 Write("  ");
-                WritePainted("\u001b[1;34m", info.Name + "\\");
+                WritePainted("\u001b[1;34m", info.Name + "/");
                 Write("\n");
             }
             foreach (string f in files) DetailLine(new System.IO.FileInfo(f));
@@ -1203,7 +1203,7 @@ namespace Shell
             for (int i = 0; i < names.Count - 1; i++)
             {
                 string from = Resolve(names[i]);
-                string to = intoDirectory ? last + "\\" + LastName(from) : last;
+                string to = intoDirectory ? last + "/" + LastName(from) : last;
                 try
                 {
                     if (System.IO.Directory.Exists(from))
@@ -1232,19 +1232,19 @@ namespace Shell
         private static void CopyTree(string from, string to)
         {
             System.IO.Directory.CreateDirectory(to);
-            foreach (string f in System.IO.Directory.GetFiles(from)) System.IO.File.Copy(f, to + "\\" + LastName(f), true);
-            foreach (string d in System.IO.Directory.GetDirectories(from)) CopyTree(d, to + "\\" + LastName(d));
+            foreach (string f in System.IO.Directory.GetFiles(from)) System.IO.File.Copy(f, to + "/" + LastName(f), true);
+            foreach (string d in System.IO.Directory.GetDirectories(from)) CopyTree(d, to + "/" + LastName(d));
         }
 
         // df: the volume's size, what is used and what is free.
         private int DiskFree()
         {
-            var drive = new System.IO.DriveInfo("\\");
+            var drive = new System.IO.DriveInfo("/");
             try
             {
                 long total = drive.TotalSize, free = drive.TotalFreeSpace;
                 Write("volume     size      used      free  use%\n");
-                Write("\\    ");
+                Write("/    ");
                 Write(Size(total));
                 Write(Size(total - free));
                 Write(Size(free));
@@ -1287,7 +1287,7 @@ namespace Shell
             for (int i = 0; i < args.Count - 1; i++)
             {
                 string from = Resolve(args[i]);
-                string to = intoDirectory ? last + "\\" + LastName(from) : last;
+                string to = intoDirectory ? last + "/" + LastName(from) : last;
                 try
                 {
                     if (System.IO.Directory.Exists(from))
@@ -1315,16 +1315,16 @@ namespace Shell
         private static bool IsWithin(string path, string directory)
         {
             string p = path.ToUpperInvariant(), d = directory.ToUpperInvariant();
-            if (!d.EndsWith("\\")) d += "\\";
-            return p + "\\" == d || p.StartsWith(d);
+            if (!d.EndsWith("/")) d += "/";
+            return p + "/" == d || p.StartsWith(d);
         }
 
         private static string LastName(string path)
         {
             int end = path.Length;
-            while (end > 1 && path[end - 1] == '\\') end--;
+            while (end > 1 && path[end - 1] == '/') end--;
             int start = end;
-            while (start > 0 && path[start - 1] != '\\') start--;
+            while (start > 0 && path[start - 1] != '/') start--;
             return path.Substring(start, end - start);
         }
 
@@ -1500,7 +1500,7 @@ namespace Shell
             {
                 string home = System.Environment.GetEnvironmentVariable("HOME");
                 if (string.IsNullOrEmpty(home)) { Write("cd: HOME is not set\n"); return 1; }
-                _cwd = home;
+                _cwd = Process.NormalizePath(home);
                 Process.WorkingDirectory = _cwd;
                 return 0;
             }
@@ -1564,7 +1564,7 @@ namespace Shell
 
                 string entryName = Encoding.UTF8.GetString(new System.ReadOnlySpan<byte>(name, (int)(entry.NameLength < 256 ? entry.NameLength : 256)));
                 // Directories blue, programs green, the rest as they are.
-                if (entry.IsDirectory != 0) WritePainted("\u001b[1;34m", entryName + "\\");
+                if (entry.IsDirectory != 0) WritePainted("\u001b[1;34m", entryName + "/");
                 else if (EndsWith(entryName, ".EXE")) WritePainted("\u001b[32m", entryName);
                 else Write(entryName);
                 Write("\n");
@@ -1684,10 +1684,7 @@ namespace Shell
             Write("not here: shell variables (x=1), $(...), loops, if, functions, X=1 prog\n");
             Write("keys: Up/Down history, Tab completes, Home/End, Ctrl+A/E/U/K/W, Ctrl+L clears,\n");
             Write("      Ctrl+C drops the line, Ctrl+D on an empty line leaves\n");
-            // Worth saying out loud: this is bash syntax, so a backslash
-            // escapes the next character and eats itself: /bin/X.EXE works,
-            // a backslash path loses its separators.
-            Write("paths: use /bin/NAME.EXE — a backslash is an escape here, not a separator\n");
+            Write("paths: /bin/NAME.EXE; a backslash escapes the next character, as in bash\n");
             return 0;
         }
 
@@ -1784,20 +1781,9 @@ namespace Shell
         /// <summary>A path as the shell's commands take it: from the working directory unless it starts at the root.</summary>
         internal string Resolve(string path)
         {
-            var built = new StringBuilder();
-
-            bool absolute = path.Length > 0 && (path[0] == '\\' || path[0] == '/');
-            if (!absolute)
-            {
-                built.Append(_cwd);
-                if (_cwd.Length > 0 && _cwd[_cwd.Length - 1] != '\\') built.Append('\\');
-            }
-
-            for (int i = 0; i < path.Length; i++)
-                built.Append(path[i] == '/' ? '\\' : path[i]);
-
             // ".", ".." and the root taken here (step208), not handed to FAT.
-            return Process.NormalizePath(built.ToString());
+            bool absolute = path.Length > 0 && (path[0] == '/' || path[0] == '\\');
+            return Process.NormalizePath(absolute ? path : _cwd + "/" + path);
         }
 
         // A path has a separator, as in sh: NAME.EXE is looked for along PATH

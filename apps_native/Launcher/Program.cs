@@ -30,7 +30,7 @@ namespace Launcher
     internal static unsafe class AppEntry
     {
         // The Files tab starts at the volume's root.
-        private const string BootDirectory = "\\";
+        private const string BootDirectory = "/";
 
         // Where the tree is rooted right now. Enter on a folder moves it; the
         // ".." row at the top moves it back.
@@ -415,8 +415,8 @@ namespace Launcher
         }
 
         // Any other file is shown by the pager, as the shell's `READ FILE | LESS`.
-        private const string ReaderPath = "\\bin\\READ.EXE";
-        private const string PagerPath = "\\bin\\LESS.EXE";
+        private const string ReaderPath = "/bin/READ.EXE";
+        private const string PagerPath = "/bin/LESS.EXE";
 
         private static void ShowInPager(FileNode node)
         {

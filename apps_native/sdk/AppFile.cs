@@ -99,11 +99,11 @@ namespace SharpOS.AppSdk
             return status;
         }
 
-        // A path as the kernel takes it: the kernel's separator, UTF-8
-        // (step208; before, ASCII only), a NUL at the end. `into` holds three
-        // bytes a character and one more.
+        // A path as the kernel takes it: UTF-8 (step208; before, ASCII only),
+        // a NUL at the end. The file system takes either separator. `into`
+        // holds three bytes a character and one more.
         private static bool ToAscii(string path, byte* into)
-            => AppHost.TryEncodePath(path.Replace('/', '\\'), into, path.Length * 3 + 1, out _);
+            => AppHost.TryEncodePath(path, into, path.Length * 3 + 1, out _);
 
         public string Path => _path;
 

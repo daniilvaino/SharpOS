@@ -140,30 +140,24 @@ namespace SharpOS.AppSdk
         }
 
         /// <summary>
-        /// A path as the kernel takes it: '/' turned into '\', and a relative
-        /// one joined to the working directory.
+        /// A full path: a relative one joined to the working directory, "." and
+        /// ".." taken, separators '/' (step215). A '\' is taken for a separator
+        /// too — FAT allows it in no name, and old scripts and settings have
+        /// it — but never given back.
         /// </summary>
         public static string ResolvePath(string path)
         {
             if (path == null) throw new ArgumentNullException(nameof(path));
-            var built = new System.Text.StringBuilder();
-            bool absolute = path.Length > 0 && (path[0] == '\\' || path[0] == '/');
-            if (!absolute)
-            {
-                string cwd = WorkingDirectory;
-                built.Append(cwd);
-                if (cwd.Length == 0 || cwd[cwd.Length - 1] != '\\') built.Append('\\');
-            }
-            for (int i = 0; i < path.Length; i++) built.Append(path[i] == '/' ? '\\' : path[i]);
-            return NormalizePath(built.ToString());
+            bool absolute = path.Length > 0 && (path[0] == '/' || path[0] == '\\');
+            return NormalizePath(absolute ? path : WorkingDirectory + "/" + path);
         }
 
         /// <summary>
         /// A full path with "." and ".." taken (step208), the way
-        /// Path.GetFullPath does: "\bin\..\home\." is "\home", ".." above the
+        /// Path.GetFullPath does: "/bin/../home/." is "/home", ".." above the
         /// root stays at the root, doubled and trailing separators go. Before,
         /// ".." reached the file system as a name — and the root has no ".."
-        /// entry, so "cd ../" from \bin led to \bin\.. and nowhere after.
+        /// entry, so "cd ../" from /bin led to /bin/.. and nowhere after.
         /// </summary>
         public static string NormalizePath(string full)
         {
@@ -181,9 +175,9 @@ namespace SharpOS.AppSdk
                 else if (length > 0) parts.Add(full.Substring(start, length));
                 start = i + 1;
             }
-            if (parts.Count == 0) return "\\";
+            if (parts.Count == 0) return "/";
             var built = new System.Text.StringBuilder();
-            foreach (string part in parts) built.Append('\\').Append(part);
+            foreach (string part in parts) built.Append('/').Append(part);
             return built.ToString();
         }
 
@@ -440,8 +434,9 @@ namespace SharpOS.AppSdk
 
         /// <summary>
         /// A program by its bare name (step207): the first directory of PATH
-        /// (separated by ';') holding NAME, or NAME.EXE when the name has no
-        /// extension. Null when none does.
+        /// holding NAME, or NAME.EXE when the name has no extension. Null when
+        /// none does. PATH is split at ';', and at ':' too —
+        /// FAT allows neither in a name.
         /// </summary>
         public static string FindProgram(string name)
         {
@@ -449,21 +444,25 @@ namespace SharpOS.AppSdk
             bool extension = name.IndexOf('.') >= 0;
             string path = Environment.GetEnvironmentVariable("PATH");
             if (string.IsNullOrEmpty(path)) return null;
-            foreach (string directory in path.Split(';'))
+            foreach (string directory in SplitPathList(path))
             {
                 if (directory.Length == 0) continue;
-                string dir = directory.Replace('/', '\\');
-                string folder = dir[dir.Length - 1] == '\\' ? dir : dir + "\\";
+                string dir = NormalizePath(directory);
+                string folder = dir == "/" ? dir : dir + "/";
                 string file = name + (extension ? "" : ".EXE");
                 if (AppHost.FileExistsEx(folder + file) != AppServiceStatus.Ok) continue;
                 // The name as the directory holds it (step208), not as typed:
-                // `which pipegen` said \bin\pipegen.EXE.
-                foreach (System.IO.Directory.Entry e in System.IO.Directory.Entries(NormalizePath(folder)))
+                // `which pipegen` said /bin/pipegen.EXE.
+                foreach (System.IO.Directory.Entry e in System.IO.Directory.Entries(dir))
                     if (!e.IsDirectory && string.Equals(e.Name, file, StringComparison.OrdinalIgnoreCase)) return folder + e.Name;
                 return folder + file;
             }
             return null;
         }
+
+        /// <summary>The directories of a PATH-like list: split at ';' and ':'.</summary>
+        public static string[] SplitPathList(string list)
+            => list.Split(new[] { ':', ';' });
 
         private static byte[] EncodeArguments(string[] arguments)
         {

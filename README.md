@@ -188,7 +188,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | Разбор чисел (`Parse` / `TryParse`) | 🟡 | 🟡 | ✅ | `double`, `float`, `decimal` — как в BCL; `int` и `long` — только `Parse(string)` и `TryParse`; остальных целых нет |
 | Разбор `DateTime` / `TimeSpan` / `Guid` | 🟡 | 🟡 | ✅ | `Parse`/`ParseExact`/`TryParse*` — порт BCL (step212); инвариантная культура, поясов кроме UTC нет |
 | Base64 и hex через `Convert` | 🟡 | 🟡 | ✅ | `Convert.From/ToBase64String`, `From/ToHexString` над `System.Buffers.Text.Base64` и `HexConverter` (step212); прогоном не проверены, перенос строк Base64 не портирован |
-| Разбор `.env` | ✅ | ✅ | 🚫 | формат `env_file` Docker Compose, проверен тестами compose-go; ядро читает им `\config\system.env` |
+| Разбор `.env` | ✅ | ✅ | 🚫 | формат `env_file` Docker Compose, проверен тестами compose-go; ядро читает им `/config/system.env` |
 | Коллекции `Concurrent.*` и `Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`, `Regex`, `ValueTuple` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple<T1,T2>` есть |
 | CBOR (`System.Formats.Cbor`) | 🔴 | ✅ | ✅ | порт из dotnet/runtime; без `Half`, `BigInteger`, `decimal` и `DateTimeOffset` — теги при этом читаются. Разбор проверен на ответе аппаратного ключа, запись пока нет |
 | `System.Uri` | 🟡 | 🟡 | ✅ | порт System.Private.Uri (.NET 10, step212) вместе с `SearchValues`, `IdnMapping` (инвариантный режим) и `Hashtable`; std считает себя Unix-платформой (`OperatingSystem.IsWindows()` = false), `file:///home/x` — путь `/home/x`; прогоном не проверен |
@@ -237,7 +237,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | Внешние данные: `READ`, `WRITE`, `CONVERT` | 🚫 | 🟡 | 🚫 | файл в трубу и обратно; `> файл` хранит поток объектов как есть (externalpipe), `READ` отдаёт те же сообщения без класса; JSON, JSON Lines, CBOR, CBOR Sequence и строки в объекты (`Expando`) и обратно, `Into<T>` из `Expando`; потоково, память — один элемент; проверено только под QEMU |
 | Запросы KQL в конвейере | 🚫 | 🟡 | 🚫 | `PIPEGEN 100 \| KQL 'where Level >= 3 \| summarize n = count() by Level'`: сообщения входа — таблица, читается по мере прихода; `take` прекращает чтение, `where`/`take`/`sort` пересылают исходные блоки, `extend` пишет в само сообщение (над Expando — любые скаляры, над типом с полями — числа, bool, даты, интервалы и строки в существующие поля), `project`/`project-away`/`project-rename` над Expando — правки самого блока; схема — из объявления писателя, запрос связан до данных; Expando — открытая таблица, каждое имя — свой столбец `dynamic`; Expando и вложенные объекты — `dynamic` (поля, сравнения, арифметика, `tostring`/`tolong`); ошибки запроса с позицией; `… \| KQL` без запроса спрашивает его, когда тип входа известен, Tab дополняет по его столбцам; без `matches regex`, `extract()`, `url_decode`/`url_encode_component`; проверено только под QEMU |
 | Terminal.Gui | 🚫 | ✅ | ⏳ | на нашей std, свой драйвер поверх терминала ядра; мыши нет |
-| Скрипты: Lua и JavaScript | 🚫 | 🟡 | 🚫 | `LUA` (Lua-CSharp, Lua 5.2) и `JS` (Okojo, ECMAScript): `-e`, файл, приглашение; стадия конвейера — сообщение входит таблицей или объектом, выходит Expando или строкой (step212). У Lua `require` по `\bin\lua` и текущему каталогу, `init.lua`; у JS нет `require`/`import` и API Node и браузера; проверено только под QEMU |
+| Скрипты: Lua и JavaScript | 🚫 | 🟡 | 🚫 | `LUA` (Lua-CSharp, Lua 5.2) и `JS` (Okojo, ECMAScript): `-e`, файл, приглашение; стадия конвейера — сообщение входит таблицей или объектом, выходит Expando или строкой (step212). У Lua `require` по `/bin/lua` и текущему каталогу, `init.lua`; у JS нет `require`/`import` и API Node и браузера; проверено только под QEMU |
 | Оболочка с синтаксисом bash | 🚫 | 🟡 | 🚫 | `&&` `\|\|` `;`, конвейер `a \| b \| c`, встроенные `cd` `pwd` `ls` `cat` `echo` `expect` `exit` `export` `unset` `env` `which`, `$ИМЯ` и `${ИМЯ}` из окружения, программы по `PATH`, запуск `.EXE` (с аргументами) и `.DLL` (без); `> файл` и `>> файл` в конце конвейера, код конвейера — первой упавшей стадии; `<` нет; переменных оболочки, `$(…)`, циклов и `if` нет — строка с ними отклоняется целиком, с номером столбца. Редактор строки (ReadLine): история между сеансами, Tab (и по `$ИМЯ`, и внутри `KQL '…'`), Ctrl-клавиши, `clear`. Ctrl+C прерывает только набор строки, не запущенную программу |
 | Изоляция процессов через MMU | 🚫 | 🚫 | 🚫 | это unikernel |
 | Параллельное исполнение по одному виртуальному адресу | 🚫 | 🚫 | 🟡 | потоки в одном ALC работают, несколько ALC в планах |
@@ -389,16 +389,16 @@ Pipe.Read("myapp.log").WriteTo(Pipe.To("CONVERT --to json | WRITE errors.json"))
 
 | папка | что там |
 |---|---|
-| `\EFI\BOOT` | `BOOTX64.EFI` — ядро |
-| `\bin` | программы: оболочка, лаунчер, `READ`, `WRITE`, `CONVERT`, `KQL`, демо-стадии труб |
-| `\games` | игры вместе с данными: DOOM и WAD, эмуляторы NES и картридж |
-| `\tests` | батарея и её данные |
-| `\config` | `system.env` — что запускать после загрузки и окружение для всего, что запускает ядро; сценарий батареи |
-| `\home` | рабочая папка по умолчанию |
-| `\system` | для системы помимо ядра, пока пусто |
-| `\sharpos` | рантайм CoreCLR, PowerShell |
+| `/EFI/BOOT` | `BOOTX64.EFI` — ядро |
+| `/bin` | программы: оболочка, лаунчер, `READ`, `WRITE`, `CONVERT`, `KQL`, демо-стадии труб |
+| `/games` | игры вместе с данными: DOOM и WAD, эмуляторы NES и картридж |
+| `/tests` | батарея и её данные |
+| `/config` | `system.env` — что запускать после загрузки и окружение для всего, что запускает ядро; сценарий батареи |
+| `/home` | рабочая папка по умолчанию |
+| `/system` | для системы помимо ядра, пока пусто |
+| `/sharpos` | рантайм CoreCLR, PowerShell |
 
-`system.env` — строки `ИМЯ=значение`: `PATH=\bin;\tests;\games`, `HOME=\home`, `INIT=\bin\LAUNCHER.EXE`. Программа ищется по `PATH`, а куда она ляжет, задаёт `<SharpOsCategory>` в её `.csproj`. Лаунчер открывается на вкладке «Главная»: плитки оболочки, PowerShell и игр.
+`system.env` — строки `ИМЯ=значение`: `PATH=/bin;/tests;/games`, `HOME=/home`, `INIT=/bin/LAUNCHER.EXE`. Программа ищется по `PATH`, а куда она ляжет, задаёт `<SharpOsCategory>` в её `.csproj`. Лаунчер открывается на вкладке «Главная»: плитки оболочки, PowerShell и игр.
 
 В оболочке окружение меняют `export ИМЯ=значение` и `unset ИМЯ`, `env` его печатает, `env ИМЯ=значение программа` запускает программу с добавкой. `$ИМЯ` подставляется в словах и в `"…"`, в `'…'` — нет; `~` — это `HOME`. `ENV` указывает сценарий, который приглашение выполняет при старте.
 
@@ -474,7 +474,7 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 - **[ChaN FatFs](https://elm-chan.org/fsw/ff/)** (BSD-1-clause) - второй ориентир по FAT.
 - **[Cosmos](https://github.com/CosmosOS/Cosmos)** (BSD-3) - сама идея managed-ОС.
 - **[shitty](https://github.com/pg83/shitty)** (Anton Samokhvalov, MIT + GPL-3) - тесты для эмулятора терминала.
-- **[compose-go](https://github.com/compose-spec/compose-go)** (John Barton, MIT; The Compose Specification Authors, Apache-2.0) - формат `.env` и тесты к нему: по ним написан разбор `\config\system.env`.
+- **[compose-go](https://github.com/compose-spec/compose-go)** (John Barton, MIT; The Compose Specification Authors, Apache-2.0) - формат `.env` и тесты к нему: по ним написан разбор `/config/system.env`.
 
 ## Лицензия
 

@@ -50,7 +50,7 @@ namespace System.IO
             if (path == null) throw new ArgumentNullException(nameof(path));
             string full = SharpOS.AppSdk.Process.ResolvePath(path);
             bool root = true;
-            foreach (char c in full) if (c != '\\') root = false;
+            foreach (char c in full) if (c != '/') root = false;
             if (root) return FileAttributes.Directory;
             if (AppFile.Manage(AppFile.ManageStat, full, out ulong kind, out _) == AppServiceStatus.Ok)
                 return kind == 2 ? FileAttributes.Directory : FileAttributes.Archive;
@@ -278,9 +278,9 @@ namespace System.IO
             get
             {
                 int end = FullName.Length;
-                while (end > 1 && FullName[end - 1] == '\\') end--;
+                while (end > 1 && FullName[end - 1] == '/') end--;
                 int start = end;
-                while (start > 0 && FullName[start - 1] != '\\') start--;
+                while (start > 0 && FullName[start - 1] != '/') start--;
                 return end <= start ? FullName : FullName.Substring(start, end - start);
             }
         }
@@ -293,7 +293,7 @@ namespace System.IO
         {
             get
             {
-                foreach (char c in FullName) if (c != '\\') return new DirectoryInfo(System.IO.Directory.ParentOf(FullName));
+                foreach (char c in FullName) if (c != '/') return new DirectoryInfo(System.IO.Directory.ParentOf(FullName));
                 return null;
             }
         }
@@ -325,7 +325,7 @@ namespace System.IO
     }
 
     /// <summary>
-    /// The volume (step208): one, the boot disk, named "\". Free space is
+    /// The volume (step208): one, the boot disk, named "/". Free space is
     /// counted in the FAT on every question. Cut: volume label, drive type
     /// other than Fixed.
     /// </summary>
@@ -334,14 +334,14 @@ namespace System.IO
         public DriveInfo(string driveName)
         {
             if (driveName == null) throw new ArgumentNullException(nameof(driveName));
-            Name = "\\";
+            Name = "/";
         }
 
         public string Name { get; }
         public string DriveFormat => "FAT32";
         public bool IsReady => Space(out _, out _);
         public DriveType DriveType => DriveType.Fixed;
-        public DirectoryInfo RootDirectory => new DirectoryInfo("\\");
+        public DirectoryInfo RootDirectory => new DirectoryInfo("/");
 
         public long TotalSize
         {
@@ -355,12 +355,12 @@ namespace System.IO
 
         public long AvailableFreeSpace => TotalFreeSpace;
 
-        public static DriveInfo[] GetDrives() => new[] { new DriveInfo("\\") };
+        public static DriveInfo[] GetDrives() => new[] { new DriveInfo("/") };
 
         public override string ToString() => Name;
 
         private static bool Space(out ulong total, out ulong free)
-            => AppFile.Manage(AppFile.ManageVolume, "\\", out total, out free) == AppServiceStatus.Ok;
+            => AppFile.Manage(AppFile.ManageVolume, "/", out total, out free) == AppServiceStatus.Ok;
 
         private static void Need(out ulong total, out ulong free)
         {

@@ -177,7 +177,7 @@ namespace OS.Kernel.Process
 
             if (op == ProcessOpGetDirectory)
             {
-                string cwd = self?.WorkingDirectory ?? "\\";
+                string cwd = self?.WorkingDirectory ?? "/";
                 request[2] = Utf8Answer(cwd, request[0], request[1]);
                 return (int)AppServiceStatus.Ok;
             }
@@ -549,7 +549,7 @@ namespace OS.Kernel.Process
                 ImagePath = imagePath ?? name,
                 // What the kernel starts by itself begins at home (step207).
                 WorkingDirectory = AppProcesses.Current?.WorkingDirectory
-                                   ?? SharpOS.Std.NoRuntime.EnvironmentBlock.Get(ProcessEnvironment.Boot, "HOME") ?? "\\",
+                                   ?? SharpOS.Std.NoRuntime.EnvironmentBlock.Get(ProcessEnvironment.Boot, "HOME") ?? "/",
                 Environment = environment ?? ProcessEnvironment.Of(AppProcesses.Current),
                 LauncherId = launcherId,
                 LauncherHolds = true,

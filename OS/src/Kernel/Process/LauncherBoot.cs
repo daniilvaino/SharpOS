@@ -24,9 +24,9 @@ namespace OS.Kernel.Process
 
         // What to start and with what environment is the configuration file's
         // (BootConfig, step207): the launcher by default, the shell with the
-        // battery script for an unattended run. \bin is listed at boot for
+        // battery script for an unattended run. /bin is listed at boot for
         // the log.
-        private const string ProgramDirectoryPath = "\\bin";
+        private const string ProgramDirectoryPath = "/bin";
 
         // It exits cleanly when the user leaves it.
         private const int LauncherExitCodeExpected = 0;

@@ -29,7 +29,7 @@ namespace Shell
         public List<string> History { get; } = new List<string>();
 
         // The history file is the program's own: KQL's prompt (step208) keeps queries, not commands.
-        public LineReader(IAutoCompleteHandler completion, string historyPath = "\\sh_history")
+        public LineReader(IAutoCompleteHandler completion, string historyPath = "/sh_history")
         {
             _completion = completion;
             _historyPath = historyPath;

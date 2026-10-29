@@ -26,13 +26,34 @@ namespace OS.Hal
         /// <summary>
         /// Whether the file was opened for sector writes (TryOpenLinear: the
         /// boot log, a write per line): its content changes without a note in
-        /// the journal of changes (<see cref="ChangedSince"/>).
+        /// the journal of changes (<see cref="ChangedSince"/>). Asked by
+        /// <see cref="PathKey"/>.
         /// </summary>
-        public static bool IsSectorWritten(string upperPath)
+        public static bool IsSectorWritten(string key)
         {
             Enter();
-            try { return s_linearPaths != null && s_linearPaths.Contains(upperPath); }
+            try { return s_linearPaths != null && s_linearPaths.Contains(key); }
             finally { Leave(); }
+        }
+
+        /// <summary>
+        /// One spelling of a path for keys (step215): upper case, '/' between
+        /// names, none at the start or the end, none doubled. "\bin\x.exe",
+        /// "/BIN/X.EXE" and "bin//X.EXE" are one file, and were three keys.
+        /// </summary>
+        public static string PathKey(string path)
+        {
+            var key = new System.Text.StringBuilder(path.Length);
+            foreach (char c in path)
+            {
+                if (c == '/' || c == '\\')
+                {
+                    if (key.Length > 0 && key[key.Length - 1] != '/') key.Append('/');
+                }
+                else key.Append(char.ToUpperInvariant(c));
+            }
+            if (key.Length > 0 && key[key.Length - 1] == '/') key.Length--;
+            return key.ToString();
         }
 
         // Sectors [lba, lba + count) all inside one file opened for sector writes.
@@ -190,7 +211,7 @@ namespace OS.Hal
             try
             {
                 if (!TryOpenLinearLocked(path, out startLba, out sectors)) return false;
-                string key = path.ToUpperInvariant();
+                string key = PathKey(path);
                 s_linearPaths ??= new System.Collections.Generic.List<string>();
                 s_linearRuns ??= new System.Collections.Generic.List<ulong>();
                 if (!s_linearPaths.Contains(key))

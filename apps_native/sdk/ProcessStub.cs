@@ -15,7 +15,7 @@ namespace System.Diagnostics
 
     public class ProcessModule
     {
-        // Path.GetDirectoryName of it is where the program lies — \games for
+        // Path.GetDirectoryName of it is where the program lies — /games for
         // DOOM, beside its WADs.
         public string FileName => SharpOS.AppSdk.Process.ImagePath;
     }

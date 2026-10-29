@@ -377,6 +377,6 @@ namespace PipeApps
         }
 
         // A file large enough that reading it takes a while in the kernel.
-        private const string BigFile = "\\tests\\AOTTESTS.EXE";
+        private const string BigFile = "/tests/AOTTESTS.EXE";
     }
 }

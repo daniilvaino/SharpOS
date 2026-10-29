@@ -52,7 +52,7 @@ namespace Launcher
         {
             switch (Kind)
             {
-                case NodeKind.Directory: return Name + "\\";
+                case NodeKind.Directory: return Name + "/";
                 case NodeKind.Application: return Name + "  *";
                 case NodeKind.ManagedApplication: return Name + "  #";
                 case NodeKind.More: return "... " + Hidden.ToString() + " more";
@@ -95,9 +95,9 @@ namespace Launcher
         {
             if (directory == null || directory.Length <= 1) return null;
 
-            int cut = directory.LastIndexOf('\\');
+            int cut = directory.LastIndexOf('/');
             if (cut < 0) return null;
-            if (cut == 0) return "\\";      // one level below the volume root
+            if (cut == 0) return "/";      // one level below the volume root
 
             return directory.Substring(0, cut);
         }
@@ -206,8 +206,8 @@ namespace Launcher
         public static string Combine(string directory, string name)
         {
             if (directory.Length == 0) return name;
-            if (directory[directory.Length - 1] == '\\') return directory + name;
-            return directory + "\\" + name;
+            if (directory[directory.Length - 1] == '/') return directory + name;
+            return directory + "/" + name;
         }
 
         /// <summary>

@@ -720,7 +720,7 @@ namespace AotTests
             bool fileRoundTrip = false;
             try
             {
-                string mine = "\\aot" + SharpOS.AppSdk.Process.CurrentId.ToString() + ".txt";
+                string mine = "/aot" + SharpOS.AppSdk.Process.CurrentId.ToString() + ".txt";
                 System.IO.File.WriteAllText(mine, "x1");
                 System.IO.File.AppendAllText(mine, "y2");
                 fileRoundTrip = System.Text.Encoding.UTF8.GetString(System.IO.File.ReadAllBytes(mine)) == "x1y2";
@@ -729,7 +729,7 @@ namespace AotTests
             Check("File.WriteAllText + AppendAllText read back", fileRoundTrip);
 
             bool streamRefused = false;
-            try { new System.IO.FileStream("\\aottests*bad.bin", System.IO.FileMode.Create, System.IO.FileAccess.Write); }
+            try { new System.IO.FileStream("/aottests*bad.bin", System.IO.FileMode.Create, System.IO.FileAccess.Write); }
             catch (System.IO.IOException) { streamRefused = true; }
             Check("FileStream for writing refuses a name FAT cannot hold", streamRefused);
         }

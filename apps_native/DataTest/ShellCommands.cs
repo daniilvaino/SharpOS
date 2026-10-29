@@ -44,17 +44,22 @@ namespace DataApps
             Check("19: which of nothing: 1", Sh("which NO_SUCH_PROGRAM") == 1);
 
             // Paths as cd takes them (step208): the root, "..", "./", a file.
-            Check("19: cd / and cd \\\\: the root (" + Escaped(Join(Lines("cd / && pwd"))) + ")",
-                  Join(Lines("cd / && pwd")) == "\\\n" && Join(Lines("cd '\\' && pwd")) == "\\\n");
-            Check("19: cd ../ from \\bin, and .. above the root, stay at the root",
-                  Join(Lines("cd /bin && cd ../ && pwd")) == "\\\n" && Join(Lines("cd /bin && cd ../.. && pwd")) == "\\\n");
-            Check("19: cd ./bin/../tests/: \\tests", Join(Lines("cd / && cd ./bin/../tests/ && pwd")) == "\\tests\n");
+            Check("19: cd / and cd '\\': the root, /  (" + Escaped(Join(Lines("cd / && pwd"))) + ")",
+                  Join(Lines("cd / && pwd")) == "/\n" && Join(Lines("cd '\\' && pwd")) == "/\n");
+            Check("19: cd ../ from /bin, and .. above the root, stay at the root",
+                  Join(Lines("cd /bin && cd ../ && pwd")) == "/\n" && Join(Lines("cd /bin && cd ../.. && pwd")) == "/\n");
+            Check("19: cd ./bin/../tests/: /tests", Join(Lines("cd / && cd ./bin/../tests/ && pwd")) == "/tests\n");
+            // step215: '/' everywhere; a '\' a program hands in is still a separator.
+            Check("19: cd '\\tests' (a backslash in quotes): /tests", Join(Lines("cd '\\tests' && pwd")) == "/tests\n");
+            Check("19: which names a /-path (" + pipegen + ")", pipegen.StartsWith("/") && pipegen.IndexOf('\\') < 0);
+            Check("19: PATH split at ';', and at ':' too",
+                  Join(Lines("export PATH='/nowhere;/bin:/tests'; which PIPEGEN")) == pipegen + "\n");
             Check("19: cd into a file: 1; which in small letters names the stored file",
                   Sh("cd /bin/PIPEGEN.EXE") == 1 && Join(Lines("which pipegen")) == pipegen + "\n" && pipegen.EndsWith("PIPEGEN.EXE"));
 
-            File.WriteAllText(home + "\\t19.txt", "old");
+            File.WriteAllText(home + "/t19.txt", "old");
             Check("19: echo hello > $HOME/$T19D.txt", Sh("export T19D=t19; echo hello > $HOME/$T19D.txt") == 0);
-            Check("19: the file", Text(home + "\\t19.txt").StartsWith("hello"));
+            Check("19: the file", Text(home + "/t19.txt").StartsWith("hello"));
 
             // Refused whole, before anything runs: 2.
             string[] refused =

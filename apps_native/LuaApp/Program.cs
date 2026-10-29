@@ -136,10 +136,10 @@ internal static unsafe class AppEntry
     }
 
     // Where `require` looks, as lua.c has it: LUA_PATH when set, else the
-    // current folder and \bin\lua, where the image keeps LUA's own files
+    // current folder and /bin/lua, where the image keeps LUA's own files
     // (apps_native/LuaApp/esp/lua: init.lua, prelude.lua).
-    private const string DefaultPath = "?.lua;\\bin\\lua\\?.lua";
-    private const string DefaultInit = "\\bin\\lua\\init.lua";
+    private const string DefaultPath = "?.lua;/bin/lua/?.lua";
+    private const string DefaultInit = "/bin/lua/init.lua";
 
     // In a pipeline the standard output carries the messages and the input
     // is the object pipe: print and io.write go to the error stream (on the

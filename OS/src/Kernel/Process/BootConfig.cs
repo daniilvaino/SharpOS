@@ -19,7 +19,7 @@ namespace OS.Kernel.Process
     /// without the shell, and they need the same environment.
     ///
     /// The defaults below come first, so the file overrides them and may
-    /// refer to them (PATH=$PATH;\more). Two names are the kernel's, not the
+    /// refer to them (PATH=$PATH;/more). Two names are the kernel's, not the
     /// environment's:
     ///   INIT       the program to start, then its arguments (split at spaces)
     ///              — the launcher, or the shell with the battery script that
@@ -30,9 +30,9 @@ namespace OS.Kernel.Process
     /// </remarks>
     internal static class BootConfig
     {
-        internal const string Path = "\\config\\system.env";
+        internal const string Path = "/config/system.env";
 
-        internal const string DefaultInit = "\\bin\\LAUNCHER.EXE";
+        internal const string DefaultInit = "/bin/LAUNCHER.EXE";
 
         /// <summary>The program and its arguments to start after boot.</summary>
         internal static string[] Init { get; private set; }
@@ -81,8 +81,8 @@ namespace OS.Kernel.Process
 
         private static Dictionary<string, string> Defaults() => new Dictionary<string, string>
         {
-            ["PATH"] = "\\bin;\\tests;\\games",
-            ["HOME"] = "\\home",
+            ["PATH"] = "/bin;/tests;/games",
+            ["HOME"] = "/home",
             ["INIT"] = DefaultInit,
         };
 

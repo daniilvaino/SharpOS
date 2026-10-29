@@ -314,8 +314,8 @@ namespace System.IO
             // Each prefix that ends a component, from the top.
             for (int i = 1; i <= full.Length; i++)
             {
-                if (i < full.Length && full[i] != '\\') continue;
-                if (i > 0 && full[i - 1] == '\\') continue;
+                if (i < full.Length && full[i] != '/') continue;
+                if (i > 0 && full[i - 1] == '/') continue;
                 string prefix = full.Substring(0, i);
                 AppServiceStatus status = AppFile.Manage(AppFile.ManageMakeDirectory, prefix, out ulong reason, out _);
                 if (status == AppServiceStatus.Ok || reason == AppFile.ReasonExists) continue;
@@ -347,7 +347,7 @@ namespace System.IO
                     int length = (int)(entry.NameLength < 256 ? entry.NameLength : 256);
                     string text = System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(name, length));
                     if (text == "." || text == "..") continue;
-                    (entry.IsDirectory != 0 ? directories : files).Add(full + "\\" + text);
+                    (entry.IsDirectory != 0 ? directories : files).Add(full + "/" + text);
                 }
                 foreach (string f in files) File.Delete(f);
                 foreach (string d in directories) Delete(d, true);
@@ -390,19 +390,19 @@ namespace System.IO
             throw Failure("move", from, status);
         }
 
-        // The directory a resolved path lies in ("\" for one in the root).
+        // The directory a resolved path lies in ("/" for one in the root).
         internal static string ParentOf(string full)
         {
             int cut = full.Length - 1;
-            while (cut > 0 && full[cut] == '\\') cut--;
-            while (cut > 0 && full[cut] != '\\') cut--;
-            return cut <= 0 ? "\\" : full.Substring(0, cut);
+            while (cut > 0 && full[cut] == '/') cut--;
+            while (cut > 0 && full[cut] != '/') cut--;
+            return cut <= 0 ? "/" : full.Substring(0, cut);
         }
 
         private static bool IsRoot(string full)
         {
             for (int i = 0; i < full.Length; i++)
-                if (full[i] != '\\') return false;
+                if (full[i] != '/') return false;
             return true;
         }
 

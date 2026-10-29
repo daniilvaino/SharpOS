@@ -39,18 +39,6 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
    `XmlReader` — у нас TurboXml.
 4. Позже: `Enum.Parse` по имени (нужны метаданные перечислений; числом есть), `IPAddress`, `System.Collections.Frozen` (у Okojo заглушки), `Encoder`/`Decoder` в `Encoding` (у Lua вырезы); XML в std (сейчас TurboXml только в ядре, для манифестов).
 
-## Пути: у ярусов разные соглашения
-
-- **Ядро и AOT-приложения** — одно дерево без дисков, корень `\`. `/` принимается и переводится в `\` (`Process.ResolvePath`, `AppFile`). Рабочий каталог хранится с `\`, от ядра — `\`. Оболочка говорит на bash и отдаёт разборщику `/` (`Executor.RunLine`).
-- **CoreCLR-hosted** — Windows-сборка BCL: пути `C:\…`, рабочий каталог `C:\sharpos` (`SystemIdentity`). PAL срезает `C:` (только букву C) в `FileSystemQuery` и `CrtHeapStubs` — то же дерево.
-- **std `System.IO.Path`** — Windows-форма: `DirectorySeparatorChar = '\\'`, выдуманный `CurrentDirectory = "C:\sharpos\"`, не связанный с `Environment.CurrentDirectory`. В AOT-приложении `Path.GetFullPath("a")` строит от `C:\sharpos\`, а `Process.ResolvePath("a")` — от настоящего рабочего каталога.
-
-Путь, выданный одним ярусом, другой понимает только через срез `C:`; на границе (аргументы hosted-запуска, рабочий каталог, `ImagePath`, переменные окружения) перевода нет.
-
-step212: std объявляет себя Unix-платформой (`OperatingSystem.IsWindows()` = false) — так ведёт себя порт `Uri`: `/home/x` — неявный file-URI. `Path` при этом остаётся виндовым.
-
-Решить: одна каноническая форма. Естественная — Unix (`/`, без дисков): оболочка уже bash, `Path` в std — порт `Path.Unix.cs`, `GetFullPath` от `Environment.CurrentDirectory`. Hosted остаётся Windows — перевод `/x` ↔ `C:\x` в одном месте на границе запуска, а не срезом в каждой службе PAL.
-
 ## Находки тестеров (2026-10-24)
 
 Три прогона чёрным ящиком через QMP (`work/ostest/ostest`, `ostest2`, `ostest3`;
@@ -75,6 +63,19 @@ step212: std объявляет себя Unix-платформой (`OperatingSy
   TODO): память — порядка всего входа, 300 000 строк SYNTH проходят; дальше —
   копить только столбцы агрегатов.
 - **Оболочка:** `.DLL` с `>` или `|` не стартует (hosted).
+- **Пути CoreCLR — Unix по умолчанию, машинерия Windows (отложено).** Управляемое остаётся
+  Windows (CoreLib, fx, pwsh win-x64; IOCP). PAL — Unix-подобная цель, как
+  pal/src: пути с `/`. Корень странностей — `HOST_WINDOWS` хоста сборки течёт в
+  цель: `palclr.h` даёт `\` и `:`, `longfilepathwrappers.cpp` переписывает `/`
+  в `\` и добавляет `\\?\`, `path.h` IsRelative сломан (4 обхода в binder и
+  nativelibrary). План: разделитель каталогов `/` (как `palrt.h`), списки — `;`
+  (TPA, `Path.PathSeparator`); `longfilepathwrappers` для SharpOS не собирать;
+  управляемый патч `PathInternal.Windows` под `TARGET_SHARPOS` (~20 строк: `/`,
+  `\` альтернативный, `/x` — полный путь, без `\\?\`; длина в
+  `FileSystem.Windows.cs:214`) и пересборка 4 сборок fx со своей копией
+  `PathInternal`; резервный слой в PAL `C:\ = /` (один нормализатор на входе
+  файловых экспортов). Риск — pwsh ждёт диск `C:`. Сначала один прогон:
+  управляемый патч + Unix-семантика `GetFullPathNameW`, normal-hello и pwsh.
 - **Данные:** новые файлы в UTC, файлы образа — в местном: часового пояса в
   системе нет. В JSON у `when` 8 знаков дроби (`…00.00000002Z`) — `TryFormatO`
   стоковый, не подтверждено.

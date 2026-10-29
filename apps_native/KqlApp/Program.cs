@@ -322,7 +322,7 @@ namespace PipeApps
                 Columns columns = Declared(input, ref first);
                 GlobalState globals = CompletionGlobals(columns, out TableSymbol schema);
                 string prompt = "kql (" + (columns.TypeName ?? "?") + ")> ";
-                var reader = new Shell.LineReader(new KqlCompletion(globals), "\\kql_history");
+                var reader = new Shell.LineReader(new KqlCompletion(globals), "/kql_history");
                 while (true)
                 {
                     string line = reader.Read(prompt, prompt.Length);
