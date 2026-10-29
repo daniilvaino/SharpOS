@@ -50,6 +50,13 @@ namespace OS.Boot.EH
         public static bool IsAppsOwnEnd(OS.Kernel.Threading.Thread thread)
             => thread != null && thread.UnhandledExitCode != 0;
 
+        private static void AppError(string text)
+        {
+            if (text == null) return;
+            for (int i = 0; i < text.Length; i++)
+                OS.Hal.Platform.WriteChar(text[i], OS.Hal.OutputChannel.AppErr);
+        }
+
         private static void Report(System.Exception ex)
         {
             if (ex == null) return;
@@ -114,6 +121,20 @@ namespace OS.Boot.EH
             OS.Hal.Console.Write(" (type mt=0x");
             OS.Hal.Console.WriteHex(mt);
             OS.Hal.Console.WriteLine(")");
+
+            // The user sees one line of it, on the app's error stream (step216):
+            // the kernel's lines no longer reach the screen while a session
+            // runs, and the frames below are for the log.
+            if (app != null)
+            {
+                AppError(app.Name);
+                AppError(": unhandled ");
+                AppError(typeName ?? "exception");
+                AppError(": ");
+                AppError(message != null && message.Length != 0 ? message : "(no message)");
+                AppError("\n");
+                OS.Hal.Platform.FlushConsole();
+            }
 
             System.IntPtr[] frames = ex.GetStackIPs();
             if (frames == null || frames.Length == 0)

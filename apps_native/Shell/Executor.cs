@@ -615,14 +615,15 @@ namespace Shell
                 // take: closed after the start, or the pipes would stay open.
                 // (A pair's own ends close below with the pair.)
                 var owned = new List<PipeWriteEnd>();
+                PipeReadEnd input = null;
                 try
                 {
                     var ends = new List<(int, PipeWriteEnd)>();
                     PipeWriteEnd output = HandOut(redirects[k], Natural(k, count, pairs, owned),
                                                   sideStarted, sidePairs, owned, ends);
+                    input = k > 0 ? pairs[k - 1].ReadEnd : TakeInput();
                     started.Add(Process.Start(path, arguments[k].ToArray(),
-                        k > 0 ? pairs[k - 1].ReadEnd : TakeInput(),
-                        output, environments[k], ends.Count > 0 ? ends.ToArray() : null));
+                        input, output, environments[k], ends.Count > 0 ? ends.ToArray() : null));
                     names.Add(verbs[k]);
                 }
                 catch (System.Exception e) when (e is System.InvalidOperationException || e is SharpOS.Std.Pipes.PipeException)
@@ -637,6 +638,7 @@ namespace Shell
                 finally
                 {
                     foreach (PipeWriteEnd made in owned) made.Dispose();
+                    if (k == 0) input?.Dispose();
                 }
             }
 
@@ -676,11 +678,9 @@ namespace Shell
                 pair.WriteEnd.Dispose();
                 pair.ReadEnd.Dispose();
             }
-            // The input goes to one command. The output stays the shell's: each
-            // command got a copy (TakeOutput), and the reader's stream ends when
-            // the shell does.
-            _input?.Dispose();
-            _input = null;
+            // The ends stay the shell's: each command got a copy (TakeInput,
+            // TakeOutput) — the input read in turn, as one stdin in sh, the
+            // output one stream — and they end when the shell does.
 
             int offset = builtinFirst ? 1 : 0;
             var codes = new int[started.Count + offset];
@@ -841,12 +841,22 @@ namespace Shell
             return at[1];
         }
 
-        // The shell's own input, handed to one stage once.
+        // The shell's own input, a copy for each command (step216): they read
+        // it in turn, what one leaves the next gets. A kernel without copies
+        // of a reading end gets the end itself, once, as before.
         private PipeReadEnd TakeInput()
         {
-            PipeReadEnd end = _input;
-            _input = null;
-            return end;
+            if (_input == null) return null;
+            try
+            {
+                return _input.Duplicate();
+            }
+            catch (SharpOS.Std.Pipes.PipeException)
+            {
+                PipeReadEnd end = _input;
+                _input = null;
+                return end;
+            }
         }
 
         // The shell's own output, a copy for each command (step212): one
@@ -1680,7 +1690,8 @@ namespace Shell
             Write("a path runs too: .EXE as a program, .DLL on the hosted runtime\n");
             Write("operators: && || ; a | b | c ; n> file, n>> file, n>&m, n>&- on any program, in order:\n");
             Write("           1 the output (left out: > file), 2 errors, 3 stdtext (reports, panels);\n");
-            Write("           sysinfo 3>&1 1>&- | less — the panel down the pipe, the data nowhere\n");
+            Write("           fetch 3>&1 1>&- | less — the panel down the pipe, the data nowhere;\n");
+            Write("           hints leave out what is not for the screen; env PIPEHINTS=off shows all\n");
             Write("not here: shell variables (x=1), $(...), loops, if, functions, X=1 prog\n");
             Write("keys: Up/Down history, Tab completes, Home/End, Ctrl+A/E/U/K/W, Ctrl+L clears,\n");
             Write("      Ctrl+C drops the line, Ctrl+D on an empty line leaves\n");

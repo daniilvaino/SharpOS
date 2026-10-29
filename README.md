@@ -177,7 +177,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `string.Format`, интерполяция, `ToString(format)` чисел | 🟡 | 🟡 | ✅ | форматтер чисел и `DefaultInterpolatedStringHandler` из .NET 8 (UTF-16 и UTF-8); культура только инвариантная, без `decimal`/`Half`/`Int128` |
 | `System.Enum` | 🟡 | 🟡 | ✅ | нет `ToString`, `GetNames`; `ToObject` есть, `Parse` — только числом: имён членов без метаданных нет |
 | `Enum.IsDefined` | 🔴 | 🟡 | ✅ | в приложениях всегда `true`: метаданных перечислений нет |
-| `DateTime` / `TimeSpan` | 🟡 | 🟡 | ✅ | порт BCL (step212): `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, все стандартные и пользовательские форматы, инвариантная культура; `TimeZoneInfo` только с UTC — базы поясов нет, `Local` = UTC. Часы — нет. В ядре источник не подключён, `Now` = начало эпохи (`IsRealClock` = false). В приложениях с step182 идут монотонные часы от HPET: интервалы верны, дата нет (эпоха + аптайм). Настоящую дату отдаёт только hosted-ярус |
+| `DateTime` / `TimeSpan` | 🟡 | 🟡 | ✅ | порт BCL (step212): `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, все стандартные и пользовательские форматы, инвариантная культура; `TimeZoneInfo` без базы поясов: `Local` — фиксированный сдвиг из `TZ` (step216), иначе UTC; летнего времени нет. Часы — нет. В ядре источник не подключён, `Now` = начало эпохи (`IsRealClock` = false). В приложениях с step182 идут монотонные часы от HPET: интервалы верны, дата нет (эпоха + аптайм). Настоящую дату отдаёт только hosted-ярус |
 | `Array.Copy` с перекрытием (семантика memmove) | ✅ | ✅ | ✅ | |
 | `Math.Abs`, `Math.Sqrt` | ✅ | ✅ | ✅ | |
 | `Math.Floor` / `Ceiling` / `Truncate` / `Round` | ✅ | ✅ | ✅ | |
@@ -186,7 +186,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | Разбор XML | ✅ | ⏳ | ✅ | TurboXml; ядро читает им манифесты приложений |
 | JSON: `Utf8JsonReader` / `Utf8JsonWriter`, `JsonDocument`, `JsonNode` | ⏳ | 🟡 | ✅ | из System.Text.Json (.NET 10): чтение кусками, запись в `IBufferWriter<byte>`. Сериализатора и `JavaScriptEncoder` нет |
 | Разбор чисел (`Parse` / `TryParse`) | 🟡 | 🟡 | ✅ | `double`, `float`, `decimal` — как в BCL; `int` и `long` — только `Parse(string)` и `TryParse`; остальных целых нет |
-| Разбор `DateTime` / `TimeSpan` / `Guid` | 🟡 | 🟡 | ✅ | `Parse`/`ParseExact`/`TryParse*` — порт BCL (step212); инвариантная культура, поясов кроме UTC нет |
+| Разбор `DateTime` / `TimeSpan` / `Guid` | 🟡 | 🟡 | ✅ | `Parse`/`ParseExact`/`TryParse*` — порт BCL (step212); инвариантная культура, поясов кроме UTC и сдвига из `TZ` нет |
 | Base64 и hex через `Convert` | 🟡 | 🟡 | ✅ | `Convert.From/ToBase64String`, `From/ToHexString` над `System.Buffers.Text.Base64` и `HexConverter` (step212); прогоном не проверены, перенос строк Base64 не портирован |
 | Разбор `.env` | ✅ | ✅ | 🚫 | формат `env_file` Docker Compose, проверен тестами compose-go; ядро читает им `/config/system.env` |
 | Коллекции `Concurrent.*` и `Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`, `Regex`, `ValueTuple` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple<T1,T2>` есть |
@@ -258,7 +258,7 @@ PIPEGEN 100 | KQL                            # kql (LogEntry)> запрос, Tab
 SYNTH 20 | VIEWFILT 3                        # тип, которого нет ни в одной программе
 PIPEGEN 1000 | PIPESPY a | PIPESPY b | PIPECNT   # обе стадии видят объект по одному адресу
 PIPEGEN 20 | LUA -e "return function(m) m.Square = m.Level * m.Level return m end" | JS -e "m => ({...m, Even: m.Level % 2 == 0})" | KQL 'where tobool(Even)'
-SYSINFO 3>&- | KQL 'project-away Storage, Input' | LUA -e "return strings" | CONVERT --to jsonl | JSON2DIR   # числа и bool строками: json2dir берёт только строки
+FETCH | KQL 'project-away Storage, Input' | LUA -e "return strings" | CONVERT --to jsonl | JSON2DIR   # числа и bool строками: json2dir берёт только строки
 ```
 
 `PIPESPY` печатает адрес, по которому пришло сообщение. Две такие стадии подряд показывают один и тот же адрес: это один объект проходит через четыре программы.
@@ -398,7 +398,7 @@ Pipe.Read("myapp.log").WriteTo(Pipe.To("CONVERT --to json | WRITE errors.json"))
 | `/system` | для системы помимо ядра, пока пусто |
 | `/sharpos` | рантайм CoreCLR, PowerShell |
 
-`system.env` — строки `ИМЯ=значение`: `PATH=/bin;/tests;/games`, `HOME=/home`, `INIT=/bin/LAUNCHER.EXE`. Программа ищется по `PATH`, а куда она ляжет, задаёт `<SharpOsCategory>` в её `.csproj`. Лаунчер открывается на вкладке «Главная»: плитки оболочки, PowerShell и игр.
+`system.env` — строки `ИМЯ=значение`: `PATH=/bin;/tests;/games`, `HOME=/home`, `TZ=+03:00` (сдвиг от UTC: местное время и время файлов; `run_build.ps1` берёт его у хоста), `INIT=/bin/LAUNCHER.EXE`. Программа ищется по `PATH`, а куда она ляжет, задаёт `<SharpOsCategory>` в её `.csproj`. Лаунчер открывается на вкладке «Главная»: плитки оболочки, PowerShell и игр.
 
 В оболочке окружение меняют `export ИМЯ=значение` и `unset ИМЯ`, `env` его печатает, `env ИМЯ=значение программа` запускает программу с добавкой. `$ИМЯ` подставляется в словах и в `"…"`, в `'…'` — нет; `~` — это `HOME`. `ENV` указывает сценарий, который приглашение выполняет при старте.
 

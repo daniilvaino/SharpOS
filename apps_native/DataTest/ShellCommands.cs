@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using SharpOS.AppSdk;
+using SharpOS.Std.Pipes;
 
 namespace DataApps
 {
@@ -56,6 +57,25 @@ namespace DataApps
                   Join(Lines("export PATH='/nowhere;/bin:/tests'; which PIPEGEN")) == pipegen + "\n");
             Check("19: cd into a file: 1; which in small letters names the stored file",
                   Sh("cd /bin/PIPEGEN.EXE") == 1 && Join(Lines("which pipegen")) == pipegen + "\n" && pipegen.EndsWith("PIPEGEN.EXE"));
+
+            // The shell's input to every command, read in turn (step216): the
+            // first takes two, the next counts the rest. Before, the second
+            // got none: 0.
+            List<string> shared = Lines("PIPEGEN 5 | SHELL -c '" + Self("take 2") + "; PIPECNT'");
+            Check("19: echo ... | shell: its commands read the input in turn (" + Escaped(Join(shared)) + ")",
+                  Join(shared) == "3\n");
+
+            // Hints (step216): FETCH's record goes to a pipe, its panel
+            // (stdtext, "describes the output") does not follow it there; the
+            // panel goes where 3 is sent.
+            int records = 0;
+            string recordType = null;
+            foreach (View v in Pipe.From("FETCH")) { records++; recordType = v.TypeName; }
+            Check("19: FETCH | ...: one SystemInfo (" + records.ToString() + " " + recordType + ")",
+                  records == 1 && recordType != null && recordType.EndsWith("SystemInfo"));
+            List<string> panel = Lines("FETCH 3>&1 >&-");
+            Check("19: FETCH 3>&1 >&-: the panel (" + panel.Count.ToString() + " lines)",
+                  panel.Count > 10 && Join(panel).Contains("processors"));
 
             File.WriteAllText(home + "/t19.txt", "old");
             Check("19: echo hello > $HOME/$T19D.txt", Sh("export T19D=t19; echo hello > $HOME/$T19D.txt") == 0);

@@ -179,6 +179,9 @@ namespace OS.Kernel.Process
                 }
                 else
                 {
+                    // The screen is the user's from here (step216): the
+                    // kernel's lines go to its logs only, until INIT ends.
+                    OS.Hal.OutputRouting.UserSession = true;
                     started = AppServiceBuilder.StartProcess(image, FileNameOf(app.Path),
                         app.AppAbiVersion, app.ServiceAbi, abiFromRequest: true, launcherId: 0, out proc,
                         imagePath: app.Path);
@@ -190,6 +193,7 @@ namespace OS.Kernel.Process
             }
             if (started != AppServiceStatus.Ok)
             {
+                OS.Hal.OutputRouting.UserSession = false;
                 DebugLog.Begin(LogLevel.Warn);
                 UiText.Write("app start failed: status=");
                 UiText.WriteUInt((uint)started);
@@ -198,6 +202,7 @@ namespace OS.Kernel.Process
             }
 
             AppServiceBuilder.WaitForExit(proc);
+            OS.Hal.OutputRouting.UserSession = false;
             int exitCode = proc.ExitCode;
             AppServiceBuilder.ReleaseProcess(proc);
 

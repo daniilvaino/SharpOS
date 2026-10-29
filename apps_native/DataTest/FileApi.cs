@@ -52,6 +52,11 @@ namespace DataApps
             DateTime now = DateTime.Now, written = info.LastWriteTime;
             double minutes = (now - written).TotalMinutes;
             Check("24: the last write is now (" + written.ToString() + ", now " + now.ToString() + ")", minutes > -2 && minutes < 2);
+            string tz = Environment.GetEnvironmentVariable("TZ") ?? "";
+            TimeSpan local = TimeZoneInfo.Local.BaseUtcOffset, apart = DateTime.Now - DateTime.UtcNow;
+            Check("24: TZ=" + tz + " is the local zone (" + local.ToString() + "), Now - UtcNow the same",
+                  (tz.Length == 0 ? local == TimeSpan.Zero : local.Ticks != 0 || tz.EndsWith("00:00") || tz == "UTC")
+                  && Math.Abs((apart - local).TotalSeconds) < 5);
             Check("24: no such file: Length throws, the time is 1601",
                   Throws(e => e is FileNotFoundException, () => { long n = new FileInfo(Root + "/none").Length; })
                   && File.GetLastWriteTime(Root + "/none").Year == 1601);

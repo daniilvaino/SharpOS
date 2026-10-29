@@ -424,6 +424,12 @@ namespace OS.Hal
             return true;
         }
 
+        /// <summary>
+        /// Minutes east of UTC that stamps are written in (step216): FAT keeps
+        /// local time, the RTC keeps UTC. Set from TZ by BootConfig; 0 before.
+        /// </summary>
+        internal static int LocalOffsetMinutes;
+
         // FAT packs a date as year-since-1980 / month / day and a time as
         // hours / minutes / two-second units.
         private static void PackTimestamp(out ushort date, out ushort time)
@@ -431,9 +437,14 @@ namespace OS.Hal
             date = (1 << 5) | 1;      // 1980-01-01
             time = 0;
 
-            if (!Rtc.TryRead(out Rtc.Snapshot now)) return;
-            if (now.Year < 1980 || now.Month < 1 || now.Month > 12
-                || now.Day < 1 || now.Day > 31) return;
+            if (!Rtc.TryRead(out Rtc.Snapshot rtc)) return;
+            if (rtc.Year < 1980 || rtc.Month < 1 || rtc.Month > 12
+                || rtc.Day < 1 || rtc.Day > 31 || rtc.Hour > 23 || rtc.Minute > 59 || rtc.Second > 59) return;
+            int day = rtc.Day > System.DateTime.DaysInMonth(rtc.Year, rtc.Month) ? System.DateTime.DaysInMonth(rtc.Year, rtc.Month) : rtc.Day;
+
+            System.DateTime now = new System.DateTime(rtc.Year, rtc.Month, day, rtc.Hour, rtc.Minute, rtc.Second)
+                .AddMinutes(LocalOffsetMinutes);
+            if (now.Year < 1980) return;
 
             date = (ushort)(((now.Year - 1980) << 9) | (now.Month << 5) | now.Day);
             time = (ushort)((now.Hour << 11) | (now.Minute << 5) | (now.Second / 2));

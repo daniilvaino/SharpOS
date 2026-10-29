@@ -56,6 +56,7 @@ namespace OS.Kernel.Pipes
             public int WriterEnd;           // end index, -1 when not attached yet
             public int ReaderEnd;
             public int Writers;              // open writing ends: one, more with Duplicate (step212)
+            public int Readers;              // open reading ends: one, more with Duplicate (step216)
             public bool WriterGone;          // the last writer closed or ended
             public bool WriterBroke;         // a writer ended without Close
             public bool ReaderGone;
@@ -127,6 +128,7 @@ namespace OS.Kernel.Pipes
                 p.WriterEnd = w;
                 p.ReaderEnd = r;
                 p.Writers = 1;
+                p.Readers = 1;
                 s_livePipes++;
                 writer = w + 1;
                 reader = r + 1;
@@ -292,10 +294,13 @@ namespace OS.Kernel.Pipes
         }
 
         /// <summary>
-        /// Another handle on a writing end, the same holder's (step212): what
-        /// `2>&amp;1` hands a stage, and a shell's own output across its
-        /// commands. The stream ends when the last copy closes, and is broken
-        /// if any copy's holder failed.
+        /// Another handle on an end, the same holder's. A writing end's copy
+        /// (step212) is what `2>&amp;1` hands a stage, and a shell's own output
+        /// across its commands: the stream ends when the last copy closes, and
+        /// is broken if any copy's holder failed. A reading end's copy
+        /// (step216) is a shell's own input across its commands: they read the
+        /// one queue in turn, and the writer sees the reader gone when the
+        /// last copy closes.
         /// </summary>
         public static PipeStatus Duplicate(uint holder, int handle, out int copy)
         {
@@ -303,10 +308,12 @@ namespace OS.Kernel.Pipes
             Preemption.Suppress();
             try
             {
-                if (!TryEnd(holder, handle, PipeRole.Writer, out Pipe p)) return PipeStatus.BadHandle;
-                int e = NewEnd(p, holder, PipeRole.Writer);
+                if (!TryEnd(holder, handle, (PipeRole)0, out Pipe p)) return PipeStatus.BadHandle;
+                PipeRole role = s_ends[handle - 1].Role;
+                int e = NewEnd(p, holder, role);
                 if (e < 0) return PipeStatus.NoMemory;
-                p.Writers++;
+                if (role == PipeRole.Writer) p.Writers++;
+                else p.Readers++;
                 copy = e + 1;
                 return PipeStatus.Ok;
             }
@@ -630,7 +637,7 @@ namespace OS.Kernel.Pipes
                 if (broke) p.WriterBroke = true;
                 if (--p.Writers > 0)
                 {
-                    if (p.WriterEnd == index) p.WriterEnd = AnyWriter(p);
+                    if (p.WriterEnd == index) p.WriterEnd = AnyEnd(p, PipeRole.Writer);
                     Bump(p);
                     return;
                 }
@@ -639,6 +646,13 @@ namespace OS.Kernel.Pipes
             }
             else
             {
+                // Another copy reads on (step216): the queue stays for it.
+                if (--p.Readers > 0)
+                {
+                    if (p.ReaderEnd == index) p.ReaderEnd = AnyEnd(p, PipeRole.Reader);
+                    Bump(p);
+                    return;
+                }
                 // Nobody will read the queue: it goes back now.
                 p.ReaderGone = true;
                 p.ReaderEnd = -2;
@@ -661,11 +675,11 @@ namespace OS.Kernel.Pipes
             Bump(p);
         }
 
-        // An open writing end of the pipe besides the one just closed.
-        private static int AnyWriter(Pipe p)
+        // An open end of the pipe in that role besides the one just closed.
+        private static int AnyEnd(Pipe p, PipeRole role)
         {
             for (int i = 0; i < s_ends.Length; i++)
-                if (s_ends[i].Open && s_ends[i].Pipe == p && s_ends[i].Role == PipeRole.Writer) return i;
+                if (s_ends[i].Open && s_ends[i].Pipe == p && s_ends[i].Role == role) return i;
             return -2;
         }
 
@@ -721,6 +735,7 @@ namespace OS.Kernel.Pipes
             else
             {
                 p.ReaderEnd = end;
+                p.Readers = 1;
                 p.ReaderSchema = Copy(schema);
                 p.ReaderKey = rootKey;
             }

@@ -5,7 +5,7 @@ namespace SharpOS.Std.NoRuntime
     /// <summary>
     /// The kernel's own code reads and sets the boot environment — the one
     /// the kernel gives what it starts by itself (step207). It has no working
-    /// directory: "\".
+    /// directory: "/".
     /// </summary>
     public static class EnvironmentStore
     {

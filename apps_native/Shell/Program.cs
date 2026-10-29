@@ -84,9 +84,10 @@ namespace Shell
             AppHost.Terminal.WriteUInt(length);
             AppHost.Terminal.Write("\n");
 
-            // The shell's own output (step212): its commands and builtins write
-            // there, each a copy of the end; the screen when none was handed over.
-            var executor = new Executor(null, SharpOS.Std.Pipes.Pipe.OutputEnd(), null);
+            // The shell's own ends (step212, input step216): its commands and
+            // builtins write to the output, each a copy of the end — the screen
+            // when none was handed over — and read the input in turn.
+            var executor = new Executor(SharpOS.Std.Pipes.Pipe.InputEnd(), SharpOS.Std.Pipes.Pipe.OutputEnd(), null);
             uint ran = 0;
             uint failed = 0;
             bool handOver = false;

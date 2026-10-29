@@ -6,11 +6,11 @@
 // returns, unless nil, goes on: a table as an Expando (a sequence as an
 // array), anything else as its text.
 //
-//     SYSINFO 3>&- | LUA -e "return strings" | CONVERT --to jsonl
+//     FETCH | LUA -e "return strings" | CONVERT --to jsonl
 //
-// Every state runs \bin\lua\init.lua first (LUA_INIT overrides), which
+// Every state runs /bin/lua/init.lua first (LUA_INIT overrides), which
 // requires prelude.lua: walk(v, f), strings(v), keyed(v). require looks in
-// the current folder and \bin\lua (LUA_PATH overrides).
+// the current folder and /bin/lua (LUA_PATH overrides).
 
 using System.Runtime;
 using Lua;

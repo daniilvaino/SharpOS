@@ -25,6 +25,8 @@ namespace OS.Kernel.Process
     ///              — the launcher, or the shell with the battery script that
     ///              run_build.ps1 -Autorun writes;
     ///   BUILDINFO  "on": programs print their build line at start.
+    /// TZ stays in the environment and the kernel reads it too: an offset east
+    /// of UTC ("+03:00") for local time and FAT stamps; the RTC keeps UTC.
     /// A missing file, or one the parser refuses, is the defaults: the machine
     /// still boots, and the log says why.
     /// </remarks>
@@ -75,6 +77,13 @@ namespace OS.Kernel.Process
             int n = 0;
             foreach (KeyValuePair<string, string> kv in vars) env[n++] = kv.Key + "=" + kv.Value;
             ProcessEnvironment.Boot = env;
+
+            // TZ (step216): a fixed offset; the kernel's local time and FAT stamps.
+            System.TimeZoneInfo.ClearCachedData();
+            Fat32.LocalOffsetMinutes = (int)System.TimeZoneInfo.Local.BaseUtcOffset.TotalMinutes;
+            if (vars.TryGetValue("TZ", out string tz) && Fat32.LocalOffsetMinutes == 0 && !System.TimeZoneInfo.TryParseFixedOffset(tz, out _))
+                DebugLog.Write(LogLevel.Warn, "config: TZ=" + tz + " is not an offset (+03:00) - UTC taken");
+
             Init = SplitInit(init ?? DefaultInit);
             AnnounceBuild = announce == "on";
         }

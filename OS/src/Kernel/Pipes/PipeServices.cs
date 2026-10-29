@@ -112,7 +112,7 @@ namespace OS.Kernel.Pipes
         public static int Break(int handle)
             => (int)KernelPipes.Break(KernelPipes.CallerHolder(), handle);
 
-        // step212: another handle on a writing end, the caller's.
+        // step212: another handle on an end, the caller's (a reading one since step216).
         [UnmanagedCallersOnly]
         public static int Duplicate(int handle, int* copy)
         {

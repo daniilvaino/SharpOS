@@ -398,7 +398,8 @@ namespace OS.Kernel.Process
         public ulong ThreadWordsAddress;
 
         // int PipeDuplicate(int handle, int* copy) (step212): another handle
-        // on the same writing end — the stream ends when the last copy
+        // on the same end (a reading one since step216: a shell's input across
+        // its commands); for a writing end — the stream ends when the last copy
         // closes. For `n>&m` and a shell's own output across its commands.
         // Zero: an older kernel.
         public ulong PipeDuplicateAddress;

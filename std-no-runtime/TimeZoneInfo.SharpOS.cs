@@ -11,7 +11,7 @@
 // upstream's own time-zone-invariant mode (TimeZoneInfo.Invariant,
 // DOTNET_SYSTEM_TIMEZONE_INVARIANT=1) under globalization-invariant mode:
 //
-//   * the local zone is UTC;
+//   * the local zone is UTC, or a fixed offset from TZ ("+03:00", step216);
 //   * the only system zone is UTC: GetSystemTimeZones returns it alone, and
 //     FindSystemTimeZoneById throws TimeZoneNotFoundException for any other id;
 //   * the UTC aliases upstream's Unix part recognises ("Etc/UTC", "Etc/UCT",
@@ -224,8 +224,46 @@ namespace System
         {
             Debug.Assert(Monitor.IsEntered(cachedData));
 
-            return Utc; // SharpOS: upstream's GetLocalTimeZoneCore, TimeZoneInfo.Invariant branch - the local zone is UTC
+            // SharpOS: upstream's GetLocalTimeZoneCore reads TZ as a zone id or a
+            // TZif path. With no database, TZ is a fixed offset (step216);
+            // anything else, or no TZ, is UTC — the Invariant branch.
+            string? tz = Environment.GetEnvironmentVariable("TZ");
+            if (tz != null && TryParseFixedOffset(tz, out TimeSpan offset))
+                return offset == TimeSpan.Zero ? Utc : new TimeZoneInfo(tz, offset, PopulateFixedName(offset), tz, null, null, disableDaylightSavingTime: true);
+            return Utc;
         }
+
+        // SharpOS: TZ as an ISO 8601 offset east of UTC — "+03:00", "-0530",
+        // "+3", optionally after "UTC" or "GMT" ("UTC+03:00"). Not POSIX TZ,
+        // whose sign is the other way round ("MSK-3").
+        internal static bool TryParseFixedOffset(string text, out TimeSpan offset)
+        {
+            offset = TimeSpan.Zero;
+            int i = 0;
+            if (text.StartsWith("UTC", StringComparison.OrdinalIgnoreCase) || text.StartsWith("GMT", StringComparison.OrdinalIgnoreCase))
+                i = 3;
+            if (i == text.Length) return i == 3;
+            if (text[i] != '+' && text[i] != '-') return false;
+            bool negative = text[i++] == '-';
+
+            int hours = 0, minutes = 0, digits = 0;
+            while (i < text.Length && digits < 2 && char.IsAsciiDigit(text[i])) { hours = hours * 10 + (text[i++] - '0'); digits++; }
+            if (digits == 0 || hours > 14) return false;
+            if (i < text.Length && text[i] == ':') i++;
+            if (i < text.Length)
+            {
+                if (text.Length - i != 2 || !char.IsAsciiDigit(text[i]) || !char.IsAsciiDigit(text[i + 1])) return false;
+                minutes = (text[i] - '0') * 10 + (text[i + 1] - '0');
+                if (minutes > 59) return false;
+            }
+
+            offset = new TimeSpan(hours, minutes, 0);
+            if (negative) offset = offset.Negate();
+            return offset <= MaxOffset && offset >= -MaxOffset;
+        }
+
+        private static string PopulateFixedName(TimeSpan offset)
+            => "(UTC" + (offset >= TimeSpan.Zero ? '+' : '-') + offset.ToString(@"hh\:mm", null) + ")";
 
         // Never reached: TryGetTimeZoneUsingId returns before it whenever Invariant is true.
         private static TimeZoneInfoResult TryGetTimeZoneFromLocalMachine(string id, out TimeZoneInfo? value, out Exception? e)

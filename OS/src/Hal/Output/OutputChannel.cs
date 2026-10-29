@@ -129,7 +129,11 @@
 
                 default:
                     // The kernel's own log, minus the screen while a program
-                    // owns it.
+                    // owns it, and while the user's session runs (step216):
+                    // the screen is the user's then, and a kernel line in the
+                    // middle of a program's output ("[proc] ...", a census, a
+                    // banner) was read as that program's. The boot before INIT
+                    // and the batch summary after it still show.
                     //
                     // Everything here still reaches the serial port and the
                     // disk, so nothing is lost; what stops is painting over a
@@ -140,11 +144,17 @@
                     // nobody anything. Suppressing the class beats finding each
                     // writer: the next one to be added would otherwise have to
                     // be found the same way.
-                    return TerminalConsole.ProgramOwnsScreen
+                    return UserSession || TerminalConsole.ProgramOwnsScreen
                         ? KernelLog & ~OutputSink.Screen
                         : KernelLog;
             }
         }
+
+        /// <summary>
+        /// The INIT program is running (step216): the screen is the user's.
+        /// A plain bool, safe to ask before statics are materialized.
+        /// </summary>
+        public static bool UserSession;
 
         private static OutputSink ProgramPort
             => Serial.Com3Present ? OutputSink.Com3 : OutputSink.Com1;

@@ -818,89 +818,101 @@ namespace OS.Kernel.Process
             int characters = 0;
             uint last = 0;
 
-            // The bytes are UTF-8, and they have to be decoded here.
-            //
-            // This used to cast each byte to a char, which is Latin-1 by
-            // another name: a box-drawing rune arrived as its three UTF-8
-            // bytes and left as three separate characters, each re-encoded to
-            // UTF-8 on the way to the terminal engine. The screen showed the
-            // mojibake that double encoding always produces.
-            byte* pointer = (byte*)textAddress;
-            for (int i = 0; i < MaxWriteStringBytes; )
+            // One write, whole (step216): switching was suppressed per
+            // character only, and two programs starting together cut each
+            // other's banners mid-word ("build 9c96ade-pi[app] PipeCnt ...").
+            // The pipe to the screen (donext) replaces this.
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
             {
-                byte lead = pointer[i];
-                if (lead == 0)
-                    break;
+                // The bytes are UTF-8, and they have to be decoded here.
+                //
+                // This used to cast each byte to a char, which is Latin-1 by
+                // another name: a box-drawing rune arrived as its three UTF-8
+                // bytes and left as three separate characters, each re-encoded to
+                // UTF-8 on the way to the terminal engine. The screen showed the
+                // mojibake that double encoding always produces.
+                byte* pointer = (byte*)textAddress;
+                for (int i = 0; i < MaxWriteStringBytes; )
+                {
+                    byte lead = pointer[i];
+                    if (lead == 0)
+                        break;
 
-                uint codepoint;
-                int length;
+                    uint codepoint;
+                    int length;
 
-                if (lead < 0x80) { codepoint = lead; length = 1; }
-                else if ((lead & 0xE0) == 0xC0) { codepoint = (uint)(lead & 0x1F); length = 2; }
-                else if ((lead & 0xF0) == 0xE0) { codepoint = (uint)(lead & 0x0F); length = 3; }
-                else if ((lead & 0xF8) == 0xF0) { codepoint = (uint)(lead & 0x07); length = 4; }
+                    if (lead < 0x80) { codepoint = lead; length = 1; }
+                    else if ((lead & 0xE0) == 0xC0) { codepoint = (uint)(lead & 0x1F); length = 2; }
+                    else if ((lead & 0xF0) == 0xE0) { codepoint = (uint)(lead & 0x0F); length = 3; }
+                    else if ((lead & 0xF8) == 0xF0) { codepoint = (uint)(lead & 0x07); length = 4; }
+                    else
+                    {
+                        // A stray continuation byte. Skip it rather than guess: one
+                        // bad byte should cost one character, not resynchronise the
+                        // rest of the string onto the wrong boundary.
+                        i++;
+                        continue;
+                    }
+
+                    if (i + length > MaxWriteStringBytes) break;
+
+                    bool truncated = false;
+                    for (int k = 1; k < length; k++)
+                    {
+                        byte continuation = pointer[i + k];
+                        if ((continuation & 0xC0) != 0x80) { truncated = true; break; }
+                        codepoint = (codepoint << 6) | (uint)(continuation & 0x3F);
+                    }
+
+                    if (truncated) { i++; continue; }
+                    i += length;
+                    characters++;
+                    last = codepoint;
+
+                    if (codepoint <= 0xFFFF)
+                    {
+                        OS.Hal.Platform.WriteChar((char)codepoint, channel);
+                    }
+                    else
+                    {
+                        // Past the basic plane the engine wants the surrogate pair,
+                        // since it consumes chars rather than codepoints.
+                        codepoint -= 0x10000;
+                        OS.Hal.Platform.WriteChar((char)(0xD800 + (codepoint >> 10)), channel);
+                        OS.Hal.Platform.WriteChar((char)(0xDC00 + (codepoint & 0x3FF)), channel);
+                    }
+                }
+
+                // Paint once, at the end of the write — the same batching
+                // Platform.Write uses for kernel output.
+                //
+                // Without this a full-screen app draws nothing: the terminal engine
+                // paints on a line break, and a text UI never writes one. Its
+                // escape sequences were reaching the engine and changing the grid,
+                // while the framebuffer kept showing the frame before.
+                //
+                //
+                // Except after a write that ends a line: that is a program printing
+                // lines, and a paint per write made it pay one full-screen move per
+                // line (step169). Its line break already painted if one was due;
+                // the rest waits for the pump, the next write or a key read.
+                //
+                // Not "paint when due" for everything. A text UI sends a frame in
+                // several writes and redraws it whole even when nothing changed;
+                // painted at the end of every write, identical frames are
+                // invisible. Deferring all but the first write of a burst put the
+                // first piece of each new frame on screen alone — the launcher
+                // flickered, and came up half-drawn until a key was pressed.
+                if (last == '\n')
+                    OS.Hal.Platform.FlushConsoleWhenDue();
                 else
-                {
-                    // A stray continuation byte. Skip it rather than guess: one
-                    // bad byte should cost one character, not resynchronise the
-                    // rest of the string onto the wrong boundary.
-                    i++;
-                    continue;
-                }
-
-                if (i + length > MaxWriteStringBytes) break;
-
-                bool truncated = false;
-                for (int k = 1; k < length; k++)
-                {
-                    byte continuation = pointer[i + k];
-                    if ((continuation & 0xC0) != 0x80) { truncated = true; break; }
-                    codepoint = (codepoint << 6) | (uint)(continuation & 0x3F);
-                }
-
-                if (truncated) { i++; continue; }
-                i += length;
-                characters++;
-                last = codepoint;
-
-                if (codepoint <= 0xFFFF)
-                {
-                    OS.Hal.Platform.WriteChar((char)codepoint, channel);
-                }
-                else
-                {
-                    // Past the basic plane the engine wants the surrogate pair,
-                    // since it consumes chars rather than codepoints.
-                    codepoint -= 0x10000;
-                    OS.Hal.Platform.WriteChar((char)(0xD800 + (codepoint >> 10)), channel);
-                    OS.Hal.Platform.WriteChar((char)(0xDC00 + (codepoint & 0x3FF)), channel);
-                }
+                    OS.Hal.Platform.FlushConsole();
             }
-
-            // Paint once, at the end of the write — the same batching
-            // Platform.Write uses for kernel output.
-            //
-            // Without this a full-screen app draws nothing: the terminal engine
-            // paints on a line break, and a text UI never writes one. Its
-            // escape sequences were reaching the engine and changing the grid,
-            // while the framebuffer kept showing the frame before.
-            //
-            //
-            // Except after a write that ends a line: that is a program printing
-            // lines, and a paint per write made it pay one full-screen move per
-            // line (step169). Its line break already painted if one was due;
-            // the rest waits for the pump, the next write or a key read.
-            //
-            // Not "paint when due" for everything. A text UI sends a frame in
-            // several writes and redraws it whole even when nothing changed;
-            // painted at the end of every write, identical frames are
-            // invisible. Deferring all but the first write of a burst put the
-            // first piece of each new frame on screen alone — the launcher
-            // flickered, and came up half-drawn until a key was pressed.
-            if (last == '\n')
-                OS.Hal.Platform.FlushConsoleWhenDue();
-            else
-                OS.Hal.Platform.FlushConsole();
+            finally
+            {
+                OS.Kernel.Threading.Preemption.Allow();
+            }
             OS.Kernel.Diagnostics.PerfCounters.CountProgramWrite(started, characters);
         }
 

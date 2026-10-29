@@ -16,6 +16,23 @@ namespace SharpOS.Std.Pipes
     // program's standard output has one type, and text beside data goes to
     // Pipe.Text (stdtext) or Console.Error.
 
+    /// <summary>
+    /// What a writer says about its stream to whoever prints it (step216).
+    /// The writer's end honours them: the screen is written by the program
+    /// itself when no end was handed over. PIPEHINTS=off turns them off.
+    /// </summary>
+    [Flags]
+    public enum PipeHints
+    {
+        None = 0,
+
+        /// <summary>The standard output is data for programs: not printed on the terminal.</summary>
+        NotForTerminal = 1,
+
+        /// <summary>stdtext repeats the standard output for people: not printed when that goes elsewhere.</summary>
+        DescribesOutput = 2,
+    }
+
     /// <summary>The two ends of a new pipe, both this program's until one is opened or handed over.</summary>
     public sealed class PipePair
     {
@@ -113,6 +130,20 @@ namespace SharpOS.Std.Pipes
     {
         internal PipeReadEnd(int handle) : base(handle) { }
 
+        /// <summary>
+        /// Another end on the same pipe, not yet opened (step216): the copies
+        /// read one queue in turn — a shell hands its own input to each of its
+        /// commands so — and the writer sees the reader gone when the last of
+        /// them closes.
+        /// </summary>
+        public PipeReadEnd Duplicate()
+        {
+            int handle = Peek();
+            PipeStatus status = PipeTransport.Duplicate(handle, out int copy);
+            if (status != PipeStatus.Ok) throw new PipeException(status, "a copy of the pipe end: " + Pipe.Explain(status));
+            return new PipeReadEnd(copy);
+        }
+
         /// <summary>A reader of <typeparamref name="T"/> on this end; the type is checked against the writer's.</summary>
         public PipeReader<T> Read<T>() where T : class
         {
@@ -196,6 +227,35 @@ namespace SharpOS.Std.Pipes
         }
 
         /// <summary>
+        /// The standard output with hints for whoever prints it (step216):
+        /// with <see cref="PipeHints.NotForTerminal"/> and no output handed
+        /// over, the messages go nowhere instead of the screen — data for
+        /// programs, whose text for people goes to <see cref="Text"/>.
+        /// </summary>
+        public static PipeWriter<T> Write<T>(PipeHints hints) where T : class
+        {
+            int handle = TakeOutput(OutputName<T>());
+            if (handle != 0) return OpenWriter<T>(handle, "the standard output");
+            if ((hints & PipeHints.NotForTerminal) == 0 || !HintsHonoured) return PipeWriter<T>.ToScreen();
+            return OpenWriter<T>(Nowhere().Take("the standard output"), "the standard output");
+        }
+
+        /// <summary>
+        /// What stdtext says about itself (step216), set before <see cref="Text"/>
+        /// is first written: with <see cref="PipeHints.DescribesOutput"/> it is
+        /// left out when the standard output was handed somewhere — to a pipe,
+        /// a file, nowhere — and only an end handed under 3 still gets it.
+        /// </summary>
+        public static PipeHints TextHints { get; set; }
+
+        /// <summary>
+        /// Whether hints leave anything out: PIPEHINTS=off prints everything
+        /// (`env PIPEHINTS=off FETCH`).
+        /// </summary>
+        public static bool HintsHonoured
+            => !string.Equals(Environment.GetEnvironmentVariable("PIPEHINTS"), "off", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
         /// The standard output as System.Console's text (step212): a pipe of
         /// strings, a message a line; with no output handed over, the screen,
         /// written through as it comes so a prompt shows before its input.
@@ -224,7 +284,10 @@ namespace SharpOS.Std.Pipes
         /// of strings when an end was handed under <see cref="TextEnd"/>
         /// (`3> file`); the terminal otherwise.
         /// </summary>
-        public static TextWriter Text => s_text ??= HandedText(TextEnd, "stdtext") ?? new TerminalTextWriter();
+        public static TextWriter Text => s_text ??= HandedText(TextEnd, "stdtext") ?? (TextLeftOut ? TextWriter.Null : new TerminalTextWriter());
+
+        private static bool TextLeftOut
+            => (TextHints & PipeHints.DescribesOutput) != 0 && HintsHonoured && PipeTransport.StandardEnd(1) != 0;
 
         /// <summary>stdtext's unfinished line, sent at the program's end (AppRuntime.Finish).</summary>
         internal static void FlushText() => s_text?.Flush();

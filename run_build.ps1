@@ -796,6 +796,11 @@ foreach ($staleElf in @("HELLO.ELF", "ABIINFO.ELF", "MARKER.ELF", "HELLOCS.ELF",
     if (Test-Path -LiteralPath $stalePath) { Remove-Item -LiteralPath $stalePath -Force }
     if (Test-Path -LiteralPath "$stalePath.abi") { Remove-Item -LiteralPath "$stalePath.abi" -Force }
 }
+# Programs that are gone: SYSINFO merged into FETCH (step216).
+foreach ($staleExe in @("SYSINFO.EXE")) {
+    $stalePath = Join-Path $espDirs['bin'] $staleExe
+    if (Test-Path -LiteralPath $stalePath) { Remove-Item -LiteralPath $stalePath -Force }
+}
 
 # step137/138: freestanding win-x64 PE apps (built by build.ps1). Stage each
 # to ESP as <NAME>.EXE; the
@@ -896,6 +901,10 @@ if ($Autorun) {
         Write-Host "Autorun requested but $autorunSrc is missing — skipping"
     }
 }
+# The host's offset east of UTC now (step216): QEMU's RTC keeps UTC, FAT and
+# the clock on screen keep local time. A fixed offset; no daylight rules.
+$tzNow = [System.TimeZoneInfo]::Local.GetUtcOffset([DateTime]::UtcNow)
+$tzOffset = ('{0}{1:00}:{2:00}' -f $(if ($tzNow -lt [TimeSpan]::Zero) { '-' } else { '+' }), [Math]::Abs($tzNow.Hours), [Math]::Abs($tzNow.Minutes))
 $systemEnv = @(
     '# SharpOS: what the kernel starts after boot, and the environment it gives',
     '# everything it starts (OS/src/Kernel/Process/BootConfig.cs). Written by',
@@ -903,6 +912,7 @@ $systemEnv = @(
     '# $NAME and ${NAME:-default} (std-no-runtime/Formats/Dotenv).',
     'PATH=/bin;/tests;/games',
     'HOME=/home',
+    "TZ=$tzOffset",
     "INIT=$init",
     "BUILDINFO=$buildInfo"
 ) -join "`n"

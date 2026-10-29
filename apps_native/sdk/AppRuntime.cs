@@ -260,11 +260,10 @@ namespace SharpOS.AppSdk
             Process.Mark(0);
             if ((s_services->Settings & AppServiceTable.SettingAnnounceBuild) != 0)
             {
-                AppHost.Terminal.Write("\u001b[90m[app] ");
-                AppHost.Terminal.Write(AppBuildInfo.Name);
-                AppHost.Terminal.Write(" build ");
-                AppHost.Terminal.Write(AppBuildInfo.Id);
-                AppHost.Terminal.Write("\u001b[0m\n");
+                // One write (step216): a write reaches the screen whole, and
+                // two programs starting together put their banners in between
+                // each other's pieces.
+                AppHost.Terminal.Write("\u001b[90m[app] " + AppBuildInfo.Name + " build " + AppBuildInfo.Id + "\u001b[0m\n");
             }
             Process.Mark(1);
         }
