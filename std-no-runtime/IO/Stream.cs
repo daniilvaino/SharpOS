@@ -7,7 +7,7 @@
 //     exist (step198) but their base versions complete synchronously.
 //   - timeouts, CanTimeout, synchronized wrapper, TextReader/TextWriter
 //     integration. CopyTo is back (step208), with a plain buffer for
-//     ArrayPool's; CopyToAsync too (release 0.1), without ConfigureAwait.
+//     ArrayPool's; CopyToAsync and DisposeAsync too (release 0.1).
 // Kept: the sync byte[] Read/Write/Seek core + ReadExactly (net7+) that
 // ported app code (ManagedDoom WAD/save readers) actually calls.
 
@@ -40,7 +40,7 @@ namespace System.IO
         ReadWrite = 3,
     }
 
-    public abstract class Stream : IDisposable
+    public abstract class Stream : IDisposable, IAsyncDisposable
     {
         // A stream with no backing store: reads find nothing, writes vanish.
         // Fresh per access rather than a static readonly singleton — the
@@ -115,9 +115,8 @@ namespace System.IO
                 try
                 {
                     int bytesRead;
-                    // SharpOS cut: .ConfigureAwait(false) on both awaits — std has no ConfigureAwait.
-                    while ((bytesRead = await source.ReadAsync(new Memory<byte>(buffer), cancellationToken)) != 0)
-                        await destination.WriteAsync(new ReadOnlyMemory<byte>(buffer, 0, bytesRead), cancellationToken);
+                    while ((bytesRead = await source.ReadAsync(new Memory<byte>(buffer), cancellationToken).ConfigureAwait(false)) != 0)
+                        await destination.WriteAsync(new ReadOnlyMemory<byte>(buffer, 0, bytesRead), cancellationToken).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -249,6 +248,46 @@ namespace System.IO
             }
         }
 
+        // ReadExactlyAsync (release 0.1, the archive ports): the original's,
+        // over ReadAtLeastAsyncCore.
+        public System.Threading.Tasks.ValueTask ReadExactlyAsync(Memory<byte> buffer, System.Threading.CancellationToken cancellationToken = default)
+        {
+            System.Threading.Tasks.ValueTask<int> vt = ReadAtLeastAsyncCore(buffer, buffer.Length, throwOnEndOfStream: true, cancellationToken);
+            return System.Threading.Tasks.ValueTask.DangerousCreateFromTypedValueTask(vt);
+        }
+
+        public System.Threading.Tasks.ValueTask ReadExactlyAsync(byte[] buffer, int offset, int count, System.Threading.CancellationToken cancellationToken = default)
+        {
+            ValidateBufferArguments(buffer, offset, count);
+            System.Threading.Tasks.ValueTask<int> vt = ReadAtLeastAsyncCore(buffer.AsMemory(offset, count), count, throwOnEndOfStream: true, cancellationToken);
+            return System.Threading.Tasks.ValueTask.DangerousCreateFromTypedValueTask(vt);
+        }
+
+        private async System.Threading.Tasks.ValueTask<int> ReadAtLeastAsyncCore(Memory<byte> buffer, int minimumBytes, bool throwOnEndOfStream, System.Threading.CancellationToken cancellationToken)
+        {
+            int totalRead = 0;
+            while (totalRead < minimumBytes)
+            {
+                int read = await ReadAsync(buffer.Slice(totalRead), cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    if (throwOnEndOfStream)
+                        throw new EndOfStreamException("Unable to read beyond the end of the stream.");
+                    return totalRead;
+                }
+                totalRead += read;
+            }
+            return totalRead;
+        }
+
+        protected static void ValidateBufferArguments(byte[] buffer, int offset, int count)
+        {
+            if (buffer is null) throw new ArgumentNullException(nameof(buffer));
+            if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset), "Non-negative number required.");
+            if ((uint)count > buffer.Length - offset)
+                throw new ArgumentOutOfRangeException(nameof(count), "Offset and length were out of bounds for the array or count is greater than the number of elements from index to the end of the source collection.");
+        }
+
         public void ReadExactly(Span<byte> buffer)
         {
             int total = 0;
@@ -264,6 +303,19 @@ namespace System.IO
         public virtual void Close() => Dispose(true);
 
         public void Dispose() => Dispose(true);
+
+        public virtual System.Threading.Tasks.ValueTask DisposeAsync()
+        {
+            try
+            {
+                Dispose();
+                return default;
+            }
+            catch (Exception exc)
+            {
+                return System.Threading.Tasks.ValueTask.FromException(exc);
+            }
+        }
 
         protected virtual void Dispose(bool disposing) { }
     }

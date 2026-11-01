@@ -60,6 +60,38 @@ namespace System.IO
         {
         }
 
+        // Share and buffer size change nothing here: the kernel's open files
+        // are unbuffered and one writer at a time already (FileOptions.AppHost.cs).
+        public FileStream(string path, FileMode mode, FileAccess access, FileShare share)
+            : this(path, mode, access)
+        {
+        }
+
+        public FileStream(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize)
+            : this(path, mode, access)
+        {
+            if (bufferSize < 0) throw new ArgumentOutOfRangeException(nameof(bufferSize));
+        }
+
+        public FileStream(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize, FileOptions options)
+            : this(path, mode, access, share, bufferSize)
+        {
+            if ((options & FileOptions.DeleteOnClose) != 0) _deleteOnClose = SharpOS.AppSdk.Process.ResolvePath(path);
+        }
+
+        public FileStream(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize, bool useAsync)
+            : this(path, mode, access, share, bufferSize)
+        {
+        }
+
+        public FileStream(string path, FileStreamOptions options)
+            : this(path, (options ?? throw new ArgumentNullException(nameof(options))).Mode, options.Access,
+                   options.Share, options.BufferSize, options.Options)
+        {
+        }
+
+        private readonly string _deleteOnClose;
+
         public override bool CanRead => _out == null || _canRead;
         public override bool CanSeek => true;
         public override bool CanWrite => _out != null;
@@ -126,7 +158,11 @@ namespace System.IO
 
         public override void Flush() { }
 
-        protected override void Dispose(bool disposing) => _out?.Dispose();
+        protected override void Dispose(bool disposing)
+        {
+            _out?.Dispose();
+            if (_deleteOnClose != null) File.Delete(_deleteOnClose);
+        }
     }
 
     public static unsafe partial class File
@@ -306,6 +342,12 @@ namespace System.IO
         }
 
         /// <summary>Makes the directory and every missing one above it, as in BCL; one that exists is no error.</summary>
+        /// <summary>
+        /// BCL's Unix overload (release 0.1, for the archive ports): the directory is
+        /// made, the mode is not kept — FAT has none, as on Linux's vfat.
+        /// </summary>
+        public static DirectoryInfo CreateDirectory(string path, UnixFileMode unixCreateMode) => CreateDirectory(path);
+
         public static DirectoryInfo CreateDirectory(string path)
         {
             if (path == null) throw new ArgumentNullException(nameof(path));

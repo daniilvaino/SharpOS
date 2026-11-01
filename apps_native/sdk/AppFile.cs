@@ -50,7 +50,8 @@ namespace SharpOS.AppSdk
         }
 
         // FileManage ops (step208): AppServiceBuilder.FileManage*.
-        internal const int ManageDelete = 1, ManageMakeDirectory = 2, ManageRemoveDirectory = 3, ManageStat = 4, ManageRename = 5, ManageVolume = 6;
+        internal const int ManageDelete = 1, ManageMakeDirectory = 2, ManageRemoveDirectory = 3, ManageStat = 4, ManageRename = 5, ManageVolume = 6,
+                           ManageSetWriteTime = 7;
 
         // The file system's reasons (OS.Hal.Fat32.Change*, negated): what a
         // refused change was refused for.
@@ -97,6 +98,19 @@ namespace SharpOS.AppSdk
             second = result[1];
             third = result[2];
             return status;
+        }
+
+        /// <summary>Sets when a path was last written: FAT's stamp, as ManageStat gives it (release 0.1).</summary>
+        internal static AppServiceStatus SetWriteTime(string path, uint stamp)
+        {
+            AppServiceTable* t = AppRuntime.Services;
+            if (t == null || t->FileManageAddress == 0) return AppServiceStatus.Unsupported;
+            byte* ascii = stackalloc byte[path.Length * 3 + 1];
+            if (!ToAscii(path, ascii)) return AppServiceStatus.InvalidParameter;
+            ulong* result = stackalloc ulong[4];
+            result[0] = stamp;
+            result[1] = result[2] = result[3] = 0;
+            return (AppServiceStatus)((delegate* unmanaged<int, ulong, ulong*, int>)t->FileManageAddress)(ManageSetWriteTime, (ulong)ascii, result);
         }
 
         // A path as the kernel takes it: UTF-8 (step208; before, ASCII only),

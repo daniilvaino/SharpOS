@@ -50,6 +50,9 @@ namespace System
         internal const string Overflow_UInt32 = "Value was either too large or too small for a UInt32.";
         internal const string Overflow_UInt64 = "Value was either too large or too small for a UInt64.";
 
+        internal static string Format(string resourceFormat, params object?[]? args) =>
+            args is null || args.Length == 0 ? resourceFormat : string.Format(resourceFormat, args);
+
         internal static string Format(string resourceFormat, object? p1) => string.Format(resourceFormat, p1);
 
         internal static string Format(string resourceFormat, object? p1, object? p2) => string.Format(resourceFormat, p1, p2);

@@ -7,6 +7,9 @@ namespace System
 {
     public static partial class Environment
     {
+        /// <summary>This process's number, as the kernel gives it (release 0.1).</summary>
+        public static int ProcessId => (int)SharpOS.AppSdk.Process.CurrentId;
+
         /// <summary>Terminates this process and returns <paramref name="exitCode"/> to the kernel.</summary>
         public static void Exit(int exitCode)
         {

@@ -95,6 +95,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Environment.AppHost.cs"  Link="sdk\Environment.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileSystemInfo.AppHost.cs" Link="sdk\FileSystemInfo.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FileOptions.AppHost.cs" Link="sdk\FileOptions.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Path.AppHost.cs" Link="sdk\Path.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ProcessStub.cs"          Link="sdk\ProcessStub.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Process.cs"              Link="sdk\Process.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppFile.cs"              Link="sdk\AppFile.cs" />

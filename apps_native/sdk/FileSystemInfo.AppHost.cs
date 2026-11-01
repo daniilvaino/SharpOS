@@ -86,6 +86,18 @@ namespace System.IO
         /// <summary>When the file was last written; 1601-01-01 when there is none, as in BCL.</summary>
         public static DateTime GetLastWriteTime(string path) => Directory.LastWrite(path);
 
+        public static DateTime GetLastWriteTimeUtc(string path) => Directory.LastWrite(path).ToUniversalTime();
+
+        /// <summary>
+        /// Sets when a file was last written (release 0.1): FAT keeps local time
+        /// to two seconds, from 1980 to 2107, and nothing else — it is an
+        /// ArgumentOutOfRangeException outside that range, as BCL's on FAT.
+        /// </summary>
+        public static void SetLastWriteTime(string path, DateTime lastWriteTime) => Directory.SetWrite(path, lastWriteTime);
+
+        public static void SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc) =>
+            Directory.SetWrite(path, DateTime.SpecifyKind(lastWriteTimeUtc, DateTimeKind.Utc));
+
         public static string ReadAllText(string path) => System.Text.Encoding.UTF8.GetString(ReadAllBytes(path));
     }
 
@@ -117,6 +129,37 @@ namespace System.IO
         public static IEnumerable<string> EnumerateFileSystemEntries(string path, string searchPattern) => GetFileSystemEntries(path, searchPattern);
 
         public static DateTime GetLastWriteTime(string path) => LastWrite(path);
+
+        public static DateTime GetLastWriteTimeUtc(string path) => LastWrite(path).ToUniversalTime();
+
+        public static void SetLastWriteTime(string path, DateTime lastWriteTime) => SetWrite(path, lastWriteTime);
+
+        public static void SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc) =>
+            SetWrite(path, DateTime.SpecifyKind(lastWriteTimeUtc, DateTimeKind.Utc));
+
+        // A time of either kind onto the path, as FAT stores it: local, to two seconds.
+        internal static void SetWrite(string path, DateTime time)
+        {
+            if (path == null) throw new ArgumentNullException(nameof(path));
+            string full = SharpOS.AppSdk.Process.ResolvePath(path);
+            DateTime local = time.Kind == DateTimeKind.Utc ? time.ToLocalTime() : time;
+            if (local.Year < 1980 || local.Year > 2107)
+                throw new ArgumentOutOfRangeException(nameof(time), "The file system keeps times from 1980 to 2107.");
+            uint stamp = ToFat(local);
+            AppServiceStatus status = AppFile.SetWriteTime(full, stamp);
+            if (status == AppServiceStatus.NotFound)
+                throw new FileNotFoundException("Could not find file '" + full + "'.", full);
+            if (status != AppServiceStatus.Ok)
+                throw new IOException("The time of '" + full + "' could not be set.");
+        }
+
+        // FromFat's reverse: date in the high 16 bits, time in the low.
+        internal static uint ToFat(DateTime local)
+        {
+            uint date = (uint)(((local.Year - 1980) << 9) | (local.Month << 5) | local.Day);
+            uint time = (uint)((local.Hour << 11) | (local.Minute << 5) | (local.Second / 2));
+            return (date << 16) | time;
+        }
 
         // The names in a directory, each as Path.Combine(path, name) — path
         // as the caller wrote it, as in BCL. A pattern of * and ? matches the
@@ -215,24 +258,85 @@ namespace System.IO
     }
 
     /// <summary>
-    /// A file by its path (step208). Cut: attributes, creation and access
-    /// times, Open* other than through File, Refresh (every property asks
-    /// the kernel anew).
+    /// FileInfo's and DirectoryInfo's base, as in BCL (release 0.1). Cuts: the
+    /// driver reports no creation or access time — both read the last write;
+    /// FAT has no Unix modes (UnixFileMode throws, as BCL on Windows), no
+    /// links (LinkTarget is null), and Attributes are Directory or Archive.
     /// </summary>
-    public sealed class FileInfo
+    public abstract class FileSystemInfo
+    {
+        protected string FullPath = string.Empty;
+        protected string OriginalPath = string.Empty;
+
+        protected FileSystemInfo() { }
+
+        public virtual string FullName => FullPath;
+        public abstract string Name { get; }
+        public abstract bool Exists { get; }
+        public string Extension => Path.GetExtension(FullPath);
+
+        public FileAttributes Attributes
+        {
+            get => File.GetAttributes(FullPath);
+            set => throw new PlatformNotSupportedException("The file system keeps no attributes beyond a directory's.");
+        }
+
+        public DateTime LastWriteTime
+        {
+            get => System.IO.Directory.LastWrite(FullPath);
+            set => System.IO.Directory.SetWrite(FullPath, value);
+        }
+
+        public DateTime LastWriteTimeUtc
+        {
+            get => LastWriteTime.ToUniversalTime();
+            set => System.IO.Directory.SetWrite(FullPath, DateTime.SpecifyKind(value, DateTimeKind.Utc));
+        }
+
+        // SharpOS cut: no creation or access time from the driver — the last write.
+        public DateTime CreationTime { get => LastWriteTime; set => LastWriteTime = value; }
+        public DateTime CreationTimeUtc { get => LastWriteTimeUtc; set => LastWriteTimeUtc = value; }
+        public DateTime LastAccessTime { get => LastWriteTime; set => LastWriteTime = value; }
+        public DateTime LastAccessTimeUtc { get => LastWriteTimeUtc; set => LastWriteTimeUtc = value; }
+
+        /// <summary>FAT has no links: always null.</summary>
+        public string LinkTarget => null;
+
+        public FileSystemInfo ResolveLinkTarget(bool returnFinalTarget) => null;
+
+        public void CreateAsSymbolicLink(string pathToTarget) =>
+            throw new PlatformNotSupportedException("The file system has no links.");
+
+        public UnixFileMode UnixFileMode
+        {
+            get => throw new PlatformNotSupportedException("The file system keeps no Unix modes.");
+            set => throw new PlatformNotSupportedException("The file system keeps no Unix modes.");
+        }
+
+        public abstract void Delete();
+
+        /// <summary>Every property asks the kernel anew: nothing to refresh.</summary>
+        public void Refresh() { }
+
+        public override string ToString() => OriginalPath;
+    }
+
+    /// <summary>
+    /// A file by its path (step208). Cut: Open* other than through File.
+    /// </summary>
+    public sealed class FileInfo : FileSystemInfo
     {
         public FileInfo(string fileName)
         {
             if (fileName == null) throw new ArgumentNullException(nameof(fileName));
-            FullName = SharpOS.AppSdk.Process.ResolvePath(fileName);
+            OriginalPath = fileName;
+            FullPath = SharpOS.AppSdk.Process.ResolvePath(fileName);
         }
 
-        public string FullName { get; }
-        public string Name => Path.GetFileName(FullName);
-        public string Extension => Path.GetExtension(FullName);
+        public override string Name => Path.GetFileName(FullName);
         public string DirectoryName => System.IO.Directory.ParentOf(FullName);
         public DirectoryInfo Directory => new DirectoryInfo(DirectoryName);
-        public bool Exists => File.Exists(FullName);
+        public override bool Exists => File.Exists(FullName);
 
         /// <summary>The size in bytes; FileNotFoundException when there is no such file.</summary>
         public long Length
@@ -245,8 +349,6 @@ namespace System.IO
             }
         }
 
-        public DateTime LastWriteTime => System.IO.Directory.LastWrite(FullName);
-
         public FileInfo CopyTo(string destFileName) => CopyTo(destFileName, false);
         public FileInfo CopyTo(string destFileName, bool overwrite)
         {
@@ -255,25 +357,22 @@ namespace System.IO
         }
 
         public void MoveTo(string destFileName) => File.Move(FullName, destFileName);
-        public void Delete() => File.Delete(FullName);
-        public override string ToString() => FullName;
+        public override void Delete() => File.Delete(FullName);
     }
 
     /// <summary>
-    /// A directory by its path (step208). Cut: attributes, creation and
-    /// access times, EnumerateFiles' laziness.
+    /// A directory by its path (step208). Cut: EnumerateFiles' laziness.
     /// </summary>
-    public sealed class DirectoryInfo
+    public sealed class DirectoryInfo : FileSystemInfo
     {
         public DirectoryInfo(string path)
         {
             if (path == null) throw new ArgumentNullException(nameof(path));
-            FullName = SharpOS.AppSdk.Process.ResolvePath(path);
+            OriginalPath = path;
+            FullPath = SharpOS.AppSdk.Process.ResolvePath(path);
         }
 
-        public string FullName { get; }
-
-        public string Name
+        public override string Name
         {
             get
             {
@@ -285,8 +384,7 @@ namespace System.IO
             }
         }
 
-        public bool Exists => System.IO.Directory.Exists(FullName);
-        public DateTime LastWriteTime => System.IO.Directory.LastWrite(FullName);
+        public override bool Exists => System.IO.Directory.Exists(FullName);
 
         /// <summary>The directory above; null for the root.</summary>
         public DirectoryInfo Parent
@@ -299,7 +397,7 @@ namespace System.IO
         }
 
         public void Create() => System.IO.Directory.CreateDirectory(FullName);
-        public void Delete() => System.IO.Directory.Delete(FullName);
+        public override void Delete() => System.IO.Directory.Delete(FullName);
         public void Delete(bool recursive) => System.IO.Directory.Delete(FullName, recursive);
         public void MoveTo(string destDirName) => System.IO.Directory.Move(FullName, destDirName);
 
@@ -320,8 +418,6 @@ namespace System.IO
             for (int i = 0; i < paths.Length; i++) result[i] = new DirectoryInfo(paths[i]);
             return result;
         }
-
-        public override string ToString() => FullName;
     }
 
     /// <summary>

@@ -185,6 +185,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `Vector128<T>` (SSE) | ✅ | ✅ | ✅ | `Vector256` объявлен, но не ускорен |
 | Интринсики x86 (`Sse2`…`Sse42`, `Pclmulqdq`, `Aes`, `Popcnt`, …) | 🟡 | ✅ | ✅ | релиз 0.1: классы CoreLib 8; «оптимистичные» наборы включаются по CPUID при старте (`g_cpuFeatures`), AVX/AVX2 ILC держит выключенными, AVX-512 нет. Ядро: только SSE2 — своего `g_cpuFeatures` оно не экспортирует |
 | `System.IO.Hashing` (CRC32/64, xxHash) | — | 🟡 | ✅ | релиз 0.1: BCL 8 с векторным путём (PCLMULQDQ); вырезаны члены с `UInt128` |
+| `System.Formats.Tar` | — | 🟡 | ✅ | релиз 0.1: BCL 8, чтение и запись архивов, `TarFile` через ФС; проверено против GNU tar; права Unix и ссылки не сохраняются (FAT) |
 | Разбор XML | ✅ | ⏳ | ✅ | TurboXml; ядро читает им манифесты приложений |
 | JSON: `Utf8JsonReader` / `Utf8JsonWriter`, `JsonDocument`, `JsonNode` | ⏳ | 🟡 | ✅ | из System.Text.Json (.NET 10): чтение кусками, запись в `IBufferWriter<byte>`. Сериализатора и `JavaScriptEncoder` нет |
 | Разбор чисел (`Parse` / `TryParse`) | 🟡 | 🟡 | ✅ | `double`, `float`, `decimal` — как в BCL; `int` и `long` — только `Parse(string)` и `TryParse`; остальных целых нет |

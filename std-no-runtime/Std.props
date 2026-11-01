@@ -172,6 +172,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc32.Vectorized.cs" Link="std\IO\Hashing\Crc32.Vectorized.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc64.Vectorized.cs" Link="std\IO\Hashing\Crc64.Vectorized.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\VectorHelper.cs" Link="std\IO\Hashing\VectorHelper.cs" />
+    <!-- PathInternal: Common's, the members the archive ports use. -->
+    <Compile Include="$(MSBuildThisFileDirectory)IO\PathInternal.cs" Link="std\IO\PathInternal.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\IOException.cs" Link="std\IO\IOException.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\MemoryStream.cs" Link="std\IO\MemoryStream.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\ArrayBufferWriter.cs" Link="std\Buffers\ArrayBufferWriter.cs" />

@@ -84,16 +84,17 @@ namespace OS.Kernel.Process
 
         // int FileManage(int op, byte* asciiPath, ulong* result) (step208):
         // 1 delete a file, 2 make a directory, 3 remove an empty one, 4 what
-        // the path is. See AppServiceTable.FileManageAddress.
+        // the path is; 7 set when it was last written (release 0.1, the FAT
+        // stamp in result[0]). See AppServiceTable.FileManageAddress.
         public const int FileManageDelete = 1, FileManageMakeDirectory = 2, FileManageRemoveDirectory = 3, FileManageStat = 4,
-                         FileManageRename = 5, FileManageVolume = 6;
+                         FileManageRename = 5, FileManageVolume = 6, FileManageSetWriteTime = 7;
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static int FileManage(int op, ulong pathAddress, ulong* result)
         {
-            if (result == null || op < FileManageDelete || op > FileManageVolume) return (int)AppServiceStatus.InvalidParameter;
-            // Rename: the new path's address comes in result[0].
-            ulong targetAddress = op == FileManageRename ? result[0] : 0;
+            if (result == null || op < FileManageDelete || op > FileManageSetWriteTime) return (int)AppServiceStatus.InvalidParameter;
+            // Rename: the new path's address comes in result[0]; set-write-time: the stamp.
+            ulong targetAddress = op == FileManageRename || op == FileManageSetWriteTime ? result[0] : 0;
             result[0] = 0;
             result[1] = 0;
             result[2] = 0;
@@ -126,6 +127,10 @@ namespace OS.Kernel.Process
                 if (!TryReadUtf8Path(targetAddress, target, MaxPathChars)) return (int)AppServiceStatus.InvalidParameter;
                 change = Fat32.Rename(path, string.FromUtf16Z(target, (int)MaxPathChars));
             }
+            else if (op == FileManageSetWriteTime)
+            {
+                change = Fat32.SetWriteTime(path, (uint)targetAddress);
+            }
             else
             {
                 change = op == FileManageDelete ? Fat32.DeleteFile(path)
@@ -137,7 +142,7 @@ namespace OS.Kernel.Process
             // are the everyday answers (CreateDirectory walks existing
             // parents, File.Delete of a missing file is no error).
             if (change == Fat32.ChangeDiskError)
-                LogFileRefusal((op == FileManageDelete ? "delete " : op == FileManageMakeDirectory ? "mkdir " : op == FileManageRename ? "rename " : "rmdir ")
+                LogFileRefusal((op == FileManageDelete ? "delete " : op == FileManageMakeDirectory ? "mkdir " : op == FileManageRename ? "rename " : op == FileManageSetWriteTime ? "set time " : "rmdir ")
                                + path + ": disk error");
             return (int)(change == Fat32.ChangeOk ? AppServiceStatus.Ok
                        : change == Fat32.ChangeNotFound ? AppServiceStatus.NotFound

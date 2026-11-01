@@ -78,6 +78,36 @@ namespace System
             return -1;
         }
 
+        // LastIndexOfAny over a set of values (release 0.1, the archive ports).
+        public static int LastIndexOfAny<T>(this Span<T> span, ReadOnlySpan<T> values) where T : IEquatable<T>
+            => LastIndexOfAny((ReadOnlySpan<T>)span, values);
+
+        public static int LastIndexOfAny<T>(this ReadOnlySpan<T> span, ReadOnlySpan<T> values) where T : IEquatable<T>
+        {
+            for (int i = span.Length - 1; i >= 0; i--)
+            {
+                T item = span[i];
+                for (int j = 0; j < values.Length; j++)
+                {
+                    if (values[j].Equals(item)) return i;
+                }
+            }
+            return -1;
+        }
+
+        // Two values (release 0.1, the archive ports).
+        public static int IndexOfAnyExcept<T>(this Span<T> span, T value0, T value1) where T : IEquatable<T>
+            => IndexOfAnyExcept((ReadOnlySpan<T>)span, value0, value1);
+
+        public static int IndexOfAnyExcept<T>(this ReadOnlySpan<T> span, T value0, T value1) where T : IEquatable<T>
+        {
+            for (int i = 0; i < span.Length; i++)
+            {
+                if (!value0.Equals(span[i]) && !value1.Equals(span[i])) return i;
+            }
+            return -1;
+        }
+
         // ContainsAnyExcept (step198, ConcurrentDictionary): as BCL, IndexOfAnyExcept >= 0.
         public static bool ContainsAnyExcept<T>(this Span<T> span, T value) where T : IEquatable<T>
             => IndexOfAnyExcept((ReadOnlySpan<T>)span, value) >= 0;

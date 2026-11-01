@@ -96,6 +96,32 @@ namespace OS.Hal
         }
 
         /// <summary>
+        /// Sets when a file or a directory was last written (release 0.1, for
+        /// archives that keep their files' times): FAT's date and time as
+        /// StatEntry gives them. The root has no entry to hold one.
+        /// </summary>
+        public static int SetWriteTime(string path, uint written)
+        {
+            Enter();
+            try
+            {
+                if (!Writable || path == null) return ChangeDiskError;
+                bool root = true;
+                foreach (char c in path) if (c != '/' && c != '\\') root = false;
+                if (root) return ChangeBadName;
+                if (!Resolve(path, out _, out _, out _)) return ChangeNotFound;
+                if (!s_disk.Read(s_foundEntryLba, 1, s_sec)) return ChangeDiskError;
+                byte* e = s_sec + s_foundEntryOffset;
+                e[22] = (byte)written; e[23] = (byte)(written >> 8);                    // time
+                e[24] = (byte)(written >> 16); e[25] = (byte)(written >> 24);           // date
+                if (!s_disk.Write(s_foundEntryLba, 1, s_sec)) return ChangeDiskError;
+                FlushDevice();
+                return ChangeOk;
+            }
+            finally { Leave(); }
+        }
+
+        /// <summary>
         /// The volume's size and its free space, in bytes (step208): the kept
         /// free-cluster count (Fat32FsInfo.cs), counted in the FAT the first
         /// time when FSInfo did not have it.

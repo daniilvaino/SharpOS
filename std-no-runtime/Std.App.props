@@ -17,5 +17,32 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Diagnostics.Output.AppHost.cs" Link="std\Runtime\Diagnostics.Output.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StringRuntime.RhNewString.cs" Link="std\StringRuntime.RhNewString.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.AppServices.cs" Link="std\Threading.Tasks.AppServices.cs" />
+    <!-- System.Formats.Tar (release 0.1): BCL .NET 8's; files need File/Directory, which apps have. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\Archiving.Utils.Windows.cs" Link="std\Formats\Tar\Archiving.Utils.Windows.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\Archiving.Utils.cs" Link="std\Formats\Tar\Archiving.Utils.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\FieldLengths.cs" Link="std\Formats\Tar\FieldLengths.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\FieldLocations.cs" Link="std\Formats\Tar\FieldLocations.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\GnuTarEntry.cs" Link="std\Formats\Tar\GnuTarEntry.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\PaxGlobalExtendedAttributesTarEntry.cs" Link="std\Formats\Tar\PaxGlobalExtendedAttributesTarEntry.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\PaxTarEntry.cs" Link="std\Formats\Tar\PaxTarEntry.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\PosixTarEntry.cs" Link="std\Formats\Tar\PosixTarEntry.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\SeekableSubReadStream.cs" Link="std\Formats\Tar\SeekableSubReadStream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\SubReadStream.cs" Link="std\Formats\Tar\SubReadStream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarEntry.Windows.cs" Link="std\Formats\Tar\TarEntry.Windows.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarEntry.cs" Link="std\Formats\Tar\TarEntry.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarEntryFormat.cs" Link="std\Formats\Tar\TarEntryFormat.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarEntryType.cs" Link="std\Formats\Tar\TarEntryType.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarFile.cs" Link="std\Formats\Tar\TarFile.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarHeader.Read.cs" Link="std\Formats\Tar\TarHeader.Read.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarHeader.Write.cs" Link="std\Formats\Tar\TarHeader.Write.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarHeader.cs" Link="std\Formats\Tar\TarHeader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarHelpers.Windows.cs" Link="std\Formats\Tar\TarHelpers.Windows.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarHelpers.cs" Link="std\Formats\Tar\TarHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarReader.cs" Link="std\Formats\Tar\TarReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarWriter.Windows.cs" Link="std\Formats\Tar\TarWriter.Windows.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\TarWriter.cs" Link="std\Formats\Tar\TarWriter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\UstarTarEntry.cs" Link="std\Formats\Tar\UstarTarEntry.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\V7TarEntry.cs" Link="std\Formats\Tar\V7TarEntry.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\SR.Tar.cs" Link="std\Formats\Tar\SR.Tar.cs" />
   </ItemGroup>
 </Project>
