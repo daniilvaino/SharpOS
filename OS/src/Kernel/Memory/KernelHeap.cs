@@ -1,6 +1,8 @@
 ﻿using OS.Hal;
 using OS.Kernel.Util;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Memory
 {
     // The kernel's raw heap: kernel strings, the managed heap's segments,
@@ -477,17 +479,20 @@ namespace OS.Kernel.Memory
             //
             // blocks/free: the address list and the bucket lists; probes:
             // free blocks looked at by every allocation so far.
-            PerfLine("[info] heap grow pages: ");
-            PerfUInt(pageCount);
-            PerfLine(" blocks=");
-            PerfUInt(s_blockCount);
-            PerfLine(" free=");
-            PerfUInt(s_freeBlocks);
-            PerfLine(" allocs=");
-            PerfUInt(s_allocCount);
-            PerfLine(" probes=");
-            PerfULong(s_probeSteps);
-            PerfLine("\r\n");
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+            {
+                PerfLine("[info] heap grow pages: ");
+                PerfUInt(pageCount);
+                PerfLine(" blocks=");
+                PerfUInt(s_blockCount);
+                PerfLine(" free=");
+                PerfUInt(s_freeBlocks);
+                PerfLine(" allocs=");
+                PerfUInt(s_allocCount);
+                PerfLine(" probes=");
+                PerfULong(s_probeSteps);
+                PerfLine("\r\n");
+            }
 
             // Periodically, what the heap is full OF. Growth alone says only
             // that it is filling; a machine left at a prompt produced 502 of

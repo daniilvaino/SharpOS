@@ -1,11 +1,13 @@
 ﻿using OS.Hal;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Boot
 {
     // ExitBootServices and everything the boot does after it: the own
     // substrate (16550 UART, GOP framebuffer, PS/2, local APIC, AHCI/xHCI,
     // FAT32) and then, back in the boot sequence, the launcher. This is the
-    // default boot since step 91 (Probes.ExitBootServicesExperiment).
+    // only boot since step 91.
     //
     // Order is load-bearing:
     //   1. Bring up + REROUTE Console to the own UART/FbTty BEFORE the
@@ -24,7 +26,7 @@ namespace OS.Boot
     //      rest of the IDT), then the disks and the filesystem. Of the
     //      firmware only the runtime ResetSystem is left, as the last way
     //      to power off (Platform.Shutdown).
-    internal static unsafe class ExitBootServicesProbe
+    internal static unsafe class PostEbsBoot
     {
         private const uint TimerHz = OS.Kernel.Diagnostics.Probes.TimerHz;
 
@@ -125,9 +127,10 @@ namespace OS.Boot
             // GOP: re-render the deterministic frame via the own path
             // and assert the SAME golden as pre-EBS (Phase B#2). Equal
             // crc => the renderer/font/MMIO mapping is identical without
-            // firmware.
-            bool fbOk = !Framebuffer.IsAvailable || OS.Kernel.Diagnostics.FbRenderProbe.Verify();
-            if (Framebuffer.IsAvailable)
+            // firmware. A test: it draws its frame on the user's screen.
+            bool fbTest = Framebuffer.IsAvailable && OS.Kernel.Diagnostics.Probes.Tests;
+            bool fbOk = !fbTest || OS.Kernel.Diagnostics.FbRenderProbe.Verify();
+            if (fbTest)
                 FbConsole.DrawString(40, 380, "POST ExitBootServices - own substrate LIVE",
                     FbConsole.Pack(0, 230, 120), -1, 2);
 
@@ -221,12 +224,6 @@ namespace OS.Boot
             // code was never reached. Here the tick is ours before anything
             // long-running starts, which is also where the STI-after-EBS
             // defect actually mattered.
-            if (OS.Kernel.Diagnostics.Probes.Preemption)
-                OS.Kernel.Threading.PreemptionProbe.Run();
-
-            if (OS.Kernel.Diagnostics.Probes.PreemptedAlloc)
-                OS.Kernel.Threading.PreemptedAllocProbe.Run();
-
             // Profile everything from here on: the disk stack, the
             // filesystem and — the reason it exists — the CoreCLR session.
             // Reports itself every ten seconds on the serial port.
@@ -246,7 +243,7 @@ namespace OS.Boot
             // controller from the firmware is only legitimate once it is gone.
             OS.Kernel.Diagnostics.UsbProbe.RunXhci();
 
-            OS.Kernel.Diagnostics.FatProbe.Run();
+            OS.Kernel.File.BootVolume.Mount();
 
             // From here on every console line also lands on disk. Bound after
             // the mount because that is when the disk becomes ours; everything

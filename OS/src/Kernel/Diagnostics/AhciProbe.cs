@@ -6,7 +6,7 @@ namespace OS.Kernel.Diagnostics
     // ICH9 controller (located by C-FS1 PCI scan), reads LBA0 of the
     // boot disk via DMA, checks the MBR boot signature (QEMU VVFAT
     // sector0[510..511] == 55 AA, deterministic). Runs POST-EBS only
-    // (called from ExitBootServicesProbe) — issuing AHCI commands
+    // (called from PostEbsBoot) — issuing AHCI commands
     // reprograms the HBA the live UEFI firmware owns pre-EBS.
     internal static unsafe class AhciProbe
     {
@@ -16,6 +16,14 @@ namespace OS.Kernel.Diagnostics
             if (!init)
             {
                 Console.WriteLine("[ahci] init=N FAIL");
+                return;
+            }
+
+            // Only a CD drive on the controller (QEMU's q35 booted from USB):
+            // no disk to read, which is not a failure.
+            if (Ahci.Device.PortType == Ahci.SATAPortType.ATAPI)
+            {
+                Console.WriteLine("[ahci] init=Y atapi only — no SATA disk");
                 return;
             }
 

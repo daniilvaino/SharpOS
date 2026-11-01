@@ -6,7 +6,7 @@
 #   pwsh tools/probe_report.ps1 -Log path\to\boot.log
 #   pwsh tools/probe_report.ps1 -Log boot.log -Compact
 #
-# For every known probe (kernel, GC, EH L1..L17, drivers, threading, CoreCLR,
+# For every known probe (kernel, GC, EH L8..L20, drivers, threading, CoreCLR,
 # ExitBootServices, PAL/OS census, per-app launcher) the script emits one
 # line: name | status | detail. Statuses:
 #   OK       expected outcome matched
@@ -147,11 +147,6 @@ function Get-ProbeStatus {
 
 $results = @()
 
-# Phase 1 -- kernel heap (no explicit PASS line; we accept presence of
-# a successful 16-byte alloc as evidence).
-$results += Get-ProbeStatus -Cat 'Phase1' -Name 'KernelHeapSmoke' `
-    -Detect 'heap alloc 16 -> 0x[0-9A-Fa-f]+'
-
 # Phase 2 -- GC statics summary (count = entries materialised).
 $results += Get-ProbeStatus -Cat 'Phase2' -Name 'GcStaticsSummary' `
     -Detect 'gcstatics-summary: entries=' `
@@ -176,16 +171,6 @@ $results += Get-ProbeStatus -Cat 'Phase3' -Name 'HpetWrap' `
     -ExpectRe '^ok$'
 
 # Phase 4 -- diagnostics + EH gradient.
-$results += Get-ProbeStatus -Cat 'Phase4' -Name 'GcHeapSmoke' `
-    -Detect 'gc heap test begin' `
-    -Status 'gc heap test (end)' `
-    -Expect 'end'
-
-$results += Get-ProbeStatus -Cat 'Phase4' -Name 'GcStress' `
-    -Detect 'gc stress test begin' `
-    -Status 'gc stress test (end)' `
-    -Expect 'end'
-
 $results += Get-ProbeStatus -Cat 'Phase4' -Name 'NativeAotFeatures' `
     -Detect 'nativeaot probe begin' `
     -Status 'nativeaot probe (end)' `
@@ -368,14 +353,7 @@ $results += Get-ProbeStatus -Cat 'Phase4' -Name 'EnumToString' `
 
 # Phase 4 -- EH level gates.
 $ehGates = @(
-    @{ N='EhTryFinallyNoThrow';    Re='eh L1 try/finally no-throw: val=(\d+)';       Expect='211'  },
-    @{ N='EhTryCatchNoThrow';      Re='eh L2 try/catch no-throw: val=(\d+)';         Expect='4'    },
-    @{ N='EhExceptionShape';       Re='eh L4 exception shape: val=(\d+)';            Expect='127'  },
-    @{ N='EhRootWalk';              Re='eh L5 \.pdata \+ root walk: val=(\d+)';      Expect='7'    },
-    @{ N='EhDecode';                Re='eh L6 ehInfo varint decode: val=(\d+)';      Expect='111'  },
-    @{ N='EhFrameWalk';              Re='eh L7 frame walk: val=(\d+)';               Expect='3'    },
-    @{ N='EhEnumLive';               Re='eh 5\.3 enum-live: val=(\d+)';              Expect='15'   },
-    @{ N='EhRealDispatch';           Re='eh L8 typed catch \(real dispatch\): val=(\d+)';  Expect='801'  },
+    @{ N='EhTryCatchWithThrow';      Re='eh L8 typed catch \(real dispatch\): val=(\d+)';  Expect='801'  },
     @{ N='EhRethrowChain';           Re='eh L9 rethrow chain: val=(\d+)';            Expect='901'  },
     @{ N='EhTryCatchFinally';        Re='eh L10 finally \+ catch: val=(\d+)';        Expect='111'  },
     @{ N='EhFilter';                 Re='eh L11 catch-when filter: val=(\d+)';       Expect='1101' },
@@ -394,28 +372,6 @@ foreach ($g in $ehGates) {
     if ($g.ExpectRe)  { $splat.ExpectRe  = $g.ExpectRe }
     $results += Get-ProbeStatus @splat
 }
-
-# Phase E -- TebFacade / Atomics / Ping-pong.
-$results += Get-ProbeStatus -Cat 'PhaseE' -Name 'TebFacadeSwap' `
-    -Detect 'TEB facade probe start' `
-    -Status 'TEB facade probe: swap (Self=ok Limit=ok)' `
-    -ExpectRe 'Self=ok Limit=ok'
-
-$results += Get-ProbeStatus -Cat 'PhaseE' -Name 'Atomics' `
-    -Detect 'atomics probe start' `
-    -Status 'atomics probe: (CmpXchg-hit=ok CmpXchg-miss=ok Xchg=ok MFence=ok)' `
-    -ExpectRe 'CmpXchg-hit=ok CmpXchg-miss=ok Xchg=ok MFence=ok'
-
-$results += Get-ProbeStatus -Cat 'PhaseE' -Name 'ThreadPingPong' `
-    -Detect 'ping-pong probe start' `
-    -Status 'ping-pong probe: T1=(\d+/\d+) T2=\d+/\d+.*?(ok|FAIL)' `
-    -ExpectRe '^5/5$' `
-    -Group 1
-
-$results += Get-ProbeStatus -Cat 'PhaseE' -Name 'ThreadPingPong.Verdict' `
-    -Detect 'ping-pong probe: T1=' `
-    -Status 'ping-pong probe:.*?(ok|FAIL)\b' `
-    -ExpectRe '^ok$'
 
 $results += Get-ProbeStatus -Cat 'PhaseE' -Name 'ThreadSleep' `
     -Detect 'sleep probe start' `
@@ -492,16 +448,6 @@ $results += Get-ProbeStatus -Cat 'PhaseF' -Name 'ApicTick' `
     -Status '\[apic\] ticks[^\r\n]*\s(PASS|HOST-LOSS|FAIL)' `
     -ExpectRe '^(PASS|HOST-LOSS)$'
 
-$results += Get-ProbeStatus -Cat 'PhaseF' -Name 'Preemption' `
-    -Detect '\[preempt\] ' `
-    -Status '\[preempt\][^\r\n]*\s(PASS|FAIL|SKIP)' `
-    -ExpectRe '^PASS$'
-
-$results += Get-ProbeStatus -Cat 'PhaseF' -Name 'PreemptedAlloc' `
-    -Detect '\[preempt-alloc\] ' `
-    -Status '\[preempt-alloc\][^\r\n]*\s(PASS|FAIL|SKIP)' `
-    -ExpectRe '^PASS$'
-
 $results += Get-ProbeStatus -Cat 'Drivers' -Name 'PciScan' `
     -Detect '\[pci\] devs=' `
     -Status '\[pci\][^\r\n]*\s(PASS|FAIL)' `
@@ -525,7 +471,7 @@ $results += Get-ProbeStatus -Cat 'CoreCLR' -Name 'execute_assembly.exitCode' `
     -ExpectRe '^\d+$'
 
 # ExitBootServices -- Phase C survival.
-$results += Get-ProbeStatus -Cat 'EBS' -Name 'ExitBootServicesProbe' `
+$results += Get-ProbeStatus -Cat 'EBS' -Name 'PostEbsBoot' `
     -Detect '\[ebs\] ExitBootServices OK' `
     -Status '\[ebs\] (ExitBootServices OK -- POST-EBS substrate LIVE)' `
     -ExpectRe '^ExitBootServices OK'

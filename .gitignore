@@ -82,7 +82,7 @@ ovmf/*.fd
 gc-experiment/
 # ILC --map outputs
 **/map.txt
-.claude/settings.local.json
+.claude/
 
 # Transient build logs from build_clr_sharpos.ps1 runs (Tee-Object output).
 build_log*.txt
@@ -157,3 +157,6 @@ sharpos.map
 
 # Логи сборки приложений (build.ps1 пишет рядом с проектом).
 publish.log
+
+# Python's bytecode caches beside the tools scripts.
+__pycache__/

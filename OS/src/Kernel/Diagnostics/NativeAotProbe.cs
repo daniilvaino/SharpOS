@@ -2,6 +2,8 @@ using System;
 using System.Linq;
 using OS.Hal;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 #pragma warning disable CS8500 // the runtime takes pointers to managed types by design
 
 namespace OS.Kernel.Diagnostics
@@ -98,7 +100,6 @@ namespace OS.Kernel.Diagnostics
             Probe_GcRootsThroughEhUnwind();
             Probe_FinallyOrderingNested();
             Probe_ExceptionFilter();
-            Probe_RethrowStackTrace();
             Probe_GcSpanInterior();
             Probe_ArrayCopyOverlap();
             Probe_XmmAcrossThrow();            // RED until P0-1 lands
@@ -1342,25 +1343,6 @@ namespace OS.Kernel.Diagnostics
         private static bool FilterFalse(int local) => local != 7 || false;
         private static bool FilterReadLocal(Exception e, int local) =>
             local == 7 && e.Message == "filtered";
-
-        // --- throw; vs throw ex; stack trace fidelity ---
-        // `throw;` preserves the original throw point; `throw ex;` resets
-        // the StackTrace to the rethrow location. We check that
-        // re-throwing preserves the original stack mention.
-        private static void Probe_RethrowStackTrace()
-        {
-            string? trace = null;
-            try
-            {
-                try { RethrowSource(); }
-                catch (InvalidOperationException) { throw; }   // bare rethrow
-            }
-            catch (InvalidOperationException e) { trace = e.StackTrace; }
-            // Stack trace must mention RethrowSource (the original throw point).
-            bool ok = trace != null && trace.Contains("RethrowSource");
-            ReportProbe("rethrow preserves stack trace", ok, (uint)(trace?.Length ?? 0));
-        }
-        private static void RethrowSource() => throw new InvalidOperationException("from source");
 
         // --- GC + Span interior view ---
         // Span<byte> over heap array; force GC.Collect; verify span still

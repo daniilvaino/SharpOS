@@ -16,6 +16,9 @@
     # allocator stress, no smoke tests, no hosted census — straight to INIT.
     # Probes.Tests in OS/src/Kernel/Diagnostics/Probes.cs.
     [switch]$NoTests,
+    # Tests without the log's extras (release 0.1): the probes run, the
+    # profiler, dumps and per-step lines (Probes.Diagnostics) do not.
+    [switch]$NoDiagnostics,
     # Boot the image the last run left (.qemu\esp.img) as it is: no build, no
     # staging, no new image — the files the guest wrote are still there.
     # Refused together with the switches that change what goes on the image.
@@ -60,8 +63,10 @@
     # QEMU's accelerator: "tcg" (the default, any host) or "whpx" (Windows
     # Hypervisor Platform, step205) — timings without the emulator's own costs.
     [string]$Accel = "tcg",
-    # ESP staged as a real FAT32 image; 253 MB of payload today, so 512 leaves headroom.
-    [int]$EspImageSizeMb = 512,
+    # ESP staged as a real FAT32 image. 0: 512 MiB for a kernel with tests;
+    # with -NoTests sized by what goes on it — the content and a quarter
+    # more, plus 64 MiB for what the system writes, in 16 MiB steps.
+    [int]$EspImageSizeMb = 0,
     # Guest RAM. Past 4 GiB the firmware may load the kernel above 4 GiB, as
     # the 7 GiB laptop's did (0x1_4000_0000) — the layout that step194's
     # process slots first collided with. -MemoryMb 8192 reproduces it.
@@ -183,6 +188,7 @@ if ($NoBuild) {
     if ($Autorun) { $conflicting += "-Autorun" }
     if ($AutorunScript) { $conflicting += "-AutorunScript" }
     if ($NoTests) { $conflicting += "-NoTests" }
+    if ($NoDiagnostics) { $conflicting += "-NoDiagnostics" }
     if ($SkipCoreClr) { $conflicting += "-SkipCoreClr" }
     if ($NoRun) { $conflicting += "-NoRun" }
     if ($conflicting.Count -gt 0) {
@@ -365,7 +371,8 @@ Push-Location $efiProjectDir
 try {
     $skipArg = if ($SkipCoreClr) { "/p:SkipCoreClr=true" } else { "" }
     $testsArg = if ($NoTests) { "/p:NoTests=true" } else { "/p:NoTests=false" }
-    & dotnet publish $projectFile -c $Configuration -r win-x64 "/p:BuildId=$buildId" "/p:CoreClrForkConfig=$ForkConfig" $skipArg $testsArg
+    $diagArg = if ($NoDiagnostics) { "/p:NoDiagnostics=true" } else { "/p:NoDiagnostics=false" }
+    & dotnet publish $projectFile -c $Configuration -r win-x64 "/p:BuildId=$buildId" "/p:CoreClrForkConfig=$ForkConfig" $skipArg $testsArg $diagArg
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE"
     }
@@ -415,25 +422,39 @@ New-Item -ItemType Directory -Force -Path $espSharpOSDir | Out-Null
 # sector per line. Pre-staged at a fixed size because writing in place needs
 # no cluster allocation - 16 MiB is ~32k lines, far more than a boot produces.
 $bootLog = Join-Path $espSharpOSDir "bootlog.txt"
-# Written as 256 copies of a 64 KiB blank chunk. A per-byte loop over 16M
-# elements takes minutes, and [Array]::Fill would be one call but does not
-# exist on .NET Framework, so it breaks under Windows PowerShell 5.1.
-$blankChunk = New-Object byte[] (64 * 1024)
-for ($i = 0; $i -lt $blankChunk.Length; $i++) { $blankChunk[$i] = 0x20 }
-$bootLogStream = [System.IO.File]::Create($bootLog)
-try {
-    for ($i = 0; $i -lt 256; $i++) { $bootLogStream.Write($blankChunk, 0, $blankChunk.Length) }
-} finally {
-    $bootLogStream.Dispose()
+# Only a kernel with tests needs it staged: its battery says far more than the
+# 1 MiB the kernel creates on a medium without the file (BootLog.TryInit) —
+# which is what a release image is.
+if ($NoTests) {
+    if (Test-Path -LiteralPath $bootLog) { Remove-Item -LiteralPath $bootLog -Force }
 }
-Write-Host "Prepared boot log: bootlog.txt (16 MiB)"
+else {
+    # Written as 256 copies of a 64 KiB blank chunk. A per-byte loop over 16M
+    # elements takes minutes, and [Array]::Fill would be one call but does not
+    # exist on .NET Framework, so it breaks under Windows PowerShell 5.1.
+    $blankChunk = New-Object byte[] (64 * 1024)
+    for ($i = 0; $i -lt $blankChunk.Length; $i++) { $blankChunk[$i] = 0x20 }
+    $bootLogStream = [System.IO.File]::Create($bootLog)
+    try {
+        for ($i = 0; $i -lt 256; $i++) { $bootLogStream.Write($blankChunk, 0, $blankChunk.Length) }
+    } finally {
+        $bootLogStream.Dispose()
+    }
+    Write-Host "Prepared boot log: bootlog.txt (16 MiB)"
+}
 
 # Target for the filesystem write probe: a file of known size and content
 # that the kernel overwrites in place. Staged fresh every run so a previous
 # run's pattern cannot be mistaken for a successful write.
+# Only for a kernel with tests: the probe is one of them.
 $fsWriteProbe = Join-Path $espSharpOSDir "fswrite.bin"
-[System.IO.File]::WriteAllBytes($fsWriteProbe, ([byte[]]@(65) * 512))
-Write-Host "Prepared FS write probe: fswrite.bin (512 x 'A')"
+if ($NoTests) {
+    if (Test-Path -LiteralPath $fsWriteProbe) { Remove-Item -LiteralPath $fsWriteProbe -Force }
+}
+else {
+    [System.IO.File]::WriteAllBytes($fsWriteProbe, ([byte[]]@(65) * 512))
+    Write-Host "Prepared FS write probe: fswrite.bin (512 x 'A')"
+}
 
 # The rest of \sharpos is the hosted runtime (CoreCLR), staged below.
 # A kernel without CoreCLR (-SkipCoreClr) runs none of it, so \sharpos keeps
@@ -820,24 +841,36 @@ foreach ($staleExe in @("SYSINFO.EXE")) {
 # потому что сюда его никто не вписал.
 . (Join-Path $repoRoot "tools/Apps.ps1")
 $peApps = @(
-    Get-SharpOsApps -RepoRoot $repoRoot | ForEach-Object {
+    Get-SharpOsApps -RepoRoot $repoRoot |
+        # none — не на образ; tests — только в сборке с тестами.
+        Where-Object { $_.Category -ne 'none' -and -not ($NoTests -and $_.Category -eq 'tests') } |
+        ForEach-Object {
         # Относительный, как и прежние записи: ниже цикл делает
         # Join-Path $repoRoot $peApp.Src, и абсолютный путь его сломал бы.
         $folder = (Split-Path -Path $_.Project -Parent).Substring($repoRoot.Length).TrimStart('\', '/')
-        $short  = $_.Short.ToUpperInvariant()
-        # Имя файла на образе — 8.3: наш FAT создаёт только такие, и приложение
-        # с длинным именем молча не появилось бы в лаунчере.
-        if ($short.Length -gt 8) {
-            throw "имя приложения '$($_.Short)' длиннее 8 символов — на образе оно станет $short.EXE, а FAT такого не создаст"
-        }
+        # Длинное имя — запись LFN: mcopy её пишет, наш FAT читает и пишет
+        # (step208); до того имя обязано было быть 8.3.
+        $image  = $_.ImageName.ToUpperInvariant()
         @{
             Src      = (Join-Path (Join-Path $folder "bin\Release\out-win-x64") "$($_.Name).exe")
-            Dest     = "$short.EXE"
+            Dest     = "$image.EXE"
             Category = $_.Category
             Folder   = $folder
         }
     }
 )
+# Заготовка ESP живёт между сборками: программа, которой больше нет в этом
+# списке (переименована, ушла в none, /tests в -NoTests), иначе осталась бы на
+# образе под старым именем.
+foreach ($dir in @('bin', 'tests', 'games')) {
+    $wanted = @($peApps | Where-Object { $_.Category -eq $dir } | ForEach-Object { $_.Dest })
+    Get-ChildItem -LiteralPath $espDirs[$dir] -Filter '*.EXE' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notin $wanted } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force; Write-Host "Removed stale app: $dir/$($_.Name)" }
+}
+if ($NoTests) {
+    Remove-Item -LiteralPath $espDirs['tests'] -Recurse -Force
+}
 Write-Host "на образ: $(($peApps | ForEach-Object { "$($_.Category)/$($_.Dest)" }) -join ' ')"
 foreach ($peApp in $peApps) {
     if (-not $espDirs.ContainsKey($peApp.Category) -or $peApp.Category -in @('config', 'home', 'system')) {
@@ -901,16 +934,16 @@ if ($Autorun) {
         Write-Host "Autorun requested but $autorunSrc is missing — skipping"
     }
 }
-# The host's offset east of UTC now (step216): QEMU's RTC keeps UTC, FAT and
-# the clock on screen keep local time. A fixed offset; no daylight rules.
-$tzNow = [System.TimeZoneInfo]::Local.GetUtcOffset([DateTime]::UtcNow)
-$tzOffset = ('{0}{1:00}:{2:00}' -f $(if ($tzNow -lt [TimeSpan]::Zero) { '-' } else { '+' }), [Math]::Abs($tzNow.Hours), [Math]::Abs($tzNow.Minutes))
+# UTC (release 0.1): an image is the same whoever built it; a user sets TZ
+# in system.env for local time. Before, the builder's own offset went in.
+$tzOffset = '+00:00'
+$searchPath = if ($NoTests) { 'PATH=/bin;/games' } else { 'PATH=/bin;/tests;/games' }
 $systemEnv = @(
     '# SharpOS: what the kernel starts after boot, and the environment it gives',
     '# everything it starts (OS/src/Kernel/Process/BootConfig.cs). Written by',
     '# run_build.ps1. The .env format of Docker Compose: NAME=value, quotes,',
     '# $NAME and ${NAME:-default} (std-no-runtime/Formats/Dotenv).',
-    'PATH=/bin;/tests;/games',
+    $searchPath,
     'HOME=/home',
     "TZ=$tzOffset",
     "INIT=$init",
@@ -1138,6 +1171,13 @@ try {
     $espImage = Join-Path $qemuWorkDir "esp.img"
     # -NoBuild: the image the last run left, guest's writes included.
     $checkedImage = $null
+    # The battery writes big files of its own: a kernel with tests keeps 512.
+    if ($EspImageSizeMb -le 0 -and -not $NoTests) { $EspImageSizeMb = 512 }
+    if ($EspImageSizeMb -le 0) {
+        $content = (Get-ChildItem -LiteralPath (Join-Path $qemuWorkDir "esp") -Recurse -File -Force | Measure-Object -Property Length -Sum).Sum
+        $mb = [int][Math]::Ceiling(($content * 1.25) / 1MB) + 64
+        $EspImageSizeMb = [int]([Math]::Ceiling($mb / 16.0) * 16)
+    }
     if ($NoBuild -or (New-EspImage -SourceDir (Join-Path $qemuWorkDir "esp") -RawPath $espImage -SizeMb $EspImageSizeMb)) {
         Write-Host "ESP image: $espImage ($EspImageSizeMb MB)"
         $checkedImage = $espImage

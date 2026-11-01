@@ -5,7 +5,7 @@ using SharpOS.Std.Pipes;
 
 namespace PipeApps
 {
-    // PIPEGEN.EXE n [name] — n records to the standard output (the screen when
+    // SAMPLE_PIPEGEN.EXE n [name] — n records to the standard output (the screen when
     // the output was handed to nobody), or to the pipe called name. The target
     // code of step 194.
     internal static unsafe class AppEntry
@@ -28,7 +28,7 @@ namespace PipeApps
 
         private static int Run(string[] args)
         {
-            if (!NumberArg.TryFirst(args, "PIPEGEN", "PIPEGEN [n] [name] — n records (10), to the pipe called name", 10, out long count, out int exit))
+            if (!NumberArg.TryFirst(args, "SAMPLE_PIPEGEN", "SAMPLE_PIPEGEN [n] [name] — n records (10), to the pipe called name", 10, out long count, out int exit))
                 return exit;
             int n = (int)count;
             using var o = args.Length > 1 ? Pipe.Write<LogEntry>(args[1]) : Pipe.Write<LogEntry>();

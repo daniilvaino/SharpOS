@@ -44,7 +44,7 @@ namespace OS.Kernel.Memory
             OS.Kernel.Threading.ThreadArea.MarkAppWords(markRoot);
             if (KernelGcPreciseWalk.Tracing) KernelGcPreciseWalk.TraceWalks--;
             KernelGcPreciseWalk.Tracing = false;
-            if (!Quiet)
+            if (!Quiet && OS.Kernel.Diagnostics.Probes.Diagnostics)
                 Report();
         }
 

@@ -49,7 +49,7 @@ namespace OS.Hal.Usb
                     s_controllers[s_count++] = hc;
 
                     // Started after the APIC is ours: interrupts at once.
-                    // Before it, ExitBootServicesProbe switches it over.
+                    // Before it, PostEbsBoot switches it over.
                     if (OS.Hal.Apic.LocalApic.IsEnabled) hc.EnableInterrupts();
                 }
             }

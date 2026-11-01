@@ -1,6 +1,8 @@
 using OS.Hal;
 using SharpOS.Std.NoRuntime;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Memory
 {
     // One-shot NativeAOT module initialization.
@@ -154,18 +156,21 @@ namespace OS.Kernel.Memory
             s_minorVersion = *(ushort*)(rtr + 6);
             s_initialized = true;
 
-            Log.Begin(LogLevel.Info);
-            Console.Write("naot-init: rtr=0x");
-            Console.WriteHexRaw((ulong)rtr, 16);
-            Console.Write(" tm=0x");
-            Console.WriteHexRaw((ulong)tm, 16);
-            Console.Write(" dmTable=0x");
-            Console.WriteHexRaw((ulong)dispatchMapTable, 16);
-            Console.Write(" indir=0x");
-            Console.WriteHexRaw((ulong)typeManagerIndir, 16);
-            Console.Write(" slots=");
-            Console.WriteULongRaw((ulong)slotCount);
-            Log.EndLine();
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("naot-init: rtr=0x");
+                Console.WriteHexRaw((ulong)rtr, 16);
+                Console.Write(" tm=0x");
+                Console.WriteHexRaw((ulong)tm, 16);
+                Console.Write(" dmTable=0x");
+                Console.WriteHexRaw((ulong)dispatchMapTable, 16);
+                Console.Write(" indir=0x");
+                Console.WriteHexRaw((ulong)typeManagerIndir, 16);
+                Console.Write(" slots=");
+                Console.WriteULongRaw((ulong)slotCount);
+                Log.EndLine();
+            }
 
             return true;
         }

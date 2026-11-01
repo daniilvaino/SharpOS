@@ -1,5 +1,7 @@
 using OS.Hal;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Diagnostics
 {
     // First write to a filesystem, ever, in this project. Deliberately the
@@ -16,7 +18,7 @@ namespace OS.Kernel.Diagnostics
     //
     //     mtype -i OS\.qemu\esp.img ::/sharpos/fswrite.bin
     //
-    // POST-EBS only, like FatProbe — AHCI must own the disk.
+    // POST-EBS only, like BootVolume — AHCI must own the disk.
     internal static unsafe class FatWriteProbe
     {
         private const string Path = "sharpos/fswrite.bin";

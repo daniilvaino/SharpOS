@@ -3,7 +3,7 @@ using SharpOS.Std.Pipes;
 namespace PipeApps
 {
     /// <summary>
-    /// The record PIPEGEN writes and PIPEFILT filters (step194). The same file
+    /// The record SAMPLE_PIPEGEN writes and PIPEFILT filters (step194). The same file
     /// in both: a pipe's two ends agree on a type by its name and layout, and
     /// PIPECNT, which has no such class, reads it through views.
     /// </summary>

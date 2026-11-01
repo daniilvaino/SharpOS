@@ -10,15 +10,15 @@ namespace KqlApps
 {
     // KQLTEST.EXE — Kusto.Language (vendor/KustoLanguage) on the app tier
     // (step198): a query parsed and bound against a table, its diagnostics,
-    // completion at a cursor, classification for colouring. Exit code =
-    // checks passed.
+    // completion at a cursor, classification for colouring; then BabyKusto
+    // executing queries (Engine.cs). Exit code = checks failed, both halves.
     internal static unsafe class AppEntry
     {
         [RuntimeExport("SharpAppEntry")]
         private static int SharpAppEntry(ulong startupPointer)
         {
             AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            return AppRuntime.Finish(Run());
+            return AppRuntime.Finish(Run() + EngineChecks.Run());
         }
 
         [RuntimeExport("SharpAppBootstrap")]
@@ -28,7 +28,7 @@ namespace KqlApps
             return SharpAppEntry(startupPointer);
         }
 
-        private static int Main() => Run();
+        private static int Main() => Run() + EngineChecks.Run();
 
         private static int s_passed, s_failed;
 

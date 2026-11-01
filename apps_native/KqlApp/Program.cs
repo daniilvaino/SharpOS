@@ -21,7 +21,7 @@ namespace PipeApps
     // the messages on the standard input are the table Input, and the query
     // (BabyKusto) runs over them as they arrive.
     //
-    //   PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'
+    //   SAMPLE_PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'
     //
     // Without a query (step208) KQL waits for the input's type, then asks for
     // the query at a prompt that names it — Tab completes against its
@@ -120,8 +120,8 @@ namespace PipeApps
             if (args.Length == 0 && !interactive)
             {
                 Console.Error.WriteLine("KQL 'query': runs the query over the messages on the input (the table " + TableName + ")");
-                Console.Error.WriteLine("  PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'");
-                Console.Error.WriteLine("  PIPEGEN 100 | KQL      asks for the query once the input's type is known; Tab completes");
+                Console.Error.WriteLine("  SAMPLE_PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'");
+                Console.Error.WriteLine("  SAMPLE_PIPEGEN 100 | KQL      asks for the query once the input's type is known; Tab completes");
                 return 2;
             }
             try
@@ -322,7 +322,7 @@ namespace PipeApps
                 Columns columns = Declared(input, ref first);
                 GlobalState globals = CompletionGlobals(columns, out TableSymbol schema);
                 string prompt = "kql (" + (columns.TypeName ?? "?") + ")> ";
-                var reader = new Shell.LineReader(new KqlCompletion(globals), "/kql_history");
+                var reader = new Shell.LineReader(new KqlCompletion(globals), ".kql_history");
                 while (true)
                 {
                     string line = reader.Read(prompt, prompt.Length);
@@ -349,7 +349,7 @@ namespace PipeApps
         // the output as strings: where the completed word starts in TEXT,
         // then the candidates.
         //
-        // With an input (`PIPEGEN 0 | KQL --complete 'where Le'`) the
+        // With an input (`SAMPLE_PIPEGEN 0 | KQL --complete 'where Le'`) the
         // completions are the interactive prompt's: against the declared
         // type's columns. That is how the battery checks them — the prompt
         // itself reads the keyboard.

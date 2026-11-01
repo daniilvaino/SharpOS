@@ -16,10 +16,7 @@ namespace OS.Kernel.Memory
         // GcContextSpill at offset 512. Falls back to the legacy
         // conservative path (GcStackSpill register-push + ScanStack
         // bottom-up dereference) for very early boot when those aren't
-        // wired yet. The conservative path remains compiled in because
-        // KernelHeapSmokeTest and the unit GcStressTest invoke Collect
-        // from CaptureStackTop-bounded callers where it's intentionally
-        // safe.
+        // wired yet.
         /// <summary>
         /// Every collection this kernel has run, whoever asked for it.
         /// </summary>

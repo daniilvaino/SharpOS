@@ -1,17 +1,20 @@
 using OS.Hal;
+using OS.Kernel.Diagnostics;
 
-namespace OS.Kernel.Diagnostics
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
+namespace OS.Kernel.File
 {
-    // C-FS3 oracle — own RO FAT16/32 via the Vfs detector over the
-    // AHCI Disk. Resolves an 8.3 path (\EFI\BOOT\BOOTX64.EFI) AND a
-    // long-name path (\sharpos\System.Private.CoreLib.dll — the file
-    // the host shim loads, exercises LFN), checking the "MZ" PE
-    // signature (rebuild-stable, no golden needed). Runs POST-EBS only
-    // (ExitBootServicesProbe) — the AHCI bring-up must not run while
-    // UEFI firmware still owns the disk.
-    internal static unsafe class FatProbe
+    // The boot volume mounted: the one place the file system becomes
+    // Fs.Current (Vfs.Mount over BootDisk). Then a check that it reads —
+    // an 8.3 path (EFI/BOOT/BOOTX64.EFI) and a long name (the hosted
+    // runtime's CoreLib, exercising LFN), each by its "MZ" signature — and
+    // its line in the log. POST-EBS only (PostEbsBoot): the AHCI bring-up
+    // must not run while UEFI firmware still owns the disk. Until release
+    // 0.1 this was Diagnostics.FatProbe.
+    internal static unsafe class BootVolume
     {
-        public static void Run()
+        public static void Mount()
         {
             Disk disk = BootDisk.Get();
             Fs fs = disk != null ? Vfs.Mount(disk) : null;
@@ -38,7 +41,11 @@ namespace OS.Kernel.Diagnostics
             }
 
             bool mz83 = CheckMz(fs, "EFI/BOOT/BOOTX64.EFI", out uint sz83);
-            bool mzLfn = CheckMz(fs, "sharpos/System.Private.CoreLib.dll", out uint szLfn);
+            // The long name is the hosted runtime's CoreLib: an image without
+            // CoreCLR has none, and the check is skipped rather than failed.
+            bool lfnPresent = fs.Exists("sharpos/System.Private.CoreLib.dll");
+            uint szLfn = 0;
+            bool mzLfn = lfnPresent && CheckMz(fs, "sharpos/System.Private.CoreLib.dll", out szLfn);
 
             Console.Write("[fat] mount=Y ");
             Console.Write(Fat32.IsFat32 ? "FAT32" : "FAT16");
@@ -53,15 +60,21 @@ namespace OS.Kernel.Diagnostics
             Console.WriteUInt(sz83);
             Console.Write(" mz=");
             Console.Write(mz83 ? "Y" : "N");
-            Console.Write("  lfn:CoreLib.dll sz=");
-            Console.WriteUInt(szLfn);
-            Console.Write(" mz=");
-            Console.Write(mzLfn ? "Y" : "N");
-            Console.WriteLine(mz83 && mzLfn ? " PASS" : " FAIL");
+            if (lfnPresent)
+            {
+                Console.Write("  lfn:CoreLib.dll sz=");
+                Console.WriteUInt(szLfn);
+                Console.Write(" mz=");
+                Console.Write(mzLfn ? "Y" : "N");
+            }
+            else
+                Console.Write("  lfn:skip (no CoreLib)");
+            Console.WriteLine(mz83 && (mzLfn || !lfnPresent) ? " PASS" : " FAIL");
 
             // EnumDir cheap-detector: what does \EFI\BOOT actually
             // enumerate via our FAT (diagnoses the launcher's empty
             // listing without guessing)?
+            if (!Probes.Diagnostics) return;
             char* nm = stackalloc char[64];
             Console.Write("[fatdir] EFI/BOOT:");
             int de = 0;

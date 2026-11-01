@@ -4,8 +4,8 @@ using SharpOS.Std.Pipes;
 namespace PipeApps
 {
     /// <summary>
-    /// Not PIPEGEN's record: the same name with a field more, so that a pipe
-    /// between PIPEGEN and this program fails its type check on a field
+    /// Not SAMPLE_PIPEGEN's record: the same name with a field more, so that a pipe
+    /// between SAMPLE_PIPEGEN and this program fails its type check on a field
     /// (step194 §7, test 4). The real one is in PipeGen/LogEntry.cs.
     /// </summary>
     [Message]

@@ -168,7 +168,7 @@ namespace DataApps
 
         private static void TargetPipeline()
         {
-            Check("1: PIPEGEN 5 | CONVERT --to json > t1in.json", Sh("PIPEGEN 5 | CONVERT --to json > t1in.json") == 0);
+            Check("1: SAMPLE_PIPEGEN 5 | CONVERT --to json > t1in.json", Sh("SAMPLE_PIPEGEN 5 | CONVERT --to json > t1in.json") == 0);
             Check("1: READ | CONVERT --from json | VIEWFILT 3 | CONVERT --to json > t1out.json",
                   Sh("READ t1in.json | CONVERT --from json | VIEWFILT 3 | CONVERT --to json > t1out.json") == 0);
             string expected = Join(new[]
@@ -366,7 +366,7 @@ namespace DataApps
 
         private static void ClassStageRefused()
         {
-            Sh("PIPEGEN 5 | CONVERT --to json > t6.json");
+            Sh("SAMPLE_PIPEGEN 5 | CONVERT --to json > t6.json");
             PipelineException failed = null;
             try { foreach (View v in Pipe.From("READ t6.json | CONVERT --from json | PIPEFILT 0")) { } }
             catch (PipelineException e) { failed = e; }
@@ -427,8 +427,8 @@ namespace DataApps
                 bool copied = Sh("READ " + a + " | WRITE " + b) == 0;
                 Check("7: " + size.ToString() + " B: READ a | WRITE b is equal byte for byte", made && copied && SameFile(a, b, size, true));
             }
-            Sh("PIPEGEN 3 | CONVERT --to lines > t7.txt");
-            Sh("PIPEGEN 2 | CONVERT --to lines >> t7.txt");
+            Sh("SAMPLE_PIPEGEN 3 | CONVERT --to lines > t7.txt");
+            Sh("SAMPLE_PIPEGEN 2 | CONVERT --to lines >> t7.txt");
             var lines = new List<string>();
             for (int i = 0; i < 3; i++) lines.Add("PipeApps.LogEntry { Level = " + i.ToString() + ", Text = \"text " + i.ToString() + "\" }");
             for (int i = 0; i < 2; i++) lines.Add("PipeApps.LogEntry { Level = " + i.ToString() + ", Text = \"text " + i.ToString() + "\" }");
@@ -498,10 +498,10 @@ namespace DataApps
         {
             int[] failed = Stages("DATATEST.EXE", new[] { "--child", "fail" }, "VIEWFILT.EXE", new[] { "0" });
             Check("10: the first stage fails (134), the next ends quietly with 141", failed[0] == 134 && failed[1] == 141);
-            int[] early = Stages("PIPEGEN.EXE", new[] { "1000000" }, "DATATEST.EXE", new[] { "--child", "take", "5" });
+            int[] early = Stages("SAMPLE_PIPEGEN.EXE", new[] { "1000000" }, "DATATEST.EXE", new[] { "--child", "take", "5" });
             Check("10: the last stage leaves after 5 of a million (0), the first ends quietly with 141", early[0] == 141 && early[1] == 0);
             Check("10: the shell's code is the failed stage's", Sh(Self("fail") + " | VIEWFILT 0") == 134);
-            Check("10: and 0 when only 141s are left", Sh("PIPEGEN 1000000 | " + Self("take 5")) == 0);
+            Check("10: and 0 when only 141s are left", Sh("SAMPLE_PIPEGEN 1000000 | " + Self("take 5")) == 0);
         }
 
         // ---- 12 ----
@@ -598,7 +598,7 @@ namespace DataApps
         {
             public void Finish()
             {
-                var p = Process.Start("PIPEGEN.EXE", new[] { "0" });
+                var p = Process.Start("SAMPLE_PIPEGEN.EXE", new[] { "0" });
                 p.WaitForExit();
                 p.Dispose();
                 throw new PipelineException("model", "STAGE", 1);
@@ -638,12 +638,12 @@ namespace DataApps
 
         private static void PipelinesFromCode()
         {
-            Sh("PIPEGEN 5 | CONVERT --to json > t11.json");
+            Sh("SAMPLE_PIPEGEN 5 | CONVERT --to json > t11.json");
             int n = 0;
             foreach (LogEntry e in Pipe.From("READ t11.json | CONVERT --from json").Into<LogEntry>()) n++;
             Check("11: foreach … in Pipe.From(\"READ … | CONVERT --from json\").Into<T>()", n == 5);
 
-            var gen = Process.Start("PIPEGEN.EXE", new[] { "3", "t11log" });
+            var gen = Process.Start("SAMPLE_PIPEGEN.EXE", new[] { "3", "t11log" });
             Pipe.Read("t11log").WriteTo(Pipe.To("CONVERT --to json | WRITE t11err.json"));
             gen.WaitForExit();
             gen.Dispose();

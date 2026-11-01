@@ -39,8 +39,8 @@ namespace DataApps
 
             Check("19: nothing set by a shell is left here", Environment.GetEnvironmentVariable("T19") == null);
 
-            string pipegen = Process.FindProgram("PIPEGEN");
-            List<string> which = Lines("which PIPEGEN echo");
+            string pipegen = Process.FindProgram("SAMPLE_PIPEGEN");
+            List<string> which = Lines("which SAMPLE_PIPEGEN echo");
             Check("19: which (" + Escaped(Join(which)) + ")", Join(which) == pipegen + "\necho: shell builtin\n");
             Check("19: which of nothing: 1", Sh("which NO_SUCH_PROGRAM") == 1);
 
@@ -54,14 +54,14 @@ namespace DataApps
             Check("19: cd '\\tests' (a backslash in quotes): /tests", Join(Lines("cd '\\tests' && pwd")) == "/tests\n");
             Check("19: which names a /-path (" + pipegen + ")", pipegen.StartsWith("/") && pipegen.IndexOf('\\') < 0);
             Check("19: PATH split at ';', and at ':' too",
-                  Join(Lines("export PATH='/nowhere;/bin:/tests'; which PIPEGEN")) == pipegen + "\n");
+                  Join(Lines("export PATH='/nowhere;/bin:/tests'; which SAMPLE_PIPEGEN")) == pipegen + "\n");
             Check("19: cd into a file: 1; which in small letters names the stored file",
-                  Sh("cd /bin/PIPEGEN.EXE") == 1 && Join(Lines("which pipegen")) == pipegen + "\n" && pipegen.EndsWith("PIPEGEN.EXE"));
+                  Sh("cd /bin/SAMPLE_PIPEGEN.EXE") == 1 && Join(Lines("which sample_pipegen")) == pipegen + "\n" && pipegen.EndsWith("SAMPLE_PIPEGEN.EXE"));
 
             // The shell's input to every command, read in turn (step216): the
             // first takes two, the next counts the rest. Before, the second
             // got none: 0.
-            List<string> shared = Lines("PIPEGEN 5 | SHELL -c '" + Self("take 2") + "; PIPECNT'");
+            List<string> shared = Lines("SAMPLE_PIPEGEN 5 | SHELL -c '" + Self("take 2") + "; PIPECNT'");
             Check("19: echo ... | shell: its commands read the input in turn (" + Escaped(Join(shared)) + ")",
                   Join(shared) == "3\n");
 
@@ -75,12 +75,12 @@ namespace DataApps
                   records == 1 && recordType != null && recordType.EndsWith("SystemInfo"));
             List<string> panel = Lines("FETCH 3>&1 >&-");
             Check("19: FETCH 3>&1 >&-: the panel (" + panel.Count.ToString() + " lines)",
-                  panel.Count > 10 && Join(panel).Contains("processors"));
+                  panel.Count > 10 && Join(panel).Contains(" cpu"));
 
             // `1>&2` with 2 not redirected (step218): the output goes where
             // the error stream does, the screen — not down the pipe.
-            List<string> toErrors = Lines("PIPEGEN 3 1>&2 | PIPECNT");
-            Check("19: PIPEGEN 3 1>&2 | PIPECNT: nothing down the pipe (" + Escaped(Join(toErrors)) + ")",
+            List<string> toErrors = Lines("SAMPLE_PIPEGEN 3 1>&2 | PIPECNT");
+            Check("19: SAMPLE_PIPEGEN 3 1>&2 | PIPECNT: nothing down the pipe (" + Escaped(Join(toErrors)) + ")",
                   Join(toErrors) == "0\n");
 
             File.WriteAllText(home + "/t19.txt", "old");
@@ -90,7 +90,7 @@ namespace DataApps
             // Refused whole, before anything runs: 2.
             string[] refused =
             {
-                "echo $(pwd)", "for i in a b; do echo $i; done", "x=1", "X=1 PIPEGEN 1", "echo $1", "echo $?",
+                "echo $(pwd)", "for i in a b; do echo $i; done", "x=1", "X=1 SAMPLE_PIPEGEN 1", "echo $1", "echo $?",
                 "$T19", "echo ${T19:-d}", "(pwd)", "export T19=1; echo `pwd`",
             };
             foreach (string line in refused)
@@ -103,10 +103,10 @@ namespace DataApps
         // an input. First line of KQL's answer: where the word starts.
         private static void Completions()
         {
-            List<string> typed = Lines("PIPEGEN 0 | KQL --complete 'where Le'");
+            List<string> typed = Lines("SAMPLE_PIPEGEN 0 | KQL --complete 'where Le'");
             Check("20: KQL over LogEntry, 'where Le': Level (" + Escaped(Join(typed)) + ")", Join(Trimmed(typed)) == "6\nLevel\n");
 
-            List<string> by = Lines("PIPEGEN 0 | KQL --complete 'summarize n = count() by Te'");
+            List<string> by = Lines("SAMPLE_PIPEGEN 0 | KQL --complete 'summarize n = count() by Te'");
             Check("20: after by: Text (" + Escaped(Join(by)) + ")", Join(Trimmed(by)) == "25\nText\n");
 
             List<string> operators = Lines("KQL --complete 'where Level > 3 | su'");
@@ -119,7 +119,7 @@ namespace DataApps
             List<string> untyped = Lines("KQL --complete 'where Le'");
             Check("20: no input, no columns (" + Escaped(Join(untyped)) + ")", Join(Trimmed(untyped)) == "6\n");
 
-            List<string> inLine = Lines("SHELL --complete \"PIPEGEN | KQL 'where Level > 3 | su\"");
+            List<string> inLine = Lines("SHELL --complete \"SAMPLE_PIPEGEN | KQL 'where Level > 3 | su\"");
             Check("20: Tab inside KQL '…' in a shell line (" + Escaped(Join(inLine)) + ")", Join(Trimmed(inLine)) == "summarize\n");
 
             List<string> variable = Lines("SHELL --complete 'echo $HO'");
@@ -128,8 +128,8 @@ namespace DataApps
             List<string> braced = Lines("SHELL --complete 'echo ${HO'");
             Check("20: Tab after ${HO (" + Escaped(Join(braced)) + ")", Join(braced) == "${HOME}\n");
 
-            List<string> program = Lines("SHELL --complete 'PIPEG'");
-            Check("20: Tab on a command: PIPEGEN (" + Escaped(Join(program)) + ")", program.Contains("PIPEGEN"));
+            List<string> program = Lines("SHELL --complete 'SAMPLE_PIPEG'");
+            Check("20: Tab on a command: SAMPLE_PIPEGEN (" + Escaped(Join(program)) + ")", program.Contains("SAMPLE_PIPEGEN"));
 
             List<string> unset = Lines("SHELL --complete 'unset HO'");
             Check("20: Tab after unset: HOME (" + Escaped(Join(unset)) + ")", unset.Contains("HOME"));

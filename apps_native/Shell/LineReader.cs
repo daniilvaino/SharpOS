@@ -28,11 +28,13 @@ namespace Shell
 
         public List<string> History { get; } = new List<string>();
 
-        // The history file is the program's own: KQL's prompt (step208) keeps queries, not commands.
-        public LineReader(IAutoCompleteHandler completion, string historyPath = "/sh_history")
+        // The history file is the program's own: KQL's prompt (step208) keeps
+        // queries, not commands. A bare name lives in $HOME, as ~/.bash_history
+        // does (release 0.1; before, in the root).
+        public LineReader(IAutoCompleteHandler completion, string historyName = ".sh_history")
         {
             _completion = completion;
-            _historyPath = historyPath;
+            _historyPath = InHome(historyName);
             LoadHistory();
         }
 
@@ -104,6 +106,13 @@ namespace Shell
                && (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.RightArrow
                    || key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.DownArrow
                    || key.Key == ConsoleKey.Home || key.Key == ConsoleKey.End || key.Key == ConsoleKey.Delete);
+
+        private static string InHome(string name)
+        {
+            string home = System.Environment.GetEnvironmentVariable("HOME");
+            if (string.IsNullOrEmpty(home)) home = "/home";
+            return home.EndsWith("/") ? home + name : home + "/" + name;
+        }
 
         // A line goes into the history unless it is blank or the same as the
         // one before it; the file gets it at once, so a session that ends by

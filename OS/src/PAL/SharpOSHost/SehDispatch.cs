@@ -578,18 +578,22 @@ namespace OS.PAL.SharpOSHost
                     personality = null;
                     skipSearchPersonality = false;
                 }
-                Console.Write("[seh-step] pc=0x");       Console.WriteHex(controlPc);
-                Console.Write(" raw=0x");                Console.WriteHex(rawRip);
-                Console.Write(" ib=0x");                 Console.WriteHex(ib);
-                Console.Write(" rf=[0x");                Console.WriteHex((ulong)rf->BeginAddress);
-                Console.Write("..0x");                   Console.WriteHex((ulong)rf->EndAddress);
-                Console.Write(" uw=0x");                 Console.WriteHex((ulong)rf->UnwindInfoAddress);
-                Console.Write("] rsp=0x");               Console.WriteHex(preVuRsp);
-                Console.Write(" -> rip=0x");             Console.WriteHex(searchCtx->Rip);
-                Console.Write(" rsp=0x");                Console.WriteHex(searchCtx->Rsp);
-                Console.Write(" frame=0x");              Console.WriteHex(newFrame);
-                Console.Write(" pers=0x");               Console.WriteHex((ulong)personality);
-                Console.WriteLine("");
+                // Each frame of the walk: for a diagnostic build only.
+                if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+                {
+                    Console.Write("[seh-step] pc=0x");       Console.WriteHex(controlPc);
+                    Console.Write(" raw=0x");                Console.WriteHex(rawRip);
+                    Console.Write(" ib=0x");                 Console.WriteHex(ib);
+                    Console.Write(" rf=[0x");                Console.WriteHex((ulong)rf->BeginAddress);
+                    Console.Write("..0x");                   Console.WriteHex((ulong)rf->EndAddress);
+                    Console.Write(" uw=0x");                 Console.WriteHex((ulong)rf->UnwindInfoAddress);
+                    Console.Write("] rsp=0x");               Console.WriteHex(preVuRsp);
+                    Console.Write(" -> rip=0x");             Console.WriteHex(searchCtx->Rip);
+                    Console.Write(" rsp=0x");                Console.WriteHex(searchCtx->Rsp);
+                    Console.Write(" frame=0x");              Console.WriteHex(newFrame);
+                    Console.Write(" pers=0x");               Console.WriteHex((ulong)personality);
+                    Console.WriteLine("");
+                }
 
                 if (personality != null)
                 {
@@ -697,13 +701,14 @@ namespace OS.PAL.SharpOSHost
                 // goes back to HwFaultBridge and on to managed dispatch, which
                 // usually catches it (the kernel's own eh L13 probe does so
                 // every boot) — "uncaught" read as a failure it was not.
-                if (rec->ExceptionCode == ExceptionRecord.EH_EXCEPTION_NUMBER)
-                    Console.Write("[seh] uncaught code=0x");
-                else
-                    Console.Write("[seh] no native handler, handing to managed dispatch: code=0x");
-                Console.WriteHex(rec->ExceptionCode);
-                Console.Write(" nParams=");             Console.WriteInt((int)rec->NumberParameters);
-                Console.WriteLine("");
+                bool cxx = rec->ExceptionCode == ExceptionRecord.EH_EXCEPTION_NUMBER;
+                if (cxx || OS.Kernel.Diagnostics.Probes.Diagnostics)
+                {
+                    Console.Write(cxx ? "[seh] uncaught code=0x" : "[seh] no native handler, handing to managed dispatch: code=0x");
+                    Console.WriteHex(rec->ExceptionCode);
+                    Console.Write(" nParams=");             Console.WriteInt((int)rec->NumberParameters);
+                    Console.WriteLine("");
+                }
                 if (rec->ExceptionCode == ExceptionRecord.EH_EXCEPTION_NUMBER &&
                     rec->NumberParameters >= 4)
                 {
@@ -1149,151 +1154,6 @@ namespace OS.PAL.SharpOSHost
             s_restore = (delegate* unmanaged<Context*, void>)resCode;
             s_shellcodeReady = true;
         }
-
-        // step 118 — legacy EmitCapture/EmitRestore preserved as REFERENCE.
-        // The live code now goes through EmitCaptureCompileTime /
-        // EmitRestoreCompileTime in SehDispatch.BootAsm.cs (compile-time
-        // codegen via BootAsm.Generator + Iced). Build excludes these via
-        // `#if false`.
-#if false
-        // Capture context shellcode: same idea как RtlCaptureContext в fork's
-        // crt_imp_stubs.cpp. RCX = ctx ptr (Win64 arg1).
-        //   mov [rcx+0x30], 0x100003  ; ContextFlags
-        //   mov [rcx+0x78], rax
-        //   ... все GP regs ...
-        //   mov rax, [rsp]            ; return addr → Rip
-        //   mov [rcx+0xF8], rax
-        //   lea rax, [rsp+8]
-        //   mov [rcx+0x98], rax       ; caller's Rsp
-        //   pushfq; pop rax; mov [rcx+0x44], eax
-        //   ret
-        // Returns final byte count for optional diagnostics / Iced parity
-        // experiments. The production EH path ignores it and stays
-        // allocation-free.
-        private static int EmitCapture(byte* p)
-        {
-            int o = 0;
-            // movl $0x100003, 0x30(%rcx)
-            p[o++] = 0xC7; p[o++] = 0x41; p[o++] = 0x30;
-            p[o++] = 0x03; p[o++] = 0x00; p[o++] = 0x10; p[o++] = 0x00;
-            // mov %rax, 0x78(%rcx)
-            EmitMovRegToCtx(p, ref o, 0x00 /*rax*/, 0x78);
-            // mov %rcx, 0x80(%rcx) — note caller's RCX is gone (arg)
-            EmitMovRegToCtx(p, ref o, 0x01 /*rcx*/, 0x80);
-            EmitMovRegToCtx(p, ref o, 0x02 /*rdx*/, 0x88);
-            EmitMovRegToCtx(p, ref o, 0x03 /*rbx*/, 0x90);
-            EmitMovRegToCtx(p, ref o, 0x05 /*rbp*/, 0xA0);
-            EmitMovRegToCtx(p, ref o, 0x06 /*rsi*/, 0xA8);
-            EmitMovRegToCtx(p, ref o, 0x07 /*rdi*/, 0xB0);
-            EmitMovRegToCtx(p, ref o, 0x08 /*r8*/,  0xB8);
-            EmitMovRegToCtx(p, ref o, 0x09 /*r9*/,  0xC0);
-            EmitMovRegToCtx(p, ref o, 0x0A /*r10*/, 0xC8);
-            EmitMovRegToCtx(p, ref o, 0x0B /*r11*/, 0xD0);
-            EmitMovRegToCtx(p, ref o, 0x0C /*r12*/, 0xD8);
-            EmitMovRegToCtx(p, ref o, 0x0D /*r13*/, 0xE0);
-            EmitMovRegToCtx(p, ref o, 0x0E /*r14*/, 0xE8);
-            EmitMovRegToCtx(p, ref o, 0x0F /*r15*/, 0xF0);
-            // mov rax, [rsp]
-            p[o++] = 0x48; p[o++] = 0x8B; p[o++] = 0x04; p[o++] = 0x24;
-            // mov [rcx+0xF8], rax
-            EmitMovRegToCtx(p, ref o, 0x00 /*rax*/, 0xF8);
-            // lea rax, [rsp+8]
-            p[o++] = 0x48; p[o++] = 0x8D; p[o++] = 0x44; p[o++] = 0x24; p[o++] = 0x08;
-            // mov [rcx+0x98], rax
-            EmitMovRegToCtx(p, ref o, 0x00 /*rax*/, 0x98);
-            // pushfq; pop rax
-            p[o++] = 0x9C;
-            p[o++] = 0x58;
-            // mov [rcx+0x44], eax
-            p[o++] = 0x89; p[o++] = 0x41; p[o++] = 0x44;
-            // ret
-            p[o++] = 0xC3;
-            return o;
-        }
-
-        // mov [rcx + disp8 or disp32], r64.
-        // REX.W (0x48 / 0x4C) + 0x89 + ModR/M.
-        // For reg in [rax..rdi] (0..7): REX = 0x48, opcode = 0x89, modrm = 0b01_rrr_001 (mode 01, rm=rcx).
-        // For reg in [r8..r15] (8..15): REX = 0x4C, same.
-        private static void EmitMovRegToCtx(byte* p, ref int o, int reg, int disp)
-        {
-            byte rex = (byte)((reg >= 8) ? 0x4C : 0x48);
-            int regLow = reg & 0x7;
-            p[o++] = rex;
-            p[o++] = 0x89;
-            if (disp <= 0x7F)
-            {
-                p[o++] = (byte)(0x40 | (regLow << 3) | 0x01); // mod=01 disp8, rm=001 (rcx)
-                p[o++] = (byte)disp;
-            }
-            else
-            {
-                p[o++] = (byte)(0x80 | (regLow << 3) | 0x01); // mod=10 disp32, rm=001
-                p[o++] = (byte)(disp);
-                p[o++] = (byte)(disp >> 8);
-                p[o++] = (byte)(disp >> 16);
-                p[o++] = (byte)(disp >> 24);
-            }
-        }
-
-        // Restore context shellcode. RCX = ctx ptr.
-        //   mov rax, [rcx+0xF8]    ; target Rip
-        //   mov rdx, [rcx+0x98]    ; target Rsp
-        //   mov [rdx-8], rax       ; pre-place Rip just below new SP
-        //   restore all GP regs except Rcx (used as ptr), Rsp (handled)
-        //   restore Rcx from ctx, last
-        //   mov rsp, [rcx+0x98]
-        //   sub rsp, 8
-        //   ret                    ; jumps к pre-placed Rip
-        // Returns final byte count for optional diagnostics / Iced parity
-        // experiments. The production EH path ignores it and stays
-        // allocation-free.
-        private static int EmitRestore(byte* p)
-        {
-            int o = 0;
-            // Pre-place return target so we can use rsp's `ret` to transfer.
-            // mov rax, [rcx+0xF8]   ; Rip
-            EmitMovCtxToReg(p, ref o, 0x00 /*rax*/, 0xF8);
-            // mov rdx, [rcx+0x98]   ; new Rsp
-            EmitMovCtxToReg(p, ref o, 0x02 /*rdx*/, 0x98);
-            // mov [rdx-8], rax       ; store target Rip там, куда `ret` его прочтёт после rsp-8
-            p[o++] = 0x48; p[o++] = 0x89; p[o++] = 0x42; p[o++] = 0xF8;
-            // Restore EFlags through pushfq trick.
-            // mov eax, [rcx+0x44] ; new EFlags
-            p[o++] = 0x8B; p[o++] = 0x41; p[o++] = 0x44;
-            // push rax; popfq
-            p[o++] = 0x50;
-            p[o++] = 0x9D;
-            // Restore GP regs (NOT rcx — it's our ctx ptr, NOT rax — used; NOT rsp/rip — handled).
-            EmitMovCtxToReg(p, ref o, 0x03 /*rbx*/, 0x90);
-            EmitMovCtxToReg(p, ref o, 0x05 /*rbp*/, 0xA0);
-            EmitMovCtxToReg(p, ref o, 0x06 /*rsi*/, 0xA8);
-            EmitMovCtxToReg(p, ref o, 0x07 /*rdi*/, 0xB0);
-            EmitMovCtxToReg(p, ref o, 0x08 /*r8*/,  0xB8);
-            EmitMovCtxToReg(p, ref o, 0x09 /*r9*/,  0xC0);
-            EmitMovCtxToReg(p, ref o, 0x0A /*r10*/, 0xC8);
-            EmitMovCtxToReg(p, ref o, 0x0B /*r11*/, 0xD0);
-            EmitMovCtxToReg(p, ref o, 0x0C /*r12*/, 0xD8);
-            EmitMovCtxToReg(p, ref o, 0x0D /*r13*/, 0xE0);
-            EmitMovCtxToReg(p, ref o, 0x0E /*r14*/, 0xE8);
-            EmitMovCtxToReg(p, ref o, 0x0F /*r15*/, 0xF0);
-            // mov rdx, [rcx+0x88]
-            EmitMovCtxToReg(p, ref o, 0x02 /*rdx*/, 0x88);
-            // mov rax, [rcx+0x78]
-            EmitMovCtxToReg(p, ref o, 0x00 /*rax*/, 0x78);
-            // Switch RSP last (so the new stack now holds the pre-placed Rip).
-            // Use the helper so disp 0x98 gets encoded as disp32 — hand-rolled
-            // disp8 byte 0x98 would sign-extend to -0x68 and load garbage.
-            EmitMovCtxToReg(p, ref o, 0x04 /*rsp*/, 0x98);
-            // sub rsp, 8 (back into the slot where we stored Rip)
-            p[o++] = 0x48; p[o++] = 0x83; p[o++] = 0xEC; p[o++] = 0x08;
-            // mov rcx, [rcx+0x80]   ; finally restore Rcx
-            EmitMovCtxToReg(p, ref o, 0x01 /*rcx*/, 0x80);
-            // ret    — pops [rsp] (= our pre-placed target Rip) into Rip
-            p[o++] = 0xC3;
-            return o;
-        }
-#endif
 
         // ─── Phase D iteration 3: FrameChain skip-through ──────────────────
         //

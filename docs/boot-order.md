@@ -17,8 +17,8 @@ Phase 5  Apps        обход \apps и запуск лаунчера
 
 У каждой фазы в коде комментарий с явными `Pre:` / `Post:`.
 
-**Вырожденный путь.** Если прошивка не отдала карту памяти, `Run` пропускает
-фазы 1–4 и идёт сразу в Phase 5 — `DemoApp` памяти не требует.
+**Без карты памяти** `Run` останавливается (`Panic.Fail`): кучи нет, дальше
+исполнять нечего. Сборщик BootInfo для UEFI ставит её всегда.
 
 ## Phase 0 — Critical
 
@@ -134,11 +134,11 @@ Threading: TebFacade, Atomics, ThreadPingPong, ThreadGcRoots, Sleep,
 NativeAotProbe.RunLate
 HandleTable.Init, AddressWait.Init
 [gated] CoreClrProbe.Run               ← размещённый CoreCLR на 16 МиБ стеке
-[gated] ExitBootServicesProbe.Run      ← взаимоисключающи с предыдущим
+[gated] PostEbsBoot.Run      ← взаимоисключающи с предыдущим
 [gated] IdtPanic / ExceptionThrow      ← не возвращаются
 ```
 
-**Снятие UEFI живёт внутри `ExitBootServicesProbe`**, а не отдельной фазой, и
+**Снятие UEFI живёт внутри `PostEbsBoot`**, а не отдельной фазой, и
 там же поднимается всё, что становится возможным только после него: локальный
 APIC с периодическим тиком (`LocalApic.StartPeriodic`), вытеснение
 (`Preemption.Enable`) и поток-насос ввода (`InputPump.Start`).
@@ -147,8 +147,7 @@ APIC с периодическим тиком (`LocalApic.StartPeriodic`), вы�
 
 ```
 LauncherBoot.Run                       ← FS init + обход \apps + запуск
-                                         \apps\LAUNCHER.EXE
-DemoApp.Run
+                                         \apps\LAUNCHER.EXE; в конце — выключение
 ```
 
 До step171 класс назывался `ElfValidation` — с тех пор, когда эта фаза гоняла ELF-приложения.

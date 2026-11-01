@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- A test stage: in the build with tests only (tools/Apps.ps1). -->
+    <SharpOsCategory>tests</SharpOsCategory>
     <IlcSystemModule>ViewFiltApp</IlcSystemModule>
   </PropertyGroup>
 

@@ -15,7 +15,7 @@ namespace DataApps
             if (Directory.Exists("t28")) Directory.Delete("t28", true);
             Directory.CreateDirectory("t28");
             const string program = "t28/GEN.EXE";
-            File.Copy(Process.FindProgram("PIPEGEN"), program);
+            File.Copy(Process.FindProgram("SAMPLE_PIPEGEN"), program);
             Check("28: the copy is big enough to be kept (" + new FileInfo(program).Length.ToString() + " bytes)",
                   new FileInfo(program).Length >= 64 * 1024);
 

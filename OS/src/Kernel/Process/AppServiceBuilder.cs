@@ -5,6 +5,8 @@ using OS.Kernel.Input;
 using OS.Kernel.Paging;
 using OS.Kernel.Util;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Process
 {
     // ABI-boundary code: all char*/byte* buffers passed into

@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- The name on the image (tools/Apps.ps1): a sample, in every build. -->
+    <SharpOsName>sample_pipesynth</SharpOsName>
     <IlcSystemModule>Synth</IlcSystemModule>
   </PropertyGroup>
 

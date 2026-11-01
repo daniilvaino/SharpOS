@@ -136,7 +136,7 @@ namespace OS.Hal
 
         /// <summary>
         /// Switches the boot disk's port to MSI. Called once the local APIC is
-        /// ours (ExitBootServicesProbe.TakeOverInterrupts); before that the
+        /// ours (PostEbsBoot.TakeOverInterrupts); before that the
         /// firmware owns interrupt delivery. Without MSI the driver stays on
         /// polling and says so.
         /// </summary>
@@ -332,6 +332,8 @@ namespace OS.Hal
         // is taken, as the xHCI registry does for its controllers.
         private static bool TryFindController(int slot, int function, out Pci.PciDev dev)
         {
+            // Once per boot; the PCI report (Probes.PciScan) is a test now.
+            Pci.Init();
             if (slot < 0)
                 return Pci.TryFind(0x01, 0x06, out dev);
 

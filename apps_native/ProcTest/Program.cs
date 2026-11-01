@@ -13,7 +13,7 @@ namespace PipeApps
     //   PROCTEST.EXE --child ROLE ...            one side of a test (Children.cs)
     //
     // Under --gc-stress the children this program starts of itself run with
-    // the same N, and so do PIPEGEN, PIPEFILT and PIPECNT (test 13). --quick
+    // the same N, and so do SAMPLE_PIPEGEN, PIPEFILT and PIPECNT (test 13). --quick
     // leaves out the long runs (100 000 messages, 200 launches).
     internal static unsafe partial class AppEntry
     {
@@ -169,11 +169,11 @@ namespace PipeApps
         private static void TargetCode()
         {
             var p1 = Pipe.Create(); var p2 = Pipe.Create();
-            Process a = Start("PIPEGEN.EXE", A("1000"), output: p1.WriteEnd);
+            Process a = Start("SAMPLE_PIPEGEN.EXE", A("1000"), output: p1.WriteEnd);
             Process b = Start("PIPEFILT.EXE", A("3"), input: p1.ReadEnd, output: p2.WriteEnd);
             Process c = Start("PIPECNT.EXE", null, input: p2.ReadEnd);
             a.WaitForExit(); b.WaitForExit(); c.WaitForExit();
-            Check("2: PIPEGEN 1000 | PIPEFILT 3 | PIPECNT by Process.Start: codes 0 (PIPECNT prints 400)",
+            Check("2: SAMPLE_PIPEGEN 1000 | PIPEFILT 3 | PIPECNT by Process.Start: codes 0 (PIPECNT prints 400)",
                   a.ExitCode == 0 && b.ExitCode == 0 && c.ExitCode == 0);
             Check("2: the handed ends are gone from the launcher",
                   !p1.WriteEnd.IsAvailable && !p1.ReadEnd.IsAvailable && !p2.WriteEnd.IsAvailable && !p2.ReadEnd.IsAvailable);
@@ -182,11 +182,11 @@ namespace PipeApps
 
             // The count read here instead of printed: the last stage's output is this program's.
             var q1 = Pipe.Create(); var q2 = Pipe.Create();
-            Process g = Start("PIPEGEN.EXE", A("1000"), output: q1.WriteEnd);
+            Process g = Start("SAMPLE_PIPEGEN.EXE", A("1000"), output: q1.WriteEnd);
             Process f = Start("PIPEFILT.EXE", A("3"), input: q1.ReadEnd, output: q2.WriteEnd);
             int n = 0, levels = 0;
             foreach (View v in q2.ReadEnd.Read()) { n++; if ((int)v["Level"] >= 3) levels++; }
-            Check("2: PIPEGEN 1000 | PIPEFILT 3 read here: 400, all of level 3 and up", n == 400 && levels == 400);
+            Check("2: SAMPLE_PIPEGEN 1000 | PIPEFILT 3 read here: 400, all of level 3 and up", n == 400 && levels == 400);
             Check("2: and their codes 0", Finish(g) == 0 && Finish(f) == 0);
         }
 
@@ -253,19 +253,19 @@ namespace PipeApps
         private static void TypeMismatch()
         {
             // By name, the reader waiting: the type is the writer's, so
-            // PIPEGEN, second, is not refused; the reader is, at its first
+            // SAMPLE_PIPEGEN, second, is not refused; the reader is, at its first
             // receive (step196).
             // The writer finishes first (3 fit the queue): a reader refusing
             // while it still writes would leave it a broken pipe, rightly.
             var waiting = Pipe.Read<LogEntry>("t4.name");
-            Process g = Start("PIPEGEN.EXE", A("3", "t4.name"));
+            Process g = Start("SAMPLE_PIPEGEN.EXE", A("3", "t4.name"));
             int written = Finish(g);
             string message = Refusal(waiting);
             Check("4: by name, the writer second: it writes (exit 0); the reader's first receive throws, naming the type and the field",
                   written == 0 && Mentions(message, "PipeApps.LogEntry", "field"));
 
             // By name, the writer waiting on a full queue: the reader here throws.
-            g = Start("PIPEGEN.EXE", A("100", "t4.name2"));
+            g = Start("SAMPLE_PIPEGEN.EXE", A("100", "t4.name2"));
             WaitForNames(1);
             message = null;
             try { Pipe.Read<LogEntry>("t4.name2"); }
@@ -275,19 +275,19 @@ namespace PipeApps
             Check("4: by name, the reader second: PipeException naming the type and the field",
                   Mentions(message, "PipeApps.LogEntry", "field") && Finish(g) == 137);
 
-            // Standard ends: this end typed first; PIPEGEN's output is still
+            // Standard ends: this end typed first; SAMPLE_PIPEGEN's output is still
             // its own type, and this reader is refused at its first receive.
             var pair = Pipe.Create();
             var reader = pair.ReadEnd.Read<LogEntry>();
-            g = Start("PIPEGEN.EXE", A("3"), output: pair.WriteEnd);
+            g = Start("SAMPLE_PIPEGEN.EXE", A("3"), output: pair.WriteEnd);
             written = Finish(g);
             message = Refusal(reader);
-            Check("4: standard output typed second: PIPEGEN writes (exit 0), the reader's receive throws, naming the type and the field",
+            Check("4: standard output typed second: SAMPLE_PIPEGEN writes (exit 0), the reader's receive throws, naming the type and the field",
                   written == 0 && Mentions(message, "PipeApps.LogEntry", "field"));
 
-            // Standard ends: PIPEGEN first, this end second.
+            // Standard ends: SAMPLE_PIPEGEN first, this end second.
             pair = Pipe.Create();
-            g = Start("PIPEGEN.EXE", A("3"), output: pair.WriteEnd);
+            g = Start("SAMPLE_PIPEGEN.EXE", A("3"), output: pair.WriteEnd);
             int code = Finish(g);
             message = null;
             try { pair.ReadEnd.Read<LogEntry>(); }
@@ -684,7 +684,7 @@ namespace PipeApps
         private static void KqlStage()
         {
             var p1 = Pipe.Create(); var p2 = Pipe.Create();
-            Process g = Start("PIPEGEN.EXE", A("100000"), output: p1.WriteEnd);
+            Process g = Start("SAMPLE_PIPEGEN.EXE", A("100000"), output: p1.WriteEnd);
             Process k = Start("KQL.EXE", A("where Level == 4 | take 3"), input: p1.ReadEnd, output: p2.WriteEnd);
             string texts = "";
             bool own = true;
@@ -694,12 +694,12 @@ namespace PipeApps
                 texts += (string)v["Text"] + ";";
             }
             int kc = Finish(k), gc = Finish(g);
-            Check("18: PIPEGEN 100000 | KQL 'where Level == 4 | take 3': text 4, 9, 14, PIPEGEN's own LogEntry messages (KQL exit "
+            Check("18: SAMPLE_PIPEGEN 100000 | KQL 'where Level == 4 | take 3': text 4, 9, 14, SAMPLE_PIPEGEN's own LogEntry messages (KQL exit "
                   + kc.ToString() + ")", kc == 0 && own && texts == "text 4;text 9;text 14;");
-            Check("18: take stopped the reading: PIPEGEN ended with 141, its reader gone (" + gc.ToString() + ")", gc == 141);
+            Check("18: take stopped the reading: SAMPLE_PIPEGEN ended with 141, its reader gone (" + gc.ToString() + ")", gc == 141);
 
             p1 = Pipe.Create(); p2 = Pipe.Create();
-            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            g = Start("SAMPLE_PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
             k = Start("KQL.EXE", A("summarize n = count() by Level | sort by Level asc"), input: p1.ReadEnd, output: p2.WriteEnd);
             int rows = 0;
             bool right = true;
@@ -749,9 +749,9 @@ namespace PipeApps
 
             // extend over a type of fields (step204): a number written into
             // the message's own field, the block sent on as it was — still
-            // PIPEGEN's LogEntry, its Text untouched.
+            // SAMPLE_PIPEGEN's LogEntry, its Text untouched.
             p1 = Pipe.Create(); p2 = Pipe.Create();
-            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            g = Start("SAMPLE_PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
             k = Start("KQL.EXE", A("where Level == 4 | take 3 | extend Level = Level * 10"), input: p1.ReadEnd, output: p2.WriteEnd);
             string edited = "";
             bool same = true;
@@ -767,7 +767,7 @@ namespace PipeApps
             // A string field too (step205): the new string in the block's
             // tail, the field pointing at it — still LogEntry.
             p1 = Pipe.Create(); p2 = Pipe.Create();
-            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            g = Start("SAMPLE_PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
             k = Start("KQL.EXE", A("take 2 | extend Text = strcat(Text, '!')"), input: p1.ReadEnd, output: p2.WriteEnd);
             string bangs = "";
             bool logEntries = true;
@@ -782,7 +782,7 @@ namespace PipeApps
 
             // A value the field cannot hold is an error, not a truncation.
             p1 = Pipe.Create(); p2 = Pipe.Create();
-            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            g = Start("SAMPLE_PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
             k = Start("KQL.EXE", A("take 1 | extend Level = Level + 10000000000"), input: p1.ReadEnd, output: p2.WriteEnd);
             int passed = 0;
             PipeStatus how = PipeStatus.Ok;
@@ -793,10 +793,10 @@ namespace PipeApps
                   kc == 1 && passed == 0 && how == PipeStatus.Broken);
 
             // A project of every column, in order (step208): cut out of the
-            // query, so the rows are PIPEGEN's own LogEntry messages; in
+            // query, so the rows are SAMPLE_PIPEGEN's own LogEntry messages; in
             // another order it is a projection, and new messages (Expando).
             p1 = Pipe.Create(); p2 = Pipe.Create();
-            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            g = Start("SAMPLE_PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
             k = Start("KQL.EXE", A("where Level == 4 | project Level, Text | take 2"), input: p1.ReadEnd, output: p2.WriteEnd);
             string identity = "";
             foreach (View v in p2.ReadEnd.Read()) identity += v.TypeName + " " + (string)v["Text"] + ";";
@@ -805,7 +805,7 @@ namespace PipeApps
                   kc == 0 && identity == "PipeApps.LogEntry text 4;PipeApps.LogEntry text 9;");
 
             p1 = Pipe.Create(); p2 = Pipe.Create();
-            g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            g = Start("SAMPLE_PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
             k = Start("KQL.EXE", A("where Level == 4 | project Text, Level | take 1"), input: p1.ReadEnd, output: p2.WriteEnd);
             string swapped = "";
             foreach (View v in p2.ReadEnd.Read()) swapped += v.TypeName + " " + Keys(v) + ";";
@@ -814,7 +814,7 @@ namespace PipeApps
                   kc == 0 && swapped == "SharpOS.Std.Pipes.Expando Text,Level;");
 
             p1 = Pipe.Create(); p2 = Pipe.Create();
-            g = Start("PIPEGEN.EXE", A("0"), output: p1.WriteEnd);
+            g = Start("SAMPLE_PIPEGEN.EXE", A("0"), output: p1.WriteEnd);
             k = Start("KQL.EXE", A("where Level > 1"), input: p1.ReadEnd, output: p2.WriteEnd);
             int none = 0;
             foreach (View v in p2.ReadEnd.Read()) none++;
@@ -838,7 +838,7 @@ namespace PipeApps
             // on, the fourth (Level 3) does not fit the int, the next stage
             // sees the stream broken, not ended.
             var p1 = Pipe.Create(); var p2 = Pipe.Create();
-            Process g = Start("PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
+            Process g = Start("SAMPLE_PIPEGEN.EXE", A("100"), output: p1.WriteEnd);
             Process k = Start("KQL.EXE", A("extend Level = Level + iif(Level == 3, 10000000000, 0)"), input: p1.ReadEnd, output: p2.WriteEnd);
             int n = 0;
             PipeStatus status = PipeStatus.Ok;
@@ -868,7 +868,7 @@ namespace PipeApps
 
             // An empty input and a wrong query: the error all the same, before data, code 2.
             p1 = Pipe.Create(); p2 = Pipe.Create();
-            g = Start("PIPEGEN.EXE", A("0"), output: p1.WriteEnd);
+            g = Start("SAMPLE_PIPEGEN.EXE", A("0"), output: p1.WriteEnd);
             k = Start("KQL.EXE", A("where Levl > 1"), input: p1.ReadEnd, output: p2.WriteEnd);
             int none = 0;
             PipeStatus how = PipeStatus.Ok;
@@ -928,7 +928,7 @@ namespace PipeApps
             for (int i = 0; i < pipelines; i++)
             {
                 var p1 = Pipe.Create(); var p2 = Pipe.Create();
-                Process a = Start("PIPEGEN.EXE", A("20"), output: p1.WriteEnd);
+                Process a = Start("SAMPLE_PIPEGEN.EXE", A("20"), output: p1.WriteEnd);
                 Process b = Start("PIPEFILT.EXE", A("3"), input: p1.ReadEnd, output: p2.WriteEnd);
                 int n = 0;
                 foreach (View v in p2.ReadEnd.Read()) n++;
@@ -1137,7 +1137,7 @@ namespace PipeApps
 
             var p1 = Pipe.Create();
             clock = System.Diagnostics.Stopwatch.StartNew();
-            Process g = Start("PIPEGEN.EXE", A("100000"), output: p1.WriteEnd);
+            Process g = Start("SAMPLE_PIPEGEN.EXE", A("100000"), output: p1.WriteEnd);
             Process c = Start("PIPECNT.EXE", null, input: p1.ReadEnd);
             Finish(g);
             Finish(c);

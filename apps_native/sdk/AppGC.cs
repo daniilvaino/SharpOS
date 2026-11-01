@@ -105,7 +105,8 @@ namespace SharpOS.AppSdk
             s_collections++;
 
             // One line per collection is a flood at a collection per allocation.
-            if (GcStress.Every == 0)
+            AppServiceTable* table = AppRuntime.Services;
+            if (GcStress.Every == 0 && table != null && (table->Settings & AppServiceTable.SettingReportCollections) != 0)
                 Report();
         }
 

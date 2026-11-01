@@ -285,6 +285,9 @@ namespace SharpOS.AppSdk
         public ulong Settings;
 
         public const ulong SettingAnnounceBuild = 1;
+        // SettingReportCollections: a line per collection ("[appgc]") — a
+        // diagnostic kernel's; a release one keeps the log to what matters.
+        public const ulong SettingReportCollections = 2;
 
         // CPU features beyond x86-64's baseline (step198): bits of
         // SharpOS.Std.NoRuntime.LibmPatcher; 0 from an older kernel.

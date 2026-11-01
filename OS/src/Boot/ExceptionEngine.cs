@@ -9,31 +9,12 @@ using OS.Hal;
 
 namespace OS.Boot
 {
-    // Phase 1 minimal exception path — `throw new X("msg")` now produces a
-    // readable panic dump (type + message) instead of an opaque halt loop.
-    //
-    // What this provides:
-    //   - RhpThrowEx(object) — entry point ILC emits for IL `throw`. We
-    //     print the exception's type and message via virtual dispatch on
-    //     System.Exception, then halt. No stack unwinding, no catch.
-    //   - Classlib hooks Test.CoreLib provides (GetRuntimeException,
-    //     FailFast, AppendExceptionStackFrame, OnFirstChanceException,
-    //     OnUnhandledException) — most are no-ops or final-halt.
-    //
-    // What this does NOT provide:
-    //   - try / catch / finally semantics (requires full StackFrameIterator
-    //     + DispatchEx + per-method EH clause table walker — 3-6 months
-    //     focused work; deferred to either a future longjmp milestone or
-    //     CoreCLR fork in Phase 6).
-    //   - Hardware-fault → managed-exception bridging (vector 14 #PF
-    //     would map to NullReferenceException via RhpThrowHwEx). Until
-    //     full unwinder is in place, hardware faults stay in our IDT
-    //     PanicDump path from step 35.
-    //
-    // The explicit `throw new X(...)` from BCL-ported code (StringBuilder,
-    // collections, Unsafe.AsPointer with bad input, etc.) now logs the
-    // exception type+message before halting — same effect as Panic.Fail
-    // but reachable through normal C# `throw` syntax.
+    // The managed ends of the exception machinery: the seam a throw lands
+    // on (RhpTest_ThrowIngress, from the ThrowEx shellcode, which goes on
+    // to DispatchEx) and the classlib hooks (GetRuntimeException, FailFast,
+    // AppendExceptionStackFrame, OnFirstChanceException,
+    // OnUnhandledException). try/catch/finally, filters and hardware
+    // faults are DispatchEx's and HwFaultBridge's (Boot/EH).
     internal static class ExceptionEngine
     {
         // RhpThrowEx moved to OS/src/Boot/EH/ThrowExStub.cs (Phase 1
@@ -41,190 +22,14 @@ namespace OS.Boot
         // shellcode that builds PAL_LIMITED_CONTEXT + ExInfo on stack
         // and tail-calls into managed RhpTest_ThrowIngress (this file).
 
-        // Phase 1 step 5.1 — managed seam where the throw shellcode
-        // lands after building ExInfo. Logs the snapshot's invariants
-        // (kind/passNumber/idxCurClause/IP/exception), confirms head
-        // chain, then halts. This is intentionally a halt — the full
-        // dispatch (DispatchEx + funclet calling) lands later in 5.6.
+        // Where the throw shellcode lands after building ExInfo: the managed
+        // dispatch, which does not return when a catch takes the exception.
+        // The name is the patchers' (ThrowExPatcher, RethrowPatcher).
         [RuntimeExport("RhpTest_ThrowIngress")]
         public static unsafe void RhpTest_ThrowIngress(byte* exceptionPtr, OS.Boot.EH.ExInfo* exInfo)
         {
-            // [UnmanagedCallersOnly] doesn't allow `object` parameter,
-            // so we accept the raw pointer (RCX from shellcode) and
-            // reinterpret the 8-byte slot as a managed reference.
-            object exception = null;
-            *(byte**)&exception = exceptionPtr;
-
-            // Phase 1 step 5.6 — production dispatch. When EhRealDispatch
-            // is on, route directly into DispatchEx без 5.1-5.5 logging.
-            // Path: RhpThrowEx shellcode → RhpTest_ThrowIngress → Dispatch
-            //       → FindFirstPassHandler → RhpCallCatchFunclet →
-            //       ILC catch funclet → real continuation в parent.
-            // Does not return on success.
-            if (OS.Kernel.Diagnostics.Probes.EhRealDispatch)
-            {
-                OS.Boot.EH.DispatchEx.Dispatch(exceptionPtr, exInfo);
-                Console.Write("\r\n*** Dispatch returned (BUG) ***\r\n");
-                while (true) { }
-            }
-
-            Console.Write("\r\n*** RhpTest_ThrowIngress (5.1) ***\r\n");
-
-            Console.Write("  exception type: ");
-            PrintExceptionInfo(exception);
-
-            Console.Write("  exInfo=0x");
-            Console.WriteHexRaw((ulong)(nuint)exInfo, 16);
-            Console.Write(" head=0x");
-            Console.WriteHexRaw((ulong)(long)OS.Boot.EH.ExInfoHead.s_head, 16);
-            Console.Write("\r\n");
-
-            Console.Write("  pass=");
-            Console.WriteUIntRaw(exInfo->PassNumber);
-            Console.Write(" kind=");
-            Console.WriteUIntRaw(exInfo->Kind);
-            Console.Write(" idxCurClause=0x");
-            Console.WriteHexRaw(exInfo->IdxCurClause, 8);
-            Console.Write("\r\n");
-
-            Console.Write("  prevExInfo=0x");
-            Console.WriteHexRaw((ulong)(nuint)exInfo->PrevExInfo, 16);
-            Console.Write(" exContext=0x");
-            Console.WriteHexRaw((ulong)(nuint)exInfo->ExContext, 16);
-            Console.Write("\r\n");
-
-            if (exInfo->ExContext != null)
-            {
-                Console.Write("  ctx.IP=0x");
-                Console.WriteHexRaw(exInfo->ExContext->IP, 16);
-                Console.Write(" ctx.Rsp=0x");
-                Console.WriteHexRaw(exInfo->ExContext->Rsp, 16);
-                Console.Write("\r\n");
-            }
-
-            // Phase 1 step 5.2 — initialise the embedded StackFrameIterator
-            // from the captured PAL_LIMITED_CONTEXT and log its
-            // invariants. Stock NativeAOT does this from DispatchEx
-            // (managed) before walking — we do it inline here for the
-            // intermediate ingress probe.
-            if (exInfo->ExContext != null)
-            {
-                Console.Write("\r\n*** RhpTest_SfiInit (5.2) ***\r\n");
-
-                OS.Boot.EH.StackFrameIteratorOps.Init(
-                    &exInfo->FrameIter, exInfo->ExContext);
-
-                Console.Write("  sfi.controlPC=0x");
-                Console.WriteHexRaw(exInfo->FrameIter.ControlPC, 16);
-                Console.Write(" sfi.originalPC=0x");
-                Console.WriteHexRaw(exInfo->FrameIter.OriginalControlPC, 16);
-                Console.Write("\r\n");
-
-                Console.Write("  sfi.framePointer=0x");
-                Console.WriteHexRaw(exInfo->FrameIter.FramePointer, 16);
-                Console.Write(" sfi.SP=0x");
-                Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
-                Console.Write("\r\n");
-
-                Console.Write("  regSet: pRbx=0x");
-                Console.WriteHexRaw((ulong)(nuint)exInfo->FrameIter.RegDisplay.pRbx, 16);
-                Console.Write(" pRbp=0x");
-                Console.WriteHexRaw((ulong)(nuint)exInfo->FrameIter.RegDisplay.pRbp, 16);
-                Console.Write(" pR12=0x");
-                Console.WriteHexRaw((ulong)(nuint)exInfo->FrameIter.RegDisplay.pR12, 16);
-                Console.Write("\r\n");
-
-                // Sanity: register pointers should point INTO the PAL
-                // struct on stack (callee-owned). PAL begins at
-                // exContext, ends at exContext + sizeof(PAL) = +0x100.
-                ulong palStart = (ulong)(nuint)exInfo->ExContext;
-                ulong palEnd = palStart + (ulong)OS.Boot.EH.PalLimitedContext.Size;
-                ulong pRbxAddr = (ulong)(nuint)exInfo->FrameIter.RegDisplay.pRbx;
-                bool inPal = pRbxAddr >= palStart && pRbxAddr < palEnd;
-                Console.Write("  pRbx in PAL? ");
-                Console.Write(inPal ? "yes" : "no");
-                Console.Write("\r\n");
-
-                // Phase 1 step 5.4 — replace 5.3 ad-hoc walk-up with
-                // production FindFirstPassHandler that walks frames AND
-                // matches typed clauses against exception type via class
-                // hierarchy. Filter clauses skipped (5.5 territory).
-                // RhpCallCatchFunclet still halt-stub — we only verify
-                // first-pass decision is correct.
-                Console.Write("\r\n*** FindFirstPassHandler (5.4) ***\r\n");
-
-                // Exception object's first 8 bytes = MT pointer.
-                SharpOS.Std.NoRuntime.GcMethodTable* exType = null;
-                if (exceptionPtr != null)
-                    exType = *(SharpOS.Std.NoRuntime.GcMethodTable**)exceptionPtr;
-
-                Console.Write("  exType=0x");
-                Console.WriteHexRaw((ulong)(nuint)exType, 16);
-                Console.Write("\r\n");
-
-                OS.Boot.EH.DispatchEx.FirstPassResult fp =
-                    OS.Boot.EH.DispatchEx.FindFirstPassHandler(exceptionPtr, exType, &exInfo->FrameIter);
-
-                if (fp.Found)
-                {
-                    Console.Write("  MATCH: framesWalked=");
-                    Console.WriteUIntRaw((uint)fp.FramesWalked);
-                    Console.Write(" handler=0x");
-                    Console.WriteHexRaw((ulong)(nuint)fp.HandlerAddress, 16);
-                    Console.Write(" idxCurClause=");
-                    Console.WriteUIntRaw(fp.IdxCurClause);
-                    Console.Write("\r\n");
-                    Console.Write("  methodStart=0x");
-                    Console.WriteHexRaw((ulong)(nuint)fp.MethodStart, 16);
-                    Console.Write(" codeOffset=0x");
-                    Console.WriteHexRaw(fp.CodeOffset, 8);
-                    Console.Write("\r\n");
-
-                    // Phase 1 step 5.5b — bridge real REGDISPLAY с fake
-                    // handler. Probes.EhCatchFuncletReal toggle gates this.
-                    // After FindFirstPassHandler, FrameIter.RegDisplay
-                    // contains real establisher frame state (IngressThrow
-                    // catcher frame). We swap real handler IP for our
-                    // fake TestCatchHandlerStub to verify whole shellcode
-                    // chain works on REAL inputs (not just synthetic).
-                    if (OS.Kernel.Diagnostics.Probes.EhCatchFuncletReal)
-                    {
-                        Console.Write("\r\n*** RhpCallCatchFunclet 5.5b (real REGDISPLAY + fake handler) ***\r\n");
-
-                        byte* fakeHandler = (byte*)OS.Boot.EH.TestCatchHandlerStub.GetMethodAddress();
-
-                        Console.Write("  passing exception=0x");
-                        Console.WriteHexRaw((ulong)(nuint)exceptionPtr, 16);
-                        Console.Write(" fakeHandler=0x");
-                        Console.WriteHexRaw((ulong)(nuint)fakeHandler, 16);
-                        Console.Write("\r\n");
-                        Console.Write("  rd.SP=0x");
-                        Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.SP, 16);
-                        Console.Write(" rd.ControlPC=0x");
-                        Console.WriteHexRaw(exInfo->FrameIter.RegDisplay.ControlPC, 16);
-                        Console.Write("\r\n");
-
-                        delegate* unmanaged<byte*, byte*, OS.Boot.EH.RegDisplay*, OS.Boot.EH.ExInfo*, void> catchFn =
-                            (delegate* unmanaged<byte*, byte*, OS.Boot.EH.RegDisplay*, OS.Boot.EH.ExInfo*, void>)
-                            OS.Boot.EH.CallCatchFuncletStub.GetMethodAddress();
-
-                        // RegDisplay is first field of StackFrameIterator,
-                        // so &FrameIter == &FrameIter.RegDisplay.
-                        catchFn(exceptionPtr, fakeHandler,
-                                (OS.Boot.EH.RegDisplay*)&exInfo->FrameIter, exInfo);
-
-                        Console.Write("5.5b: catchFn returned (BUG)\r\n");
-                    }
-                }
-                else
-                {
-                    Console.Write("  NO MATCH after framesWalked=");
-                    Console.WriteUIntRaw((uint)fp.FramesWalked);
-                    Console.Write("\r\n");
-                }
-            }
-
-            Console.Write("*** halting (5.4/5.5b first-pass probe) ***\r\n");
+            OS.Boot.EH.DispatchEx.Dispatch(exceptionPtr, exInfo);
+            Console.Write("\r\n*** Dispatch returned (BUG) ***\r\n");
             while (true) { }
         }
 

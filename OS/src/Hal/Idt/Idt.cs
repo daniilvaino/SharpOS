@@ -28,7 +28,7 @@ namespace OS.Hal.Idt
     //   EOI is never sent, and the PIC suppresses everything after it.
     //
     //   After ExitBootServices those handlers are code without an owner.
-    //   ExitBootServicesProbe masks the legacy PIC, points the vectors we
+    //   PostEbsBoot masks the legacy PIC, points the vectors we
     //   raise at our own dispatcher (Phase F1) and every other one above 31
     //   at a stub of ours (StubUnownedVectors): nothing in the table leads
     //   into the firmware any more.

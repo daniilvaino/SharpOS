@@ -6,6 +6,8 @@ using OS.Kernel.File;
 using OS.Kernel.Paging;
 using OS.Kernel.Util;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Process
 {
     /// <summary>
@@ -44,7 +46,7 @@ namespace OS.Kernel.Process
 
         public static void Run(BootInfo bootInfo)
         {
-            DebugLog.Write(LogLevel.Info, "pe launcher start");
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics) DebugLog.Write(LogLevel.Info, "pe launcher start");
 
             // Panic rather than shut down. On a real machine a quiet
             // Shutdown() here is indistinguishable from a clean finish: the
@@ -54,13 +56,15 @@ namespace OS.Kernel.Process
                 OS.Kernel.Panic.Fail("no boot disk: " + OS.Hal.BootDisk.MissingReason
                                      + " — the launcher and every app load from it; nothing to run");
 
-            DebugLog.Write(LogLevel.Info, "fs init ok");
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics) DebugLog.Write(LogLevel.Info, "fs init ok");
             if (OS.Kernel.Diagnostics.Probes.Diagnostics) FileDiagnostics.DumpDirectory(ProgramDirectoryPath);
 
             BootConfig.Load();
             // A battery's log says which build of each program ran; a prompt does not need it.
             if (BootConfig.AnnounceBuild)
                 AppServiceBuilder.Settings |= AppServiceTable.SettingAnnounceBuild;
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+                AppServiceBuilder.Settings |= AppServiceTable.SettingReportCollections;
 
             // PeLoader flattens, maps and jumps it; WindowsX64 service ABI.
             BootApp launcher = default;
@@ -78,32 +82,39 @@ namespace OS.Kernel.Process
             uint failed = 0;
             RunAppAndAccumulate(ref launcher, ref passed, ref failed);
 
-            DebugLog.Write(LogLevel.Info, "app batch summary");
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write("passed: ");
-            UiText.WriteUInt(passed);
-            DebugLog.EndLine();
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+            {
+                DebugLog.Write(LogLevel.Info, "app batch summary");
+                DebugLog.Begin(LogLevel.Info);
+                UiText.Write("passed: ");
+                UiText.WriteUInt(passed);
+                DebugLog.EndLine();
 
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write("failed: ");
-            UiText.WriteUInt(failed);
-            DebugLog.EndLine();
+                DebugLog.Begin(LogLevel.Info);
+                UiText.Write("failed: ");
+                UiText.WriteUInt(failed);
+                DebugLog.EndLine();
+            }
 
             // Must be zero: an allocation from an interrupt handler can land in
-            // the middle of the interrupted thread's own allocation.
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write("kernel allocations inside interrupts: ");
-            UiText.WriteULong(SharpOS.Std.NoRuntime.GcHeap.AllocationsWhereForbidden);
-            UiText.Write(" last size=");
-            UiText.WriteUInt(SharpOS.Std.NoRuntime.GcHeap.LastForbiddenSize);
-            DebugLog.EndLine();
+            // the middle of the interrupted thread's own allocation. Said
+            // always when it is not.
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics || SharpOS.Std.NoRuntime.GcHeap.AllocationsWhereForbidden != 0)
+            {
+                DebugLog.Begin(SharpOS.Std.NoRuntime.GcHeap.AllocationsWhereForbidden != 0 ? LogLevel.Warn : LogLevel.Info);
+                UiText.Write("kernel allocations inside interrupts: ");
+                UiText.WriteULong(SharpOS.Std.NoRuntime.GcHeap.AllocationsWhereForbidden);
+                UiText.Write(" last size=");
+                UiText.WriteUInt(SharpOS.Std.NoRuntime.GcHeap.LastForbiddenSize);
+                DebugLog.EndLine();
+            }
 
             // "passed: 0 / failed: 0" reads as a green batch while meaning the
             // opposite — every app was optional and none was on the disk.
             if (passed == 0 && failed == 0)
                 OS.Kernel.Panic.Fail("app batch ran nothing — no app image on disk");
 
-            DebugLog.Write(LogLevel.Info, "pe launcher done");
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics) DebugLog.Write(LogLevel.Info, "pe launcher done");
             Platform.Shutdown();
             Platform.Halt();
         }
@@ -157,15 +168,18 @@ namespace OS.Kernel.Process
                 return AppRunResult.ReadFailed;
 
             MemoryBlock image = fileBuffer.AsMemoryBlock();
-            DebugLog.Write(LogLevel.Info, "open app file ok");
-            DebugLog.Begin(LogLevel.Info);
-            UiText.Write("read app bytes = ");
-            UiText.WriteUInt(fileBuffer.Length);
-            DebugLog.EndLine();
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+            {
+                DebugLog.Write(LogLevel.Info, "open app file ok");
+                DebugLog.Begin(LogLevel.Info);
+                UiText.Write("read app bytes = ");
+                UiText.WriteUInt(fileBuffer.Length);
+                DebugLog.EndLine();
+            }
 
             // The boot app is a process like any other (step194): started at
             // its slot's range, on a main thread of its own, and waited for.
-            OS.Kernel.Diagnostics.Sampler.ReportScreenState();
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics) OS.Kernel.Diagnostics.Sampler.ReportScreenState();
             AppServiceBuilder.EnterStart();
             AppServiceStatus started;
             AppProcess proc;

@@ -141,7 +141,7 @@ namespace OS.Hal.Usb
             else OS.Kernel.Threading.Preemption.Allow();
         }
 
-        /// <summary>Every running controller to MSI (ExitBootServicesProbe, once the APIC is ours).</summary>
+        /// <summary>Every running controller to MSI (PostEbsBoot, once the APIC is ours).</summary>
         public static void EnableInterruptsAll()
         {
             for (int i = 0; i < Xhci.Count; i++) Xhci.Get(i).EnableInterrupts();

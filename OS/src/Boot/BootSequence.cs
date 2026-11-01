@@ -7,7 +7,6 @@ using OS.Kernel.Process;
 using OS.Kernel.Input;
 using OS.Kernel.Memory;
 using OS.Kernel.Paging;
-using OS.TestApp;
 using SharpOS.Std.NoRuntime;
 using HpetTimer = OS.Hal.Timer.Hpet;
 
@@ -40,9 +39,9 @@ namespace OS.Boot
 
             if ((bootInfo.Capabilities & PlatformCapabilities.MemoryMap) != PlatformCapabilities.MemoryMap)
             {
-                Log.Write(LogLevel.Warn, "memory map not implemented — skipping memory-dependent phases");
-                Phase5_Apps(bootInfo);   // DemoApp still runs (no memory needed)
-                return;
+                // The UEFI builder always sets it; without it there is no heap
+                // and nothing after this can run.
+                OS.Kernel.Panic.Fail("no memory map");
             }
 
             Phase1_Memory(bootInfo);    PhaseReport("phase1");
@@ -73,6 +72,7 @@ namespace OS.Boot
         private static ulong s_prevArenaTotal;
         private static void PhaseReport(string name)
         {
+            if (!Probes.Diagnostics) return;
             KernelHeap.GetSummary(out HeapSummary kh);
             ulong arena = NativeArena.TotalBytes;
 
@@ -144,11 +144,6 @@ namespace OS.Boot
             Log.Write(idtOk ? LogLevel.Info : LogLevel.Warn,
                 idtOk ? "idt installed" : "idt install failed");
             Log.Write(LogLevel.Info, "kernel start");
-
-            if (Probes.KeyboardInput)
-                InputDiagnostics.Run();
-            else
-                Console.WriteLine("skipped keyboard demo");
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -163,7 +158,7 @@ namespace OS.Boot
         {
             PrintMemorySummary(bootInfo);
             PhysicalMemory.Init(bootInfo.MemoryMap);
-            Log.Write(LogLevel.Info, "early allocator ready");
+            if (Probes.Diagnostics) Log.Write(LogLevel.Info, "early allocator ready");
 
             // Three pages taken only to show where the allocator starts.
             if (Probes.Diagnostics)
@@ -174,9 +169,6 @@ namespace OS.Boot
             }
 
             InitializeHeap();
-
-            if (Probes.KernelHeapSmoke)
-                KernelHeapSmokeTest.Run();
 
             if (Probes.Simd)
                 SimdProbe.Run();
@@ -225,10 +217,6 @@ namespace OS.Boot
                 InstallRethrowShellcode();
                 InstallCallFinallyFuncletShellcode();
                 InstallCallFilterFuncletShellcode();
-                // Test harness (5.5a) wired separately from EhProbe so the
-                // patcher addresses live in EhProbe statics at install time.
-                if (OS.Kernel.Diagnostics.Probes.Tests)
-                    OS.Kernel.Diagnostics.EhProbe.InstallStep5_5TestHarness();
             }
             if (bootInfo.JumpStubExecBuffer != null)
                 X64PageTable.SetJumpStubBuffer(bootInfo.JumpStubExecBuffer, bootInfo.JumpStubExecBufferSize);
@@ -265,7 +253,7 @@ namespace OS.Boot
             // it the two calls; apps leave them null and stay as they were.
             SharpOS.Std.NoRuntime.GcHeap.s_enterCritical = &global::OS.Kernel.Threading.Preemption.Suppress;
             SharpOS.Std.NoRuntime.GcHeap.s_leaveCritical = &global::OS.Kernel.Threading.Preemption.Allow;
-            Log.Write(LogLevel.Info, "gc collect hook installed (precise once the walker is up)");
+            if (Probes.Diagnostics) Log.Write(LogLevel.Info, "gc collect hook installed (precise once the walker is up)");
 
             // Force-init NativeAotModuleInit (RTR walking + TypeManager).
             // Anchor MT for the scan = `EETypePtrOf<object>()` intrinsic,
@@ -304,7 +292,9 @@ namespace OS.Boot
 
             // The region write barrier for RhpByRefAssignRef: Iced assembles
             // it, and Iced needs the statics. Before any region exists.
-            OS.Kernel.Diagnostics.WriteWatch.Install((byte*)bootInfo.RegionBarrierBuffer + 384);
+            // The write watch is armed only by the kernel's pipe tests (PipeProbe).
+            if (Probes.Tests)
+                OS.Kernel.Diagnostics.WriteWatch.Install((byte*)bootInfo.RegionBarrierBuffer + 384);
             if (OS.Kernel.Memory.RegionBarrier.TryInstall(bootInfo.RegionBarrierBuffer, 384))
                 OS.Kernel.Memory.RegionBarrier.PatchStub((byte*)OS.Boot.ByRefAssignRefStub.GetMethodAddress());
             else
@@ -364,6 +354,9 @@ namespace OS.Boot
             else
                 Log.Write(LogLevel.Warn, "tss: not installed - a stack overflow resets the machine");
             if (Probes.Diagnostics) DumpExecBuffers(bootInfo);
+            // Not a probe: without it the SEH walk stops at the first stub
+            // frame (step123). Inside the dump, only test builds had it.
+            RegisterExecPools(bootInfo);
             if (Probes.Tests) RunPagerValidation();
 
             // VM manager self-test — Reserve/Commit/MapKernel produce live
@@ -385,11 +378,6 @@ namespace OS.Boot
             // after this point is entitled to assume the answer is yes.
             if (Probes.FpFaultPreservesXmm)
                 OS.Kernel.Diagnostics.FpFaultProbe.Run();
-
-            // Late enough to have paging and frames, early enough to be seen
-            // before the hosted session — which is what depends on the answer.
-            if (Probes.ProtectPages)
-                OS.Kernel.Diagnostics.ProtectPagesProbe.Run();
 
             // Phase B#2 — identity-map the GOP framebuffer MMIO into the
             // pager PML4. Non-fatal: headless / BltOnly / no-GOP boots
@@ -493,29 +481,11 @@ namespace OS.Boot
             // commands reprograms the HBA the live UEFI firmware still
             // owns (it loads CoreCLR assemblies and apps via UEFI FS),
             // which corrupts every later UEFI-FS read. Verified after
-            // ExitBootServices instead (ExitBootServicesProbe). PCI
+            // ExitBootServices instead (PostEbsBoot). PCI
             // config-space scan above is read-only → safe pre-EBS.
-
-            if (Probes.GcHeapSmoke)
-                GcHeapSmokeTest.Run();
 
             if (Probes.GcStaticsSummary)
                 GcStaticsMaterializer.DumpMaterializedSummary();
-
-            if (Probes.GcStress)
-                GcStressTest.Run();
-
-            if (Probes.CoffGcInfoDump)
-                CoffGcInfoDumpProbe.Run();
-
-            if (Probes.GcInfoResolverSmoke)
-                GcInfoResolverSmokeProbe.Run();
-
-            if (Probes.GcContextSpillSmoke)
-                GcContextSpillSmokeProbe.Run();
-
-            if (Probes.KernelGcPreciseSmoke)
-                KernelGcPreciseSmokeProbe.Run();
 
             if (Probes.NativeAotFeatures)
                 NativeAotProbe.Run();
@@ -539,31 +509,6 @@ namespace OS.Boot
             // a kernel built without its tests (Probes.Tests) had none (step207).
             if (!OS.Kernel.Threading.Scheduler.Init())
                 OS.Kernel.Panic.Fail("Scheduler.Init failed: no context block for the boot thread");
-
-            // Phase E2 — TEB facade swap probe. Allocates a fresh TebFacade,
-            // CLI-fenced swaps gs base to it, reads gs:[Self] / gs:[Limit]
-            // back, restores original gs base. Gates the per-switch
-            // primitive that Phase E4 wires into cooperative context
-            // switches. Runs before CoreClrProbe so the original gs base
-            // is the firmware default (0) — restoring to 0 is safe here
-            // because no kernel path reads gs:[X] (only CoreCLR does, and
-            // CoreCLR hasn't been touched yet).
-            if (Probes.TebFacadeSwap)
-                OS.Kernel.Threading.TebFacadeProbe.Run();
-
-            // Phase E3 — atomic primitives smoke (lock cmpxchg / xchg /
-            // mfence semantics on a stack-resident ulong). Regression
-            // oracle for the X64Asm shellcode bytes; gated alongside
-            // the TEB probe so a single boot run validates the full
-            // Phase E pre-requisite stack.
-            if (Probes.Atomics)
-                OS.Kernel.Threading.AtomicsProbe.Run();
-
-            // Phase E4 — two cooperative kernel threads ping-pong via
-            // X64Asm.CoopSwitch. First real multi-thread artefact;
-            // commit milestone after this passes green.
-            if (Probes.ThreadPingPong)
-                OS.Kernel.Threading.ThreadPingPongProbe.Run();
 
             if (Probes.ThreadStatics)
                 OS.Kernel.Threading.ThreadStaticProbe.Run();
@@ -617,27 +562,10 @@ namespace OS.Boot
             // WakeByAddress*. Same idempotency contract.
             OS.Kernel.Threading.AddressWait.Init();
 
-            // Pre-EBS CoreCLR (loads \sharpos\* via UEFI FS). Skipped
-            // when the post-EBS experiment is on — there CoreCLR runs
-            // AFTER ExitBootServices, loading from our own FAT instead
-            // (firmware-free hosted tier). Avoids a double run.
-            if (Probes.CoreClrInit && !Probes.ExitBootServicesExperiment)
-                RunCoreClrSession(bootInfo);
-
-            // Phase C experiment — physically ExitBootServices and
-            // prove the own substrate survives UEFI teardown. Never
-            // returns; runs after all probes/census. Default-off.
-            if (Probes.ExitBootServicesExperiment)
-                ExitBootServicesProbe.Run();
-
-
-
-            // Never-returning probes — last so a regular boot still finishes.
-            if (Probes.IdtPanic)
-                IdtProbe.TriggerNullDeref();
-
-            if (Probes.ExceptionThrow)
-                ExceptionProbe.TriggerThrow();
+            // ExitBootServices and the rest of the boot on our own drivers
+            // (step91): the hosted runtime, when there is one, runs after
+            // it, from our FAT. Returns into Phase 5.
+            PostEbsBoot.Run();
         }
 
         // CoreCLR session on a 16 MiB pre-mapped BigStack (the fixed
@@ -647,6 +575,11 @@ namespace OS.Boot
         // back to the boot stack if BigStack init fails.
         internal static void RunCoreClrSession(BootInfo bootInfo)
         {
+#if SKIP_CORECLR
+            // No runtime, so no stack for it: 16 MiB not taken and not zeroed.
+            _ = bootInfo;
+            if (Probes.Diagnostics) Console.WriteLine("[boot] SKIP_CORECLR build — CoreClrProbe disabled");
+#else
             const uint BigStackSize = 16u * 1024u * 1024u;
             void* bigBuf = AllocateBigStack(BigStackSize);
             if (bigBuf != null)
@@ -661,7 +594,6 @@ namespace OS.Boot
                 Console.WriteLine("");
             }
 
-#if !SKIP_CORECLR
             bool ranBig = false;
             // step105: BigStack now uses its own dedicated stub pool
             // (BootInfo.BigStackStubBuffer), not the shared ExecStubBuffer
@@ -673,9 +605,6 @@ namespace OS.Boot
             }
             if (!ranBig)
                 CoreClrProbe.Run();
-#else
-            Console.WriteLine("[boot] SKIP_CORECLR build — CoreClrProbe disabled");
-            _ = bigBuf;
 #endif
         }
 
@@ -703,22 +632,17 @@ namespace OS.Boot
         // ─────────────────────────────────────────────────────────────────
         // Phase 5 — Apps. User-visible workloads.
         //
-        //   Pre:  Memory + runtime + platform + probes (or nothing if
-        //         memory map missing — Phase 5 still runs DemoApp).
-        //   Post: Process complete; kernel idles.
+        //   Pre:  Memory + runtime + platform + probes.
+        //   Post: the launcher ended; the machine is off (LauncherBoot).
         // ─────────────────────────────────────────────────────────────────
         private static void Phase5_Apps(BootInfo bootInfo)
         {
-            if ((bootInfo.Capabilities & PlatformCapabilities.MemoryMap) == PlatformCapabilities.MemoryMap)
-            {
-                // Programs share the CPU by the timer, not by goodwill: a
-                // thread that never sleeps no longer holds every other one off.
-                if (OS.Kernel.Diagnostics.Probes.PreemptLauncher)
-                    OS.Kernel.Threading.Preemption.Enable();
+            // Programs share the CPU by the timer, not by goodwill: a
+            // thread that never sleeps no longer holds every other one off.
+            if (OS.Kernel.Diagnostics.Probes.PreemptLauncher)
+                OS.Kernel.Threading.Preemption.Enable();
 
-                LauncherBoot.Run(bootInfo);
-            }
-            DemoApp.Run();
+            LauncherBoot.Run(bootInfo);
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -730,8 +654,8 @@ namespace OS.Boot
             if (!KernelHeap.Init())
                 Panic.Fail("kernel heap init failed");
 
-            Log.Write(LogLevel.Info, "heap init ok");
-            HeapDiagnostics.DumpSummary();
+            if (Probes.Diagnostics) Log.Write(LogLevel.Info, "heap init ok");
+            if (Probes.Diagnostics) HeapDiagnostics.DumpSummary();
         }
 
         private static void InstallInterfaceDispatchBridge(BootInfo bootInfo)
@@ -750,70 +674,68 @@ namespace OS.Boot
             if (!ok)
                 Panic.Fail("iface dispatch bridge install failed (see [ifacepatch] above)");
 
-            Log.Write(LogLevel.Info, "iface dispatch bridge installed");
+            if (Probes.Diagnostics) Log.Write(LogLevel.Info, "iface dispatch bridge installed");
+        }
+
+        // A failure always; the success line only in a diagnostic build.
+        private static void Installed(bool ok, string what)
+        {
+            if (!ok) Log.Write(LogLevel.Warn, what + " shellcode install failed");
+            else if (Probes.Diagnostics) Log.Write(LogLevel.Info, what + " shellcode installed");
         }
 
         private static void InstallByRefAssignRefShellcode()
         {
             bool ok = ByRefAssignRefPatcher.TryInstall();
-            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
-                ok ? "byref-assign shellcode installed" : "byref-assign shellcode install failed");
+            Installed(ok, "byref-assign");
         }
 
         private static void InstallChkstkShellcode()
         {
             bool ok = OS.PAL.SharpOSHost.ChkstkPatcher.TryInstall();
-            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
-                ok ? "__chkstk shellcode installed" : "__chkstk shellcode install failed");
+            Installed(ok, "__chkstk");
         }
 
         private static void InstallPortIoShellcode()
         {
             bool ok = PortIoPatcher.TryInstall();
-            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
-                ok ? "port-io shellcode installed" : "port-io shellcode install failed");
+            Installed(ok, "port-io");
         }
 
         private static void InstallCaptureContextShellcode()
         {
             bool ok = OS.Boot.EH.CaptureContextPatcher.TryInstall();
-            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
-                ok ? "capture-context shellcode installed" : "capture-context shellcode install failed");
+            Installed(ok, "capture-context");
         }
 
         private static void InstallThrowExShellcode()
         {
             bool ok = OS.Boot.EH.ThrowExPatcher.TryInstall();
-            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
-                ok ? "throw-ex shellcode installed" : "throw-ex shellcode install failed");
+            Installed(ok, "throw-ex");
         }
 
         private static void InstallCallCatchFuncletShellcode()
         {
             bool ok = OS.Boot.EH.CallCatchFuncletPatcher.TryInstall();
-            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
-                ok ? "call-catch-funclet shellcode installed" : "call-catch-funclet shellcode install failed");
+            Installed(ok, "call-catch-funclet");
         }
 
         private static void InstallRethrowShellcode()
         {
             bool ok = OS.Boot.EH.RethrowPatcher.TryInstall();
-            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
-                ok ? "rethrow shellcode installed" : "rethrow shellcode install failed");
+            Installed(ok, "rethrow");
         }
 
         private static void InstallCallFinallyFuncletShellcode()
         {
             bool ok = OS.Boot.EH.CallFinallyFuncletPatcher.TryInstall();
-            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
-                ok ? "call-finally-funclet shellcode installed" : "call-finally-funclet shellcode install failed");
+            Installed(ok, "call-finally-funclet");
         }
 
         private static void InstallCallFilterFuncletShellcode()
         {
             bool ok = OS.Boot.EH.CallFilterFuncletPatcher.TryInstall();
-            Log.Write(ok ? LogLevel.Info : LogLevel.Warn,
-                ok ? "call-filter-funclet shellcode installed" : "call-filter-funclet shellcode install failed");
+            Installed(ok, "call-filter-funclet");
         }
 
         private static void InitializePager()
@@ -826,8 +748,8 @@ namespace OS.Boot
             if (!Pager.Init(requirements))
                 Panic.Fail("pager init failed");
 
-            Log.Write(LogLevel.Info, "pager init ok");
-            PagingDiagnostics.DumpSummary();
+            if (Probes.Diagnostics) Log.Write(LogLevel.Info, "pager init ok");
+            if (Probes.Diagnostics) PagingDiagnostics.DumpSummary();
 
             Pager.GetSummary(out PagingSummary summary);
             if (summary.PageSize != requirements.PageSize)
@@ -836,13 +758,13 @@ namespace OS.Boot
             if (summary.SpareTablePages < requirements.InitialPageTablePages)
                 Panic.Fail("pager requirements mismatch: initial spare table pages");
 
-            Log.Write(LogLevel.Info, "pager requirements applied");
+            if (Probes.Diagnostics) Log.Write(LogLevel.Info, "pager requirements applied");
         }
 
         private static void RunPagerValidation()
         {
             PagingValidation.Run();
-            PagingDiagnostics.DumpSummary();
+            if (Probes.Diagnostics) PagingDiagnostics.DumpSummary();
         }
 
         // Phase E1 — flip the inactive pager clone to be the live CR3 and
@@ -886,7 +808,10 @@ namespace OS.Boot
             DumpOne("AsmExecBuffer     ", bi.AsmExecBuffer,     bi.AsmExecBufferSize);
             DumpOne("BigStackStubBuffer", bi.BigStackStubBuffer, bi.BigStackStubBufferSize);
             DumpOne("RegionBarrierBuffer", bi.RegionBarrierBuffer, bi.RegionBarrierBufferSize);
+        }
 
+        private static unsafe void RegisterExecPools(BootInfo bi)
+        {
             // step 123: register every loader-code exec pool as a "stub range"
             // with SehUnwind so the SEH walker treats RAs inside them as
             // frameless leaves (pop [rsp]; rsp += 8; continue with caller).
@@ -906,7 +831,7 @@ namespace OS.Boot
             RegOne(bi.AsmExecBuffer,      bi.AsmExecBufferSize);
             RegOne(bi.BigStackStubBuffer, bi.BigStackStubBufferSize);
             RegOne(bi.RegionBarrierBuffer, bi.RegionBarrierBufferSize);
-            Log.Write(LogLevel.Info, "[exec-pool] registered with SehUnwind stub range");
+            if (Probes.Diagnostics) Log.Write(LogLevel.Info, "[exec-pool] registered with SehUnwind stub range");
         }
 
         // Mask every SSE exception, the state the architecture defines at reset
@@ -958,8 +883,7 @@ namespace OS.Boot
             // `null.ToString()` HALT.
             //
             // Side effect: native CoreCLR paths (e.g. NativeCodeVersion::GetGC-
-            // CoverageInfo) and the KernelGcPreciseSmokeProbe were relying on
-            // page 0 returning zero. Those are targeted fixes (not "remap as
+            // CoverageInfo) was relying on page 0 returning zero. Those are targeted fixes (not "remap as
             // readable"), tracked separately.
             if (OS.Kernel.Paging.X64PageTable.Unmap(0))
                 Log.Write(LogLevel.Info, "VA 0 unmapped (null-deref trap)");

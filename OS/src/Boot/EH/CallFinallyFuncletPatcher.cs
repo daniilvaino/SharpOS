@@ -1,5 +1,7 @@
 using OS.Hal;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Boot.EH
 {
     // Phase 1 step 7 — patches CallFinallyFuncletStub.RhpCallFinallyFunclet
@@ -49,10 +51,13 @@ namespace OS.Boot.EH
             if (target[0] != 0x41 || target[p - 1] != 0xC3)
                 return false;
 
-            Log.Begin(LogLevel.Info);
-            Console.Write("call-finally-funclet shellcode: bytes=");
-            Console.WriteUIntRaw((uint)p);
-            Log.EndLine();
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("call-finally-funclet shellcode: bytes=");
+                Console.WriteUIntRaw((uint)p);
+                Log.EndLine();
+            }
 
             s_installed = true;
             return true;

@@ -6,7 +6,7 @@
 //
 // In a pipeline (the input is an object pipe) the code's value is a function,
 // called with each message as an object:
-//   pipegen 3 | js -e "m => ({...m, twice: m.Level * 2})" | convert --to jsonl
+//   sample_pipegen 3 | js -e "m => ({...m, twice: m.Level * 2})" | convert --to jsonl
 // What it returns goes out unless null or undefined: an object makes a pipe of
 // Expando, anything else a pipe of strings. console.log there goes to the
 // error stream — the standard output carries the messages.

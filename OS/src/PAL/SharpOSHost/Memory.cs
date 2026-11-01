@@ -91,7 +91,7 @@ namespace OS.PAL.SharpOSHost
         // active PML4 и flip the W bit (preserving NX=0) на каждой странице.
         //
         // After ExitBootServices (the default boot calls it, see
-        // ExitBootServicesProbe) the pages come from PhysicalMemory instead.
+        // PostEbsBoot) the pages come from PhysicalMemory instead.
         // Pages are never freed.
         [RuntimeExport("SharpOSHost_AllocExecutable")]
         public static void* AllocExecutable(ulong size)

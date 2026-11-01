@@ -499,7 +499,7 @@ namespace OS.Hal
                 if (probe < 0 || fsz == 0)
                     return false;
 
-                bool trace = fsz >= TimedReadThresholdBytes;
+                bool trace = fsz >= TimedReadThresholdBytes && OS.Kernel.Diagnostics.Probes.Diagnostics;
                 ulong cmd0 = Ahci.ReadCommands;
                 ulong sec0 = Ahci.ReadSectors;
                 ulong ioTicks0 = Ahci.ReadTicks;

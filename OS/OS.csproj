@@ -203,6 +203,11 @@
   <PropertyGroup Condition="'$(NoTests)' == 'true'">
     <DefineConstants>$(DefineConstants);SHARPOS_NO_TESTS</DefineConstants>
   </PropertyGroup>
+  <!-- Tests without the log's extras: -p:NoDiagnostics=true, from
+       run_build.ps1 -NoDiagnostics. Probes.Diagnostics turns false. -->
+  <PropertyGroup Condition="'$(NoDiagnostics)' == 'true'">
+    <DefineConstants>$(DefineConstants);SHARPOS_NO_DIAGNOSTICS</DefineConstants>
+  </PropertyGroup>
   <!-- Библиотеки MSVC CRT и Windows SDK (splat xwin) — только ядру с форком,
        см. SharpOsNativeLink.props. Чистое ядро сшивается без них. -->
   <PropertyGroup Condition="'$(SkipCoreClr)' != 'true'">

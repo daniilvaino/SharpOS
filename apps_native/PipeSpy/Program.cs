@@ -15,7 +15,7 @@ namespace PipeApps
     //
     // Two of them in one pipeline print the same addresses:
     //
-    //     PIPEGEN 1000 | PIPESPY a | PIPESPY b | PIPECNT
+    //     SAMPLE_PIPEGEN 1000 | PIPESPY a | PIPESPY b | PIPECNT
     //
     // one object crossing four programs, not a byte string parsed into new
     // objects at every step — which would put each copy in its reader's heap

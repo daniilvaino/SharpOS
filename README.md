@@ -236,7 +236,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | Несколько приложений сразу (процессы) | 🟡 | 🟡 | 🚫 | `Process.Start`/`WaitForExit`/`Kill`, до 16, каждое в своём диапазоне адресов; куча растёт по мере надобности, переполнение стека — выход 134; один процессор, старт + выход ≈10 мс на ноутбуке |
 | Родные трубы: объекты между ядром и приложениями | 🟡 | 🟡 | 🚫 | `PipeWriter<T>`/`PipeReader<T>`/`Region<T>`, типы `[Message]`; копия, `Move`, чтение на месте, чтение по описанию; между приложениями по имени и концами при старте (стандартные вход и выход); без выделений на сообщение, между процессами вровень с `BinaryWriter` по каналу ОС на одном ядре; байты и текст (`Pipe.ReadBytes`/`WriteBytes`/`ReadText`/`WriteText`); конвейер из кода — `Pipe.From`/`Pipe.To`; принятый Expando правится на месте (`ExpandoEdits`: в запасе блока без выделений, иначе рост или сжатие); проверено только под QEMU |
 | Внешние данные: `READ`, `WRITE`, `CONVERT` | 🚫 | 🟡 | 🚫 | файл в трубу и обратно; `> файл` хранит поток объектов как есть (externalpipe), `READ` отдаёт те же сообщения без класса; JSON, JSON Lines, CBOR, CBOR Sequence и строки в объекты (`Expando`) и обратно, `Into<T>` из `Expando`; потоково, память — один элемент; проверено только под QEMU |
-| Запросы KQL в конвейере | 🚫 | 🟡 | 🚫 | `PIPEGEN 100 \| KQL 'where Level >= 3 \| summarize n = count() by Level'`: сообщения входа — таблица, читается по мере прихода; `take` прекращает чтение, `where`/`take`/`sort` пересылают исходные блоки, `extend` пишет в само сообщение (над Expando — любые скаляры, над типом с полями — числа, bool, даты, интервалы и строки в существующие поля), `project`/`project-away`/`project-rename` над Expando — правки самого блока; схема — из объявления писателя, запрос связан до данных; Expando — открытая таблица, каждое имя — свой столбец `dynamic`; Expando и вложенные объекты — `dynamic` (поля, сравнения, арифметика, `tostring`/`tolong`); ошибки запроса с позицией; `… \| KQL` без запроса спрашивает его, когда тип входа известен, Tab дополняет по его столбцам; без `matches regex`, `extract()`, `url_decode`/`url_encode_component`; проверено только под QEMU |
+| Запросы KQL в конвейере | 🚫 | 🟡 | 🚫 | `SAMPLE_PIPEGEN 100 \| KQL 'where Level >= 3 \| summarize n = count() by Level'`: сообщения входа — таблица, читается по мере прихода; `take` прекращает чтение, `where`/`take`/`sort` пересылают исходные блоки, `extend` пишет в само сообщение (над Expando — любые скаляры, над типом с полями — числа, bool, даты, интервалы и строки в существующие поля), `project`/`project-away`/`project-rename` над Expando — правки самого блока; схема — из объявления писателя, запрос связан до данных; Expando — открытая таблица, каждое имя — свой столбец `dynamic`; Expando и вложенные объекты — `dynamic` (поля, сравнения, арифметика, `tostring`/`tolong`); ошибки запроса с позицией; `… \| KQL` без запроса спрашивает его, когда тип входа известен, Tab дополняет по его столбцам; без `matches regex`, `extract()`, `url_decode`/`url_encode_component`; проверено только под QEMU |
 | Terminal.Gui | 🚫 | ✅ | ⏳ | на нашей std, свой драйвер поверх терминала ядра; мыши нет |
 | Скрипты: Lua и JavaScript | 🚫 | 🟡 | 🚫 | `LUA` (Lua-CSharp, Lua 5.2) и `JS` (Okojo, ECMAScript): `-e`, файл, приглашение; стадия конвейера — сообщение входит таблицей или объектом, выходит Expando или строкой (step212). У Lua `require` по `/bin/lua` и текущему каталогу, `init.lua`; у JS нет `require`/`import` и API Node и браузера; проверено только под QEMU |
 | Оболочка с синтаксисом bash | 🚫 | 🟡 | 🚫 | `&&` `\|\|` `;`, конвейер `a \| b \| c`, встроенные `cd` `pwd` `ls` `cat` `echo` `expect` `exit` `export` `unset` `env` `which`, `$ИМЯ` и `${ИМЯ}` из окружения, программы по `PATH`, запуск `.EXE` (с аргументами) и `.DLL` (без); `> файл` и `>> файл` в конце конвейера, код конвейера — первой упавшей стадии; `<` нет; переменных оболочки, `$(…)`, циклов и `if` нет — строка с ними отклоняется целиком, с номером столбца. Редактор строки (ReadLine): история между сеансами, Tab (и по `$ИМЯ`, и внутри `KQL '…'`), Ctrl-клавиши, `clear`. Ctrl+C прерывает только набор строки, не запущенную программу |
@@ -248,18 +248,18 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 
 ## Трубы
 
-Программы в SharpOS передают друг другу объекты, а не байты. `PIPEGEN | PIPEFILT 3 | PIPECNT` в оболочке работает так же, как в bash. Но каждая стадия получает настоящий объект с полями: его не нужно разбирать из текста, и в кучу получателя он не копируется. Объект лежит в общей памяти обмена, и следующая стадия читает его прямо там.
+Программы в SharpOS передают друг другу объекты, а не байты. `SAMPLE_PIPEGEN | PIPEFILT 3 | PIPECNT` в оболочке работает так же, как в bash. Но каждая стадия получает настоящий объект с полями: его не нужно разбирать из текста, и в кучу получателя он не копируется. Объект лежит в общей памяти обмена, и следующая стадия читает его прямо там.
 
 ### В оболочке
 
 ```sh
-PIPEGEN 10                                   # десять LogEntry на экран
-PIPEGEN 1000 | PIPEFILT 3 | PIPECNT          # фильтр со своим классом, счётчик без класса
-PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'
-PIPEGEN 100 | KQL                            # kql (LogEntry)> запрос, Tab — столбцы LogEntry
-SYNTH 20 | VIEWFILT 3                        # тип, которого нет ни в одной программе
-PIPEGEN 1000 | PIPESPY a | PIPESPY b | PIPECNT   # обе стадии видят объект по одному адресу
-PIPEGEN 20 | LUA -e "return function(m) m.Square = m.Level * m.Level return m end" | JS -e "m => ({...m, Even: m.Level % 2 == 0})" | KQL 'where tobool(Even)'
+SAMPLE_PIPEGEN 10                                   # десять LogEntry на экран
+SAMPLE_PIPEGEN 1000 | PIPEFILT 3 | PIPECNT          # фильтр со своим классом, счётчик без класса
+SAMPLE_PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level'
+SAMPLE_PIPEGEN 100 | KQL                            # kql (LogEntry)> запрос, Tab — столбцы LogEntry
+SAMPLE_PIPESYNTH 20 | VIEWFILT 3                        # тип, которого нет ни в одной программе
+SAMPLE_PIPEGEN 1000 | PIPESPY a | PIPESPY b | PIPECNT   # обе стадии видят объект по одному адресу
+SAMPLE_PIPEGEN 20 | LUA -e "return function(m) m.Square = m.Level * m.Level return m end" | JS -e "m => ({...m, Even: m.Level % 2 == 0})" | KQL 'where tobool(Even)'
 FETCH | KQL 'project-away Storage, Input' | LUA -e "return strings" | CONVERT --to jsonl | JSON2DIR   # числа и bool строками: json2dir берёт только строки
 ```
 
@@ -272,10 +272,10 @@ FETCH | KQL 'project-away Storage, Input' | LUA -e "return strings" | CONVERT --
 `> файл` сохраняет поток таким, каким он шёл по трубе, а `READ` отдаёт его обратно теми же сообщениями. Класс для этого не нужен ни при записи, ни при чтении.
 
 ```sh
-PIPEGEN 100 > log.pipe
+SAMPLE_PIPEGEN 100 > log.pipe
 READ log.pipe | KQL 'where Level > 2'        # запрос связывается до первого сообщения, как над живым писателем
-PIPEGEN 10 >> log.pipe                       # дописать можно только тот же тип
-SYNTH 5 >> log.pipe                          # другой тип: отказ, файл не меняется
+SAMPLE_PIPEGEN 10 >> log.pipe                       # дописать можно только тот же тип
+SAMPLE_PIPESYNTH 5 >> log.pipe                          # другой тип: отказ, файл не меняется
 ```
 
 Формат файла называется `externalpipe`: описание типов трубы один раз и затем сами блоки сообщений. Поток строк и `byte[]` пишется в файл обычными байтами, без заголовка. Текст, JSON и CBOR — явные преобразования через `CONVERT`:
@@ -290,7 +290,7 @@ SYNTH 5 >> log.pipe                          # другой тип: отказ, 
 | `externalpipe` | то же, что делают `>` и `READ`, отдельной стадией |
 
 ```sh
-PIPEGEN 5 | CONVERT --to json > log.json
+SAMPLE_PIPEGEN 5 | CONVERT --to json > log.json
 READ log.json | CONVERT --from json | KQL 'where Level == 4'
 READ log.pipe | CONVERT --to cbor > log.cbor          # читается на хосте: python -c "import cbor2; ..."
 READ data.bin --bytes                                 # любой файл как сырые байты
@@ -334,7 +334,7 @@ Pipe.Read<LogEntry>().Where(e => e.Level >= min).WriteTo();
 Класс не обязателен. Через вид (`View`) можно читать любое сообщение по описанию, которое прислал писатель:
 
 ```csharp
-Pipe.Read().Where(v => v["Level"] >= min).WriteTo();    // VIEWFILT: работает и с SYNTH, и с Expando из JSON
+Pipe.Read().Where(v => v["Level"] >= min).WriteTo();    // VIEWFILT: работает и с SAMPLE_PIPESYNTH, и с Expando из JSON
 foreach (View v in Pipe.Read()) n++;                     // PIPECNT
 ```
 
@@ -392,15 +392,15 @@ Pipe.Read("myapp.log").WriteTo(Pipe.To("CONVERT --to json | WRITE errors.json"))
 | папка | что там |
 |---|---|
 | `/EFI/BOOT` | `BOOTX64.EFI` — ядро |
-| `/bin` | программы: оболочка, лаунчер, `READ`, `WRITE`, `CONVERT`, `KQL`, демо-стадии труб |
+| `/bin` | программы: оболочка, лаунчер, `READ`, `WRITE`, `CONVERT`, `KQL`, примеры `SAMPLE_PIPEGEN`, `SAMPLE_PIPESYNTH` |
 | `/games` | игры вместе с данными: DOOM и WAD, эмуляторы NES и картридж |
-| `/tests` | батарея и её данные |
+| `/tests` | батарея, её данные и тестовые стадии труб (`PIPEFILT`, `PIPECNT`, `PIPESPY`, `VIEWFILT`); только в сборке с тестами |
 | `/config` | `system.env` — что запускать после загрузки и окружение для всего, что запускает ядро; сценарий батареи |
 | `/home` | рабочая папка по умолчанию |
 | `/system` | для системы помимо ядра, пока пусто |
 | `/sharpos` | рантайм CoreCLR, PowerShell |
 
-`system.env` — строки `ИМЯ=значение`: `PATH=/bin;/tests;/games`, `HOME=/home`, `TZ=+03:00` (сдвиг от UTC: местное время и время файлов; `run_build.ps1` берёт его у хоста), `INIT=/bin/LAUNCHER.EXE`. Программа ищется по `PATH`, а куда она ляжет, задаёт `<SharpOsCategory>` в её `.csproj`. Лаунчер открывается на вкладке «Главная»: плитки оболочки, PowerShell и игр.
+`system.env` — строки `ИМЯ=значение`: `PATH=/bin;/tests;/games` (без `/tests` в сборке `-NoTests`), `HOME=/home`, `TZ=+00:00` (сдвиг от UTC: местное время и время файлов; в образе UTC, свой часовой пояс — правкой этой строки), `INIT=/bin/LAUNCHER.EXE`. Программа ищется по `PATH`, а куда она ляжет, задаёт `<SharpOsCategory>` в её `.csproj`. Лаунчер открывается на вкладке «Главная»: плитки оболочки, PowerShell и игр.
 
 В оболочке окружение меняют `export ИМЯ=значение` и `unset ИМЯ`, `env` его печатает, `env ИМЯ=значение программа` запускает программу с добавкой. `$ИМЯ` подставляется в словах и в `"…"`, в `'…'` — нет; `~` — это `HOME`. `ENV` указывает сценарий, который приглашение выполняет при старте.
 
@@ -458,7 +458,7 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 - **[TurboXml](https://github.com/xoofx/TurboXml)** (Alexandre Mutel, BSD-2-Clause) - разбор XML без аллокаций. Читает манифест приложения из ресурсов PE.
 - **[ShellSyntaxTree](https://github.com/Aaronontheweb/ShellSyntaxTree)** (Aaron Stannard, Apache-2.0) - разбор командной строки bash в дерево. На нём стоит оболочка; половина для PowerShell не компилируется.
 - **[Kusto.Language](https://github.com/microsoft/Kusto-Query-Language)** (Microsoft, Apache-2.0) - разбор и связывание KQL, диагностика, автодополнение, раскраска. Приложение KQLTEST.
-- **[BabyKusto](https://github.com/davidnx/baby-kusto-csharp)** (Microsoft, MIT) и **[t-digest](https://github.com/Cyral/t-digest-csharp)** (Heath Milligan, MIT) - исполнение KQL. Приложения KQL и KQLBABY; правки и вырезы — в `PROVENANCE.md`.
+- **[BabyKusto](https://github.com/davidnx/baby-kusto-csharp)** (Microsoft, MIT) и **[t-digest](https://github.com/Cyral/t-digest-csharp)** (Heath Milligan, MIT) - исполнение KQL. Приложения KQL и KQLTEST; правки и вырезы — в `PROVENANCE.md`.
 - **[Lua-CSharp](https://github.com/nuskey8/Lua-CSharp)** (Yusuke Nakada, MIT, `vendor/LuaCSharp/`) - интерпретатор Lua 5.2 на C#. Приложение LUA: скрипты, приглашение, стадия конвейера.
 - **[Okojo](https://github.com/akeit0/okojo)** (Akito Inoue, MIT, `vendor/Okojo/`) - движок JavaScript на C#: разбор, компиляция в байткод, VM, `Intl`, `RegExp`. Приложение JS. Внутри — переработанные куски .NET runtime (MIT), устройство навеяно V8; уведомления в `THIRD_PARTY_NOTICES.md`.
 - **[SharpLibm](https://github.com/daniilvaino/SharpLibm)** (MIT, сабмодуль `SharpLibm/`) - libm на C# под `Math`/`MathF`, на основе [CORE-MATH](https://core-math.gitlabpages.inria.fr/) и других; чужой код внутри перечислен в `THIRD-PARTY-NOTICES.md`.

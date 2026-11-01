@@ -54,78 +54,7 @@ namespace OS.Kernel.Memory
         // inner refs aren't traced by GC), true = allocate in GcHeap
         // (proper GC walk, but exposes any latent bug in mt[-1] / GCDesc
         // reading or non-array offset+8 interpretation).
-        // Sage 2 path: flip to true once the diagnostic confirms the MT
-        // shape and we have correctness audits in place.
         private const bool UseGcHeapForMaterialized = true;
-
-        // Walk and dump descriptor cells without modifying anything.
-        // Confirms section layout, flag values, address validity before
-        // we commit to materialization.
-        public static void Diagnose()
-        {
-            byte* tm = NativeAotModuleInit.TypeManager;
-            if (tm == null)
-            {
-                Log.Write(LogLevel.Warn, "gcstatics: TypeManager not initialized");
-                return;
-            }
-
-            // ReadyToRunHeader pointer is at TypeManager + 8 (m_pHeader).
-            byte* rtr = *(byte**)(tm + 8);
-            if (rtr == null)
-            {
-                Log.Write(LogLevel.Warn, "gcstatics: rtr pointer null");
-                return;
-            }
-
-            byte* section = FindSection(rtr, SectionId_GCStaticRegion, out int length);
-            if (section == null)
-            {
-                Log.Write(LogLevel.Info, "gcstatics: GCStaticRegion section absent");
-                return;
-            }
-
-            int entryCount = length / sizeof(nint);
-
-            Log.Begin(LogLevel.Info);
-            Console.Write("gcstatics: section=0x");
-            Console.WriteHexRaw((ulong)section, 16);
-            Console.Write(" length=");
-            Console.WriteUIntRaw((uint)length);
-            Console.Write(" entries=");
-            Console.WriteUIntRaw((uint)entryCount);
-            Log.EndLine();
-
-            // Dump first few entries with their decoded shape.
-            int dumpLimit = entryCount < 8 ? entryCount : 8;
-            nint* entries = (nint*)section;
-            for (int i = 0; i < dumpLimit; i++)
-            {
-                nint blockPtr = entries[i];
-                Log.Begin(LogLevel.Info);
-                Console.Write("  entry[");
-                Console.WriteUIntRaw((uint)i);
-                Console.Write("] blockPtr=0x");
-                Console.WriteHexRaw((ulong)blockPtr, 16);
-                if (blockPtr != 0)
-                {
-                    nint blockAddr = *(nint*)blockPtr;
-                    Console.Write(" *block=0x");
-                    Console.WriteHexRaw((ulong)blockAddr, 16);
-                    Console.Write(" flags=");
-                    if ((blockAddr & Uninitialized) != 0) Console.Write("U");
-                    if ((blockAddr & HasPreInitializedData) != 0) Console.Write("P");
-                    if ((blockAddr & Mask) == 0) Console.Write("-");
-                    if ((blockAddr & Uninitialized) != 0)
-                    {
-                        nint eetype = blockAddr & ~Mask;
-                        Console.Write(" eetype=0x");
-                        Console.WriteHexRaw((ulong)eetype, 16);
-                    }
-                }
-                Log.EndLine();
-            }
-        }
 
         // Materialize all uninitialized GC static blocks. After this runs,
         // every `__GetGCStaticBase_*` helper returns a real GC-allocated
@@ -260,7 +189,7 @@ namespace OS.Kernel.Memory
                 // diagnostic. This shows whether the static fields landed
                 // at offset +8 as expected, and whether the MT pointer
                 // we wrote at +0 matches what we computed from the tag.
-                if (materialized == 0)
+                if (materialized == 0 && OS.Kernel.Diagnostics.Probes.Diagnostics)
                     DumpObjectHeader(obj, eetype);
 
                 // Replace the tagged pointer with the materialized object ref.

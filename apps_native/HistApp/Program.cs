@@ -337,7 +337,7 @@ namespace HistApp
             Out.WriteLine("  --width W  line width (default: the screen's, or 80)");
             Out.WriteLine("numbers with few distinct integer values get a row each; strings, bools and");
             Out.WriteLine("enums are counted as categories, most frequent first.");
-            Out.WriteLine("examples: pipegen 500 | hist Level    synth 10000 | hist Weight --bins 8");
+            Out.WriteLine("examples: sample_pipegen 500 | hist Level    sample_pipesynth 10000 | hist Weight --bins 8");
             Out.WriteLine("exit: 0 drawn, 1 no data or no such field, 2 bad arguments");
         }
 

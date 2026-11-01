@@ -36,7 +36,7 @@ namespace DataApps
                 for (int i = 0; i < 2; i++) w.Copy(MakeRecord(i));
             Check("16: >> of the same type: five messages" + RecordsBack("READ t16.pipe", 5), RecordsBack("READ t16.pipe", 5) == "");
             int five = File.ReadAllBytes("t16.pipe").Length;
-            int other = Sh("PIPEGEN 2 >> t16.pipe");
+            int other = Sh("SAMPLE_PIPEGEN 2 >> t16.pipe");
             Check("16: >> of another type is refused (exit " + other.ToString() + ")", other == 1);
             Check("16: and the file is as it was", File.ReadAllBytes("t16.pipe").Length == five);
 
@@ -47,13 +47,13 @@ namespace DataApps
                   RecordsBack("READ t16b.pipe --bytes | CONVERT --from externalpipe", 5) == "");
 
             // An Expando: JSON → Expando → file → Expando → JSON is the same text.
-            Sh("PIPEGEN 5 | CONVERT --to json > t16in.json");
+            Sh("SAMPLE_PIPEGEN 5 | CONVERT --to json > t16in.json");
             Check("16: Expando into a file", Sh("READ t16in.json | CONVERT --from json > t16x.pipe") == 0);
             Check("16: and out of it", Sh("READ t16x.pipe | CONVERT --to json > t16x.json") == 0);
             Check("16: the JSON is the same", Text("t16x.json") == Text("t16in.json"));
 
             // A query binds over the file's description, as over a live writer.
-            Sh("PIPEGEN 5 > t16g.pipe");
+            Sh("SAMPLE_PIPEGEN 5 > t16g.pipe");
             int levels = 0, count = 0;
             foreach (View v in Pipe.From("READ t16g.pipe | KQL 'where Level > 2'"))
             {
@@ -75,7 +75,7 @@ namespace DataApps
                   got == 4 && failed != null && failed.Stage == "READ" && failed.ExitCode == 1);
 
             // Strings and bytes stay what they are: no header, nothing added.
-            Sh("PIPEGEN 2 | CONVERT --to lines > t16s.txt");
+            Sh("SAMPLE_PIPEGEN 2 | CONVERT --to lines > t16s.txt");
             Check("16: a stream of strings is text", !ExternalPipe.StartsWithSignature(File.ReadAllBytes("t16s.txt"))
                   && Text("t16s.txt").StartsWith("PipeApps.LogEntry"));
 

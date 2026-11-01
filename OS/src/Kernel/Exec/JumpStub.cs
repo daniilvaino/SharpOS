@@ -2,6 +2,8 @@ using OS.Hal;
 using OS.Kernel.Paging;
 using OS.Kernel.Util;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Exec
 {
     internal static unsafe partial class JumpStub
@@ -333,11 +335,14 @@ namespace OS.Kernel.Exec
             int icedLen = EmitStubIced(dst, AbortEntryOffset);
             int abortLen = EmitAbortIced(dst + AbortEntryOffset, (int)StubPageSize - AbortEntryOffset);
 
-            Console.Write("[stub] jumpstub len=0x");
-            Console.WriteHex((ulong)icedLen);
-            Console.Write(" abort len=0x");
-            Console.WriteHex((ulong)abortLen);
-            Console.WriteLine("");
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+            {
+                Console.Write("[stub] jumpstub len=0x");
+                Console.WriteHex((ulong)icedLen);
+                Console.Write(" abort len=0x");
+                Console.WriteHex((ulong)abortLen);
+                Console.WriteLine("");
+            }
 
             // The writer drops bytes past its capacity: a stub that grew into
             // the abort entry would run off the end of its own code.

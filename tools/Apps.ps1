@@ -26,17 +26,27 @@ function Get-SharpOsApps {
             # Папка на образе (step207): <SharpOsCategory> в .csproj — bin,
             # tests или games; без свойства — bin. Второго списка нет.
             $category = 'bin'
-            if ((Get-Content -LiteralPath $_.FullName -Raw) -match '<SharpOsCategory>\s*(\w+)\s*</SharpOsCategory>') {
+            # none — собирается, но на образ не идёт (стендовые верстаки).
+            $text = Get-Content -LiteralPath $_.FullName -Raw
+            if ($text -match '<SharpOsCategory>\s*(\w+)\s*</SharpOsCategory>') {
                 $category = $Matches[1].ToLowerInvariant()
             }
+            # Имя, которым приложение зовут вслух: "doom", а не "DoomApp"
+            # и не "GPL_AHEAD_WARNING_DOOM_managed".
+            $short = ($name -replace 'App$', '')
+            # Имя файла на образе, если оно не Short (<SharpOsName>, релиз 0.1:
+            # sample_pipegen). Цель сборки остаётся Short.
+            $imageName = $short
+            if ($text -match '<SharpOsName>\s*([\w.-]+)\s*</SharpOsName>') {
+                $imageName = $Matches[1]
+            }
             [PSCustomObject]@{
-                Category = $category
-                Name    = $name
-                Folder  = $_.Directory.Name
-                # Имя, которым приложение зовут вслух: "doom", а не "DoomApp"
-                # и не "GPL_AHEAD_WARNING_DOOM_managed".
-                Short   = ($name -replace 'App$', '')
-                Project = $_.FullName
+                Category  = $category
+                Name      = $name
+                Folder    = $_.Directory.Name
+                Short     = $short
+                ImageName = $imageName
+                Project   = $_.FullName
             }
         }
 }

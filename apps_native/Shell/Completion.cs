@@ -87,7 +87,7 @@ namespace Shell
         }
 
         // Whether the end of the line is inside a quoted argument of KQL
-        // (`PIPEGEN | KQL 'where Le`); where the query in it starts. The
+        // (`SAMPLE_PIPEGEN | KQL 'where Le`); where the query in it starts. The
         // quotes are followed as the line is, so a | inside them is the
         // query's, not a pipe.
         private static bool KqlQueryAt(string text, out int queryStart)

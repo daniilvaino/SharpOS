@@ -35,9 +35,10 @@ namespace OS.Kernel.Diagnostics
             {
                 Console.Write(" ahci=none");
             }
-            // PASS = enumeration produced devices AND the AHCI
-            // controller with a non-zero ABAR was located.
-            bool pass = n > 0 && ahci && a.Bar5 != 0;
+            // PASS = enumeration produced devices, and an AHCI controller, if
+            // there is one, has a non-zero ABAR. A machine with NVMe and no
+            // SATA has none, and that is not a failure.
+            bool pass = n > 0 && (!ahci || a.Bar5 != 0);
             Console.WriteLine(pass ? " PASS" : " FAIL");
         }
     }

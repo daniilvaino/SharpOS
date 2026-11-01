@@ -45,7 +45,7 @@
 # kernel started it. A shell reached from the launcher is one level down
 # already.
 #
-# Processes (step 194): PIPEGEN 5 prints its five records (its output was
+# Processes (step 194): SAMPLE_PIPEGEN 5 prints its five records (its output was
 # handed to nobody), the pipeline prints 400, and PROCTEST.EXE runs the
 # process and pipe tests — exit code = checks failed; under --gc-stress the
 # measurements are left out, and every program it starts runs stressed too.
@@ -69,12 +69,12 @@
 #
 # KQL (step200, streaming since step201): KQL 'query' runs the query over the
 # messages on its input (the table Input) as they come. `where Level == 4`
-# sends PIPEGEN's own messages on — four LogEntry lines; the summarize line
+# sends SAMPLE_PIPEGEN's own messages on — four LogEntry lines; the summarize line
 # prints Level 3 and 4 with n = 20 each; KQL with an unknown column says
 # where and exits with 1. PROCTEST test 18 checks the rest: take stops the
 # reading, an Expando input, extend writing into Expandos in place, an input
-# that ends at once. KQLBABY.EXE checks the engine itself on a table in
-# memory — exit code = checks failed.
+# that ends at once. KQLTEST.EXE checks the parser and the engine itself
+# on a table in memory — exit code = checks failed.
 #
 # Paths are written with '/', the system's separator (step215); a backslash
 # escapes the next character, as in bash.
@@ -93,10 +93,10 @@ expect 1 AOTTESTS.EXE --untranslated-interface4
 expect 0 AOTTESTS.EXE --gc-stress 16 4
 expect 0 AOTTESTS.EXE --gc-stress 1 1 --pipe-stress 1
 expect 0 AOTTESTS.EXE --gc-stress 1 1 --dynamic
-PIPEGEN 5
-PIPEGEN 1000 | PIPEFILT 3 | PIPECNT
-PIPEGEN 20 | KQL 'where Level == 4'
-PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level | sort by Level asc'
+SAMPLE_PIPEGEN 5
+SAMPLE_PIPEGEN 1000 | PIPEFILT 3 | PIPECNT
+SAMPLE_PIPEGEN 20 | KQL 'where Level == 4'
+SAMPLE_PIPEGEN 100 | KQL 'where Level >= 3 | summarize n = count() by Level | sort by Level asc'
 expect 2 KQL.EXE 'where Levl > 1'
 expect 0 PROCTEST.EXE
 expect 0 PROCTEST.EXE --gc-stress 16
@@ -106,4 +106,3 @@ expect 0 DATATEST.EXE
 expect 0 DATATEST.EXE --gc-stress 16 --quick
 expect 0 GVMTEST.EXE
 expect 0 KQLTEST.EXE
-expect 0 KQLBABY.EXE

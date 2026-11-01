@@ -3,7 +3,7 @@ using SharpOS.Std.Pipes;
 
 namespace DataApps
 {
-    // The same shape as PIPEGEN's record: Into<T> lays out by name, so any
+    // The same shape as SAMPLE_PIPEGEN's record: Into<T> lays out by name, so any
     // class with these fields takes it.
     [Message]
     public sealed class LogEntry

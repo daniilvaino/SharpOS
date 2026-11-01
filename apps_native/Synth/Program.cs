@@ -7,7 +7,7 @@ using SharpOS.Std.Pipes;
 
 namespace PipeApps
 {
-    // SYNTH [n] — n objects of a type that exists in no program (step197).
+    // SAMPLE_PIPESYNTH [n] — n objects of a type that exists in no program (step197).
     //
     // Each run makes up a type: a random name ("Ghost.Q7xk2"), the fields
     // Level (int), Weight (double), Name (string) and one more with a random
@@ -18,10 +18,10 @@ namespace PipeApps
     // string a record of its own, a reference the offset of its key word.
     // Both are written here byte by byte.
     //
-    //     SYNTH 5                         the objects on the screen
-    //     SYNTH 20 | VIEWFILT 3           a stage that never heard of the type filters it
-    //     SYNTH 3 | CONVERT --to json     and it becomes JSON like any other
-    //     SYNTH 3 | PIPEFILT 0            a stage with a class refuses it by type
+    //     SAMPLE_PIPESYNTH 5                         the objects on the screen
+    //     SAMPLE_PIPESYNTH 20 | VIEWFILT 3           a stage that never heard of the type filters it
+    //     SAMPLE_PIPESYNTH 3 | CONVERT --to json     and it becomes JSON like any other
+    //     SAMPLE_PIPESYNTH 3 | PIPEFILT 0            a stage with a class refuses it by type
     internal static unsafe class AppEntry
     {
         [RuntimeExport("SharpAppEntry")]
@@ -48,7 +48,7 @@ namespace PipeApps
 
         private static int Run(string[] args)
         {
-            if (!NumberArg.TryFirst(args, "SYNTH", "SYNTH [n] — n objects (5) of a type made up for this run", 5, out long count, out int exit))
+            if (!NumberArg.TryFirst(args, "SAMPLE_PIPESYNTH", "SAMPLE_PIPESYNTH [n] — n objects (5) of a type made up for this run", 5, out long count, out int exit))
                 return exit;
             int n = (int)count;
             s_random = (ulong)System.Diagnostics.Stopwatch.GetTimestamp() | 1;
@@ -61,7 +61,7 @@ namespace PipeApps
             TypeKeys.Description text = null;
             foreach (TypeKeys.Description d in TypeKeys.Declared)
                 if (d.Name == "System.String") text = d;
-            if (text == null) { Console.Error.WriteLine("SYNTH: no System.String in the catalog"); return 1; }
+            if (text == null) { Console.Error.WriteLine("SAMPLE_PIPESYNTH: no System.String in the catalog"); return 1; }
 
             var ghost = new TypeKeys.Description
             {
@@ -86,13 +86,13 @@ namespace PipeApps
             if (output != 0)
             {
                 PipeStatus opened = PipeTransport.OpenEnd(output, schema, ghost.Key, out string error);
-                if (opened != PipeStatus.Ok) { Console.Error.WriteLine("SYNTH: " + (error ?? "cannot open the output")); return 1; }
+                if (opened != PipeStatus.Ok) { Console.Error.WriteLine("SAMPLE_PIPESYNTH: " + (error ?? "cannot open the output")); return 1; }
             }
             else
             {
                 // No output: read our own blocks back the way a reader would.
                 shapes = RegionShapes.Parse(schema, out string bad);
-                if (shapes == null) { Console.Error.WriteLine("SYNTH: " + bad); return 1; }
+                if (shapes == null) { Console.Error.WriteLine("SAMPLE_PIPESYNTH: " + bad); return 1; }
             }
 
             try
@@ -103,7 +103,7 @@ namespace PipeApps
                     ulong stringSize = Round8(text.BaseSize + (ulong)name.Length * text.ComponentSize);
                     ulong size = GhostBaseSize + stringSize;
                     byte* block = (byte*)PipeTransport.Allocate(size);
-                    if (block == null) { Console.Error.WriteLine("SYNTH: no exchange memory"); return 1; }
+                    if (block == null) { Console.Error.WriteLine("SAMPLE_PIPESYNTH: no exchange memory"); return 1; }
                     for (ulong b = 0; b < size; b++) block[b] = 0;
 
                     // Record 0, the root: [header][key][Level][Weight][Name → record 1][extra].
@@ -134,7 +134,7 @@ namespace PipeApps
                     if (!shapes.Validate(block, size, out string complaint))
                     {
                         PipeTransport.Free(block);
-                        Console.Error.WriteLine("SYNTH: my own block fails the reader's check: " + complaint);
+                        Console.Error.WriteLine("SAMPLE_PIPESYNTH: my own block fails the reader's check: " + complaint);
                         return 1;
                     }
                     var region = new RawRegion(block, size, schema, 0, shapes);

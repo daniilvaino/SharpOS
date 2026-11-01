@@ -1,3 +1,5 @@
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Kernel.Paging
 {
     internal static unsafe partial class Cr3Accessor
@@ -123,9 +125,12 @@ namespace OS.Kernel.Paging
             if (!s_readGateLogged)
             {
                 s_readGateLogged = true;
-                OS.Hal.Console.Write("[cr3] readstub iced=legacy OK len=0x");
-                OS.Hal.Console.WriteHex((ulong)icedLen);
-                OS.Hal.Console.WriteLine("");
+                if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+                {
+                    OS.Hal.Console.Write("[cr3] readstub iced=legacy OK len=0x");
+                    OS.Hal.Console.WriteHex((ulong)icedLen);
+                    OS.Hal.Console.WriteLine("");
+                }
             }
             return true;
         }
@@ -143,9 +148,12 @@ namespace OS.Kernel.Paging
             if (!s_writeGateLogged)
             {
                 s_writeGateLogged = true;
-                OS.Hal.Console.Write("[cr3] writestub iced=legacy OK len=0x");
-                OS.Hal.Console.WriteHex((ulong)icedLen);
-                OS.Hal.Console.WriteLine("");
+                if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+                {
+                    OS.Hal.Console.Write("[cr3] writestub iced=legacy OK len=0x");
+                    OS.Hal.Console.WriteHex((ulong)icedLen);
+                    OS.Hal.Console.WriteLine("");
+                }
             }
             return true;
         }

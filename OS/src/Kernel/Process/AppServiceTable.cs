@@ -344,6 +344,9 @@ namespace OS.Kernel.Process
         public ulong Settings;
 
         public const ulong SettingAnnounceBuild = 1;
+        // SettingReportCollections: a line per collection ("[appgc]") — a
+        // diagnostic kernel's; a release one keeps the log to what matters.
+        public const ulong SettingReportCollections = 2;
 
         // CPU features the app may use beyond x86-64's baseline (step198),
         // bits of SharpOS.Std.NoRuntime.LibmPatcher (SSE4.1, usable FMA): the

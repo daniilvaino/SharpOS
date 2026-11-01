@@ -7,9 +7,6 @@
     // All flags are `const bool`, so the C# compiler folds disabled probes
     // into dead code that ILC removes from the binary. There is no runtime
     // cost for probes left off.
-    //
-    // Probes that never return (IdtPanic, ExceptionThrow) live here too —
-    // flip to true once per change to verify panic/throw paths, then back.
     internal static class Probes
     {
         // Whether this kernel runs its boot-time tests at all (step207).
@@ -32,14 +29,12 @@
         // census and allocation sampling, USB descriptor dumps and the serial
         // echo (two seconds of boot), the GC-statics and RTC dumps, Bench's
         // profile variable. -NoTests: none of it — SharpOS doing its work and
-        // nothing else.
+        // nothing else. -NoDiagnostics: the tests run, this does not.
+#if SHARPOS_NO_DIAGNOSTICS
+        public const bool Diagnostics = false;
+#else
         public const bool Diagnostics = Tests;
-
-        // Phase 0
-        public const bool KeyboardInput = false;
-
-        // Phase 1
-        public const bool KernelHeapSmoke = Tests;
+#endif
 
         // Reports whether ILC turned our own Vector128 into instructions.
         public const bool Simd = Tests;
@@ -193,26 +188,6 @@
         // prompt; leave it off unless hunting a hang.
         public const bool ThreadDumpWhenIdle = Diagnostics;
 
-        // Isolated check of SharpOSHost_ProtectPages, called directly from the
-        // kernel. OFF: it halts the boot (the export is a Panic.Fail stub) and
-        // it is the weaker of the two tests — it proves the function works in
-        // isolation, not that the path the runtime takes works.
-        //
-        // The honest one is end-to-end in apps_managed/normal-hello:
-        // VirtualAlloc → write code → VirtualProtect → execute, exactly as a
-        // JIT does. Run it with LaunchNormalHelloCensus.
-        public const bool ProtectPages = false;
-
-        // Phase F3 gate: the timer takes the CPU from a thread that never
-        // yields. Enabled only around the probe — the rest of the kernel still
-        // assumes cooperative scheduling (unlocked heap, polling drivers).
-        public const bool Preemption = Tests;
-
-        // Phase F3 gate: allocation under preemption, with collections running
-        // on another thread. Exercises the suppression around the allocator and
-        // around the collection itself.
-        public const bool PreemptedAlloc = Tests;
-
         // Phase F2 gate: a collection must find roots on the stacks of threads
         // that are not running. Spawns a worker holding an array in a local,
         // parks it, collects, and has the worker check its own data.
@@ -224,8 +199,6 @@
         public const bool FpFaultPreservesXmm = Tests;
 
         // Phase 4
-        public const bool GcHeapSmoke = Tests;
-        public const bool GcStress = Tests;
         public const bool NativeAotFeatures = Tests;
 
         // Terminal engine (vendor/XtermSharp) self-test + rich console front-end.
@@ -274,21 +247,8 @@
         public const bool PreemptAppCodeOnly = false;
         public const bool Cctor = Tests;
 
-        // EH probe gradient — flip each level on independently. L1+L2+L4
-        // are expected to pass today (no throw, no unwinder). L3 throws
-        // and currently halts; flipping it green is the Phase 1 closure
-        // criterion.
-        public const bool EhTryFinallyNoThrow = Tests;
-        public const bool EhTryCatchNoThrow = Tests;
+        // EH gates, L8 and up: a real throw caught each way the runtime must handle.
         public const bool EhTryCatchWithThrow = Tests;    // step 5.6 GATE: L8 == 801 with real dispatch
-        public const bool EhExceptionShape = Tests;       // step 1 gate: full Exception + 6 derived types
-        public const bool EhRootWalk = Tests;              // step 2 gate: .pdata lookup + funclet->ROOT walk
-        public const bool EhDecode = Tests;                // step 3 gate: ehInfoRVA + varint clause decoder
-        public const bool EhFrameWalk = Tests;             // step 4 gate: PAL/RegDisplay/SFI + 4-opcode unwind
-        public const bool EhIngressThrow = false;         // step 5.5b verified: throw -> 5.1+5.2+5.4+5.5b chain (default off, halts when on)
-        public const bool EhCatchFuncletProbe = false;    // step 5.5a verified: RhpCallCatchFunclet end-to-end OK (default off, halts when on)
-        public const bool EhCatchFuncletReal = false;    // step 5.5b verified: real REGDISPLAY + fake handler OK (default off, requires EhIngressThrow too)
-        public const bool EhRealDispatch = true;         // step 5.6: full real dispatch (DispatchEx + ILC catch funclet) — needed for L8 == 801
         public const bool EhRethrowChain = Tests;         // step 6 GATE: L9 == 901 (nested catch with throw;)
         public const bool EhTryCatchFinally = Tests;       // step 7 GATE: L10 == 111 (finally runs before catch)
         public const bool EhFilter = Tests;                 // step 8 GATE: L11 == 1101 (catch when filter)
@@ -300,10 +260,7 @@
         public const bool EhTraceText = Tests;              // step177: L18 == 1800+frames (StackTrace is text, not the "[trace]" marker)
         public const bool EhTraceTruncation = Tests;        // step177: L19 == 1900+dropped (a cut-off trace says so)
         public const bool EhRethrowAppends = Tests;         // step177: L20 == 2000+added (throw; keeps appending frames)
-        public const bool EhEnumLive = Tests;              // step 5.3 probe A: enum clauses on live frame inside try (non-halting)
 
-        public const bool IdtPanic = false;          // never returns when on
-        public const bool ExceptionThrow = false;    // never returns when on (legacy single-throw probe)
 
         // Phase 6 — CoreCLR integration probe. Calls coreclr_initialize
         // statically-linked from coreclr_static.lib (Phase 6.1.0). Expected
@@ -365,26 +322,6 @@
         // without the hosted runtime.
         public const bool HostedHideCoreLib = false;
 
-        // Phase E2 — TEB facade swap. Allocates a fresh TebFacade, swaps
-        // gs base to it (under CLI), reads gs:[Self] and gs:[StackLimit]
-        // back, restores original gs base. Proves the per-switch primitive
-        // works before Phase E4 wires it into a cooperative context
-        // switch. Independent of CoreCLR (runs against own X64Asm stubs).
-        public const bool TebFacadeSwap = Tests;
-
-        // Phase E3 — atomic primitives (lock cmpxchg / xchg / mfence).
-        // Stack-resident ulong slot, four mini scenarios (hit, miss,
-        // xchg, mfence). Regression oracle for the X64Asm shellcode
-        // bytes — multi-core stress is E4+ business.
-        public const bool Atomics = Tests;
-
-        // Phase E4 — cooperative two-thread ping-pong. Wraps current
-        // execution as a Thread, spawns T1 and T2 (each yielding N
-        // times), drives Scheduler.Yield until both children exit.
-        // Asserts iteration counts + boot-thread resume. First real
-        // multi-thread artefact in the project — commit milestone.
-        public const bool ThreadPingPong = Tests;
-
         // A large file read while another thread counts its turns (step210):
         // the disk drivers sleep on their interrupts instead of holding the CPU.
         public const bool DiskYield = Tests;
@@ -433,8 +370,9 @@
         // writes one line through the OWN driver. Pre-EBS this hits the
         // same physical COM1 the UEFI ConOut mirror reads, so the line
         // appearing proves the post-EBS serial substrate works. Permanent
-        // regression oracle for the serial driver.
-        public const bool SerialSmoke = true;
+        // regression oracle for the serial driver. A test: it paints a square
+        // on the screen. The UART itself is brought up by the EBS path.
+        public const bool SerialSmoke = Tests;
 
         // Phase B#2 — own GOP framebuffer renderer. Clears the screen,
         // draws colour bands + an 8x8-font banner straight to the mapped
@@ -459,60 +397,23 @@
 
 
 
-        // Phase C — physically call ExitBootServices and run the rest
-        // of the boot (FAT mount, CoreCLR session, native launcher) on
-        // the own UART+GOP+PS/2+AHCI substrate, no UEFI. This is the
-        // DEFAULT BOOT as of step 91 (Phase C4): the post-EBS substrate
-        // is canonical; the legacy pre-EBS path is dead code (retained
-        // for diagnostic comparison if a regression demands it, flip
-        // false). Reversal note: tears down UEFI Boot Services
-        // irreversibly, so any pre-EBS-only diagnostics must run BEFORE
-        // ExitBootServicesProbe.
-        public const bool ExitBootServicesExperiment = true;
-
         // C-FS1 — PCI ECAM scan (adapted MOOS PCIExpress). Finds the
         // q35 AHCI controller (class 0x01/0x06, ABAR=BAR5) — foundation
         // for the own-substrate read-only FAT32 stack. Headless-
-        // deterministic (fixed QEMU topology); permanent oracle.
-        public const bool PciScan = true;
+        // deterministic (fixed QEMU topology); permanent oracle. Only the
+        // report: UsbHost.Discover initialises the bus itself.
+        public const bool PciScan = Tests;
 
         // C-FS2/FS3 (AHCI Disk + RO-FAT) have NO Phase-4 gate: bringing
         // up AHCI reprograms the HBA the live UEFI firmware still owns,
-        // so it runs POST-EBS only (ExitBootServicesProbe), gated by
-        // ExitBootServicesExperiment. PciScan above is read-only and
+        // so it runs POST-EBS only (PostEbsBoot). PciScan above is read-only and
         // safe pre-EBS.
-
-        // Step 110 part 1 — resolve a few known IPs to their per-method
-        // gcInfo blob via CoffMethodGcInfo.TryResolve, dump first bytes.
-        // Sanity check that .pdata + UNWIND_INFO walk lands at a plausible
-        // varint stream before we write the decoder. Headless-deterministic.
-        public const bool CoffGcInfoDump = Tests;
-
-        // Step 110 part 6 — synthetic-CONTEXT smoke test for the slot
-        // resolver. Builds a fake Context with sentinel values, runs
-        // resolver on Marker3 live slots, prints resolved pointer values.
-        // Headless-deterministic.
-        public const bool GcInfoResolverSmoke = Tests;
-
-        // Step 110 part 7 — GcContextSpill shellcode smoke. Captures real
-        // CONTEXT via shellcode, verifies Rip resolves through .pdata.
-        // First exercise of the live-CONTEXT capture path that the precise
-        // GC walker will use.
-        public const bool GcContextSpillSmoke = Tests;
-
-        // Step 110 part 8 — full precise GC walk + sweep. Holds a sentinel
-        // string live across CollectPrecise, verifies it survives (i.e. the
-        // walker found it and marked it before sweep ran). Headless-
-        // deterministic; flips ReclamationDisabled locally for the test.
-        // Step 123: temporarily off — VA 0 unmap guard exposed a null-deref at
-        // Run+0x276 (CR2=8). Probe needs targeted fix, not blocker on CoreCLR
-        // managed NRE bring-up. Flip back true after addressing.
-        public const bool KernelGcPreciseSmoke = false;
 
         // Lists the USB host controllers the machine exposes. The first step of
         // the USB stack: which controller is present decides what to write, and
-        // it differs between QEMU and the test machines.
-        public const bool UsbScan = true;
+        // it differs between QEMU and the test machines. Only the report:
+        // XhciRegistry discovers the controllers itself.
+        public const bool UsbScan = Diagnostics;
 
         // Takes the xHCI controller from the firmware and resets it. DMA-free:
         // register reads, one ownership handshake, one reset — so it can be
@@ -562,7 +463,7 @@
 
         // A line per ended process to COM1: its start by phase, and whether
         // the program came from the cache (step208).
-        public const bool ProcessStartLog = true;
+        public const bool ProcessStartLog = Diagnostics;
 
         // Reset the sampler's tables after each periodic report, so every
         // report describes the last window instead of the whole boot.

@@ -1,35 +1,18 @@
 using System;
 using System.Collections.Generic;
-using System.Runtime;
 using System.Text.Json.Nodes;
 using BabyKusto.Core;
 using BabyKusto.Core.Evaluation;
 using Kusto.Language.Symbols;
-using SharpOS.AppSdk;
 
 namespace KqlApps
 {
-    // KQLBABY.EXE — BabyKusto (vendor/BabyKusto) executing KQL on the app
-    // tier (step200): a table in memory, queries over it, their rows checked.
-    // Exit code = checks failed.
-    internal static unsafe class AppEntry
+    // KQLTEST, its second half: BabyKusto (vendor/BabyKusto) executing KQL
+    // on the app tier (step200) — a table in memory, queries over it, their
+    // rows checked. Until release 0.1 it was KQLBABY.EXE of its own. Returns
+    // the checks failed.
+    internal static unsafe class EngineChecks
     {
-        [RuntimeExport("SharpAppEntry")]
-        private static int SharpAppEntry(ulong startupPointer)
-        {
-            AppRuntime.Initialize((AppStartupBlock*)startupPointer);
-            return AppRuntime.Finish(Run());
-        }
-
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
-        private static int Main() => Run();
-
         private static int s_passed, s_failed;
 
         private static void Check(string name, bool ok, string detail = null)
@@ -38,7 +21,7 @@ namespace KqlApps
             Console.WriteLine((ok ? "  ok   " : "  FAIL ") + name + (detail != null ? " — " + detail : ""));
         }
 
-        private static int Run()
+        internal static int Run()
         {
             var engine = new BabyKustoEngine();
             engine.AddGlobalTable(MakeTable());
@@ -103,7 +86,7 @@ namespace KqlApps
                   && (long)rows[3][0] == 14 && rows[0][2].ToString() == "1.5",
                   Describe(rows, shape));
 
-            Console.WriteLine("[kqlbaby] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
+            Console.WriteLine("[kqltest] engine done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
             return s_failed;
         }
 

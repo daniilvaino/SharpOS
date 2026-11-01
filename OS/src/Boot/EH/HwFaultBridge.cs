@@ -6,6 +6,8 @@ using OS.Kernel.Threading;
 using OS.PAL.SharpOSHost;
 using SharpOS.Std.NoRuntime;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 #pragma warning disable CS8500 // the runtime takes pointers to managed types by design
 
 namespace OS.Boot.EH
@@ -189,6 +191,92 @@ namespace OS.Boot.EH
             Console.WriteHexRaw(frame->ErrorCode, 8);
             Log.EndLine();
 
+            // The rest of the picture is for a diagnostic build: a fault a
+            // catch takes (a plain NullReferenceException) printed ~45 lines.
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+                DumpFault(frame);
+
+            // Re-enable interrupts before handing к managed dispatcher.
+            // IDT entry was an interrupt gate (RFLAGS.IF cleared on entry).
+            // Our control transfer through RhpCallCatchFunclet uses
+            // mov rsp+jmp bypassing IRETQ, so IF would stay 0 в catch
+            // funclet — disabling all hardware interrupts post-catch.
+            // STI ensures catch runs с interrupts enabled, как if managed
+            // code threw в normal context. X64Asm uses BootInfo.AsmExecBuffer
+            // (EfiLoaderCode, R+X) to host the STI shellcode stub.
+            OS.Hal.X64Asm.Sti();
+
+            // step106: AV / #PF first try PAL SEH dispatcher — it knows
+            // __C_specific_handler for C++ EX_TRY frames (e.g.
+            // Object::ValidateInner's AVInRuntimeImplOkayHolder). Our
+            // own DispatchEx.Dispatch uses CoffEhDecoder (NativeAOT EH
+            // only) and silently steps past C++ frames, so a defensive
+            // AV inside CoreCLR runtime leaks out as unhandled.
+            // DispatchFromHwFault returns only when no handler matched —
+            // then we fall through to the NativeAOT path which still
+            // catches null-derefs in our own managed kernel code.
+            SetReporting(reporter, null);
+            if (frame->Vector == 13 || frame->Vector == 14)
+            {
+                // C# requires `fixed` scope to take address-of of a managed
+                // static field. Our static fields live in .bss and never
+                // move under SharpOS's non-moving GC, but the compiler
+                // doesn't know that — `fixed` makes it happy at zero cost.
+                fixed (ExceptionRecord* rec = &s_hwRec)
+                fixed (Context*         ctx = &s_hwCtx)
+                {
+                    BuildHwExceptionRecord(rec, frame);
+                    BuildContextFromInterruptFrame(ctx, frame);
+
+                    // CoreCLR knows nothing of our chain: when it handles the
+                    // fault it resumes at its own catch and never comes back
+                    // here, leaving s_head in this frame's dead stack (step199:
+                    // its page faults during the boot session on BigStack).
+                    // Unlinked for that call only — it allocates nothing in
+                    // our heap. The SEH walker below prints and allocates, so
+                    // the entry stays linked for it (its collections must see
+                    // the exception and the faulting frames), and it pops the
+                    // entry itself when it resumes (ExInfoHead.PopBelow).
+                    ExInfoHead.s_head = (System.IntPtr)exInfo.PrevExInfo;
+                    // step123: CoreCLR managed hardware fault path. For JIT-code
+                    // null deref / AV, IsSafeToHandleHardwareException + Handle-
+                    // HardwareException is the canonical route → it creates an
+                    // ExInfo(HardwareFault), sets up FaultingExceptionFrame, and
+                    // calls RhThrowHwEx to throw NRE/AVE caught by the user's
+                    // try/catch. Returns 0 if CoreCLR can't handle (init not
+                    // done yet, or fault outside managed code) — we then fall
+                    // through to the existing native-SEH walker for C++ __try
+                    // handlers inside the runtime, and finally to NativeAOT EH.
+                    if (TryCoreClrHandleHardwareException(rec, ctx) != 0)
+                    {
+                        // CoreCLR handled it — does not return on managed-catch
+                        // path; if it did return, that's "stack was fixed up,
+                        // continue execution at the (modified) context".
+                        return;
+                    }
+                    ExInfoHead.s_head = (System.IntPtr)(&exInfo);
+                    SehDispatch.DispatchFromHwFault(rec, ctx);
+                    // Returned — PAL SEH didn't find a handler. Fall through.
+                }
+            }
+
+            // The interrupt gate cleared IF, and the catch funclet is reached by
+            // a jump, not an IRETQ, so nothing would set it again: code that
+            // caught a fault ran on with interrupts off — no timer, no sleep
+            // that ever wakes. Give the handler the interrupted code's IF.
+            if ((frame->Rflags & 0x200) != 0)
+                X64Asm.Sti();
+
+            // Hand off к managed dispatcher. Does not return on success.
+            DispatchEx.Dispatch(exceptionPtr, &exInfo);
+
+            // If we get here, Dispatch failed (unhandled). Halt.
+            Console.Write("\r\n*** HwFaultBridge: Dispatch returned (unhandled HW exception) ***\r\n");
+            while (true) { }
+        }
+
+        private static void DumpFault(InterruptFrame* frame)
+        {
             // For #PF (vec=14) — decode the page-fault error code so we can
             // tell write-vs-fetch / present-vs-not / NX-violation at a glance.
             //   bit 0: P  (1 = protection violation; 0 = not-present)
@@ -470,11 +558,8 @@ namespace OS.Boot.EH
                 }
             }
 
-            // Stack top — first 32 qwords from RSP. For indirect-call
-            // fault into BSS, multiple frames may be in zero-memory
-            // chain. Look for first .text-range return address to find
-            // real CoreCLR caller. Loaded image base ≈ 0xC1A9000;
-            // .text spans ~0xC1AA000 to ~0xCE5E8DC.
+            // Stack top — first 32 qwords from RSP: the return addresses
+            // among them name the callers when the frame chain is broken.
             ulong* sp = (ulong*)frame->Rsp;
             if (sp != null)
             {
@@ -484,95 +569,9 @@ namespace OS.Boot.EH
                     Log.Begin(LogLevel.Info);
                     Console.Write("  [RSP+0x"); Console.WriteHexRaw((ulong)(i * 8), 3);
                     Console.Write("] = 0x"); Console.WriteHexRaw(v, 16);
-                    // Hint: tag values that look like .text return addresses.
-                    if (v >= 0xC1A9000UL && v < 0xCE5F000UL) Console.Write("  <- .text");
                     Log.EndLine();
                 }
             }
-
-            // Sage-2 frontier discriminator (step 71). Cheapest single-run
-            // signal that splits frontier A (stack overflow / no guard-page)
-            // from frontier B (LCG/DynamicMethod). Pure C#, fault-time only —
-            // no alloc, only pointer-walks segment headers. See work/sage2-*.
-            FaultClassify(frame);
-
-            // Re-enable interrupts before handing к managed dispatcher.
-            // IDT entry was an interrupt gate (RFLAGS.IF cleared on entry).
-            // Our control transfer through RhpCallCatchFunclet uses
-            // mov rsp+jmp bypassing IRETQ, so IF would stay 0 в catch
-            // funclet — disabling all hardware interrupts post-catch.
-            // STI ensures catch runs с interrupts enabled, как if managed
-            // code threw в normal context. X64Asm uses BootInfo.AsmExecBuffer
-            // (EfiLoaderCode, R+X) to host the STI shellcode stub.
-            OS.Hal.X64Asm.Sti();
-
-            // step106: AV / #PF first try PAL SEH dispatcher — it knows
-            // __C_specific_handler for C++ EX_TRY frames (e.g.
-            // Object::ValidateInner's AVInRuntimeImplOkayHolder). Our
-            // own DispatchEx.Dispatch uses CoffEhDecoder (NativeAOT EH
-            // only) and silently steps past C++ frames, so a defensive
-            // AV inside CoreCLR runtime leaks out as unhandled.
-            // DispatchFromHwFault returns only when no handler matched —
-            // then we fall through to the NativeAOT path which still
-            // catches null-derefs in our own managed kernel code.
-            SetReporting(reporter, null);
-            if (frame->Vector == 13 || frame->Vector == 14)
-            {
-                // C# requires `fixed` scope to take address-of of a managed
-                // static field. Our static fields live in .bss and never
-                // move under SharpOS's non-moving GC, but the compiler
-                // doesn't know that — `fixed` makes it happy at zero cost.
-                fixed (ExceptionRecord* rec = &s_hwRec)
-                fixed (Context*         ctx = &s_hwCtx)
-                {
-                    BuildHwExceptionRecord(rec, frame);
-                    BuildContextFromInterruptFrame(ctx, frame);
-
-                    // CoreCLR knows nothing of our chain: when it handles the
-                    // fault it resumes at its own catch and never comes back
-                    // here, leaving s_head in this frame's dead stack (step199:
-                    // its page faults during the boot session on BigStack).
-                    // Unlinked for that call only — it allocates nothing in
-                    // our heap. The SEH walker below prints and allocates, so
-                    // the entry stays linked for it (its collections must see
-                    // the exception and the faulting frames), and it pops the
-                    // entry itself when it resumes (ExInfoHead.PopBelow).
-                    ExInfoHead.s_head = (System.IntPtr)exInfo.PrevExInfo;
-                    // step123: CoreCLR managed hardware fault path. For JIT-code
-                    // null deref / AV, IsSafeToHandleHardwareException + Handle-
-                    // HardwareException is the canonical route → it creates an
-                    // ExInfo(HardwareFault), sets up FaultingExceptionFrame, and
-                    // calls RhThrowHwEx to throw NRE/AVE caught by the user's
-                    // try/catch. Returns 0 if CoreCLR can't handle (init not
-                    // done yet, or fault outside managed code) — we then fall
-                    // through to the existing native-SEH walker for C++ __try
-                    // handlers inside the runtime, and finally to NativeAOT EH.
-                    if (TryCoreClrHandleHardwareException(rec, ctx) != 0)
-                    {
-                        // CoreCLR handled it — does not return on managed-catch
-                        // path; if it did return, that's "stack was fixed up,
-                        // continue execution at the (modified) context".
-                        return;
-                    }
-                    ExInfoHead.s_head = (System.IntPtr)(&exInfo);
-                    SehDispatch.DispatchFromHwFault(rec, ctx);
-                    // Returned — PAL SEH didn't find a handler. Fall through.
-                }
-            }
-
-            // The interrupt gate cleared IF, and the catch funclet is reached by
-            // a jump, not an IRETQ, so nothing would set it again: code that
-            // caught a fault ran on with interrupts off — no timer, no sleep
-            // that ever wakes. Give the handler the interrupted code's IF.
-            if ((frame->Rflags & 0x200) != 0)
-                X64Asm.Sti();
-
-            // Hand off к managed dispatcher. Does not return on success.
-            DispatchEx.Dispatch(exceptionPtr, &exInfo);
-
-            // If we get here, Dispatch failed (unhandled). Halt.
-            Console.Write("\r\n*** HwFaultBridge: Dispatch returned (unhandled HW exception) ***\r\n");
-            while (true) { }
         }
 
         // step106: pre-allocated record + context for the PAL SEH path.
@@ -670,187 +669,6 @@ namespace OS.Boot.EH
             ctx->R14 = frame->R14;
             ctx->R15 = frame->R15;
             ctx->Rip = frame->Rip;
-        }
-
-        // ---- Sage-2 frontier discriminator (step 71) ------------------------
-        //
-        // The two open frontiers share ONE symptom (an ASCII qword sits where
-        // a pointer/MethodTable was expected → #GP) but, per sage-2, almost
-        // certainly have TWO roots:
-        //   A  recursion/checked  — kernel stack has no guard page; deep
-        //                            recursion runs RSP down into adjacent
-        //                            memory / the GC heap → object headers
-        //                            read as strings → MethodTable::SanityCheck.
-        //   B  System.Text.Json   — LCG / DynamicMethod / dynamic-IL path
-        //                            (ReflectionEmitCachingMemberAccessor).
-        //
-        // The decisive cheap test that needs NO recorded stack bounds and NO
-        // stack-size change: is the faulting RSP literally INSIDE a managed GC
-        // heap segment ("stack-bottom-falls-into-heap")? Plus the ASCII-spray
-        // run length and a RAX/RCX classifier (canonical / ASCII / heap /
-        // image). One run, fires on whichever frontier crashes first.
-
-        private static bool IsCanonical(ulong v)
-        {
-            ulong hi = v >> 47;            // bits 63..47 must all equal bit 47
-            return hi == 0UL || hi == 0x1FFFFUL;
-        }
-
-        private static bool IsAsciiQword(ulong v)
-        {
-            for (int i = 0; i < 8; i++)
-            {
-                byte b = (byte)(v >> (i * 8));
-                if (b < 0x20 || b > 0x7E) return false;
-            }
-            return true;
-        }
-
-        private static void ClassifyWord(string name, ulong v)
-        {
-            Log.Begin(LogLevel.Info);
-            Console.Write("  ["); Console.Write(name); Console.Write("]=0x");
-            Console.WriteHexRaw(v, 16);
-            if (!IsCanonical(v)) Console.Write("  non-canonical");
-            if (IsAsciiQword(v))
-            {
-                Console.Write("  ascii=\"");
-                for (int i = 0; i < 8; i++) Console.WriteChar((char)(byte)(v >> (i * 8)));
-                Console.Write("\"");
-            }
-            if (GcHeap.IsInitialized &&
-                GcHeap.FindSegmentContaining((nint)v) != null)
-                Console.Write("  in-GC-heap");
-            ulong ib = (ulong)CoffRuntimeFunctionTable.ImageBase;
-            if (ib != 0 && v >= ib && v < ib + 0x10000000UL)
-                Console.Write("  in-image");
-            Log.EndLine();
-        }
-
-        private static void FaultClassify(InterruptFrame* frame)
-        {
-            ClassifyWord("RAX", frame->Rax);
-            ClassifyWord("RCX", frame->Rcx);
-
-
-            // BigStack.RunOn swaps RSP into a dedicated mapped buffer.
-            // Its active bounds are authoritative; do not classify by the
-            // larger UEFI/physical region that happens to contain the
-            // buffer. If RSP is outside those bounds and inside GcHeap, that
-            // is a real stack/heap overlap or overflow signal.
-            ulong bsLo = 0, bsHi = 0;
-            bool rspInBigStack = BigStack.TryGetActiveBounds(frame->Rsp, out bsLo, out bsHi);
-
-            // Frontier-A discriminator: faulting RSP inside a managed heap
-            // segment is the literal "stack ran into the heap" — a near-
-            // certain stack-overflow verdict that needs no stack bounds.
-            GcSegmentHeader* rspSeg = GcHeap.IsInitialized
-                ? GcHeap.FindSegmentContaining((nint)frame->Rsp)
-                : null;
-            bool rspInHeap = rspSeg != null;
-            Log.Begin(LogLevel.Info);
-            if (rspInBigStack)
-            {
-                Console.Write("  [BIGSTACK] RSP inside active BigStack buffer [0x");
-                Console.WriteHex(bsLo);
-                Console.Write("..0x");
-                Console.WriteHex(bsHi);
-                Console.Write(") — CoreCLR-hosted run, RSP swapped by BigStack.RunOn");
-            }
-            else if (rspInHeap)
-                Console.Write("  [SO-SUSPECT] RSP is INSIDE a GC heap segment "
-                    + "— stack descended into managed heap (frontier A: SO)");
-            else
-                Console.Write("  RSP not in GC heap (frontier-A SO not confirmed by this signal)");
-            Log.EndLine();
-
-            // Step104 discriminator: print current thread stack bounds AND
-            // the GC segment that contains RSP (if any), so we can tell
-            // whether RSP fell below StackBase (true overflow into adjacent
-            // memory) vs RSP is normal but stack/heap address ranges OVERLAP
-            // (allocation bug — stack and GC segment reserved at same VA).
-            Thread? curr = Scheduler.Current;
-            if (curr != null)
-            {
-                Log.Begin(LogLevel.Info);
-                Console.Write("  [STK] thread Id=");
-                Console.WriteUIntRaw((uint)curr.Id);
-                Console.Write(" StackBase=0x"); Console.WriteHex((ulong)curr.StackBase);
-                Console.Write(" StackTop=0x");  Console.WriteHex((ulong)curr.StackTop);
-                Console.Write(" StackBytes=0x"); Console.WriteHex((ulong)curr.StackBytes);
-                Console.Write(" GuardPage=0x"); Console.WriteHex((ulong)curr.GuardPage);
-                Log.EndLine();
-
-                ulong rsp = frame->Rsp;
-                ulong sbase = (ulong)curr.StackBase;
-                ulong stop  = (ulong)curr.StackTop;
-                Log.Begin(LogLevel.Info);
-                if (rspInBigStack)
-                {
-                    Console.Write("  [STK] wrapper bounds shown above — execution actually on BigStack");
-                }
-                else if (sbase == 0 || stop == 0)
-                {
-                    Console.Write("  [STK] thread has no owned stack (boot/wrapped thread)");
-                }
-                else if (rsp < sbase)
-                {
-                    Console.Write("  [STK] RSP BELOW StackBase by 0x");
-                    Console.WriteHex(sbase - rsp);
-                }
-                else if (rsp >= stop)
-                {
-                    Console.Write("  [STK] RSP ABOVE StackTop by 0x");
-                    Console.WriteHex(rsp - stop);
-                }
-                else
-                {
-                    Console.Write("  [STK] RSP within bounds, used=0x");
-                    Console.WriteHex(stop - rsp);
-                    Console.Write(" of 0x");
-                    Console.WriteHex(stop - sbase);
-                }
-                Log.EndLine();
-            }
-            else
-            {
-                Log.Begin(LogLevel.Info);
-                Console.Write("  [STK] Scheduler.Current == null (no thread context)");
-                Log.EndLine();
-            }
-
-            if (rspSeg != null)
-            {
-                Log.Begin(LogLevel.Info);
-                Console.Write("  [GC-SEG] RSP-containing segment: Start=0x");
-                Console.WriteHex((ulong)rspSeg->Start);
-                Console.Write(" End=0x");
-                Console.WriteHex((ulong)rspSeg->End);
-                Console.Write(" size=0x");
-                Console.WriteHex((ulong)(rspSeg->End - rspSeg->Start));
-                Log.EndLine();
-            }
-
-            // ASCII-spray extent: a long contiguous run of one ASCII qword up
-            // the stack is the overrun/spray fingerprint (frontier A). Scan is
-            // upward only (mapped, contiguous with the dump above) — never
-            // downward (may be unmapped → recursive fault).
-            ulong* sp = (ulong*)frame->Rsp;
-            if (sp != null && IsAsciiQword(frame->Rax))
-            {
-                ulong pat = frame->Rax;
-                int run = 0;
-                while (run < 4096 && sp[run] == pat) run++;   // contiguous from RSP
-                int total = 0;
-                for (int i = 0; i < 4096; i++) if (sp[i] == pat) total++;
-                Log.Begin(LogLevel.Info);
-                Console.Write("  [SPRAY] RAX-pattern qwords: run-from-RSP=");
-                Console.WriteUIntRaw((uint)run);
-                Console.Write(" total-in-32KB=");
-                Console.WriteUIntRaw((uint)total);
-                Console.Write(" (of 4096)");
-                Log.EndLine();
-            }
         }
 
         // Populate PAL_LIMITED_CONTEXT from interrupt frame. Captures the

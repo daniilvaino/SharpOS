@@ -1,5 +1,7 @@
 using OS.Hal;
 
+#pragma warning disable CS0162 // Probes/Trace switches are compile-time constants: the branch a switch turns off is meant to be dead (docs/build-warnings.md)
+
 namespace OS.Boot.EH
 {
     // Phase 1 step 6 — patches RethrowStub.RhpRethrow с byte-array
@@ -42,28 +44,31 @@ namespace OS.Boot.EH
             // step 118 Wave 2 — compile-time codegen (BootAsm.Generator).
             // 2 MovHoles: head (= &s_head), ingress (= RhpTest_ThrowIngress).
             // No compare-gate — first throw validates via existing EH probes
-            // (L1..L17) and CoreCLR-hosted census.
+            // (L8..L20) and CoreCLR-hosted census.
             int p = Emit(target, (void**)headAddr, ingressFn);
 
             if (target[0] != 0x48 || target[p - 1] != 0xCC)
                 return false;
 
-            Log.Begin(LogLevel.Info);
-            Console.Write("rethrow shellcode: bytes=");
-            Console.WriteUIntRaw((uint)p);
-            Console.Write(" head=0x");
-            Console.WriteHexRaw((ulong)(nuint)headAddr, 16);
-            Console.Write(" ingress=0x");
-            Console.WriteHexRaw((ulong)(nuint)ingressFn, 16);
-            Log.EndLine();
+            if (OS.Kernel.Diagnostics.Probes.Diagnostics)
+            {
+                Log.Begin(LogLevel.Info);
+                Console.Write("rethrow shellcode: bytes=");
+                Console.WriteUIntRaw((uint)p);
+                Console.Write(" head=0x");
+                Console.WriteHexRaw((ulong)(nuint)headAddr, 16);
+                Console.Write(" ingress=0x");
+                Console.WriteHexRaw((ulong)(nuint)ingressFn, 16);
+                Log.EndLine();
+            }
 
             s_installed = true;
             return true;
         }
 
-        // Reuse RhpTest_ThrowIngress as ingress seam — same managed entry
-        // что routes к Dispatch when EhRealDispatch=true. Dispatcher
-        // detects Rethrow kind flag и handles accordingly.
+        // Reuse RhpTest_ThrowIngress as ingress seam — the same managed
+        // entry that routes to Dispatch. Dispatcher detects the Rethrow kind
+        // flag and handles it accordingly.
         private static void* GetRethrowIngressAddress()
         {
             delegate*<byte*, ExInfo*, void> fn =
