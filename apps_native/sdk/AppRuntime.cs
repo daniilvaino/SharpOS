@@ -75,6 +75,11 @@ namespace SharpOS.AppSdk
             // before any math runs. 0 from an older kernel: nothing replaced.
             SharpOS.Std.NoRuntime.LibmPatcher.Apply(s_services->CpuFeatures);
 
+            // ILC's optimistic IsSupported reads g_cpuFeatures: the stock
+            // runtime fills it at startup from CPUID; here the kernel's
+            // flags go in, before any code asks.
+            IntrinsicFlagsInstaller.Write(startup->ImageBase, (int)s_services->IntrinsicFlags);
+
             // Byref struct copies (List<T> element moves, Dictionary entries) go through
             // RhpByRefAssignRef. Our GC has no card table, so the plain helper is a
             // copy the app writes itself; a kernel with the region write barrier

@@ -230,9 +230,9 @@ namespace System.Runtime.CompilerServices
         [Intrinsic]
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static T ReadUnaligned<T>(ref byte source)
+        public static T ReadUnaligned<T>(ref readonly byte source)
         {
-            return Unsafe.As<byte, T>(ref source);
+            return Unsafe.As<byte, T>(ref Unsafe.AsRef(in source));
         }
 
         [Intrinsic]

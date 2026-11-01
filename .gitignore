@@ -26,6 +26,9 @@ x86/
 [Ww][Ii][Nn]32/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
+# …but not the sources named for the architectures (System.Runtime.Intrinsics.X86/Arm).
+!std-no-runtime/Runtime/Intrinsics/X86/
+!std-no-runtime/Runtime/Intrinsics/Arm/
 bld/
 [Bb]in/
 [Oo]bj/

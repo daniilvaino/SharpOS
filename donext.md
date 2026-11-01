@@ -734,7 +734,9 @@ MinimalRuntime обязана явно ответить «нужен ли тот
 строит код под этот минимум. `Bench.dll` в QEMU — в 2–4 раза медленнее хоста;
 с `qemu64,+nx,+ssse3,+sse4.1,+sse4.2,+popcnt,+avx,+avx2,+bmi1,+bmi2,+fma,+abm,
 +movbe,+xsave,+f16c,+aes,+pclmulqdq` — как на хосте (step208), полная батарея
-проходит. NativeAOT это не трогает: ILC фиксирует набор при сборке. Решить,
+проходит. NativeAOT теперь тоже от неё зависит: «оптимистичные» наборы ILC
+(SSE3–4.2, AES, PCLMULQDQ, POPCNT, LZCNT, MOVBE) включаются по CPUID при старте
+(`g_cpuFeatures`, релиз 0.1); AVX/AVX2 ILC фиксирует при сборке. Решить,
 делать ли это умолчанием (PowerShell в QEMU ускорится так же). `-cpu max` под
 WHPX роняет OVMF (#GP до загрузки). С step212 к умолчанию добавлен `+rdrand` —
 источник `RandomNumberGenerator`.

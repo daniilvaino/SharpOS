@@ -368,6 +368,12 @@ namespace SharpOS.AppSdk
         // int TerminalSideWrite(byte* utf8, int length): terminal text for
         // the side panel (the shell's inspector). Zero: an older kernel.
         public ulong TerminalSideWriteAddress;
+
+        // The flags ILC's optimistic IsSupported reads (release 0.1), as
+        // minipal_getcpufeatures gives them (HardwareIntrinsicFlags): the app
+        // writes them into its g_cpuFeatures. Zero: an older kernel; every
+        // optimistic instruction set reads as absent.
+        public ulong IntrinsicFlags;
     }
 
     /// <summary>

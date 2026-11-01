@@ -183,6 +183,8 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `Math.Floor` / `Ceiling` / `Truncate` / `Round` | ✅ | ✅ | ✅ | |
 | `Math` / `MathF`: тригонометрия, exp/log, `Pow`, гиперболические, `Cbrt`, `FusedMultiplyAdd` | ✅ | ✅ | 🟡 | в AOT — SharpLibm, правильно округлено (проверено на худших случаях CORE-MATH против MPFR, float — на всех 2³² входах); hosted — libm форка, ~1e-9 |
 | `Vector128<T>` (SSE) | ✅ | ✅ | ✅ | `Vector256` объявлен, но не ускорен |
+| Интринсики x86 (`Sse2`…`Sse42`, `Pclmulqdq`, `Aes`, `Popcnt`, …) | 🟡 | ✅ | ✅ | релиз 0.1: классы CoreLib 8; «оптимистичные» наборы включаются по CPUID при старте (`g_cpuFeatures`), AVX/AVX2 ILC держит выключенными, AVX-512 нет. Ядро: только SSE2 — своего `g_cpuFeatures` оно не экспортирует |
+| `System.IO.Hashing` (CRC32/64, xxHash) | — | 🟡 | ✅ | релиз 0.1: BCL 8 с векторным путём (PCLMULQDQ); вырезаны члены с `UInt128` |
 | Разбор XML | ✅ | ⏳ | ✅ | TurboXml; ядро читает им манифесты приложений |
 | JSON: `Utf8JsonReader` / `Utf8JsonWriter`, `JsonDocument`, `JsonNode` | ⏳ | 🟡 | ✅ | из System.Text.Json (.NET 10): чтение кусками, запись в `IBufferWriter<byte>`. Сериализатора и `JavaScriptEncoder` нет |
 | Разбор чисел (`Parse` / `TryParse`) | 🟡 | 🟡 | ✅ | `double`, `float`, `decimal` — как в BCL; `int` и `long` — только `Parse(string)` и `TryParse`; остальных целых нет |

@@ -337,6 +337,7 @@ namespace OS.Kernel.Process
             table.FileCloseAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&FileClose;
             table.Settings = Settings;
             table.CpuFeatures = OS.Hal.CpuFeatures.Value;
+            table.IntrinsicFlags = (ulong)(uint)OS.Hal.CpuFeatures.IntrinsicFlags;
 
             table.RegionByRefBarrierAddress = (ulong)OS.Kernel.Memory.RegionBarrier.Entry;
             if (OS.Kernel.Memory.ExchangeHeap.EnsureArena())

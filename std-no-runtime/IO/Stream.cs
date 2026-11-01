@@ -5,9 +5,9 @@
 // Cuts vs original:
 //   - BeginRead/EndRead/BeginWrite/EndWrite; ReadAsync/WriteAsync/FlushAsync
 //     exist (step198) but their base versions complete synchronously.
-//   - CopyToAsync, timeouts, CanTimeout, synchronized wrapper,
-//     TextReader/TextWriter integration. CopyTo is back (step208), with a
-//     plain buffer for ArrayPool's.
+//   - timeouts, CanTimeout, synchronized wrapper, TextReader/TextWriter
+//     integration. CopyTo is back (step208), with a plain buffer for
+//     ArrayPool's; CopyToAsync too (release 0.1), without ConfigureAwait.
 // Kept: the sync byte[] Read/Write/Seek core + ReadExactly (net7+) that
 // ported app code (ManagedDoom WAD/save readers) actually calls.
 
@@ -90,6 +90,42 @@ namespace System.IO
             while ((bytesRead = Read(buffer, 0, buffer.Length)) != 0)
                 destination.Write(buffer, 0, bytesRead);
         }
+        // CopyToAsync (release 0.1, for System.IO.Hashing and the archives):
+        // the original's, over ReadAsync/WriteAsync with a rented buffer.
+        public System.Threading.Tasks.Task CopyToAsync(Stream destination) =>
+            CopyToAsync(destination, DefaultCopyBufferSize, default);
+
+        public System.Threading.Tasks.Task CopyToAsync(Stream destination, int bufferSize) =>
+            CopyToAsync(destination, bufferSize, default);
+
+        public System.Threading.Tasks.Task CopyToAsync(Stream destination, System.Threading.CancellationToken cancellationToken) =>
+            CopyToAsync(destination, DefaultCopyBufferSize, cancellationToken);
+
+        public virtual System.Threading.Tasks.Task CopyToAsync(Stream destination, int bufferSize, System.Threading.CancellationToken cancellationToken)
+        {
+            if (destination == null) throw new ArgumentNullException(nameof(destination));
+            if (bufferSize <= 0) throw new ArgumentOutOfRangeException(nameof(bufferSize));
+            if (!CanRead) throw new NotSupportedException("Stream does not support reading.");
+            if (!destination.CanWrite) throw new NotSupportedException("Stream does not support writing.");
+            return Core(this, destination, bufferSize, cancellationToken);
+
+            static async System.Threading.Tasks.Task Core(Stream source, Stream destination, int bufferSize, System.Threading.CancellationToken cancellationToken)
+            {
+                byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(bufferSize);
+                try
+                {
+                    int bytesRead;
+                    // SharpOS cut: .ConfigureAwait(false) on both awaits — std has no ConfigureAwait.
+                    while ((bytesRead = await source.ReadAsync(new Memory<byte>(buffer), cancellationToken)) != 0)
+                        await destination.WriteAsync(new ReadOnlyMemory<byte>(buffer, 0, bytesRead), cancellationToken);
+                }
+                finally
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                }
+            }
+        }
+
         public abstract long Seek(long offset, SeekOrigin origin);
         public abstract void Write(byte[] buffer, int offset, int count);
         public abstract void Flush();

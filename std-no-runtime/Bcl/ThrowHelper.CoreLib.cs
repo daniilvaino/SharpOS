@@ -67,6 +67,7 @@ namespace System
                 case ExceptionResource.Arg_RankMultiDimNotSupported: return SR.Arg_RankMultiDimNotSupported;
                 case ExceptionResource.Arg_NonZeroLowerBound: return SR.Arg_NonZeroLowerBound;
                 case ExceptionResource.Arg_ArrayPlusOffTooSmall: return SR.Arg_ArrayPlusOffTooSmall;
+                case ExceptionResource.Arg_TypeNotSupported: return SR.Arg_TypeNotSupported;
                 default: return "";
             }
         }
@@ -78,6 +79,7 @@ namespace System
         Arg_RankMultiDimNotSupported,
         Arg_NonZeroLowerBound,
         Arg_ArrayPlusOffTooSmall,
+        Arg_TypeNotSupported,
     }
 
     internal static partial class SR

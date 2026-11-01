@@ -382,6 +382,7 @@ namespace AotTests
                 CheckPipes();
             }
             CheckDynamic();
+            CheckFormats();
 
             // The error stream (step 167). The check can only see that the
             // kernel offers it; whether the marker reached last_err.log and not

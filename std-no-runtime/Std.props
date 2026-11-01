@@ -152,6 +152,26 @@
     <Compile Include="$(MSBuildThisFileDirectory)Globalization.cs" Link="std\Globalization.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\BinaryReader.cs" Link="std\IO\BinaryReader.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\BinaryWriter.cs" Link="std\IO\BinaryWriter.cs" />
+    <!-- System.IO.Hashing (release 0.1): BCL .NET 8's, as is (IO/Hashing/*.cs headers). -->
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc32.cs" Link="std\IO\Hashing\Crc32.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc32.Table.cs" Link="std\IO\Hashing\Crc32.Table.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc64.cs" Link="std\IO\Hashing\Crc64.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc64.Table.cs" Link="std\IO\Hashing\Crc64.Table.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\NonCryptographicHashAlgorithm.cs" Link="std\IO\Hashing\NonCryptographicHashAlgorithm.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\XxHash128.cs" Link="std\IO\Hashing\XxHash128.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\XxHash3.cs" Link="std\IO\Hashing\XxHash3.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\XxHash32.cs" Link="std\IO\Hashing\XxHash32.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\XxHash32.State.cs" Link="std\IO\Hashing\XxHash32.State.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\XxHash64.cs" Link="std\IO\Hashing\XxHash64.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\XxHash64.State.cs" Link="std\IO\Hashing\XxHash64.State.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\XxHashShared.cs" Link="std\IO\Hashing\XxHashShared.cs" />
+    <!-- SR texts for System.IO.Hashing. -->
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\SR.Hashing.cs" Link="std\IO\Hashing\SR.Hashing.cs" />
+    <!-- System.IO.Hashing, the vectorized half (CRC by PCLMULQDQ when the CPU has it, Arm branches PlatformNotSupported). -->
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc32.Arm.cs" Link="std\IO\Hashing\Crc32.Arm.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc32.Vectorized.cs" Link="std\IO\Hashing\Crc32.Vectorized.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc64.Vectorized.cs" Link="std\IO\Hashing\Crc64.Vectorized.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\VectorHelper.cs" Link="std\IO\Hashing\VectorHelper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\IOException.cs" Link="std\IO\IOException.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\MemoryStream.cs" Link="std\IO\MemoryStream.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\ArrayBufferWriter.cs" Link="std\Buffers\ArrayBufferWriter.cs" />
@@ -261,6 +281,57 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\FunctionPointerOps.cs" Link="std\Runtime\FunctionPointerOps.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\GC.cs" Link="std\Runtime\GC.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\BoolBox.cs" Link="std\Runtime\BoolBox.cs" />
+    <!-- System.Runtime.Intrinsics.X86 (release 0.1): CoreLib .NET 8's, for ILC 8; IsSupported of the optimistic sets reads g_cpuFeatures (Runtime/HardwareIntrinsicFlags.cs). -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\X86Base.cs" Link="std\Runtime\Intrinsics\X86\X86Base.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\X86Base.SharpOS.cs" Link="std\Runtime\Intrinsics\X86\X86Base.SharpOS.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Sse.cs" Link="std\Runtime\Intrinsics\X86\Sse.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Sse2.cs" Link="std\Runtime\Intrinsics\X86\Sse2.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Pclmulqdq.cs" Link="std\Runtime\Intrinsics\X86\Pclmulqdq.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Enums.cs" Link="std\Runtime\Intrinsics\X86\Enums.cs" />
+    <!-- Flags for g_cpuFeatures; RequiresPreviewFeatures for X86Base.DivRem. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\HardwareIntrinsicFlags.cs" Link="std\Runtime\HardwareIntrinsicFlags.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\RequiresPreviewFeaturesAttribute.cs" Link="std\Runtime\RequiresPreviewFeaturesAttribute.cs" />
+    <!-- The rest of X86 from CoreLib .NET 8: AVX ones are not optimistic for ILC 8, so their IsSupported folds to false. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Sse3.cs" Link="std\Runtime\Intrinsics\X86\Sse3.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Ssse3.cs" Link="std\Runtime\Intrinsics\X86\Ssse3.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Sse41.cs" Link="std\Runtime\Intrinsics\X86\Sse41.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Sse42.cs" Link="std\Runtime\Intrinsics\X86\Sse42.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Aes.cs" Link="std\Runtime\Intrinsics\X86\Aes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Popcnt.cs" Link="std\Runtime\Intrinsics\X86\Popcnt.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Lzcnt.cs" Link="std\Runtime\Intrinsics\X86\Lzcnt.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Bmi1.cs" Link="std\Runtime\Intrinsics\X86\Bmi1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Bmi2.cs" Link="std\Runtime\Intrinsics\X86\Bmi2.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Avx.cs" Link="std\Runtime\Intrinsics\X86\Avx.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Avx2.cs" Link="std\Runtime\Intrinsics\X86\Avx2.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\Fma.cs" Link="std\Runtime\Intrinsics\X86\Fma.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\X86Serialize.cs" Link="std\Runtime\Intrinsics\X86\X86Serialize.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\X86\AvxVnni.cs" Link="std\Runtime\Intrinsics\X86\AvxVnni.cs" />
+    <!-- Vector64/128/256/512 and Scalar: CoreLib .NET 8's whole (release 0.1; step165's port was a part). -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Scalar.cs" Link="std\Runtime\Intrinsics\Scalar.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector64.cs" Link="std\Runtime\Intrinsics\Vector64.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector64_1.cs" Link="std\Runtime\Intrinsics\Vector64_1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector64DebugView_1.cs" Link="std\Runtime\Intrinsics\Vector64DebugView_1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector128DebugView_1.cs" Link="std\Runtime\Intrinsics\Vector128DebugView_1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector256DebugView_1.cs" Link="std\Runtime\Intrinsics\Vector256DebugView_1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector512.cs" Link="std\Runtime\Intrinsics\Vector512.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector512_1.cs" Link="std\Runtime\Intrinsics\Vector512_1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector512DebugView_1.cs" Link="std\Runtime\Intrinsics\Vector512DebugView_1.cs" />
+    <!-- Arm and Wasm intrinsics as BCL builds them for x64: PlatformNotSupported (IsSupported false), named by the shared code's other branches. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Arm\AdvSimd.PlatformNotSupported.cs" Link="std\Runtime\Intrinsics\Arm\AdvSimd.PlatformNotSupported.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Arm\Aes.PlatformNotSupported.cs" Link="std\Runtime\Intrinsics\Arm\Aes.PlatformNotSupported.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Arm\ArmBase.PlatformNotSupported.cs" Link="std\Runtime\Intrinsics\Arm\ArmBase.PlatformNotSupported.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Arm\Crc32.PlatformNotSupported.cs" Link="std\Runtime\Intrinsics\Arm\Crc32.PlatformNotSupported.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Arm\Dp.PlatformNotSupported.cs" Link="std\Runtime\Intrinsics\Arm\Dp.PlatformNotSupported.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Arm\Rdm.PlatformNotSupported.cs" Link="std\Runtime\Intrinsics\Arm\Rdm.PlatformNotSupported.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Arm\Sha1.PlatformNotSupported.cs" Link="std\Runtime\Intrinsics\Arm\Sha1.PlatformNotSupported.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Arm\Sha256.PlatformNotSupported.cs" Link="std\Runtime\Intrinsics\Arm\Sha256.PlatformNotSupported.cs" />
+    <!-- Wasm, the same. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Wasm\PackedSimd.PlatformNotSupported.cs" Link="std\Runtime\Intrinsics\Wasm\PackedSimd.PlatformNotSupported.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Wasm\WasmBase.PlatformNotSupported.cs" Link="std\Runtime\Intrinsics\Wasm\WasmBase.PlatformNotSupported.cs" />
+    <!-- CompExactlyDependsOn: CoreLib's marker on vector helpers (no behaviour). -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\CompExactlyDependsOnAttribute.cs" Link="std\Runtime\CompilerServices\CompExactlyDependsOnAttribute.cs" />
+    <!-- ThrowHelper members of the intrinsics port. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\ThrowHelper.Intrinsics.cs" Link="std\Bcl\ThrowHelper.Intrinsics.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector128.cs" Link="std\Runtime\Intrinsics\Vector128.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector128_1.cs" Link="std\Runtime\Intrinsics\Vector128_1.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Intrinsics\Vector256.cs" Link="std\Runtime\Intrinsics\Vector256.cs" />

@@ -70,6 +70,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)AppStartupBlock.cs"      Link="sdk\AppStartupBlock.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppServiceTable.cs"      Link="sdk\AppServiceTable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppRuntime.cs"           Link="sdk\AppRuntime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IntrinsicFlagsInstaller.cs" Link="sdk\IntrinsicFlagsInstaller.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppThreads.cs"           Link="sdk\AppThreads.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppConsole.cs"           Link="sdk\AppConsole.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)AppGC.cs"                Link="sdk\AppGC.cs" />
@@ -145,6 +146,9 @@
     <LinkerArg Include="/BASE:0x200000000000" />
     <LinkerArg Include="/DYNAMICBASE:NO" />
     <LinkerArg Include="/NODEFAULTLIB" />
+    <!-- g_cpuFeatures (WinCrtStubs), exported so AppRuntime can find it in its
+         own image and write the CPU's flags into it before any code reads them. -->
+    <LinkerArg Include="/EXPORT:g_cpuFeatures,DATA" />
   </ItemGroup>
 
   <Import Project="$(MSBuildThisFileDirectory)SharpAppManifest.props" />

@@ -15,6 +15,9 @@
 
 ## 2. Форматы в std
 
+Сделано: `System.IO.Hashing`, интринсики x86, векторы BCL целиком —
+`done/step221.md`.
+
 Подключение — как BCL, в своих namespace; что тяжёлое — отдельной строкой в
 csproj, не в `Std.props`.
 
@@ -27,7 +30,6 @@ csproj, не в `Std.props`.
 - Сжатие: SharpCompress (MIT) в `vendor/` целиком; `System.IO.Compression`
   (`DeflateStream`, `GZipStream`, `ZLibStream`, `ZipArchive`) поверх него.
   Сначала — чего ему не хватает (ZstdSharp, async `Stream`, `ArrayPool`).
-- `System.IO.Hashing` (`Crc32`, `Crc64`, `XxHash`) — из BCL как есть.
 - `System.Formats.Tar` — из BCL.
 - Кодовые страницы: `System.Text.Encoding.CodePages` из BCL (`codepages.nlp`
   612 КБ ресурсом — ресурсы сборки работают); нужны `EncodingProvider`,

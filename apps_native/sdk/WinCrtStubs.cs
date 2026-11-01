@@ -19,6 +19,13 @@ namespace SharpOS.AppSdk
         [BootAsm.CoffDataSymbol("__security_cookie", Section = ".data", Alignment = 8)]
         public static ulong SecurityCookie = 0x2B992DDFA232UL;
 
+        // What ILC's optimistic X.IsSupported reads (HardwareIntrinsicFlags):
+        // 0 here, the CPU's flags once AppRuntime has written them through
+        // the image's export of it. This managed field is not the symbol —
+        // only the .obj holds that.
+        [BootAsm.CoffDataSymbol("g_cpuFeatures", Section = ".data", Alignment = 4)]
+        public static int CpuFeatures = 0;
+
         [RuntimeExport("__security_check_cookie")]
         public static void SecurityCheckCookie(ulong cookie)
         {

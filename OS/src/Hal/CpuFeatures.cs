@@ -16,6 +16,16 @@ namespace OS.Hal
         /// <summary>The AVX register state is on (XCR0) and interrupts save it.</summary>
         public static bool AvxState;
 
+        /// <summary>What ILC's optimistic IsSupported reads (HardwareIntrinsicFlags), for every image.</summary>
+        public static int IntrinsicFlags;
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void CpuIdForX86Base(int* cpuInfo, int functionId, int subFunctionId)
+        {
+            if (!X64Asm.Cpuid((uint)functionId, (uint)subFunctionId, (uint*)cpuInfo))
+                cpuInfo[0] = cpuInfo[1] = cpuInfo[2] = cpuInfo[3] = 0;
+        }
+
         /// <param name="avxState">XCR0 enables AVX state and interrupts save it
         /// (BootSequence.ConfigureXcr0) — VEX instructions, vfmadd included,
         /// raise #UD without it.</param>
@@ -33,6 +43,8 @@ namespace OS.Hal
             }
             Value = features;
             AvxState = avxState;
+            HardwareIntrinsicFlags.CpuId = &CpuIdForX86Base;
+            IntrinsicFlags = HardwareIntrinsicFlags.Compute(avxState);
             LibmPatcher.Apply(features);
 
             Log.Begin(LogLevel.Info);
@@ -42,6 +54,8 @@ namespace OS.Hal
             Console.Write((features & LibmPatcher.FeatureFma) != 0 ? "yes" : fmaCpu ? "no (AVX state off)" : "no");
             Console.Write("; libm entries replaced: ");
             Console.WriteUInt((uint)LibmPatcher.Replaced);
+            Console.Write("; intrinsics=0x");
+            Console.WriteHex((uint)IntrinsicFlags);
             Log.EndLine();
         }
     }

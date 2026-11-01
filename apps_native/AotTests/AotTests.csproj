@@ -19,5 +19,6 @@
     <Compile Include="DynamicCases.cs" />
     <Compile Include="GcBigFrame.cs" />
     <Compile Include="ThreadStaticTests.cs" />
+    <Compile Include="FormatTests.cs" />
   </ItemGroup>
 </Project>
