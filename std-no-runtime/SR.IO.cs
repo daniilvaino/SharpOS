@@ -5,6 +5,10 @@ namespace System
 {
     internal static partial class SR
     {
+        internal const string EndPositionNotReached = @"End position was not reached during enumeration.";
+        internal const string Arg_VersionString = @"Version string portion was too short or too long.";
+        internal const string Arg_MustBeVersion = @"Object must be of type Version.";
+        internal const string ArgumentOutOfRange_Bounds_Lower_Upper = @"Argument must be between {0} and {1}.";
         internal const string IO_StreamTooLong = @"Stream was too long.";
         internal const string UnauthorizedAccess_MemStreamBuffer = @"MemoryStream's internal buffer cannot be accessed.";
         internal const string ArgumentOutOfRange_SmallCapacity = @"capacity was less than the current size.";

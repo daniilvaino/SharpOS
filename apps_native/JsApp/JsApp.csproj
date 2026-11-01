@@ -12,7 +12,7 @@
 
   <Import Project="..\sdk\FreestandingPe.props" />
   <!-- JSON.parse and source maps: JsonDocument from the vendored System.Text.Json. -->
-  <Import Project="..\..\vendor\SystemTextJson\SystemTextJson.props" />
+  <Import Project="..\..\std-no-runtime\Text\Json\Json.props" />
 
   <PropertyGroup>
     <O>..\..\vendor\Okojo\src\</O>

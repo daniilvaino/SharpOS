@@ -17,7 +17,7 @@ namespace System
 {
     public abstract partial class Type
     {
-        public virtual string Name => LastResortName;
+        public override string Name => LastResortName;
 
         public virtual string FullName => LastResortName;
 
@@ -29,7 +29,7 @@ namespace System
         // so not nested. A runtime type is never a generic parameter.
         public virtual string? Namespace => null;
 
-        public virtual Type? DeclaringType => null;
+        public override Type? DeclaringType => null;
 
         public bool IsNested => DeclaringType != null;
 
@@ -79,8 +79,27 @@ namespace System
             if (type == typeof(decimal)) return TypeCode.Decimal;
             if (type == typeof(DateTime)) return TypeCode.DateTime;
             if (type == typeof(string)) return TypeCode.String;
+            // An enum's code is its underlying type's, as BCL answers
+            // (step224): the enum's MethodTable carries that primitive's
+            // element type.
+            if (type.IsEnum) return EnumTypeCode(type);
             return TypeCode.Object;
         }
+
+        private static unsafe TypeCode EnumTypeCode(Type type) => ((SharpOS.Std.NoRuntime.GcMethodTable*)type._handle)->ElementType switch
+        {
+            SharpOS.Std.NoRuntime.GcEETypeElementType.Boolean => TypeCode.Boolean,
+            SharpOS.Std.NoRuntime.GcEETypeElementType.Char => TypeCode.Char,
+            SharpOS.Std.NoRuntime.GcEETypeElementType.SByte => TypeCode.SByte,
+            SharpOS.Std.NoRuntime.GcEETypeElementType.Byte => TypeCode.Byte,
+            SharpOS.Std.NoRuntime.GcEETypeElementType.Int16 => TypeCode.Int16,
+            SharpOS.Std.NoRuntime.GcEETypeElementType.UInt16 => TypeCode.UInt16,
+            SharpOS.Std.NoRuntime.GcEETypeElementType.Int32 => TypeCode.Int32,
+            SharpOS.Std.NoRuntime.GcEETypeElementType.UInt32 => TypeCode.UInt32,
+            SharpOS.Std.NoRuntime.GcEETypeElementType.Int64 => TypeCode.Int64,
+            SharpOS.Std.NoRuntime.GcEETypeElementType.UInt64 => TypeCode.UInt64,
+            _ => TypeCode.Object,
+        };
 
         // Shape queries the MethodTable answers by itself, as NativeAOT's
         // EETypePtr does (release/8.0, MIT): IsEnum is "base type is Enum"

@@ -8,10 +8,11 @@
   <!-- The freestanding win-x64 PE recipe every AOT app uses. -->
   <Import Project="..\sdk\FreestandingPe.props" />
 
-  <!-- Utf8JsonReader / Utf8JsonWriter, vendored from System.Text.Json. -->
-  <Import Project="..\..\vendor\SystemTextJson\SystemTextJson.props" />
+  <!-- System.Text.Json whole (std-no-runtime/Text/Json); JsonSerializer through the source generator. -->
+  <Import Project="..\..\std-no-runtime\Text\Json\Json.props" />
 
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="Serializer.cs" />
   </ItemGroup>
 </Project>

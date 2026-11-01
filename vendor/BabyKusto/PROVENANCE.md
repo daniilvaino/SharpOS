@@ -29,8 +29,6 @@ aggregates use. `BabyKusto.props` compiles both and imports
 - `join` and `summarize` build their composite keys without
   `Uri.EscapeDataString`: `%` and the `|` separator are escaped by hand, which
   keeps the key unambiguous.
-- Table dumps write dynamic values with default JSON options — no
-  `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`.
 - `take` stops when its count is reached exactly (step201); upstream asked the
   source for one more chunk first, which on a pipe is a wait for one more
   message.

@@ -245,6 +245,20 @@ namespace System
             set => _source = value;
         }
 
+        // BCL: the innermost exception of the InnerException chain (step224,
+        // AggregateException overrides it).
+        public virtual Exception GetBaseException()
+        {
+            Exception? inner = InnerException;
+            Exception back = this;
+            while (inner != null)
+            {
+                back = inner;
+                inner = inner.InnerException;
+            }
+            return back;
+        }
+
         public virtual string HelpLink
         {
             get => _helpURL;

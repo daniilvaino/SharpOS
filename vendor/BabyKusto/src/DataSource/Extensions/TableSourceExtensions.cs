@@ -4,6 +4,7 @@
 using System;
 using System.Globalization;
 using System.IO;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Kusto.Language.Symbols;
@@ -12,9 +13,7 @@ namespace BabyKusto.Core.Extensions
 {
     public static class TableSourceExtensions
     {
-        // SharpOS cut: JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }
-        // — neither the serializer options nor System.Text.Encodings.Web is ported;
-        // dynamic values are dumped with the default escaping.
+        private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
         public static void Dump(this ITableSource table, TextWriter writer, int indent = 0)
         {
@@ -59,7 +58,7 @@ namespace BabyKusto.Core.Extensions
                                 v switch
                                 {
                                     DateTime dateTime => dateTime.ToString("O"),
-                                    JsonNode jsonNode => jsonNode.ToJsonString(), // SharpOS cut: JsonOptions
+                                    JsonNode jsonNode => jsonNode.ToJsonString(JsonOptions),
                                     null => "(null)",
                                     _ => v,
                                 });

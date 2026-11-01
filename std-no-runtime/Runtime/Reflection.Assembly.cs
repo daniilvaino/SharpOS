@@ -26,6 +26,14 @@ namespace System.Reflection
     {
         public virtual string? FullName => null;
 
+        // No type names in the image (step224): every lookup by name misses,
+        // as BCL answers for a name it does not have.
+        public virtual Type? GetType(string name) => GetType(name, throwOnError: false, ignoreCase: false);
+
+        public virtual Type? GetType(string name, bool throwOnError) => GetType(name, throwOnError, ignoreCase: false);
+
+        public virtual Type? GetType(string name, bool throwOnError, bool ignoreCase) => Type.GetType(name, throwOnError, ignoreCase);
+
         public virtual string[] GetManifestResourceNames() => new string[0];
 
         public virtual Stream? GetManifestResourceStream(string name) => null;

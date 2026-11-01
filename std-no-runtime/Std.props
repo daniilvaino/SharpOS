@@ -43,6 +43,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Dictionary.cs" Link="std\Bcl\Dictionary.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\EqualityComparer.cs" Link="std\Bcl\EqualityComparer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Guid.cs" Link="std\Bcl\Guid.cs" />
+    <!-- Guid equality, string ctor, order (step224) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Guid.Equality.cs" Link="std\Bcl\Guid.Equality.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\HashCode.cs" Link="std\Bcl\HashCode.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\HashSet.cs" Link="std\Bcl\HashSet.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Boolean.Statics.cs" Link="std\Bcl\Boolean.Statics.cs" />
@@ -56,16 +58,23 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Padding.cs" Link="std\Runtime\Padding.cs" />
     <!-- SR of System.Collections.Concurrent -->
     <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\SR.Concurrent.cs" Link="std\Collections\Concurrent\SR.Concurrent.cs" />
+    <!-- ConcurrentStack (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\ConcurrentStack.cs" Link="std\Collections\Concurrent\ConcurrentStack.cs" />
+    <!-- no ETW (step224) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\CDSCollectionETWBCLProvider.SharpOS.cs" Link="std\Collections\Concurrent\CDSCollectionETWBCLProvider.SharpOS.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\ConcurrentDictionary.cs" Link="std\Bcl\ConcurrentDictionary.cs" />
     <!-- SemaphoreSlim, TimeoutHelper (BCL 8); WaitHandle family over a word -->
     <Compile Include="$(MSBuildThisFileDirectory)SR.Threading.cs" Link="std\SR.Threading.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.TaskToAsyncResult.cs" Link="std\Threading.Tasks.TaskToAsyncResult.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.AsyncResult.cs" Link="std\Threading.Tasks.AsyncResult.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)SR.IO.cs" Link="std\SR.IO.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SR.Collections.cs" Link="std\SR.Collections.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.CancellationToken.WaitHandle.cs" Link="std\Threading.CancellationToken.WaitHandle.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.LazyInitializer.cs" Link="std\Threading.LazyInitializer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.SemaphoreFullException.cs" Link="std\Threading.SemaphoreFullException.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.ConfigureAwaitOptions.cs" Link="std\Threading.Tasks.ConfigureAwaitOptions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.ExecutionContext.cs" Link="std\Threading.ExecutionContext.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.ThreadPool.cs" Link="std\Threading.ThreadPool.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.SemaphoreSlim.cs" Link="std\Threading.SemaphoreSlim.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.TimeoutHelper.cs" Link="std\Threading.TimeoutHelper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.WaitHandle.cs" Link="std\Threading.WaitHandle.cs" />
@@ -93,6 +102,14 @@
     <!-- AsyncCallback, IAsyncResult (BCL 8) -->
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\AsyncCallback.cs" Link="std\Bcl\AsyncCallback.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\IAsyncResult.cs" Link="std\Bcl\IAsyncResult.cs" />
+    <!-- SequencePosition (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\SequencePosition.cs" Link="std\Bcl\SequencePosition.cs" />
+    <!-- Version (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\Version.cs" Link="std\Bcl\Version.cs" />
+    <!-- DBNull, AggregateException, ThrowHelper.Memory (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\DBNull.cs" Link="std\Bcl\DBNull.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\AggregateException.cs" Link="std\Bcl\AggregateException.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\ThrowHelper.Memory.cs" Link="std\Bcl\ThrowHelper.Memory.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Tuple.cs" Link="std\Bcl\Tuple.cs" />
     <!-- MemoryPool<T>, IMemoryOwner<T> (BCL 8) -->
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\IMemoryOwner.cs" Link="std\Buffers\IMemoryOwner.cs" />
@@ -102,6 +119,18 @@
     <!-- MemoryHandle, IPinnable (BCL 8) -->
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\MemoryHandle.cs" Link="std\Buffers\MemoryHandle.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\IPinnable.cs" Link="std\Buffers\IPinnable.cs" />
+    <!-- ReadOnlySequence, SequenceReader, BuffersExtensions (BCL 8, System.Memory) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\ReadOnlySequence.cs" Link="std\Buffers\ReadOnlySequence.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\ReadOnlySequence.Helpers.cs" Link="std\Buffers\ReadOnlySequence.Helpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\ReadOnlySequenceSegment.cs" Link="std\Buffers\ReadOnlySequenceSegment.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\BuffersExtensions.cs" Link="std\Buffers\BuffersExtensions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SequenceReader.cs" Link="std\Buffers\SequenceReader.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SequenceReader.Search.cs" Link="std\Buffers\SequenceReader.Search.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SequenceReaderExtensions.Binary.cs" Link="std\Buffers\SequenceReaderExtensions.Binary.cs" />
+    <!-- ReadOnlySequenceDebugView (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\ReadOnlySequenceDebugView.cs" Link="std\Buffers\ReadOnlySequenceDebugView.cs" />
+    <!-- MemoryManager (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\MemoryManager.cs" Link="std\Buffers\MemoryManager.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\ArrayPool.cs" Link="std\Buffers\ArrayPool.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\ConfigurableArrayPool.cs" Link="std\Buffers\ConfigurableArrayPool.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\SpanAction.cs" Link="std\Buffers\SpanAction.cs" />
@@ -220,12 +249,29 @@
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Base64Decoder.cs" Link="std\Buffers\Text\Base64Decoder.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Base64Encoder.cs" Link="std\Buffers\Text\Base64Encoder.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Constants.cs" Link="std\Buffers\Text\Utf8Constants.cs" />
+    <!-- dates, Guid, TimeSpan (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\Utf8Formatter.Date.cs" Link="std\Buffers\Text\Utf8Formatter\Utf8Formatter.Date.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\Utf8Formatter.Guid.cs" Link="std\Buffers\Text\Utf8Formatter\Utf8Formatter.Guid.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\Utf8Formatter.TimeSpan.cs" Link="std\Buffers\Text\Utf8Formatter\Utf8Formatter.TimeSpan.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\FormattingHelpers.cs" Link="std\Buffers\Text\Utf8Formatter\FormattingHelpers.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\Utf8Formatter.Boolean.cs" Link="std\Buffers\Text\Utf8Formatter\Utf8Formatter.Boolean.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\Utf8Formatter.Decimal.cs" Link="std\Buffers\Text\Utf8Formatter\Utf8Formatter.Decimal.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Decimal.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Decimal.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\Utf8Formatter.Float.cs" Link="std\Buffers\Text\Utf8Formatter\Utf8Formatter.Float.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Formatter\Utf8Formatter.Integer.cs" Link="std\Buffers\Text\Utf8Formatter\Utf8Formatter.Integer.cs" />
+    <!-- dates, Guid, TimeSpan (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Date.Default.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Date.Default.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Date.G.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Date.G.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Date.Helpers.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Date.Helpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Date.O.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Date.O.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Date.R.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Date.R.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Date.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Date.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Guid.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Guid.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.TimeSpan.BigG.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.TimeSpan.BigG.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.TimeSpan.C.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.TimeSpan.C.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.TimeSpan.LittleG.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.TimeSpan.LittleG.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.TimeSpan.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.TimeSpan.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.TimeSpanSplitter.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.TimeSpanSplitter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\ParserHelpers.cs" Link="std\Buffers\Text\Utf8Parser\ParserHelpers.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Boolean.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Boolean.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\Text\Utf8Parser\Utf8Parser.Float.cs" Link="std\Buffers\Text\Utf8Parser\Utf8Parser.Float.cs" />
@@ -289,6 +335,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Number\NumberFormatInfo.cs" Link="std\Number\NumberFormatInfo.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Number\Primitives.Formatting.cs" Link="std\Number\Primitives.Formatting.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Primitives.Equality.cs" Link="std\Runtime\Primitives.Equality.cs" />
+    <!-- PopCount and friends on the integer types (step224) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Primitives.BitOperations.cs" Link="std\Number\Primitives.BitOperations.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Number\SR.cs" Link="std\Number\SR.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Number\ThrowHelper.cs" Link="std\Number\ThrowHelper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Number\ValueListBuilder.cs" Link="std\Number\ValueListBuilder.cs" />
@@ -331,6 +379,10 @@
     <!-- CriticalFinalizerObject (BCL 8) -->
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ConstrainedExecution\CriticalFinalizerObject.cs" Link="std\Runtime\ConstrainedExecution\CriticalFinalizerObject.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\CallingConvention.cs" Link="std\Runtime\InteropServices\CallingConvention.cs" />
+    <!-- FeatureSwitchDefinitionAttribute (.NET 9) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\FeatureSwitchDefinitionAttribute.cs" Link="std\Runtime\CompilerServices\FeatureSwitchDefinitionAttribute.cs" />
+    <!-- System.CodeDom.Compiler.GeneratedCodeAttribute (BCL 8; source generators stamp it) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\GeneratedCodeAttribute.cs" Link="std\Runtime\CompilerServices\GeneratedCodeAttribute.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\DecimalConstantAttribute.cs" Link="std\Runtime\CompilerServices\DecimalConstantAttribute.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\DefaultInterpolatedStringHandler.cs" Link="std\Runtime\CompilerServices\DefaultInterpolatedStringHandler.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\InterpolatedStringHandlerArgumentAttribute.cs" Link="std\Runtime\CompilerServices\InterpolatedStringHandlerArgumentAttribute.cs" />
@@ -421,6 +473,13 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\RuntimeAttributes.cs" Link="std\Runtime\RuntimeAttributes.cs" />
     <!-- RhCheckArrayStore for T[,] (step223) -->
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\RuntimeImports.ArrayStore.cs" Link="std\Runtime\RuntimeImports.ArrayStore.cs" />
+    <!-- System.Reflection member shapes, no metadata (step224) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Reflection.Members.cs" Link="std\Runtime\Reflection.Members.cs" />
+    <!-- Type as MemberInfo, Activator(Type), Enum names, MemoryExtensions.Sort (step224) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Type.Reflection.cs" Link="std\Runtime\Type.Reflection.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Activator.Type.cs" Link="std\Runtime\Activator.Type.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Enum.Names.cs" Link="std\Runtime\Enum.Names.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemoryExtensions.Sort.cs" Link="std\Runtime\MemoryExtensions.Sort.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\RuntimeImports.Delegate.cs" Link="std\Runtime\RuntimeImports.Delegate.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Span.cs" Link="std\Runtime\Span.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\UnboxHelpers.cs" Link="std\Runtime\UnboxHelpers.cs" />
@@ -535,6 +594,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Text\UnicodeDebug.cs" Link="std\Text\UnicodeDebug.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\UnicodeUtility.cs" Link="std\Text\UnicodeUtility.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\GraphemeClusterBreakType.cs" Link="std\Text\Unicode\GraphemeClusterBreakType.cs" />
+    <!-- Utf8 (step224) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\Utf8.cs" Link="std\Text\Unicode\Utf8.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\Utf16Utility.cs" Link="std\Text\Unicode\Utf16Utility.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\Rune.cs" Link="std\Text\Rune.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\Encoding.cs" Link="std\Text\Encoding.cs" />
@@ -676,6 +737,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemoryExtensions.SearchValues.cs" Link="std\Runtime\MemoryExtensions.SearchValues.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemoryExtensions.Overlaps.cs" Link="std\Runtime\MemoryExtensions.Overlaps.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\SR.MemoryExtensions.cs" Link="std\Runtime\SR.MemoryExtensions.cs" />
+    <!-- Ascii case in place (step224) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Ascii.CaseInPlace.cs" Link="std\Text\Ascii.CaseInPlace.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\Ascii.cs" Link="std\Text\Ascii.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\SpanRuneEnumerator.cs" Link="std\Text\SpanRuneEnumerator.cs" />
   </ItemGroup>

@@ -152,7 +152,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | Многомерные массивы (`int[,]`) | 🟡 | 🟡 | ✅ | без ненулевых нижних границ и `int[*]` |
 | `typeof(T)` / `System.Type` | 🔴 | 🟡 | ✅ | в приложениях только сравнение через `==`: ни `Name`, ни членов |
 | `record`, `init`-аксессоры | 🔴 | ✅ | ✅ | записям нужен `typeof`, а в ядре его нет |
-| Рефлексия: `System.Reflection`, `Activator.CreateInstance(Type)`, `Type.GetType(string)` | 🔴 | 🔴 | ✅ | в AOT нет метаданных |
+| Рефлексия: `System.Reflection`, `Activator.CreateInstance(Type)`, `Type.GetType(string)` | 🔴 | 🔴 | ✅ | в AOT нет метаданных. В приложениях есть формы типов (`PropertyInfo`, `BindingFlags`, …), чтобы собирался BCL-код: поиск членов отдаёт `null`/пусто, `Type.GetType` — `null`; `CreateInstance` — только значимые типы |
 | `dynamic` | 🔴 | 🟡 | ✅ | AOT: свой связыватель без DLR, переходники и таблицы членов пишет генератор (step193); нет вывода типов обобщённых методов, событий, `ref`/`out` и именованных аргументов; в ядре не гонялось |
 | `Reflection.Emit`, DLR, `Expression<T>.Compile()` | 🚫 | 🚫 | ✅ | нужен JIT |
 | `AssemblyLoadContext` (несколько ALC) | 🚫 | 🚫 | ⏳ | нужен JIT |
@@ -175,7 +175,7 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `SortedDictionary` | 🟡 | 🟡 | ✅ | внутри сортированный массив: вставка линейная |
 | LINQ | ✅ | ✅ | ✅ | своя мини-реализация `System.Linq.Enumerable` |
 | `string.Format`, интерполяция, `ToString(format)` чисел | 🟡 | 🟡 | ✅ | форматтер чисел и `DefaultInterpolatedStringHandler` из .NET 8 (UTF-16 и UTF-8); культура только инвариантная, без `decimal`/`Half`/`Int128` |
-| `System.Enum` | 🟡 | 🟡 | ✅ | нет `ToString`, `GetNames`; `ToObject` есть, `Parse` — только числом: имён членов без метаданных нет |
+| `System.Enum` | 🟡 | 🟡 | ✅ | нет `ToString`, `GetNames`/`GetValues` пусты, `Parse` — только числом: имён членов без метаданных нет; `ToObject` и `Type.GetTypeCode` (по нижележащему типу) есть |
 | `Enum.IsDefined` | 🔴 | 🟡 | ✅ | в приложениях всегда `true`: метаданных перечислений нет |
 | `DateTime` / `TimeSpan` | 🟡 | 🟡 | ✅ | порт BCL (step212): `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, все стандартные и пользовательские форматы, инвариантная культура; `TimeZoneInfo` без базы поясов: `Local` — фиксированный сдвиг из `TZ` (step216), иначе UTC; летнего времени нет. Часы — нет. В ядре источник не подключён, `Now` = начало эпохи (`IsRealClock` = false). В приложениях с step182 идут монотонные часы от HPET: интервалы верны, дата нет (эпоха + аптайм). Настоящую дату отдаёт только hosted-ярус |
 | `Array.Copy` с перекрытием (семантика memmove) | ✅ | ✅ | ✅ | |
@@ -187,13 +187,13 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | `System.IO.Hashing` (CRC32/64, xxHash) | — | 🟡 | ✅ | релиз 0.1: BCL 8 с векторным путём (PCLMULQDQ); вырезаны члены с `UInt128` |
 | `System.Formats.Tar` | — | 🟡 | ✅ | релиз 0.1: BCL 8, чтение и запись архивов, `TarFile` через ФС; проверено против GNU tar; права Unix и ссылки не сохраняются (FAT) |
 | Разбор XML | ✅ | ⏳ | ✅ | TurboXml; ядро читает им манифесты приложений |
-| JSON: `Utf8JsonReader` / `Utf8JsonWriter`, `JsonDocument`, `JsonNode` | ⏳ | 🟡 | ✅ | из System.Text.Json (.NET 10): чтение кусками, запись в `IBufferWriter<byte>`. Сериализатора и `JavaScriptEncoder` нет |
+| System.Text.Json: reader/writer, `JsonDocument`, `JsonNode`, `JsonSerializer` | ⏳ | 🟡 | ✅ | релиз 0.1: STJ (.NET 10) целиком, с `System.Text.Encodings.Web` и `System.IO.Pipelines`, строкой в csproj. `JsonSerializer` — через генератор источников (`JsonSerializerContext`), без контекста — только примитивы; перечисления — числами (имён нет) |
 | Разбор чисел (`Parse` / `TryParse`) | 🟡 | 🟡 | ✅ | `double`, `float`, `decimal` — как в BCL; `int` и `long` — только `Parse(string)` и `TryParse`; остальных целых нет |
 | Разбор `DateTime` / `TimeSpan` / `Guid` | 🟡 | 🟡 | ✅ | `Parse`/`ParseExact`/`TryParse*` — порт BCL (step212); инвариантная культура, поясов кроме UTC и сдвига из `TZ` нет |
 | Base64 и hex через `Convert` | 🟡 | 🟡 | ✅ | `Convert.From/ToBase64String`, `From/ToHexString` над `System.Buffers.Text.Base64` и `HexConverter` (step212); прогоном не проверены, перенос строк Base64 не портирован |
 | Разбор `.env` | ✅ | ✅ | 🚫 | формат `env_file` Docker Compose, проверен тестами compose-go; ядро читает им `/config/system.env` |
 | `ConcurrentQueue`, `BlockingCollection`, `SemaphoreSlim`, `Monitor.Wait`/`Pulse`, `WaitHandle` | 🟡 | 🟡 | ✅ | релиз 0.1: BCL 8; `Pulse` будит всех ждущих, `WaitAny`/`WaitAll` по нескольким ручкам опрашивают раз в миллисекунду. В ядре не проверены прогоном |
-| Коллекции `ConcurrentBag`/`ConcurrentStack` и `Immutable.*`, `SortedSet`, `KeyedCollection`, `Array.BinarySearch`, `Regex` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple` до трёх элементов есть |
+| Коллекции `ConcurrentBag` и `Immutable.*`, `SortedSet`, `KeyedCollection`, `Array.BinarySearch`, `Regex` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple` до трёх элементов есть; `ConcurrentStack`, `BitArray`, `ReadOnlySequence<T>` — BCL 8 (релиз 0.1) |
 | CBOR (`System.Formats.Cbor`) | 🔴 | ✅ | ✅ | порт из dotnet/runtime; без `Half`, `BigInteger`, `decimal` и `DateTimeOffset` — теги при этом читаются. Разбор проверен на ответе аппаратного ключа, запись пока нет |
 | `System.Uri` | 🟡 | 🟡 | ✅ | порт System.Private.Uri (.NET 10, step212) вместе с `SearchValues`, `IdnMapping` (инвариантный режим) и `Hashtable`; std считает себя Unix-платформой (`OperatingSystem.IsWindows()` = false), `file:///home/x` — путь `/home/x`; прогоном не проверен |
 | `RandomNumberGenerator` | 🟡 | ✅ | ✅ | порт BCL поверх `RDRAND` (step212): ядро — `HardwareRandom`, приложения — служба ядра; процессор без `RDRAND` — `CryptographicException`, а не предсказуемые байты (в QEMU нужен `-cpu …,+rdrand`, `run_build` ставит). В ядре прогоном не проверен |
@@ -454,7 +454,7 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 
 Чужой код, который лежит в дереве и попадает в образ. Лицензии этих проектов нас обязывают. Копии живут в `vendor/<имя>/`, рядом `LICENSE` и `PROVENANCE.md`: что взято и что вырезано.
 
-- **[dotnet/runtime](https://github.com/dotnet/runtime) + [runtimelab](https://github.com/dotnet/runtimelab)** (Microsoft, MIT) - toolchain NativeAOT, форк CoreCLR в `dotnet-runtime-sharpos/`, сотни портов BCL в нашу std и `Utf8JsonReader`/`Utf8JsonWriter` из System.Text.Json в `vendor/SystemTextJson/`.
+- **[dotnet/runtime](https://github.com/dotnet/runtime) + [runtimelab](https://github.com/dotnet/runtimelab)** (Microsoft, MIT) - toolchain NativeAOT, форк CoreCLR в `dotnet-runtime-sharpos/`, сотни портов BCL в нашу std; System.Text.Json, System.Text.Encodings.Web и System.IO.Pipelines целиком в `std-no-runtime/` (вырезы — `std-no-runtime/Text/Json/README.md`), генератор источников STJ в `generators/Json.Generator/`.
 - **[referencesource](https://github.com/microsoft/referencesource)** (Microsoft, MIT) - `RijndaelManagedTransform` из .NET Framework: ядро AES в `std-no-runtime/Security/Cryptography/`, в .NET 8 управляемого AES нет.
 - **[SharpCompress](https://github.com/adamhathcock/sharpcompress)** (Adam Hathcock, MIT, `vendor/SharpCompress/`; внутри ZstdSharp (MIT), XZ.NET, managed-lzma и код Bouncy Castle (MIT) — по `LICENSE.txt` и README апстрима) - все архивы и сжатие; его zlib стоит под `System.IO.Compression`. Приложение COMPRESSTEST.
 - **[Iced](https://github.com/icedland/iced)** (icedland, MIT) - кодировщик x86-64. Им пишется весь ассемблер проекта: и при сборке, и на лету.

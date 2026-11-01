@@ -4,7 +4,6 @@
 // owner is now an object, so ReadOnlyMemory<char> over a string works
 // (string.AsMemory()).
 // Cuts (each marked "SharpOS cut:" / "SharpOS:"):
-//   - MemoryManager<T> owners (ctors, GetSpan branch) — no MemoryManager here;
 //   - DebuggerTypeProxy(MemoryDebugView<>);
 //   - typeof(T).IsValueType → default(T) is null (Type is identity only);
 //   - ThrowHelper overloads taking ExceptionArgument → direct throws.
@@ -111,7 +110,8 @@ namespace System
             // 'obj is T[]' below also handles things like int[] <-> uint[] being convertible
             Debug.Assert((obj == null)
                 || (typeof(T) == typeof(char) && obj is string)
-                || (obj is T[])); // SharpOS cut: || (obj is MemoryManager<T>)
+                || (obj is T[])
+                || (obj is MemoryManager<T>)); // SharpOS: MemoryManager<T> owners back since step224
 
             _object = obj;
             _index = start;
@@ -222,7 +222,13 @@ namespace System
                         refToReturn = ref Unsafe.As<char, T>(ref Unsafe.As<string>(tmpObject).GetRawStringData());
                         lengthOfUnderlyingSpan = Unsafe.As<string>(tmpObject).Length;
                     }
-                    else // SharpOS cut: RuntimeHelpers.ObjectHasComponentSize — without MemoryManager<T> the only other owner is T[]
+                    else if (tmpObject is MemoryManager<T> manager) // SharpOS: MemoryManager<T> before arrays — order, not RuntimeHelpers.ObjectHasComponentSize
+                    {
+                        Span<T> memoryManagerSpan = manager.GetSpan();
+                        refToReturn = ref MemoryMarshal.GetReference(memoryManagerSpan);
+                        lengthOfUnderlyingSpan = memoryManagerSpan.Length;
+                    }
+                    else
                     {
                         // We know the object is not null, it's not a string, and it is variable-length. The only
                         // remaining option is for it to be a T[] (or a U[] which is blittable to T[], like int[]
@@ -239,7 +245,6 @@ namespace System
                         refToReturn = ref MemoryMarshal.GetArrayDataReference(Unsafe.As<T[]>(tmpObject));
                         lengthOfUnderlyingSpan = Unsafe.As<T[]>(tmpObject).Length;
                     }
-                    // SharpOS cut: the MemoryManager<T> branch (GetSpan)
 
                     // If the Memory<T> or ReadOnlyMemory<T> instance is torn, this property getter has undefined behavior.
                     // We try to detect this condition and throw an exception, but it's possible that a torn struct might
@@ -302,6 +307,8 @@ namespace System
             object? tmpObject = _object;
             if (tmpObject == null)
                 return default;
+            if (tmpObject is MemoryManager<T> memoryManager)
+                return memoryManager.Pin(_index & 0x7FFFFFFF);
             GCHandle handle = GCHandle.Alloc(tmpObject, GCHandleType.Pinned);
             byte* start = (byte*)handle.AddrOfPinnedObject();
             return new MemoryHandle(start + (nint)(_index & 0x7FFFFFFF) * Unsafe.SizeOf<T>(), handle);

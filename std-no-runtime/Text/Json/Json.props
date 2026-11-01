@@ -1,0 +1,38 @@
+<Project>
+
+  <!-- System.Text.Json, System.Text.Encodings.Web and System.IO.Pipelines
+       whole, from the fork (dotnet-runtime-sharpos, .NET 10): reader, writer,
+       JsonDocument, JsonNode, JsonSerializer. What is cut and why: README.md
+       beside this.
+
+       JsonSerializer works through the source generator: no reflection
+       metadata here, so a JsonSerializerContext ([JsonSerializable]) gives
+       every type its JsonTypeInfo. The generator is built from the fork's own
+       sources (generators/Json.Generator) — the SDK's would skip every member
+       attribute, since it knows them by the assembly name System.Text.Json and
+       here the library is compiled into the app.
+
+       Opt-in rather than in Std.App.props: 400 files are not what every app
+       should compile. App tier only. -->
+
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)**\*.cs" Link="std\Text\Json\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\Encodings.Web\**\*.cs" Link="std\Text\Encodings.Web\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\IO\Pipelines\**\*.cs" Link="std\IO\Pipelines\%(RecursiveDir)%(Filename)%(Extension)" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\..\generators\Json.Generator\Json.Generator.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- The targeting pack's System.Text.Json generator comes with every app;
+       with ours beside it both would write the same context. -->
+  <Target Name="_SharpOsJsonGeneratorOnly" BeforeTargets="CoreCompile" AfterTargets="ResolvePackageFileConflicts">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'System.Text.Json.SourceGeneration'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

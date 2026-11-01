@@ -1,5 +1,5 @@
 // System.MemoryExtensions — more of the BCL surface, for the vendored
-// System.Text.Json reader/writer (vendor/SystemTextJson) and the floating-point
+// System.Text.Json (std-no-runtime/Text/Json) and the floating-point
 // parser (Number/Number.Parsing.cs). Signatures and results are the BCL's
 // (dotnet/runtime src/libraries/System.Private.CoreLib/src/System/MemoryExtensions.cs,
 // MemoryExtensions.Trim.cs, MIT); the bodies are scalar loops instead of the BCL's

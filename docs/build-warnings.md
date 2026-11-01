@@ -39,6 +39,6 @@
 | `vendor/XtermSharp/` | CS0162, CS0168, CS0169, CS0414 | Апстрим. |
 | `vendor/SharpCompress/` | CS0162 | Апстрим: ветки для `\` при `Path.DirectorySeparatorChar` = `'/'` недостижимы. |
 | `vendor/Terminal.Gui/Terminal.Gui/` | CS0649 | Апстрим; `SharpOS/` — наш и не заглушён. |
-| `vendor/SystemTextJson/` | CS0108, CS0168, CS0414 | Собран в один образ с std: видит `internal Exception._message` и скрывает его своим; остальное — следы вырезов. |
+| `generators/Json.Generator` (`NoWarn` в csproj) | CS1574, RS2008, RS1036, nullable | Генератор System.Text.Json из форка: ссылки в XML-доках и правила анализаторов Roslyn — как в сборке dotnet/runtime, где они отключены; netstandard2.0 без аннотаций BCL. |
 | `vendor/BabyKusto/src/opensource/unmodified/` | CS8604 | Скопировано из dotnet/runtime без изменений. |
 | `JsApp`, `LuaApp` (`NoWarn` в csproj) | CS0436, CS8632, CS0649 | Исторически; кандидат на перенос в `.editorconfig`. |

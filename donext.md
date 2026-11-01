@@ -20,8 +20,7 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
 Что есть и чего нет — README, таблица «Стандартная библиотека». По пользе:
 
 1. **Целые типы.** `int` и `long` — ручные `Parse(string)`/`TryParse`, дважды (`OS/src/Boot/MinimalRuntime.cs` и `apps_native/sdk/MinimalRuntime.cs`); у `uint`, `ulong`, `short`, `ushort`, `byte`, `sbyte`, `char` нет `Parse`. Порт `Number.Parsing` из dotnet/runtime со всеми перегрузками, как уже лежит для `double`/`float`/`decimal` в `Number/`; ручные копии снести.
-2. **`Version.Parse`.**
-3. **`Regex`** (`System.Text.RegularExpressions`). Самый большой и самый нужный: из-за него вырезаны `matches regex` и `extract()` в BabyKusto, а разбор `.env` (`Formats/Dotenv`) заменяет регулярки compose-go ручным сканированием. Сначала интерпретатор (`RegexInterpreter`), без компилятора и генератора исходников.
+2. **`Regex`** (`System.Text.RegularExpressions`). Самый большой и самый нужный: из-за него вырезаны `matches regex` и `extract()` в BabyKusto, а разбор `.env` (`Formats/Dotenv`) заменяет регулярки compose-go ручным сканированием. Сначала интерпретатор (`RegexInterpreter`), без компилятора и генератора исходников.
    Порт из `dotnet-runtime-sharpos`: 35 тыс. строк, без компиляторов
    (`RegexCompiler`, `LWCG`, `AssemblyCompiler` — Reflection.Emit; BCL и сам
    уходит в интерпретатор без динамического кода) и без `Symbolic`
@@ -29,8 +28,9 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
    `CharUnicodeInfo` с таблицами, `SearchValues<char>`, `IndexOfAnyInRange`,
    `string.Create`, `Lock`, с step223 `Environment.TickCount64`; не хватает
    `SearchValues<string>`, слабого `WeakReference<T>` (сейчас сильный).
-   Ещё потребитель — SharpCompress: имена томов многотомных архивов
-   (`SHARPOS_REGEX`, `vendor/SharpCompress/PROVENANCE.md`).
+   Ещё потребители под `SHARPOS_REGEX`: SharpCompress — имена томов
+   многотомных архивов (`vendor/SharpCompress/PROVENANCE.md`), System.Text.Json —
+   шаблон целых чисел (`JsonHelpers`, сейчас тот же разбор руками).
    Второй потребитель — Okojo: восемь его внутренних образцов `[GeneratedRegex]`
    сейчас идут через его собственный движок ECMAScript (`vendor/Okojo/SharpOS/OkojoShims.cs`).
    Ещё потребитель — подсветка синтаксиса для редактора: все готовые движки на
@@ -39,15 +39,17 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
    в `TextView` v1 через `SetNormalColor(line, idx)`, как в
    `UICatalog/Scenarios/SyntaxHighlighting.cs`. Загрузчик `.xshd` хочет
    `XmlReader` — у нас TurboXml.
-4. Позже: `Enum.Parse` по имени (нужны метаданные перечислений; числом есть), `IPAddress`, `System.Collections.Frozen` (у Okojo заглушки), `Encoder`/`Decoder` в `Encoding` (у Lua вырезы); XML в std (сейчас TurboXml только в ядре, для манифестов).
+3. Позже: `Enum.Parse` по имени (нужны метаданные перечислений; числом есть), `IPAddress`, `System.Collections.Frozen` (у Okojo заглушки), `Encoder`/`Decoder` в `Encoding` (у Lua вырезы); XML в std (сейчас TurboXml только в ядре, для манифестов).
 
 ## SharpCompress: исправление `DeflateStream` — в апстрим
 
 `DeflateStream` с `leaveOpen: true` в режиме сжатия ничего не пишет: с 0.45.0
 (коммит `8df92321`, PR #1132) до master. Issue в апстриме нет. У нас исправлено
 (`// SharpOS fix:`, `vendor/SharpCompress/PROVENANCE.md`); повтор на .NET 10 с
-пакетом NuGet — 0 байт против 423. Отправлять issue или PR — решение
-пользователя; образец исправления в самом апстриме — PR #1346 (`GZipStream`).
+пакетом NuGet — 0 байт против 423. Ближайшее действие — вместе с
+пользователем подготовить issue (и, возможно, PR) с повтором; отправляет
+пользователь. Образец исправления в самом апстриме — PR #1346 (`GZipStream`);
+рабочие копии — `work/foreign/sharpcompress-full`, `work/foreign/screpro`.
 
 ## Находки тестеров (2026-10-24)
 

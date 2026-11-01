@@ -512,14 +512,14 @@ namespace System
             }
         }
 
-        public static bool operator ==(Type left, Type right)
+        public static bool operator ==(Type? left, Type? right)
         {
             if ((object)left == null) return (object)right == null;
             if ((object)right == null) return false;
             return left._handle == right._handle;
         }
 
-        public static bool operator !=(Type left, Type right) => !(left == right);
+        public static bool operator !=(Type? left, Type? right) => !(left == right);
 
         // `is` with a concrete type rather than `as`: the cast helper the
         // latter needs is not linked in here.

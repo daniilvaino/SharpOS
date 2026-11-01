@@ -11,7 +11,7 @@
 
   <Import Project="..\KustoLanguage\KustoLanguage.props" />
   <!-- JsonNode: the values of KQL's `dynamic` type. -->
-  <Import Project="..\SystemTextJson\SystemTextJson.props" />
+  <Import Project="..\..\std-no-runtime\Text\Json\Json.props" />
 
   <ItemGroup>
     <!-- MatchRegex / ExtractRegex: no System.Text.RegularExpressions in std yet

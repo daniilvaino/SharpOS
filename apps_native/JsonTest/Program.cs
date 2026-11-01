@@ -9,11 +9,11 @@ using SharpOS.AppSdk;
 namespace JsonCheckApp
 {
     // JSONTEST.EXE — System.Text.Json's Utf8JsonReader / Utf8JsonWriter
-    // (vendor/SystemTextJson) on the app tier: one document read whole and in
+    // (std-no-runtime/Text/Json) on the app tier: one document read whole and in
     // 7-byte chunks with the reader state carried between them, the writer in
     // compact and indented form, escaping, numbers at the edges of their types,
     // and a malformed document. The exit code is the number of checks passed.
-    internal static unsafe class AppEntry
+    internal static unsafe partial class AppEntry
     {
         private static int s_passed;
         private static int s_failed;
@@ -84,6 +84,7 @@ namespace JsonCheckApp
             StdSurface();
             Document(sample);
             Nodes();
+            Serializer();
 
             Console.WriteLine("[jsoncheck] done: passed " + s_passed.ToString() + ", failed " + s_failed.ToString());
             return s_failed;

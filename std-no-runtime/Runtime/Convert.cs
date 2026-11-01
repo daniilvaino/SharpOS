@@ -50,6 +50,12 @@ namespace System
             }
             if (value.GetType() == conversionType) return value;
 
+            // To an enum is not a conversion BCL makes (Type.GetTypeCode gives an
+            // enum its underlying code since step224; that must not turn this
+            // into a cast to the number).
+            if (conversionType.IsEnum)
+                throw new InvalidCastException("Invalid cast from '" + value.GetType().ToString() + "' to '" + conversionType.ToString() + "'.");
+
             TypeCode target = Type.GetTypeCode(conversionType);
             if (target == TypeCode.String) return value.ToString();
 

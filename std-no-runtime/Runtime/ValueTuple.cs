@@ -60,8 +60,24 @@ namespace System
     }
 
     /// <summary>Represents a value tuple with 2 components.</summary>
-    public struct ValueTuple<T1, T2> : IEquatable<ValueTuple<T1, T2>>
+    public struct ValueTuple<T1, T2> : IEquatable<ValueTuple<T1, T2>>, IComparable<ValueTuple<T1, T2>>, IComparable
     {
+        // BCL's ordering: Item1, then Item2, by Comparer<T>.Default (step224).
+        public int CompareTo(ValueTuple<T1, T2> other)
+        {
+            int c = System.Collections.Generic.Comparer<T1>.Default.Compare(Item1, other.Item1);
+            if (c != 0) return c;
+            return System.Collections.Generic.Comparer<T2>.Default.Compare(Item2, other.Item2);
+        }
+
+        int IComparable.CompareTo(object? other)
+        {
+            if (other is null) return 1;
+            if (other is not ValueTuple<T1, T2> objTuple)
+                throw new ArgumentException("Argument must be of type ValueTuple<T1, T2>.", nameof(other));
+            return CompareTo(objTuple);
+        }
+
         /// <summary>
         /// The current <see cref="ValueTuple{T1, T2}"/> instance's first component.
         /// </summary>

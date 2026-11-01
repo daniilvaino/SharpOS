@@ -59,6 +59,16 @@ namespace System
     {
         task,
         collection,         // ConcurrentQueue (step223)
+        offset,             // ReadOnlySequence (step224)
+        start,
+        count,
+        length,
+        destination,
+        writer,
+        startSegment,
+        endSegment,
+        startIndex,
+        endIndex,
         minimumBufferSize,  // ArrayMemoryPool (step223)
         keySelector,        // Enumerable.GroupBy / ToLookup (step223)
         elementSelector,

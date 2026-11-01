@@ -18,18 +18,17 @@
 Сделано: `System.IO.Hashing`, интринсики x86, векторы BCL целиком —
 `done/step221.md`; `System.Formats.Tar` и файловый API — `done/step222.md`;
 сжатие (SharpCompress, `System.IO.Compression`) и криптография —
-`done/step223.md`.
+`done/step223.md`; System.Text.Json целиком с сериализатором через генератор
+источников — `done/step224.md`.
 
 Подключение — как BCL, в своих namespace; что тяжёлое — отдельной строкой в
 csproj, не в `Std.props`.
 
-- JSON: `vendor/SystemTextJson` (reader/writer, `JsonDocument`, `JsonNode`) — в
-  std; `PROVENANCE.md` обновить. `JsonSerializer` — генератором источников.
 - XML: `XmlReader`/`XmlWriter` (и `XDocument`) в std; сейчас TurboXml только в
   ядре.
 - Regex — интерпретатор (`RegexInterpreter`), без компилятора и генератора;
   вернуть `matches regex` и `extract()` в BabyKusto, тома многотомных архивов
-  в SharpCompress (`SHARPOS_REGEX`).
+  в SharpCompress и шаблон целых чисел в System.Text.Json (`SHARPOS_REGEX`).
 - Кодовые страницы: `System.Text.Encoding.CodePages` из BCL (`codepages.nlp`
   612 КБ ресурсом — ресурсы сборки работают); нужны `EncodingProvider`,
   `Encoding.RegisterProvider`, `Encoder`/`Decoder` с состоянием; вернуть
