@@ -231,6 +231,19 @@ namespace SharpOS.Std.NoRuntime
             *(nint*)slot = valueAddr;
         }
 
+        // The covariance check alone, for stores ILC does not lower to
+        // RhpStelemRef: a multidimensional array's Set (RuntimeImports.
+        // RhCheckArrayStore, step223 — SharpCompress's PPMd model).
+        internal static unsafe void CheckArrayStore(object array, object value)
+        {
+            if (value == null) return;
+            nint arrayAddr = *(nint*)&array;
+            nint valueAddr = *(nint*)&value;
+            GcMethodTable* elementType = (*(GcMethodTable**)arrayAddr)->RelatedType;
+            if (*(GcMethodTable**)valueAddr != elementType)
+                StelemRef_Helper(elementType, value);
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static unsafe void StelemRef_Helper(GcMethodTable* elementType, object value)
         {

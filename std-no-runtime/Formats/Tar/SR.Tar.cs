@@ -47,7 +47,6 @@ namespace System
         internal const string TarUnsupportedFile = @"The file type of '{0}' is not supported for tar archiving.";
         internal const string UnauthorizedAccess_IODenied_NoPathName = @"Access to the path is denied.";
         internal const string UnauthorizedAccess_IODenied_Path = @"Access to the path '{0}' is denied.";
-        internal const string IO_SeekBeforeBegin = @"An attempt was made to move the position before the beginning of the stream.";
         internal const string TarInvalidNumber = @"Unable to parse number.";
         internal const string TarEntryFieldExceedsMaxLength = @"The field '{0}' exceeds the maximum allowed length for this format.";
         internal const string TarSizeFieldTooLargeForEntryFormat = @"The value of the size field for the current entry of format '{0}' is greater than the format allows.";

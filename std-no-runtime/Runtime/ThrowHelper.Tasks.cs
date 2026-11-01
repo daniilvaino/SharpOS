@@ -58,6 +58,11 @@ namespace System
     internal enum ExceptionArgument
     {
         task,
+        collection,         // ConcurrentQueue (step223)
+        minimumBufferSize,  // ArrayMemoryPool (step223)
+        keySelector,        // Enumerable.GroupBy / ToLookup (step223)
+        elementSelector,
+        resultSelector,
         source,
         continuation,
         array,          // Collection<T>, Random (step198)

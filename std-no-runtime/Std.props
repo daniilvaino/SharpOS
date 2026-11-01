@@ -1,4 +1,4 @@
-<!--
+﻿<!--
   std-no-runtime: общая часть. Берут оба яруса.
 
   Всё, что одинаково для ядра и приложений. Новый файл в std-no-runtime
@@ -46,7 +46,29 @@
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\HashCode.cs" Link="std\Bcl\HashCode.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\HashSet.cs" Link="std\Bcl\HashSet.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Boolean.Statics.cs" Link="std\Bcl\Boolean.Statics.cs" />
+    <!-- ConcurrentQueue, BlockingCollection (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\ConcurrentQueue.cs" Link="std\Collections\Concurrent\ConcurrentQueue.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\ConcurrentQueueSegment.cs" Link="std\Collections\Concurrent\ConcurrentQueueSegment.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\IProducerConsumerCollection.cs" Link="std\Collections\Concurrent\IProducerConsumerCollection.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\IProducerConsumerCollectionDebugView.cs" Link="std\Collections\Concurrent\IProducerConsumerCollectionDebugView.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\BlockingCollection.cs" Link="std\Collections\Concurrent\BlockingCollection.cs" />
+    <!-- PaddingHelpers (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Padding.cs" Link="std\Runtime\Padding.cs" />
+    <!-- SR of System.Collections.Concurrent -->
+    <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\SR.Concurrent.cs" Link="std\Collections\Concurrent\SR.Concurrent.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\ConcurrentDictionary.cs" Link="std\Bcl\ConcurrentDictionary.cs" />
+    <!-- SemaphoreSlim, TimeoutHelper (BCL 8); WaitHandle family over a word -->
+    <Compile Include="$(MSBuildThisFileDirectory)SR.Threading.cs" Link="std\SR.Threading.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.TaskToAsyncResult.cs" Link="std\Threading.Tasks.TaskToAsyncResult.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.AsyncResult.cs" Link="std\Threading.Tasks.AsyncResult.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SR.IO.cs" Link="std\SR.IO.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.CancellationToken.WaitHandle.cs" Link="std\Threading.CancellationToken.WaitHandle.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.LazyInitializer.cs" Link="std\Threading.LazyInitializer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.SemaphoreFullException.cs" Link="std\Threading.SemaphoreFullException.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.ConfigureAwaitOptions.cs" Link="std\Threading.Tasks.ConfigureAwaitOptions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.SemaphoreSlim.cs" Link="std\Threading.SemaphoreSlim.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.TimeoutHelper.cs" Link="std\Threading.TimeoutHelper.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.WaitHandle.cs" Link="std\Threading.WaitHandle.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Volatile.cs" Link="std\Threading.Volatile.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\ICustomFormatter.cs" Link="std\Bcl\ICustomFormatter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Index.cs" Link="std\Bcl\Index.cs" />
@@ -66,7 +88,20 @@
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\OrderedDictionary.cs" Link="std\Bcl\OrderedDictionary.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Stack.cs" Link="std\Bcl\Stack.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\TimeSpan.cs" Link="std\Bcl\TimeSpan.cs" />
+    <!-- IProgress<T> (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\IProgress.cs" Link="std\Bcl\IProgress.cs" />
+    <!-- AsyncCallback, IAsyncResult (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\AsyncCallback.cs" Link="std\Bcl\AsyncCallback.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\IAsyncResult.cs" Link="std\Bcl\IAsyncResult.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Tuple.cs" Link="std\Bcl\Tuple.cs" />
+    <!-- MemoryPool<T>, IMemoryOwner<T> (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\IMemoryOwner.cs" Link="std\Buffers\IMemoryOwner.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\MemoryPool.cs" Link="std\Buffers\MemoryPool.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\ArrayMemoryPool.cs" Link="std\Buffers\ArrayMemoryPool.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\ArrayMemoryPool.ArrayMemoryPoolBuffer.cs" Link="std\Buffers\ArrayMemoryPool.ArrayMemoryPoolBuffer.cs" />
+    <!-- MemoryHandle, IPinnable (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\MemoryHandle.cs" Link="std\Buffers\MemoryHandle.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\IPinnable.cs" Link="std\Buffers\IPinnable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\ArrayPool.cs" Link="std\Buffers\ArrayPool.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\ConfigurableArrayPool.cs" Link="std\Buffers\ConfigurableArrayPool.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\SpanAction.cs" Link="std\Buffers\SpanAction.cs" />
@@ -153,6 +188,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)IO\BinaryReader.cs" Link="std\IO\BinaryReader.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\BinaryWriter.cs" Link="std\IO\BinaryWriter.cs" />
     <!-- System.IO.Hashing (release 0.1): BCL .NET 8's, as is (IO/Hashing/*.cs headers). -->
+    <!-- zlib-style crc32 for System.IO.Compression -->
+    <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc32.SharpOS.cs" Link="std\IO\Hashing\Crc32.SharpOS.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc32.cs" Link="std\IO\Hashing\Crc32.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc32.Table.cs" Link="std\IO\Hashing\Crc32.Table.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\Hashing\Crc64.cs" Link="std\IO\Hashing\Crc64.cs" />
@@ -211,6 +248,23 @@
     <Compile Include="$(MSBuildThisFileDirectory)IO\StringWriter.cs" Link="std\IO\StringWriter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\TextReader.cs" Link="std\IO\TextReader.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\TextWriter.cs" Link="std\IO\TextWriter.cs" />
+    <!-- Encoding.CodePage/Default (step223) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Encoding.CodePage.cs" Link="std\Text\Encoding.CodePage.cs" />
+    <!-- NativeMemory, RuntimeInformation, OSPlatform, Architecture (step223) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\NativeMemory.cs" Link="std\Runtime\InteropServices\NativeMemory.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\RuntimeInformation.SharpOS.cs" Link="std\Runtime\InteropServices\RuntimeInformation.SharpOS.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\OSPlatform.cs" Link="std\Runtime\InteropServices\OSPlatform.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\Architecture.cs" Link="std\Runtime\InteropServices\Architecture.cs" />
+    <!-- ThrowHelper.IO, BitConverter.GetBytes (step223) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\ThrowHelper.IO.cs" Link="std\Bcl\ThrowHelper.IO.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Bcl\BitConverter.GetBytes.cs" Link="std\Bcl\BitConverter.GetBytes.cs" />
+    <!-- MemoryMarshal.TryGetArray, Array.LongLength, Debugger (step223) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemoryMarshal.TryGetArray.cs" Link="std\Runtime\MemoryMarshal.TryGetArray.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Array.LongLength.cs" Link="std\Runtime\Array.LongLength.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Debugger.cs" Link="std\Runtime\Debugger.cs" />
+    <!-- GroupBy, ToLookup (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Linq\Grouping.cs" Link="std\Linq\Grouping.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Linq\Lookup.cs" Link="std\Linq\Lookup.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Linq\Enumerable.cs" Link="std\Linq\Enumerable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Linq\AsyncEnumerable.cs" Link="std\Linq\AsyncEnumerable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)MemoryPrimitives.cs" Link="std\MemoryPrimitives.cs" />
@@ -265,6 +319,18 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ThreadStatics.cs" Link="std\Runtime\ThreadStatics.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CodeAnalysisAttributes.cs" Link="std\Runtime\CodeAnalysisAttributes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerFeatures.cs" Link="std\Runtime\CompilerFeatures.cs" />
+    <!-- InlineArray (C# 12; ILC 8 lays it out) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\InlineArrayAttribute.cs" Link="std\Runtime\CompilerServices\InlineArrayAttribute.cs" />
+    <!-- CallingConvention (BCL 8; was in both MinimalRuntime files) -->
+    <!-- CharSet (BCL 8; was in both MinimalRuntime files) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\CharSet.cs" Link="std\Runtime\InteropServices\CharSet.cs" />
+    <!-- GCHandle (own table), SafeHandle (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\GCHandle.cs" Link="std\Runtime\InteropServices\GCHandle.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\GCHandleType.cs" Link="std\Runtime\InteropServices\GCHandleType.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\SafeHandle.cs" Link="std\Runtime\InteropServices\SafeHandle.cs" />
+    <!-- CriticalFinalizerObject (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\ConstrainedExecution\CriticalFinalizerObject.cs" Link="std\Runtime\ConstrainedExecution\CriticalFinalizerObject.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\CallingConvention.cs" Link="std\Runtime\InteropServices\CallingConvention.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\DecimalConstantAttribute.cs" Link="std\Runtime\CompilerServices\DecimalConstantAttribute.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\DefaultInterpolatedStringHandler.cs" Link="std\Runtime\CompilerServices\DefaultInterpolatedStringHandler.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\InterpolatedStringHandlerArgumentAttribute.cs" Link="std\Runtime\CompilerServices\InterpolatedStringHandlerArgumentAttribute.cs" />
@@ -353,6 +419,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\MulticastDelegate.cs" Link="std\Runtime\MulticastDelegate.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ReadOnlySpan.cs" Link="std\Runtime\ReadOnlySpan.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\RuntimeAttributes.cs" Link="std\Runtime\RuntimeAttributes.cs" />
+    <!-- RhCheckArrayStore for T[,] (step223) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\RuntimeImports.ArrayStore.cs" Link="std\Runtime\RuntimeImports.ArrayStore.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\RuntimeImports.Delegate.cs" Link="std\Runtime\RuntimeImports.Delegate.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Span.cs" Link="std\Runtime\Span.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\UnboxHelpers.cs" Link="std\Runtime\UnboxHelpers.cs" />
@@ -434,6 +502,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\InternalsVisibleToAttribute.cs" Link="std\Runtime\CompilerServices\InternalsVisibleToAttribute.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemoryMarshal.AsBytes.cs" Link="std\Runtime\MemoryMarshal.AsBytes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ValueTuple.Arity6to8.cs" Link="std\Runtime\ValueTuple.Arity6to8.cs" />
+    <!-- SecurityCritical (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Security\SecurityCriticalAttribute.cs" Link="std\Security\SecurityCriticalAttribute.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\SecurityCriticalScope.cs" Link="std\Security\SecurityCriticalScope.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Security\SecuritySafeCriticalAttribute.cs" Link="std\Security\SecuritySafeCriticalAttribute.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)SystemString.Intern.cs" Link="std\SystemString.Intern.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\UTF32Encoding.cs" Link="std\Text\UTF32Encoding.cs" />
@@ -479,6 +550,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.Result.cs" Link="std\Threading.Tasks.Result.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.Sources.cs" Link="std\Threading.Tasks.Sources.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.TaskCompletionSource.cs" Link="std\Threading.Tasks.TaskCompletionSource.cs" />
+    <!-- CachedCompletedInt32Task (BCL 8, for MemoryStream) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.CachedCompletedInt32Task.cs" Link="std\Threading.Tasks.CachedCompletedInt32Task.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.ValueTask.cs" Link="std\Threading.Tasks.ValueTask.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.cs" Link="std\Threading.Tasks.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Thread.cs" Link="std\Threading.Thread.cs" />
@@ -497,6 +570,69 @@
     <Compile Include="$(MSBuildThisFileDirectory)Globalization\StringInfo.cs" Link="std\Globalization\StringInfo.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Globalization\RegionInfo.cs" Link="std\Globalization\RegionInfo.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\TextSegmentationUtility.cs" Link="std\Text\Unicode\TextSegmentationUtility.cs" />
+    <!-- System.Security.Cryptography: hashes, HMAC, PBKDF2, AES (BCL 8 managed paths; AES core from referencesource) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\Aes.cs" Link="std\Security\Cryptography\Aes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\AesImplementation.SharpOS.cs" Link="std\Security\Cryptography\AesImplementation.SharpOS.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\AesImplementation.cs" Link="std\Security\Cryptography\AesImplementation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\CipherMode.cs" Link="std\Security\Cryptography\CipherMode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\CryptoPool.cs" Link="std\Security\Cryptography\CryptoPool.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\CryptoStream.cs" Link="std\Security\Cryptography\CryptoStream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\CryptoStreamMode.cs" Link="std\Security\Cryptography\CryptoStreamMode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMAC.cs" Link="std\Security\Cryptography\HMAC.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMACCommon.cs" Link="std\Security\Cryptography\HMACCommon.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMACHashProvider.Browser.Managed.cs" Link="std\Security\Cryptography\HMACHashProvider.Browser.Managed.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMACSHA1.cs" Link="std\Security\Cryptography\HMACSHA1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMACSHA256.cs" Link="std\Security\Cryptography\HMACSHA256.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HashAlgorithm.cs" Link="std\Security\Cryptography\HashAlgorithm.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HashAlgorithmName.cs" Link="std\Security\Cryptography\HashAlgorithmName.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HashOneShotHelpers.cs" Link="std\Security\Cryptography\HashOneShotHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HashProvider.cs" Link="std\Security\Cryptography\HashProvider.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HashProviderDispenser.SharpOS.cs" Link="std\Security\Cryptography\HashProviderDispenser.SharpOS.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\Helpers.cs" Link="std\Security\Cryptography\Helpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\ICryptoTransform.cs" Link="std\Security\Cryptography\ICryptoTransform.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\ILiteSymmetricCipher.cs" Link="std\Security\Cryptography\ILiteSymmetricCipher.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\KeySizeHelpers.cs" Link="std\Security\Cryptography\KeySizeHelpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\KeySizes.cs" Link="std\Security\Cryptography\KeySizes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\KeyedHashAlgorithm.cs" Link="std\Security\Cryptography\KeyedHashAlgorithm.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\LiteHash.Browser.cs" Link="std\Security\Cryptography\LiteHash.Browser.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\PaddingMode.cs" Link="std\Security\Cryptography\PaddingMode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\Pbkdf2Implementation.Managed.cs" Link="std\Security\Cryptography\Pbkdf2Implementation.Managed.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\Rfc2898DeriveBytes.OneShot.cs" Link="std\Security\Cryptography\Rfc2898DeriveBytes.OneShot.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\Rfc2898DeriveBytes.cs" Link="std\Security\Cryptography\Rfc2898DeriveBytes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\RijndaelManagedTransform.cs" Link="std\Security\Cryptography\RijndaelManagedTransform.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SHA1.cs" Link="std\Security\Cryptography\SHA1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SHA256.cs" Link="std\Security\Cryptography\SHA256.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SHAHashProvider.Browser.Managed.cs" Link="std\Security\Cryptography\SHAHashProvider.Browser.Managed.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SR.Cryptography.cs" Link="std\Security\Cryptography\SR.Cryptography.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\Sha1ForNonSecretPurposes.cs" Link="std\Security\Cryptography\Sha1ForNonSecretPurposes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\Sha256HashProvider.SharpOS.cs" Link="std\Security\Cryptography\Sha256HashProvider.SharpOS.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SymmetricAlgorithm.cs" Link="std\Security\Cryptography\SymmetricAlgorithm.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SymmetricPadding.cs" Link="std\Security\Cryptography\SymmetricPadding.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\UniversalCryptoOneShot.cs" Link="std\Security\Cryptography\UniversalCryptoOneShot.cs" />
+    <!-- Rijndael texts from .NET Framework -->
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SR.Rijndael.cs" Link="std\Security\Cryptography\SR.Rijndael.cs" />
+    <!-- DeriveBytes, IncrementalHash, LiteHashProvider (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\DeriveBytes.cs" Link="std\Security\Cryptography\DeriveBytes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\IncrementalHash.cs" Link="std\Security\Cryptography\IncrementalHash.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\LiteHashProvider.cs" Link="std\Security\Cryptography\LiteHashProvider.cs" />
+    <!-- SHA-384/512, MD5, SHA-3, their HMACs, helpers (BCL 8) -->
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HashAlgorithmNames.cs" Link="std\Security\Cryptography\HashAlgorithmNames.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\CryptographicOperations.cs" Link="std\Security\Cryptography\CryptographicOperations.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SHA384.cs" Link="std\Security\Cryptography\SHA384.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SHA512.cs" Link="std\Security\Cryptography\SHA512.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\MD5.cs" Link="std\Security\Cryptography\MD5.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SHA3_256.cs" Link="std\Security\Cryptography\SHA3_256.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SHA3_384.cs" Link="std\Security\Cryptography\SHA3_384.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\SHA3_512.cs" Link="std\Security\Cryptography\SHA3_512.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMACSHA384.cs" Link="std\Security\Cryptography\HMACSHA384.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMACSHA512.cs" Link="std\Security\Cryptography\HMACSHA512.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMACMD5.cs" Link="std\Security\Cryptography\HMACMD5.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMACSHA3_256.cs" Link="std\Security\Cryptography\HMACSHA3_256.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMACSHA3_384.cs" Link="std\Security\Cryptography\HMACSHA3_384.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\HMACSHA3_512.cs" Link="std\Security\Cryptography\HMACSHA3_512.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\CryptographicUnexpectedOperationException.cs" Link="std\Security\Cryptography\CryptographicUnexpectedOperationException.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\Helpers.Cryptography.cs" Link="std\Security\Cryptography\Helpers.Cryptography.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\Oids.cs" Link="std\Security\Cryptography\Oids.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Security\Cryptography\RandomNumberGenerator.cs" Link="std\Security\Cryptography\RandomNumberGenerator.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Uri\DomainNameHelper.cs" Link="std\Uri\DomainNameHelper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Uri\GenericUriParser.cs" Link="std\Uri\GenericUriParser.cs" />

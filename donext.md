@@ -27,8 +27,10 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
    уходит в интерпретатор без динамического кода) и без `Symbolic`
    (NonBacktracking) — ≈19 тыс. С step212 в std есть `Hashtable`,
    `CharUnicodeInfo` с таблицами, `SearchValues<char>`, `IndexOfAnyInRange`,
-   `string.Create`, `Lock`; не хватает `SearchValues<string>`, слабого
-   `WeakReference<T>` (сейчас сильный), `Environment.TickCount64`.
+   `string.Create`, `Lock`, с step223 `Environment.TickCount64`; не хватает
+   `SearchValues<string>`, слабого `WeakReference<T>` (сейчас сильный).
+   Ещё потребитель — SharpCompress: имена томов многотомных архивов
+   (`SHARPOS_REGEX`, `vendor/SharpCompress/PROVENANCE.md`).
    Второй потребитель — Okojo: восемь его внутренних образцов `[GeneratedRegex]`
    сейчас идут через его собственный движок ECMAScript (`vendor/Okojo/SharpOS/OkojoShims.cs`).
    Ещё потребитель — подсветка синтаксиса для редактора: все готовые движки на
@@ -38,6 +40,14 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
    `UICatalog/Scenarios/SyntaxHighlighting.cs`. Загрузчик `.xshd` хочет
    `XmlReader` — у нас TurboXml.
 4. Позже: `Enum.Parse` по имени (нужны метаданные перечислений; числом есть), `IPAddress`, `System.Collections.Frozen` (у Okojo заглушки), `Encoder`/`Decoder` в `Encoding` (у Lua вырезы); XML в std (сейчас TurboXml только в ядре, для манифестов).
+
+## SharpCompress: исправление `DeflateStream` — в апстрим
+
+`DeflateStream` с `leaveOpen: true` в режиме сжатия ничего не пишет: с 0.45.0
+(коммит `8df92321`, PR #1132) до master. Issue в апстриме нет. У нас исправлено
+(`// SharpOS fix:`, `vendor/SharpCompress/PROVENANCE.md`); повтор на .NET 10 с
+пакетом NuGet — 0 байт против 423. Отправлять issue или PR — решение
+пользователя; образец исправления в самом апстриме — PR #1346 (`GZipStream`).
 
 ## Находки тестеров (2026-10-24)
 

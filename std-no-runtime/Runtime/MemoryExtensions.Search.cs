@@ -78,6 +78,19 @@ namespace System
             return -1;
         }
 
+        public static int LastIndexOfAny<T>(this ReadOnlySpan<T> span, T value0, T value1, T value2) where T : IEquatable<T>
+        {
+            for (int i = span.Length - 1; i >= 0; i--)
+            {
+                T item = span[i];
+                if (item.Equals(value0) || item.Equals(value1) || item.Equals(value2)) return i;
+            }
+            return -1;
+        }
+
+        public static int LastIndexOfAny<T>(this Span<T> span, T value0, T value1, T value2) where T : IEquatable<T> =>
+            LastIndexOfAny((ReadOnlySpan<T>)span, value0, value1, value2);
+
         // LastIndexOfAny over a set of values (release 0.1, the archive ports).
         public static int LastIndexOfAny<T>(this Span<T> span, ReadOnlySpan<T> values) where T : IEquatable<T>
             => LastIndexOfAny((ReadOnlySpan<T>)span, values);

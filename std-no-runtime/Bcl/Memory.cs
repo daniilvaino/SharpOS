@@ -5,7 +5,6 @@
 // (string.AsMemory()).
 // Cuts (each marked "SharpOS cut:" / "SharpOS:"):
 //   - MemoryManager<T> owners (ctors, GetSpan branch) — no MemoryManager here;
-//   - Pin() — no GCHandle/MemoryHandle; the collector does not move objects;
 //   - DebuggerTypeProxy(MemoryDebugView<>);
 //   - typeof(T).IsValueType → default(T) is null (Type is identity only);
 //   - ThrowHelper overloads taking ExceptionArgument → direct throws.
@@ -314,6 +313,21 @@ namespace System
         /// </exception>
         /// </summary>
         public void CopyTo(Memory<T> destination) => Span.CopyTo(destination.Span);
+
+        /// <summary>
+        /// Pins the owner and gives its address. SharpOS (step223): over a
+        /// pinned GCHandle — the collector does not move objects, the handle
+        /// keeps the owner alive until the MemoryHandle is disposed.
+        /// </summary>
+        public unsafe MemoryHandle Pin()
+        {
+            object? tmpObject = _object;
+            if (tmpObject == null)
+                return default;
+            GCHandle handle = GCHandle.Alloc(tmpObject, GCHandleType.Pinned);
+            byte* start = (byte*)handle.AddrOfPinnedObject();
+            return new MemoryHandle(start + (nint)(_index & 0x7FFFFFFF) * Unsafe.SizeOf<T>(), handle);
+        }
 
         /// <summary>
         /// Copies the contents of the memory into the destination. If the source

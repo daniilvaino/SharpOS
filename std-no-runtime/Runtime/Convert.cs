@@ -26,6 +26,12 @@ namespace System
 
         public static long ToInt64(object value) => value == null ? 0 : (long)ChangeType(value, typeof(long));
 
+        public static long ToInt64(object value, IFormatProvider provider) => value == null ? 0 : (long)ChangeType(value, typeof(long), provider);
+
+        public static long ToInt64(string value, IFormatProvider provider) => value == null ? 0 : long.Parse(value, System.Globalization.NumberStyles.Integer, provider);
+
+        public static int ToInt32(object value, IFormatProvider provider) => value == null ? 0 : (int)ChangeType(value, typeof(int), provider);
+
         public static double ToDouble(object value) => value == null ? 0 : (double)ChangeType(value, typeof(double));
 
         public static string ToString(object value) => value == null ? string.Empty : value.ToString() ?? string.Empty;
@@ -97,7 +103,33 @@ namespace System
                 case double d: return checked((long)Math.Round(d));
                 case decimal m: return (long)Math.Round(m);
             }
+            // A boxed enum is its underlying number (BCL: Enum is IConvertible).
+            if (TryEnumValue(value, out long enumValue)) return enumValue;
             throw new InvalidCastException("Object must implement IConvertible.");
+        }
+
+        // The payload of a boxed enum, read by the element type its MethodTable
+        // gives (an enum's is its underlying primitive's).
+        private static unsafe bool TryEnumValue(object value, out long result)
+        {
+            result = 0;
+            if (!value.GetType().IsEnum) return false;
+            object box = value;
+            byte* mt = *(byte**)System.Runtime.CompilerServices.Unsafe.AsPointer(ref box);
+            byte* data = *(byte**)System.Runtime.CompilerServices.Unsafe.AsPointer(ref box) + 8;
+            var table = (SharpOS.Std.NoRuntime.GcMethodTable*)*(void**)mt;
+            switch (table->ElementType)
+            {
+                case SharpOS.Std.NoRuntime.GcEETypeElementType.SByte: result = *(sbyte*)data; return true;
+                case SharpOS.Std.NoRuntime.GcEETypeElementType.Byte: result = *data; return true;
+                case SharpOS.Std.NoRuntime.GcEETypeElementType.Int16: result = *(short*)data; return true;
+                case SharpOS.Std.NoRuntime.GcEETypeElementType.UInt16: result = *(ushort*)data; return true;
+                case SharpOS.Std.NoRuntime.GcEETypeElementType.Int32: result = *(int*)data; return true;
+                case SharpOS.Std.NoRuntime.GcEETypeElementType.UInt32: result = *(uint*)data; return true;
+                case SharpOS.Std.NoRuntime.GcEETypeElementType.Int64: result = *(long*)data; return true;
+                case SharpOS.Std.NoRuntime.GcEETypeElementType.UInt64: result = unchecked((long)*(ulong*)data); return true;
+            }
+            return false;
         }
 
         private static double Floating(object value)

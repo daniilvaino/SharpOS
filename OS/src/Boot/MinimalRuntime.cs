@@ -681,8 +681,14 @@ namespace System
 
         public enum MethodImplOptions
         {
+            Unmanaged = 0x0004,
             NoInlining = 0x0008,
+            ForwardRef = 0x0010,
+            Synchronized = 0x0020,
+            NoOptimization = 0x0040,
+            PreserveSig = 0x0080,
             AggressiveInlining = 0x0100,
+            AggressiveOptimization = 0x0200,
             InternalCall = 0x1000,
         }
 
@@ -714,6 +720,9 @@ namespace System.Runtime.InteropServices
         public StructLayoutAttribute(LayoutKind layoutKind) { }
         public int Size;
         public int Pack;
+#pragma warning disable CS0649 // set by named arguments where the attribute is applied
+        public CharSet CharSet;
+#pragma warning restore CS0649
     }
 
     [AttributeUsage(AttributeTargets.Field)]
@@ -748,14 +757,6 @@ namespace System.Runtime.InteropServices
         public DllImportAttribute(string dllName) { }
     }
 
-    public enum CallingConvention
-    {
-        Winapi = 1,
-        Cdecl = 2,
-        StdCall = 3,
-        ThisCall = 4,
-        FastCall = 5,
-    }
 
     internal enum LayoutKind
     {
@@ -764,13 +765,6 @@ namespace System.Runtime.InteropServices
         Auto = 3,
     }
 
-    public enum CharSet
-    {
-        None = 1,
-        Ansi = 2,
-        Unicode = 3,
-        Auto = 4,
-    }
 }
 
 namespace System

@@ -23,6 +23,21 @@ namespace System.IO
         public const char VolumeSeparatorChar = '/';
         public const char PathSeparator = ';';
 
+        // Unix's (BCL Path.Unix.cs): only NUL is invalid in a name, and '/'
+        // as well in a file name.
+        public static char[] GetInvalidFileNameChars() => new char[] { '\0', '/' };
+
+        public static char[] GetInvalidPathChars() => new char[] { '\0' };
+
+        public static string? GetPathRoot(string? path)
+        {
+            if (path == null || path.Length == 0) return null;
+            return IsPathRooted(path) ? "/" : string.Empty;
+        }
+
+        public static ReadOnlySpan<char> GetPathRoot(ReadOnlySpan<char> path) =>
+            path.Length > 0 && path[0] == DirectorySeparatorChar ? "/".AsSpan() : ReadOnlySpan<char>.Empty;
+
         public static bool IsPathRooted(string? path)
             => path != null && path.Length > 0 && path[0] == DirectorySeparatorChar;
 

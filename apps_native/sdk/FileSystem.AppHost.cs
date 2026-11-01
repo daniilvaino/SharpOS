@@ -33,9 +33,14 @@ namespace System.IO
         // DOOM's WAD reads with seeks).
         private readonly AppFile _out;
         private readonly bool _canRead;
+        private readonly string _name;
+
+        /// <summary>The file's absolute path, as BCL's Name.</summary>
+        public virtual string Name => _name;
 
         public FileStream(string path, FileMode mode, FileAccess access)
         {
+            _name = SharpOS.AppSdk.Process.ResolvePath(path);
             if (access != FileAccess.Read)
             {
                 bool exists = File.Exists(path);

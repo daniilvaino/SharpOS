@@ -322,7 +322,7 @@ namespace System.IO
     }
 
     /// <summary>
-    /// A file by its path (step208). Cut: Open* other than through File.
+    /// A file by its path (step208; Open* since step223).
     /// </summary>
     public sealed class FileInfo : FileSystemInfo
     {
@@ -358,6 +358,14 @@ namespace System.IO
 
         public void MoveTo(string destFileName) => File.Move(FullName, destFileName);
         public override void Delete() => File.Delete(FullName);
+
+        public FileStream Open(FileMode mode) => File.Open(FullName, mode);
+        public FileStream Open(FileMode mode, FileAccess access) => File.Open(FullName, mode, access);
+        public FileStream Open(FileMode mode, FileAccess access, FileShare share) => File.Open(FullName, mode, access, share);
+        public FileStream Open(FileStreamOptions options) => new FileStream(FullName, options);
+        public FileStream OpenRead() => File.OpenRead(FullName);
+        public FileStream OpenWrite() => File.OpenWrite(FullName);
+        public FileStream Create() => File.Create(FullName);
     }
 
     /// <summary>
@@ -409,6 +417,12 @@ namespace System.IO
             for (int i = 0; i < paths.Length; i++) result[i] = new FileInfo(paths[i]);
             return result;
         }
+
+        // Enumerate* are Get* already done: the listing is one kernel call.
+        public System.Collections.Generic.IEnumerable<FileInfo> EnumerateFiles() => GetFiles("*");
+        public System.Collections.Generic.IEnumerable<FileInfo> EnumerateFiles(string searchPattern) => GetFiles(searchPattern);
+        public System.Collections.Generic.IEnumerable<DirectoryInfo> EnumerateDirectories() => GetDirectories("*");
+        public System.Collections.Generic.IEnumerable<DirectoryInfo> EnumerateDirectories(string searchPattern) => GetDirectories(searchPattern);
 
         public DirectoryInfo[] GetDirectories() => GetDirectories("*");
         public DirectoryInfo[] GetDirectories(string searchPattern)

@@ -58,6 +58,17 @@ namespace System.Threading
             s_wakeAll = wakeAll;
         }
 
+        private static delegate*<long> s_milliseconds;
+
+        /// <summary>
+        /// A monotonic millisecond count since some fixed point — what
+        /// Environment.TickCount64 reads. The kernel wires it to the HPET, an
+        /// app to the counter the kernel hands it (Stopwatch).
+        /// </summary>
+        public static void InstallClock(delegate*<long> milliseconds) => s_milliseconds = milliseconds;
+
+        internal static long Milliseconds => s_milliseconds == null ? 0 : s_milliseconds();
+
         /// <summary>True when waits block rather than poll.</summary>
         internal static bool CanBlock => s_wait != null && s_wakeAll != null;
 

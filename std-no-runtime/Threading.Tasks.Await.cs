@@ -27,6 +27,16 @@ namespace System.Threading.Tasks
 
         public ConfiguredTaskAwaitable ConfigureAwait(bool continueOnCapturedContext) =>
             new ConfiguredTaskAwaitable(this, continueOnCapturedContext);
+
+        // .NET 8 (step223, SemaphoreSlim.WaitAsync): SuppressThrowing ends the
+        // await without rethrowing; ForceYielding never completes inline.
+        // ContinueOnCapturedContext has nothing to capture here.
+        public ConfiguredTaskAwaitable ConfigureAwait(ConfigureAwaitOptions options)
+        {
+            if ((options & ~(ConfigureAwaitOptions.ContinueOnCapturedContext | ConfigureAwaitOptions.SuppressThrowing | ConfigureAwaitOptions.ForceYielding)) != 0)
+                throw new ArgumentOutOfRangeException(nameof(options));
+            return new ConfiguredTaskAwaitable(this, options);
+        }
     }
 }
 
@@ -124,19 +134,27 @@ namespace System.Runtime.CompilerServices
         private readonly ConfiguredTaskAwaiter m_configuredTaskAwaiter;
 
         internal ConfiguredTaskAwaitable(System.Threading.Tasks.Task task, bool continueOnCapturedContext) =>
-            m_configuredTaskAwaiter = new ConfiguredTaskAwaiter(task);
+            m_configuredTaskAwaiter = new ConfiguredTaskAwaiter(task, System.Threading.Tasks.ConfigureAwaitOptions.None);
+
+        internal ConfiguredTaskAwaitable(System.Threading.Tasks.Task task, System.Threading.Tasks.ConfigureAwaitOptions options) =>
+            m_configuredTaskAwaiter = new ConfiguredTaskAwaiter(task, options);
 
         public ConfiguredTaskAwaiter GetAwaiter() => m_configuredTaskAwaiter;
 
         public readonly struct ConfiguredTaskAwaiter : ICriticalNotifyCompletion
         {
             private readonly System.Threading.Tasks.Task m_task;
+            private readonly System.Threading.Tasks.ConfigureAwaitOptions m_options;
 
-            internal ConfiguredTaskAwaiter(System.Threading.Tasks.Task task) { m_task = task; }
+            internal ConfiguredTaskAwaiter(System.Threading.Tasks.Task task, System.Threading.Tasks.ConfigureAwaitOptions options) { m_task = task; m_options = options; }
 
-            public bool IsCompleted => m_task.IsCompleted;
+            public bool IsCompleted => (m_options & System.Threading.Tasks.ConfigureAwaitOptions.ForceYielding) == 0 && m_task.IsCompleted;
 
-            public void GetResult() => TaskAwaiter.ValidateEnd(m_task);
+            public void GetResult()
+            {
+                if ((m_options & System.Threading.Tasks.ConfigureAwaitOptions.SuppressThrowing) == 0)
+                    TaskAwaiter.ValidateEnd(m_task);
+            }
 
             public void OnCompleted(Action continuation) => TaskAwaiter.OnCompletedInternal(m_task, continuation);
 

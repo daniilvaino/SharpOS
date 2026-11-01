@@ -188,7 +188,7 @@ namespace System.Text
 
     public sealed class UnicodeEncoding : Encoding
     {
-        private readonly bool _bigEndian;
+        internal readonly bool _bigEndian;
 
         public UnicodeEncoding() : this(false) { }
         public UnicodeEncoding(bool bigEndian) => _bigEndian = bigEndian;

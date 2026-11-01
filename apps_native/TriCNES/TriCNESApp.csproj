@@ -19,7 +19,8 @@
        the emulator core and supplies everything else here:
 
          Compat\    tiny stand-ins for the few framework types the core touches
-                    (System.Drawing.Bitmap/Color, GCHandle, BinaryReader). They
+                    (System.Drawing.Bitmap/Color, BinaryReader; GCHandle is std's
+                    since step223). They
                     exist so the upstream sources compile UNCHANGED — see the
                     header in each file for why the type is safe to fake.
          Program.cs the SharpOS front end: ROM in, frames out to the GOP

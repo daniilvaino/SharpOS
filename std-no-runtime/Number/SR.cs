@@ -55,6 +55,9 @@ namespace System
 
         internal static string Format(string resourceFormat, object? p1) => string.Format(resourceFormat, p1);
 
+        internal static string Format(IFormatProvider? provider, string resourceFormat, params object?[]? args) =>
+            string.Format(provider, resourceFormat, args ?? new object?[0]);
+
         internal static string Format(string resourceFormat, object? p1, object? p2) => string.Format(resourceFormat, p1, p2);
 
         internal static string Format(string resourceFormat, object? p1, object? p2, object? p3) => string.Format(resourceFormat, p1, p2, p3);

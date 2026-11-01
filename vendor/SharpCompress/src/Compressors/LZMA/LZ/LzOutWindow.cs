@@ -1,0 +1,326 @@
+#nullable disable
+
+using System;
+using System.Buffers;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using SharpCompress.Common;
+
+namespace SharpCompress.Compressors.LZMA.LZ;
+
+internal partial class OutWindow : IDisposable
+{
+    private readonly ArrayPool<byte> _pool;
+
+    public OutWindow()
+        : this(ArrayPool<byte>.Shared) { }
+
+    internal OutWindow(ArrayPool<byte> pool) => _pool = pool;
+
+    private byte[] _buffer;
+    private int _windowSize;
+    private int _pos;
+    private int _streamPos;
+    private int _pendingLen;
+    private int _pendingDist;
+    private Stream _stream;
+
+    private long _total;
+    private long _limit;
+
+    public long Total => _total;
+
+    internal int BufferCapacity => _buffer?.Length ?? 0;
+
+    public void Create(int windowSize)
+    {
+        if (windowSize <= 0)
+        {
+            throw new InvalidFormatException($"LZMA: invalid dictionary size {windowSize}");
+        }
+        if (_windowSize != windowSize || _buffer is null)
+        {
+            // Allocate first so failed growth leaves the existing buffer owned by this window.
+            var replacement = _pool.Rent(Math.Min(windowSize, 4096));
+            if (_buffer is not null)
+            {
+                _pool.Return(_buffer);
+            }
+            _buffer = replacement;
+        }
+        _windowSize = windowSize;
+        _pos = 0;
+        _streamPos = 0;
+        _pendingLen = 0;
+        _total = 0;
+        _limit = 0;
+    }
+
+    private void EnsureCapacity(int required)
+    {
+        if (required <= _buffer.Length)
+        {
+            return;
+        }
+        // Grow from emitted history, never from the advertised dictionary or output size.
+        var capacity = (int)Math.Min(_windowSize, Math.Max(required, (long)_buffer.Length * 2));
+        var replacement = _pool.Rent(capacity);
+        _buffer.AsSpan(0, _pos).CopyTo(replacement);
+        _pool.Return(_buffer);
+        _buffer = replacement;
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            ReleaseStream();
+        }
+        finally
+        {
+            var buffer = _buffer;
+            _buffer = null;
+            _stream = null;
+            if (buffer is not null)
+            {
+                _pool.Return(buffer);
+            }
+        }
+    }
+
+    public void Reset()
+    {
+        ReleaseStream();
+        Create(_windowSize);
+    }
+
+    public void Init(Stream stream)
+    {
+        ReleaseStream();
+        _stream = stream;
+    }
+
+    public void Train(Stream stream)
+    {
+        var len = stream.Length;
+        var size = (len < _windowSize) ? (int)len : _windowSize;
+        stream.Position = len - size;
+        _total = 0;
+        _limit = size;
+        _pos = 0;
+        CopyStream(stream, size);
+        if (_pos == _windowSize)
+        {
+            _pos = 0;
+        }
+        _streamPos = _pos;
+    }
+
+    public void ReleaseStream()
+    {
+        Flush();
+        _stream = null;
+    }
+
+    private void Flush()
+    {
+        if (_stream is null)
+        {
+            return;
+        }
+        var size = _pos - _streamPos;
+        if (size == 0)
+        {
+            return;
+        }
+        _stream.Write(_buffer, _streamPos, size);
+        if (_pos >= _windowSize)
+        {
+            _pos = 0;
+        }
+        _streamPos = _pos;
+    }
+
+    public void CopyPending()
+    {
+        if (_pendingLen < 1)
+        {
+            return;
+        }
+        var rem = _pendingLen;
+        var pos = (_pendingDist < _pos ? _pos : _pos + _windowSize) - _pendingDist - 1;
+        while (rem > 0 && HasSpace)
+        {
+            if (pos >= _windowSize)
+            {
+                pos = 0;
+            }
+            PutByte(_buffer[pos++]);
+            rem--;
+        }
+        _pendingLen = rem;
+    }
+
+    public void CopyBlock(int distance, int len)
+    {
+        var rem = len;
+        var pos = (distance < _pos ? _pos : _pos + _windowSize) - distance - 1;
+        var targetSize = HasSpace ? (int)Math.Min(rem, _limit - _total) : 0;
+        var sizeUntilWindowEnd = Math.Min(_windowSize - _pos, _windowSize - pos);
+        var sizeUntilOverlap = Math.Abs(pos - _pos);
+        var fastSize = Math.Min(Math.Min(sizeUntilWindowEnd, sizeUntilOverlap), targetSize);
+        if (fastSize >= 2)
+        {
+            EnsureCapacity(_pos + fastSize);
+            _buffer.AsSpan(pos, fastSize).CopyTo(_buffer.AsSpan(_pos, fastSize));
+            _pos += fastSize;
+            pos += fastSize;
+            _total += fastSize;
+            if (_pos >= _windowSize)
+            {
+                Flush();
+            }
+            rem -= fastSize;
+        }
+        while (rem > 0 && HasSpace)
+        {
+            if (pos >= _windowSize)
+            {
+                pos = 0;
+            }
+            PutByte(_buffer[pos++]);
+            rem--;
+        }
+        _pendingLen = rem;
+        _pendingDist = distance;
+    }
+
+    public void PutByte(byte b)
+    {
+        EnsureCapacity(_pos + 1);
+        _buffer[_pos++] = b;
+        _total++;
+        if (_pos >= _windowSize)
+        {
+            Flush();
+        }
+    }
+
+    public byte GetByte(int distance)
+    {
+        // The initial literal context is zero; no dictionary history has been emitted yet.
+        if (_total == 0 && distance == 0)
+        {
+            return 0;
+        }
+        var pos = _pos - distance - 1;
+        if (pos < 0)
+        {
+            pos += _windowSize;
+        }
+        return _buffer[pos];
+    }
+
+    public int CopyStream(Stream stream, int len)
+    {
+        var size = len;
+        while (size > 0 && _pos < _windowSize && _total < _limit)
+        {
+            var curSize = Math.Min(4096, _windowSize - _pos);
+            if (curSize > _limit - _total)
+            {
+                curSize = (int)(_limit - _total);
+            }
+            if (curSize > size)
+            {
+                curSize = size;
+            }
+            EnsureCapacity(_pos + curSize);
+            var numReadBytes = stream.Read(_buffer, _pos, curSize);
+            if (numReadBytes == 0)
+            {
+                throw new DataErrorException();
+            }
+            size -= numReadBytes;
+            _pos += numReadBytes;
+            _total += numReadBytes;
+            if (_pos >= _windowSize)
+            {
+                Flush();
+            }
+        }
+        return len - size;
+    }
+
+    public void SetLimit(long size) => _limit = _total + size;
+
+    public bool HasSpace => _pos < _windowSize && _total < _limit;
+
+    public bool HasPending => _pendingLen > 0;
+
+    public int Read(byte[] buffer, int offset, int count)
+    {
+        if (_streamPos >= _pos)
+        {
+            return 0;
+        }
+
+        var size = _pos - _streamPos;
+        if (size > count)
+        {
+            size = count;
+        }
+        Buffer.BlockCopy(_buffer, _streamPos, buffer, offset, size);
+        _streamPos += size;
+        if (_streamPos >= _windowSize)
+        {
+            _pos = 0;
+            _streamPos = 0;
+        }
+        return size;
+    }
+
+    public int Read(Memory<byte> buffer, int offset, int count)
+    {
+        if (_streamPos >= _pos)
+        {
+            return 0;
+        }
+
+        var size = _pos - _streamPos;
+        if (size > count)
+        {
+            size = count;
+        }
+        _buffer.AsMemory(_streamPos, size).CopyTo(buffer.Slice(offset, size));
+        _streamPos += size;
+        if (_streamPos >= _windowSize)
+        {
+            _pos = 0;
+            _streamPos = 0;
+        }
+        return size;
+    }
+
+    public int ReadByte()
+    {
+        if (_streamPos >= _pos)
+        {
+            return -1;
+        }
+
+        int value = _buffer[_streamPos];
+
+        _streamPos++;
+        if (_streamPos >= _windowSize)
+        {
+            _pos = 0;
+            _streamPos = 0;
+        }
+
+        return value;
+    }
+
+    public int AvailableBytes => _pos - _streamPos;
+}

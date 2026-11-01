@@ -53,6 +53,10 @@ namespace System.Threading.Tasks
             return task;
         }
 
+        internal static Task FromCanceled(OperationCanceledException exception) => FromCanceled(exception.CancellationToken);
+
+        internal static Task<TResult> FromCanceled<TResult>(OperationCanceledException exception) => FromCanceled<TResult>(exception.CancellationToken);
+
         public static Task FromCanceled(CancellationToken cancellationToken)
         {
             if (!cancellationToken.IsCancellationRequested)
@@ -133,6 +137,14 @@ namespace System.Threading.Tasks
         internal TResult? m_result;
 
         internal Task() { }
+
+        // BCL's promise-style constructor (SemaphoreSlim's TaskNode): a task
+        // completed from outside, by TrySetResult.
+        internal Task(object? state, TaskCreationOptions options)
+        {
+            SetAsyncState(state);
+            _runContinuationsAsynchronously = (options & TaskCreationOptions.RunContinuationsAsynchronously) != 0;
+        }
 
         internal Task(TResult result) : base(completed: true)
         {

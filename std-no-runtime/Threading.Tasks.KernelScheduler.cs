@@ -38,6 +38,7 @@ namespace OS.Kernel.Threading
         {
             if (s_queue == null) s_queue = new ThreadBackend.ThreadEntry?[Capacity];
             ThreadBackend.Install(Spawn, Sleep);
+            ThreadBackend.InstallClock(&Milliseconds);
 
             // Blocking waits. Init first: without the buckets WaitOnAddress
             // returns at once, and every wait in std would become a spin.
@@ -52,6 +53,12 @@ namespace OS.Kernel.Threading
             // this runs before there is a second thread, and building them
             // under contention is what made `lock` fault on a null array.
             Monitor.EnsureTables();
+        }
+
+        private static long Milliseconds()
+        {
+            ulong hz = OS.Hal.Timer.Hpet.FrequencyHz;
+            return hz == 0 ? 0 : (long)(OS.Hal.Timer.Hpet.ReadCounter() / (hz / 1000));
         }
 
         private static int CurrentThreadId()

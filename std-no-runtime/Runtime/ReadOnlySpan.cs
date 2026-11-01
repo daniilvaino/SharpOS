@@ -95,6 +95,8 @@ namespace System
 
         public static implicit operator ReadOnlySpan<T>(T[] array) => new ReadOnlySpan<T>(array);
 
+        public static implicit operator ReadOnlySpan<T>(ArraySegment<T> segment) => new ReadOnlySpan<T>(segment.Array, segment.Offset, segment.Count);
+
         // BCL (.NET 9): a span of a reference type read as a span of its base.
         // C# 14 lowers the covariant span conversions (string[] → ReadOnlySpan<object>)
         // to this; without it the compiler crashed emitting them (NoConversion).

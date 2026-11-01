@@ -396,6 +396,8 @@ namespace System
         /// genuinely needs this to police untrusted input, it needs the
         /// metadata, not a better guess.
         /// </remarks>
+        public static bool IsDefined<TEnum>(TEnum value) where TEnum : struct, Enum => IsDefined(typeof(TEnum), value);
+
         public static bool IsDefined(Type enumType, object value)
         {
             if (enumType == null) throw new ArgumentNullException(nameof(enumType));
@@ -635,6 +637,15 @@ namespace System
     public class AppContext
     {
         public static void SetData(string s, object o) { }
+
+        // No runtimeconfig, so no switch is ever set: false, and the caller
+        // takes its default (BCL does the same for an unknown name).
+        public static bool TryGetSwitch(string switchName, out bool isEnabled)
+        {
+            if (switchName == null) throw new ArgumentNullException(nameof(switchName));
+            isEnabled = false;
+            return false;
+        }
     }
 
     namespace Runtime.CompilerServices
@@ -697,6 +708,9 @@ namespace System.Runtime.InteropServices
         public StructLayoutAttribute(LayoutKind layoutKind) { }
         public int Size;
         public int Pack;
+#pragma warning disable CS0649 // set by named arguments where the attribute is applied
+        public CharSet CharSet;
+#pragma warning restore CS0649
     }
 
     [AttributeUsage(AttributeTargets.Field)]
@@ -719,13 +733,6 @@ namespace System.Runtime.InteropServices
         Auto = 3,
     }
 
-    internal enum CharSet
-    {
-        None = 1,
-        Ansi = 2,
-        Unicode = 3,
-        Auto = 4,
-    }
 
     // Declared so that host-platform source compiles; it does not make such a
     // call work. A P/Invoke that survives into a real build fails at link time,
@@ -749,10 +756,6 @@ namespace System.Runtime.InteropServices
         #pragma warning restore CS0649
     }
 
-    internal enum CallingConvention
-    {
-        Winapi = 1, Cdecl = 2, StdCall = 3, ThisCall = 4, FastCall = 5,
-    }
 }
 
 namespace System

@@ -9,9 +9,9 @@
 //   * SharpOS.Std.Security.Sha256 - the streaming, pointer-shaped API the
 //     forked CoreCLR's incremental hashing maps onto through
 //     PAL/SharpOSHost/Sha256Bridge.cs. Not a BCL shape, so not a BCL name.
-//   * System.Security.Cryptography.SHA256.HashData - the BCL's own one-shot,
-//     under its own name, because a faithful hash is faithful: real code that
-//     calls it compiles here unchanged.
+//   * System.Security.Cryptography.SHA256 - BCL's class (Cryptography/
+//     SHA256.cs, step223), whose hash provider is this one
+//     (Sha256HashProvider.SharpOS.cs); SHA-1/384/512 are BCL's managed ones.
 
 namespace SharpOS.Std.Security
 {
@@ -147,54 +147,6 @@ namespace SharpOS.Std.Security
         {
             Sha256State copy = *s;
             Final(&copy, out32);
-        }
-    }
-}
-
-namespace System.Security.Cryptography
-{
-    /// <summary>SHA-256, the one-shot half of the BCL's surface.</summary>
-    /// <remarks>
-    /// Only the static HashData members: the instance HashAlgorithm shape
-    /// brings streams, disposal and a base class hierarchy with it, and nothing
-    /// here has asked for any of that. Adding them later changes nothing about
-    /// these.
-    /// </remarks>
-    public static unsafe class SHA256
-    {
-        public const int HashSizeInBits = 256;
-        public const int HashSizeInBytes = 32;
-
-        public static byte[] HashData(byte[] source)
-        {
-            if (source == null) throw new ArgumentNullException(nameof(source));
-            return HashData(new ReadOnlySpan<byte>(source));
-        }
-
-        public static byte[] HashData(ReadOnlySpan<byte> source)
-        {
-            byte[] digest = new byte[HashSizeInBytes];
-            HashData(source, digest);
-            return digest;
-        }
-
-        public static int HashData(ReadOnlySpan<byte> source, Span<byte> destination)
-        {
-            if (destination.Length < HashSizeInBytes)
-                throw new ArgumentException("Destination is too short.", nameof(destination));
-
-            // Both spans are pinned for the length of one hash. The empty
-            // source is not a special case for the algorithm - SHA-256 of
-            // nothing is a defined value - but it is one for taking the address
-            // of an empty span, so it gets a length of zero and a pointer that
-            // is never read.
-            fixed (byte* input = source)
-            fixed (byte* output = destination)
-            {
-                SharpOS.Std.Security.Sha256.OneShot(input, (uint)source.Length, output);
-            }
-
-            return HashSizeInBytes;
         }
     }
 }

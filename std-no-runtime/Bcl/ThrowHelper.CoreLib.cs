@@ -64,6 +64,7 @@ namespace System
             switch (resource)
             {
                 case ExceptionResource.NotSupported_ReadOnlyCollection: return SR.NotSupported_ReadOnlyCollection;
+                case ExceptionResource.ConcurrentCollection_SyncRoot_NotSupported: return SR.ConcurrentCollection_SyncRoot_NotSupported;
                 case ExceptionResource.Arg_RankMultiDimNotSupported: return SR.Arg_RankMultiDimNotSupported;
                 case ExceptionResource.Arg_NonZeroLowerBound: return SR.Arg_NonZeroLowerBound;
                 case ExceptionResource.Arg_ArrayPlusOffTooSmall: return SR.Arg_ArrayPlusOffTooSmall;
@@ -75,6 +76,7 @@ namespace System
 
     internal enum ExceptionResource
     {
+        ConcurrentCollection_SyncRoot_NotSupported, // ConcurrentQueue (step223)
         NotSupported_ReadOnlyCollection,
         Arg_RankMultiDimNotSupported,
         Arg_NonZeroLowerBound,

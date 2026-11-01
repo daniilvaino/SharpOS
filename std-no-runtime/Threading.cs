@@ -101,6 +101,9 @@ namespace System.Threading
             }
         }
 
+        public static unsafe IntPtr Exchange(ref IntPtr location1, IntPtr value) =>
+            (IntPtr)Exchange(ref System.Runtime.CompilerServices.Unsafe.As<IntPtr, long>(ref location1), (long)value);
+
         public static long Exchange(ref long location1, long value)
         {
             while (true)
@@ -276,6 +279,14 @@ namespace System
         // which generally prefers CRLF (same as Windows). Stringbuilder's
         // AppendLine() and similar paths read this.
         public static string NewLine => "\r\n";
+
+        /// <summary>
+        /// Milliseconds since the tier's clock started (BCL: since boot);
+        /// zero until a tier installs one (ThreadBackend.InstallClock).
+        /// </summary>
+        public static long TickCount64 => System.Threading.ThreadBackend.Milliseconds;
+
+        public static int TickCount => (int)TickCount64;
 
         // x64 only, kernel and apps alike.
         public static bool Is64BitProcess => true;

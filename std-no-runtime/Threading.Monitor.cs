@@ -46,6 +46,10 @@ namespace System.Threading
         // take a slot that already belongs to someone else.
         private static int[] s_users = null!;
 
+        // Wait/Pulse: the slot's pulse count, and how many wait on it.
+        private static int[] s_pulses = null!;
+        private static int[] s_pulseWaiters = null!;
+
         // A freed slot. Lookups probe past it, so an object placed after it in
         // the probe chain is still found; a claim may reuse it.
         private static object s_removed = null!;
@@ -171,18 +175,98 @@ namespace System.Threading
             return slot >= 0 && s_holders[slot] == CurrentThreadId();
         }
 
-        // Pulse / Wait are the condition-variable half of Monitor. Nothing in
-        // this system uses them yet, and guessing at an implementation would be
-        // worse than saying so: a Wait that returned immediately would turn
-        // every waiting loop into a spin, silently.
-        public static void Pulse(object obj) => throw new NotSupportedException(
-            "Monitor.Pulse is not implemented — see std-no-runtime/Threading.Monitor.cs.");
+        // Pulse / Wait, the condition-variable half (step223; SemaphoreSlim and
+        // BlockingCollection stand on them). A slot carries a pulse count:
+        // Wait reads it while it still holds the lock, gives the lock up
+        // whole, and blocks on the count's word until a Pulse moves it. A
+        // Pulse between the release and the block is not lost — the word
+        // already differs and the wait returns at once.
+        //
+        // Pulse wakes every waiter, not one: there is no queue to take one
+        // from. What BCL code waits for it re-checks in a loop, so an extra
+        // wake costs a turn of that loop, not a wrong answer.
+        public static void Pulse(object obj) => PulseCore(obj);
 
-        public static void PulseAll(object obj) => throw new NotSupportedException(
-            "Monitor.PulseAll is not implemented — see std-no-runtime/Threading.Monitor.cs.");
+        public static void PulseAll(object obj) => PulseCore(obj);
 
-        public static bool Wait(object obj) => throw new NotSupportedException(
-            "Monitor.Wait is not implemented — see std-no-runtime/Threading.Monitor.cs.");
+        public static bool Wait(object obj) => Wait(obj, Timeout.Infinite);
+
+        public static bool Wait(object obj, TimeSpan timeout) => Wait(obj, WaitHandleTimeout(timeout));
+
+        public static bool Wait(object obj, int millisecondsTimeout, bool exitContext) => Wait(obj, millisecondsTimeout);
+
+        public static bool Wait(object obj, TimeSpan timeout, bool exitContext) => Wait(obj, WaitHandleTimeout(timeout));
+
+        public static bool Wait(object obj, int millisecondsTimeout)
+        {
+            if (obj == null) throw new ArgumentNullException(nameof(obj));
+            if (millisecondsTimeout < -1)
+                throw new ArgumentOutOfRangeException(nameof(millisecondsTimeout), "Number must be either non-negative and less than or equal to Int32.MaxValue or -1.");
+
+            // A claim of its own for the length of the wait: Exit drops the
+            // holder's, and the slot must stay this object's until Enter
+            // takes it back.
+            int slot = Claim(obj);
+            int self = CurrentThreadId();
+            if (s_holders[slot] != self)
+            {
+                Release(slot);
+                throw new SynchronizationLockException(
+                    "Object synchronization method was called from an unsynchronized block of code.");
+            }
+
+            int pulses = Interlocked.Read(ref s_pulses[slot]);
+            int depth = s_recursion[slot];
+            s_recursion[slot] = 1;
+            Exit(obj);
+
+            bool pulsed = false;
+            Interlocked.Increment(ref s_pulseWaiters[slot]);
+            if (millisecondsTimeout == Timeout.Infinite)
+            {
+                while (!(pulsed = Interlocked.Read(ref s_pulses[slot]) != pulses))
+                    ThreadBackend.WaitWhile(ref s_pulses[slot], pulses, ThreadBackend.Infinite);
+            }
+            else
+            {
+                // As ManualResetEventSlim: a millisecond counted per turn,
+                // each turn ending early when the word moves.
+                for (int waited = 0; waited < millisecondsTimeout; waited++)
+                {
+                    if (pulsed = Interlocked.Read(ref s_pulses[slot]) != pulses) break;
+                    ThreadBackend.WaitWhile(ref s_pulses[slot], pulses, (uint)(millisecondsTimeout - waited));
+                }
+                pulsed = pulsed || Interlocked.Read(ref s_pulses[slot]) != pulses;
+            }
+            Interlocked.Decrement(ref s_pulseWaiters[slot]);
+
+            Enter(obj);
+            s_recursion[slot] = depth;
+            Release(slot);
+            return pulsed;
+        }
+
+        private static void PulseCore(object obj)
+        {
+            if (obj == null) throw new ArgumentNullException(nameof(obj));
+
+            int slot = Find(obj);
+            if (slot < 0 || s_holders[slot] != CurrentThreadId())
+                throw new SynchronizationLockException(
+                    "Object synchronization method was called from an unsynchronized block of code.");
+
+            Interlocked.Increment(ref s_pulses[slot]);
+            if (Interlocked.Read(ref s_pulseWaiters[slot]) != 0)
+                ThreadBackend.WakeAll(ref s_pulses[slot]);
+        }
+
+        private static int WaitHandleTimeout(TimeSpan timeout)
+        {
+            long ms = (long)timeout.TotalMilliseconds;
+            if (ms < -1 || ms > int.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(timeout), "Number must be either non-negative and less than or equal to Int32.MaxValue or -1.");
+            return (int)ms;
+        }
 
         /// <summary>
         /// Builds the side tables. Idempotent, and meant to be called once at
@@ -210,6 +294,8 @@ namespace System.Threading
             int[] recursion = new int[Capacity];
             int[] waiters = new int[Capacity];
             int[] users = new int[Capacity];
+            int[] pulses = new int[Capacity];
+            int[] pulseWaiters = new int[Capacity];
             object removed = new object();
             object?[] owners = new object?[Capacity];
 
@@ -217,6 +303,8 @@ namespace System.Threading
             s_recursion = recursion;
             s_waiters = waiters;
             s_users = users;
+            s_pulses = pulses;
+            s_pulseWaiters = pulseWaiters;
             s_removed = removed;
             s_owners = owners;          // last: it is the one everyone tests
         }

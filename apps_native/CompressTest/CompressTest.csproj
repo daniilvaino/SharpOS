@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Where the image puts it (tools/Apps.ps1, step207). -->
+    <SharpOsCategory>tests</SharpOsCategory>
+    <IlcSystemModule>CompressTest</IlcSystemModule>
+    <LangVersion>latest</LangVersion>
+    <Nullable>annotations</Nullable>
+  </PropertyGroup>
+
+  <!-- The freestanding win-x64 PE recipe every AOT app uses. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <!-- SharpCompress, and System.IO.Compression over it. -->
+  <Import Project="..\..\vendor\SharpCompress\SharpCompress.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>

@@ -3,9 +3,10 @@
 // plus the FileMode/FileAccess/SeekOrigin enums (verbatim values).
 //
 // Cuts vs original:
-//   - BeginRead/EndRead/BeginWrite/EndWrite; ReadAsync/WriteAsync/FlushAsync
-//     exist (step198) but their base versions complete synchronously.
-//   - timeouts, CanTimeout, synchronized wrapper, TextReader/TextWriter
+//   - ReadAsync/WriteAsync/FlushAsync exist (step198) but their base
+//     versions complete synchronously; BeginRead/EndRead/BeginWrite/
+//     EndWrite (step223) are over them, through TaskToAsyncResult.
+//   - synchronized wrapper, TextReader/TextWriter
 //     integration. CopyTo is back (step208), with a plain buffer for
 //     ArrayPool's; CopyToAsync and DisposeAsync too (release 0.1).
 // Kept: the sync byte[] Read/Write/Seek core + ReadExactly (net7+) that
@@ -299,6 +300,65 @@ namespace System.IO
                 total += read;
             }
         }
+
+        protected static void ValidateCopyToArguments(Stream destination, int bufferSize)
+        {
+            ArgumentNullException.ThrowIfNull(destination);
+            if (bufferSize <= 0) throw new ArgumentOutOfRangeException(nameof(bufferSize), "Positive number required.");
+            if (!destination.CanWrite)
+            {
+                if (destination.CanRead) throw new NotSupportedException("Stream does not support writing.");
+                throw new ObjectDisposedException(destination.GetType().Name, "Cannot access a closed Stream.");
+            }
+        }
+
+        public int ReadAtLeast(Span<byte> buffer, int minimumBytes, bool throwOnEndOfStream = true)
+        {
+            if (minimumBytes < 0) throw new ArgumentOutOfRangeException(nameof(minimumBytes), "Non-negative number required.");
+            if (buffer.Length < minimumBytes) throw new ArgumentOutOfRangeException(nameof(minimumBytes), "The value is larger than the buffer.");
+            int totalRead = 0;
+            while (totalRead < minimumBytes)
+            {
+                int read = Read(buffer.Slice(totalRead));
+                if (read == 0)
+                {
+                    if (throwOnEndOfStream) throw new EndOfStreamException("Unable to read beyond the end of the stream.");
+                    return totalRead;
+                }
+                totalRead += read;
+            }
+            return totalRead;
+        }
+
+        public virtual bool CanTimeout => false;
+
+        public virtual int ReadTimeout
+        {
+            get => throw new InvalidOperationException(SR.InvalidOperation_TimeoutsNotSupported);
+            set => throw new InvalidOperationException(SR.InvalidOperation_TimeoutsNotSupported);
+        }
+
+        public virtual int WriteTimeout
+        {
+            get => throw new InvalidOperationException(SR.InvalidOperation_TimeoutsNotSupported);
+            set => throw new InvalidOperationException(SR.InvalidOperation_TimeoutsNotSupported);
+        }
+
+        public virtual IAsyncResult BeginRead(byte[] buffer, int offset, int count, AsyncCallback? callback, object? state)
+        {
+            ValidateBufferArguments(buffer, offset, count);
+            return System.Threading.Tasks.TaskToAsyncResult.Begin(ReadAsync(buffer, offset, count), callback, state);
+        }
+
+        public virtual int EndRead(IAsyncResult asyncResult) => System.Threading.Tasks.TaskToAsyncResult.End<int>(asyncResult);
+
+        public virtual IAsyncResult BeginWrite(byte[] buffer, int offset, int count, AsyncCallback? callback, object? state)
+        {
+            ValidateBufferArguments(buffer, offset, count);
+            return System.Threading.Tasks.TaskToAsyncResult.Begin(WriteAsync(buffer, offset, count), callback, state);
+        }
+
+        public virtual void EndWrite(IAsyncResult asyncResult) => System.Threading.Tasks.TaskToAsyncResult.End(asyncResult);
 
         public virtual void Close() => Dispose(true);
 

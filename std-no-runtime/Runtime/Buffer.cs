@@ -46,7 +46,7 @@ namespace System
         /// </summary>
         /// <remarks>
         /// Cut from BCL: only single-dimension arrays of primitives are
-        /// supported. The real method also accepts multidimensional arrays,
+        /// supported (any primitive since step223). The real method also accepts multidimensional arrays,
         /// whose element storage sits behind a different object layout that
         /// this implementation does not decode; those throw rather than copy
         /// the wrong bytes silently. (Fami's savestate helpers pass byte[,] and
@@ -61,19 +61,37 @@ namespace System
             if (dstOffset < 0) throw new ArgumentOutOfRangeException(nameof(dstOffset));
             if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
 
-            if (src is byte[] source && dst is byte[] destination)
+            // Any single-dimension array of primitives, as BCL (until step223
+            // only byte[] — RijndaelManagedTransform copies int[]): lengths in
+            // bytes from the element size the MethodTable carries.
+            long srcBytes = PrimitiveByteLength(src, nameof(src));
+            long dstBytes = PrimitiveByteLength(dst, nameof(dst));
+            if (srcOffset + (long)count > srcBytes || dstOffset + (long)count > dstBytes)
+                throw new ArgumentException("Offset and length were out of bounds for the array or count is greater than the number of elements from index to the end of the source collection.");
+            if (count == 0) return;
+
+            unsafe
             {
-                if (srcOffset + count > source.Length || dstOffset + count > destination.Length)
-                    throw new ArgumentException("Source or destination is too short.");
-
-                if (count == 0) return;
-
-                Memmove(ref destination[dstOffset], ref source[srcOffset], (nuint)count);
-                return;
+                byte* srcData = *(byte**)Unsafe.AsPointer(ref src) + 16;
+                byte* dstData = *(byte**)Unsafe.AsPointer(ref dst) + 16;
+                Memmove(ref *(dstData + dstOffset), ref *(srcData + srcOffset), (nuint)count);
             }
+        }
 
-            throw new NotSupportedException(
-                "Buffer.BlockCopy supports single-dimension byte arrays only.");
+        public static int ByteLength(Array array) => checked((int)PrimitiveByteLength(array, nameof(array)));
+
+        // The array's size in bytes when it is a single-dimension array of a
+        // primitive type; ArgumentException otherwise, as BCL words it.
+        private static unsafe long PrimitiveByteLength(Array array, string paramName)
+        {
+            if (array.Rank != 1 || array.GetLowerBound(0) != 0)
+                throw new NotSupportedException("Buffer.BlockCopy supports single-dimension arrays only.");
+            var mt = (SharpOS.Std.NoRuntime.GcMethodTable*)*(void**)*(byte**)Unsafe.AsPointer(ref array);
+            var element = mt->RelatedType;
+            SharpOS.Std.NoRuntime.GcEETypeElementType kind = element->ElementType;
+            if (kind < SharpOS.Std.NoRuntime.GcEETypeElementType.Boolean || kind > SharpOS.Std.NoRuntime.GcEETypeElementType.Double)
+                throw new ArgumentException("Object must be an array of primitives.", paramName);
+            return (long)array.Length * *(ushort*)mt;
         }
     }
 }

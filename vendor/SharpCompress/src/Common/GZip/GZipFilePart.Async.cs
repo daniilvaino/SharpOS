@@ -1,0 +1,161 @@
+using System;
+using System.Buffers.Binary;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using SharpCompress.Common.Tar.Headers;
+using SharpCompress.Compressors;
+using SharpCompress.Compressors.Deflate;
+using SharpCompress.Providers;
+
+namespace SharpCompress.Common.GZip;
+
+internal sealed partial class GZipFilePart
+{
+    internal static async ValueTask<GZipFilePart> CreateAsync(
+        Stream stream,
+        IArchiveEncoding archiveEncoding,
+        CompressionProviderRegistry compressionProviders,
+        CancellationToken cancellationToken = default
+    )
+    {
+        var part = new GZipFilePart(stream, archiveEncoding, compressionProviders);
+
+        await part.ReadAndValidateGzipHeaderAsync(cancellationToken).ConfigureAwait(false);
+        if (stream.CanSeek)
+        {
+            var position = stream.Position;
+            stream.Position = stream.Length - 8;
+            await part.ReadTrailerAsync(cancellationToken).ConfigureAwait(false);
+            stream.Position = position;
+            part.EntryStartPosition = position;
+        }
+        else
+        {
+            // For non-seekable streams, we can't read the trailer or track position.
+            // Set to 0 since the stream will be read sequentially from its current position.
+            part.EntryStartPosition = 0;
+        }
+        return part;
+    }
+
+    private async ValueTask ReadTrailerAsync(CancellationToken cancellationToken = default)
+    {
+        // Read and potentially verify the GZIP trailer: CRC32 and  size mod 2^32
+        var trailer = new byte[8];
+        if (!await _stream.ReadFullyAsync(trailer, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ZlibException("Unexpected end-of-file reading GZIP trailer.");
+        }
+
+        Crc = BinaryPrimitives.ReadUInt32LittleEndian(trailer);
+        UncompressedSize = BinaryPrimitives.ReadUInt32LittleEndian(trailer.AsSpan().Slice(4));
+    }
+
+    private async ValueTask ReadAndValidateGzipHeaderAsync(
+        CancellationToken cancellationToken = default
+    )
+    {
+        // read the header on the first read
+        var header = new byte[10];
+        var n = await _stream.ReadAsync(header, 0, 10, cancellationToken).ConfigureAwait(false);
+
+        // workitem 8501: handle edge case (decompress empty stream)
+        if (n == 0)
+        {
+            return;
+        }
+
+        if (
+            !await _stream
+                .ReadFullyAsync(header, n, header.Length - n, cancellationToken)
+                .ConfigureAwait(false)
+        )
+        {
+            throw new ZlibException("Not a valid GZIP stream.");
+        }
+
+        if (header[0] != 0x1F || header[1] != 0x8B || header[2] != 8)
+        {
+            throw new ZlibException("Bad GZIP header.");
+        }
+
+        var timet = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan().Slice(4));
+        DateModified = TarHeader.EPOCH.AddSeconds(timet);
+        if ((header[3] & 0x04) == 0x04)
+        {
+            // read and discard extra field
+            var lengthField = new byte[2];
+            if (!await _stream.ReadFullyAsync(lengthField, cancellationToken).ConfigureAwait(false))
+            {
+                throw new ZlibException("Unexpected end-of-file reading GZIP header.");
+            }
+
+            var extraLength = lengthField[0] + (lengthField[1] * 256);
+            var extra = new byte[extraLength];
+
+            if (!await _stream.ReadFullyAsync(extra, cancellationToken).ConfigureAwait(false))
+            {
+                throw new ZlibException("Unexpected end-of-file reading GZIP header.");
+            }
+        }
+        if ((header[3] & 0x08) == 0x08)
+        {
+            _name = await ReadZeroTerminatedStringAsync(_stream, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        if ((header[3] & 0x10) == 0x010)
+        {
+            await ReadZeroTerminatedStringAsync(_stream, cancellationToken).ConfigureAwait(false);
+        }
+        if ((header[3] & 0x02) == 0x02)
+        {
+            var headerCrc = new byte[2];
+            if (!await _stream.ReadFullyAsync(headerCrc, cancellationToken).ConfigureAwait(false))
+            {
+                throw new ZlibException("Unexpected end-of-file reading GZIP header CRC.");
+            }
+        }
+    }
+
+    private async ValueTask<string> ReadZeroTerminatedStringAsync(
+        Stream stream,
+        CancellationToken cancellationToken = default
+    )
+    {
+        var buf1 = new byte[1];
+        var list = new List<byte>();
+        var done = false;
+        do
+        {
+            // workitem 7740
+            var n = await stream.ReadAsync(buf1, 0, 1, cancellationToken).ConfigureAwait(false);
+            if (n != 1)
+            {
+                throw new ZlibException("Unexpected EOF reading GZIP header.");
+            }
+            if (buf1[0] == 0)
+            {
+                done = true;
+            }
+            else
+            {
+                list.Add(buf1[0]);
+            }
+        } while (!done);
+        var buffer = list.ToArray();
+        return ArchiveEncoding.Decode(buffer);
+    }
+
+    internal override async ValueTask<Stream?> GetCompressedStreamAsync(
+        CancellationToken cancellationToken = default
+    )
+    {
+        // GZip uses Deflate compression
+        _decompressor = await _compressionProviders
+            .CreateDecompressStreamAsync(CompressionType.Deflate, _stream, cancellationToken)
+            .ConfigureAwait(false);
+        return _decompressor;
+    }
+}

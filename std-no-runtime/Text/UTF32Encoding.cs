@@ -17,7 +17,7 @@ namespace System.Text
 
     public sealed class UTF32Encoding : Encoding
     {
-        private readonly bool _bigEndian;
+        internal readonly bool _bigEndian;
 
         public UTF32Encoding() : this(false, true) { }
 

@@ -121,6 +121,8 @@ namespace System
 
         public static implicit operator Span<T>(T[] array) => new Span<T>(array);
 
+        public static implicit operator Span<T>(ArraySegment<T> segment) => new Span<T>(segment.Array, segment.Offset, segment.Count);
+
         public static Span<T> Empty => default;
 
         public Enumerator GetEnumerator() => new Enumerator(this);

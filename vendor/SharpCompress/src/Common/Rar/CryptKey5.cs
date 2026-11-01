@@ -1,0 +1,114 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using SharpCompress.Common.Rar.Headers;
+
+namespace SharpCompress.Common.Rar;
+
+internal class CryptKey5 : ICryptKey
+{
+    const int AES_256 = 256;
+    const int SHA256_DIGEST_SIZE = 32;
+
+    private readonly string _password;
+    private readonly Rar5CryptoInfo _cryptoInfo;
+    private readonly Rar5KeyCache _keyCache;
+    private byte[]? _aesKey;
+    private byte[] _derivedSalt = [];
+    private int _derivedLg2Count;
+    private byte[] _pswCheck = [];
+    private byte[] _hashKey = [];
+
+    public CryptKey5(string? password, Rar5CryptoInfo rar5CryptoInfo, Rar5KeyCache? keyCache = null)
+    {
+        _password = password ?? "";
+        _cryptoInfo = rar5CryptoInfo;
+        _keyCache = keyCache ?? new Rar5KeyCache();
+    }
+
+    public byte[] PswCheck => _pswCheck;
+
+    public byte[] HashKey => _hashKey;
+
+    internal static List<byte[]> GenerateRarPBKDF2Key(string password, byte[] salt, int iterations)
+    {
+        var passwordBytes = Encoding.UTF8.GetBytes(password);
+        salt = salt.Concat(new byte[] { 0, 0, 0, 1 }).ToArray();
+        // Reuse keyed HMAC state: recreating it for every iteration is especially
+        // expensive on some platforms. Modern targets also reuse digest buffers.
+        using var hmac = new HMACSHA256(passwordBytes);
+#if LEGACY_DOTNET
+        var block = hmac.ComputeHash(salt);
+        var finalHash = (byte[])block.Clone();
+#else
+        Span<byte> block = stackalloc byte[SHA256_DIGEST_SIZE];
+        Span<byte> nextBlock = stackalloc byte[SHA256_DIGEST_SIZE];
+        Span<byte> finalHash = stackalloc byte[SHA256_DIGEST_SIZE];
+        hmac.TryComputeHash(salt, block, out _);
+        block.CopyTo(finalHash);
+#endif
+
+        // RAR5 takes snapshots of the same PBKDF2 chain at N, N+16, and N+32.
+        var loop = new int[] { iterations, 17, 17 };
+        var res = new List<byte[]> { };
+
+        for (var x = 0; x < 3; x++)
+        {
+            for (var i = 1; i < loop[x]; i++)
+            {
+#if LEGACY_DOTNET
+                block = hmac.ComputeHash(block);
+#else
+                hmac.TryComputeHash(block, nextBlock, out _);
+                nextBlock.CopyTo(block);
+#endif
+                for (var j = 0; j < finalHash.Length; j++)
+                {
+                    finalHash[j] ^= block[j];
+                }
+            }
+
+            res.Add(finalHash.ToArray());
+        }
+
+        return res;
+    }
+
+    public ICryptoTransform Transformer(byte[] salt)
+    {
+        // Header IVs change for each block, but the expensive KDF inputs do not.
+        // Snapshot the salt so in-place changes cannot reuse an unrelated key.
+        if (
+            _aesKey is null
+            || _derivedLg2Count != _cryptoInfo.LG2Count
+            || !_derivedSalt.SequenceEqual(salt)
+        )
+        {
+            var derivedKey = _keyCache.GetKeys(_password, salt, _cryptoInfo.LG2Count);
+            _hashKey = derivedKey[1];
+            _pswCheck = new byte[EncryptionConstV5.SIZE_PSWCHECK];
+            for (var i = 0; i < SHA256_DIGEST_SIZE; i++)
+            {
+                _pswCheck[i % EncryptionConstV5.SIZE_PSWCHECK] ^= derivedKey[2][i];
+            }
+            _derivedSalt = (byte[])salt.Clone();
+            _derivedLg2Count = _cryptoInfo.LG2Count;
+            _aesKey = derivedKey[0];
+        }
+
+        if (_cryptoInfo.UsePswCheck && !_cryptoInfo.PswCheck.SequenceEqual(_pswCheck))
+        {
+            throw new CryptographicException("The password did not match.");
+        }
+
+        using var aes = Aes.Create();
+        aes.KeySize = AES_256;
+        aes.Mode = CipherMode.CBC;
+        aes.Padding = PaddingMode.None;
+        aes.Key = _aesKey;
+        aes.IV = _cryptoInfo.InitV;
+        return aes.CreateDecryptor();
+    }
+}

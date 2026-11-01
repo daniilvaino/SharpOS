@@ -102,6 +102,8 @@ namespace System
         internal const string ProduceLegacyHmacValuesMessage = "ProduceLegacyHmacValues is obsolete. Producing legacy HMAC values is not supported.";
         internal const string ProduceLegacyHmacValuesDiagId = "SYSLIB0029";
 
+        internal const string Rfc2898OutdatedCtorMessage = "The default hash algorithm and iteration counts in Rfc2898DeriveBytes constructors are outdated and insecure. Use a constructor that accepts the hash algorithm and the number of iterations.";
+        internal const string Rfc2898OutdatedCtorDiagId = "SYSLIB0041";
         internal const string UseManagedSha1Message = "HMACSHA1 always uses the algorithm implementation provided by the platform. Use a constructor without the useManagedSha1 parameter.";
         internal const string UseManagedSha1DiagId = "SYSLIB0030";
 

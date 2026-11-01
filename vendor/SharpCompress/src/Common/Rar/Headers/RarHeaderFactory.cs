@@ -1,0 +1,272 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using SharpCompress.Common.Rar;
+using SharpCompress.IO;
+using SharpCompress.Readers;
+
+namespace SharpCompress.Common.Rar.Headers;
+
+public partial class RarHeaderFactory
+{
+    private bool _isRar5;
+
+    private Rar5CryptoInfo? _cryptInfo;
+    private CryptKey5? _headerKey;
+    private string? _headerPassword;
+    internal Rar5KeyCache KeyCache { get; } = new();
+
+    private CryptKey5 GetHeaderKey()
+    {
+        // ReaderOptions is mutable; changing its password must not keep using
+        // a key derived from the previous password.
+        if (_headerKey is null || _headerPassword != Options.Password)
+        {
+            _headerPassword = Options.Password;
+            _headerKey = new CryptKey5(_headerPassword, _cryptInfo.NotNull(), KeyCache);
+        }
+        return _headerKey;
+    }
+
+    public RarHeaderFactory(StreamingMode mode, ReaderOptions options)
+    {
+        StreamingMode = mode;
+        Options = options;
+    }
+
+    public ReaderOptions Options { get; }
+    public StreamingMode StreamingMode { get; }
+    public bool IsEncrypted { get; private set; }
+
+    private void ResetHeaderScanState()
+    {
+        // Metadata probes rewind the stream. Each new scan must rediscover encryption
+        // from the plaintext archive headers, rather than reuse the previous scan's state.
+        IsEncrypted = false;
+        _cryptInfo = null;
+        _headerKey = null;
+        _headerPassword = null;
+        // Keep the password/salt/iteration-keyed KDF cache across scans.
+    }
+
+    public IEnumerable<IRarHeader> ReadHeaders(Stream stream)
+    {
+        ResetHeaderScanState();
+        var markHeader = MarkHeader.Read(stream, Options.LeaveStreamOpen, Options.LookForHeader);
+        _isRar5 = markHeader.IsRar5;
+        yield return markHeader;
+
+        RarHeader? header;
+        while ((header = TryReadNextHeader(stream)) != null)
+        {
+            yield return header;
+            if (header.HeaderType == HeaderType.EndArchive)
+            {
+                // End of archive marker. RAR does not read anything after this header letting to use third
+                // party tools to add extra information such as a digital signature to archive.
+                yield break;
+            }
+        }
+    }
+
+    private RarHeader? TryReadNextHeader(Stream stream)
+    {
+        RarCrcBinaryReader reader;
+        if (!IsEncrypted)
+        {
+            reader = new RarCrcBinaryReader(stream);
+        }
+        else
+        {
+            if (Options.Password is null)
+            {
+                throw new CryptographicException(
+                    "Encrypted Rar archive has no password specified."
+                );
+            }
+
+            if (_isRar5 && _cryptInfo != null)
+            {
+                _cryptInfo.ReadInitV(new MarkingBinaryReader(stream));
+                reader = RarCryptoBinaryReader.Create(stream, GetHeaderKey(), _cryptInfo.Salt);
+            }
+            else
+            {
+                var key = new CryptKey3(Options.Password);
+                reader = RarCryptoBinaryReader.Create(stream, key);
+            }
+        }
+
+        // Readers leave the underlying stream open but own their crypto transforms.
+        using var readerLifetime = reader;
+        var header = RarHeader.TryReadBase(reader, _isRar5, Options.ArchiveEncoding);
+        if (header is null)
+        {
+            return null;
+        }
+        switch (header.HeaderCode)
+        {
+            case HeaderCodeV.RAR5_ARCHIVE_HEADER:
+            case HeaderCodeV.RAR4_ARCHIVE_HEADER:
+            {
+                var ah = ArchiveHeader.Create(header, reader);
+                if (ah.IsEncrypted == true)
+                {
+                    //!!! rar5 we don't know yet
+                    IsEncrypted = true;
+                }
+                return ah;
+            }
+
+            case HeaderCodeV.RAR4_PROTECT_HEADER:
+            {
+                var ph = ProtectHeader.Create(header, reader);
+                // skip the recovery record data, we do not use it.
+                switch (StreamingMode)
+                {
+                    case StreamingMode.Seekable:
+                        {
+                            reader.BaseStream.Position += ph.DataSize;
+                        }
+                        break;
+                    case StreamingMode.Streaming:
+                        {
+                            reader.BaseStream.Skip(ph.DataSize);
+                        }
+                        break;
+                    default:
+                    {
+                        throw new InvalidFormatException("Invalid StreamingMode");
+                    }
+                }
+
+                return ph;
+            }
+
+            case HeaderCodeV.RAR5_SERVICE_HEADER:
+            {
+                var fh = FileHeader.Create(header, reader, HeaderType.Service);
+                // Only stored comments are supported; skip other methods without decrypting.
+                if (fh.FileName == "CMT" && fh.IsStored)
+                {
+                    fh.PackedStream = CreatePackedStream(fh, reader.BaseStream);
+                }
+                else
+                {
+                    SkipData(fh, reader);
+                }
+                return fh;
+            }
+
+            case HeaderCodeV.RAR4_NEW_SUB_HEADER:
+            {
+                var fh = FileHeader.Create(header, reader, HeaderType.NewSub);
+                SkipData(fh, reader);
+                return fh;
+            }
+
+            case HeaderCodeV.RAR5_FILE_HEADER:
+            case HeaderCodeV.RAR4_FILE_HEADER:
+            {
+                var fh = FileHeader.Create(header, reader, HeaderType.File);
+                switch (StreamingMode)
+                {
+                    case StreamingMode.Seekable:
+                        {
+                            fh.DataStartPosition = reader.BaseStream.Position;
+                            reader.BaseStream.Position += fh.CompressedSize;
+                        }
+                        break;
+                    case StreamingMode.Streaming:
+                        {
+                            var ms = new ReadOnlySubStream(reader.BaseStream, fh.CompressedSize);
+                            if (fh.R4Salt is null && fh.Rar5CryptoInfo is null)
+                            {
+                                fh.PackedStream = ms;
+                            }
+                            else
+                            {
+                                fh.PackedStream = new RarCryptoWrapper(
+                                    ms,
+                                    fh.R4Salt is null
+                                        ? fh.Rar5CryptoInfo.NotNull().Salt
+                                        : fh.R4Salt,
+                                    fh.R4Salt is null
+                                        ? new CryptKey5(
+                                            Options.Password,
+                                            fh.Rar5CryptoInfo.NotNull(),
+                                            KeyCache
+                                        )
+                                        : new CryptKey3(Options.Password)
+                                );
+                            }
+                        }
+                        break;
+                    default:
+                    {
+                        throw new InvalidFormatException("Invalid StreamingMode");
+                    }
+                }
+                return fh;
+            }
+            case HeaderCodeV.RAR5_END_ARCHIVE_HEADER:
+            case HeaderCodeV.RAR4_END_ARCHIVE_HEADER:
+            {
+                return EndArchiveHeader.Create(header, reader);
+            }
+            case HeaderCodeV.RAR5_ARCHIVE_ENCRYPTION_HEADER:
+            {
+                var cryptoHeader = ArchiveCryptHeader.Create(header, reader);
+                IsEncrypted = true;
+                _cryptInfo = cryptoHeader.CryptInfo;
+                _headerKey = null;
+
+                return cryptoHeader;
+            }
+            default:
+            {
+                throw new InvalidFormatException("Unknown Rar Header: " + header.HeaderCode);
+            }
+        }
+    }
+
+    private void SkipData(FileHeader fh, RarCrcBinaryReader reader)
+    {
+        switch (StreamingMode)
+        {
+            case StreamingMode.Seekable:
+                {
+                    fh.DataStartPosition = reader.BaseStream.Position;
+                    reader.BaseStream.Position += fh.CompressedSize;
+                }
+                break;
+            case StreamingMode.Streaming:
+                {
+                    //skip the data because it's useless?
+                    reader.BaseStream.Skip(fh.CompressedSize);
+                }
+                break;
+            default:
+            {
+                throw new InvalidFormatException("Invalid StreamingMode");
+            }
+        }
+    }
+
+    private Stream CreatePackedStream(FileHeader header, Stream stream)
+    {
+        var packedStream = new ReadOnlySubStream(stream, header.CompressedSize);
+        // Service data has its own encryption metadata, independent of header encryption.
+        if (header.Rar5CryptoInfo is not null)
+        {
+            return new RarCryptoWrapper(
+                packedStream,
+                header.Rar5CryptoInfo.Salt,
+                new CryptKey5(Options.Password, header.Rar5CryptoInfo, KeyCache)
+            );
+        }
+
+        return packedStream;
+    }
+}

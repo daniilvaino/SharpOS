@@ -216,6 +216,14 @@ namespace System.Collections.Generic
             else throw new ArgumentException("Target array must be of type T[].", nameof(array));
         }
 
+        public void CopyTo(int index, T[] array, int arrayIndex, int count)
+        {
+            if (_size - index < count) throw new ArgumentException("Offset and length were out of bounds for the array or count is greater than the number of elements from index to the end of the source collection.");
+            Array.Copy(_items, index, array, arrayIndex, count);
+        }
+
+        public void CopyTo(T[] array) => CopyTo(array, 0);
+
         public void CopyTo(T[] array, int arrayIndex)
         {
             for (int i = 0; i < _size; i++)

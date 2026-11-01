@@ -31,6 +31,10 @@ namespace SharpOS.AppSdk
         /// </summary>
         public static bool Install()
         {
+            // The clock does not need threads: Environment.TickCount from the
+            // counter the kernel hands over (zero without HPET, as Stopwatch).
+            ThreadBackend.InstallClock(&Milliseconds);
+
             if (!AppThreads.IsAvailable) return false;
 
             if (s_queue == null) s_queue = new ThreadBackend.ThreadEntry?[Capacity];
@@ -52,6 +56,12 @@ namespace SharpOS.AppSdk
             Monitor.EnsureTables();
 
             return true;
+        }
+
+        private static long Milliseconds()
+        {
+            ulong hz = System.Diagnostics.Stopwatch.s_frequencyHz;
+            return hz == 0 ? 0 : (long)(System.Diagnostics.Stopwatch.ReadCounter() / (hz / 1000));
         }
 
         private static int CurrentThreadId() => AppThreads.CurrentThreadId();

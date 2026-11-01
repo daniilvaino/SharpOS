@@ -1,0 +1,228 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using SharpCompress.Common;
+using SharpCompress.Compressors.RLE90;
+using SharpCompress.IO;
+
+namespace SharpCompress.Compressors.ArcLzw;
+
+public partial class ArcLzwStream : Stream
+{
+    private Stream _stream;
+    private bool _processed;
+    private bool _useCrunched;
+    private int _compressedSize;
+    private byte[]? _decoded;
+    private int _decodedPosition;
+
+    private const int BITS = 12;
+    private const int CRUNCH_BITS = 12;
+    private const int SQUASH_BITS = 13;
+    private const int INIT_BITS = 9;
+    private const ushort FIRST = 257;
+    private const ushort CLEAR = 256;
+
+    private ushort oldcode;
+    private byte finchar;
+    private int n_bits;
+    private ushort maxcode;
+    private ushort[] prefix = new ushort[8191];
+    private byte[] suffix = new byte[8191];
+    private bool clearFlag;
+    private Stack<byte> stack = new Stack<byte>();
+    private ushort freeEnt;
+    private ushort maxcodemax;
+
+    public ArcLzwStream(Stream stream, int compressedSize, bool useCrunched = true)
+    {
+        if (compressedSize < 0)
+        {
+            throw new InvalidFormatException("ARC: invalid compressed size.");
+        }
+        _stream = stream;
+        _useCrunched = useCrunched;
+        _compressedSize = compressedSize;
+
+        oldcode = 0;
+        finchar = 0;
+        n_bits = 0;
+        maxcode = 0;
+        clearFlag = false;
+        freeEnt = FIRST;
+        maxcodemax = 0;
+    }
+
+    private ushort? GetCode(BitReader reader)
+    {
+        if (clearFlag || freeEnt > maxcode)
+        {
+            if (freeEnt > maxcode)
+            {
+                n_bits++;
+                maxcode = (n_bits == BITS) ? maxcodemax : (ushort)((1 << n_bits) - 1);
+            }
+            if (clearFlag)
+            {
+                clearFlag = false;
+                n_bits = INIT_BITS;
+                maxcode = (ushort)((1 << n_bits) - 1);
+            }
+        }
+        return (ushort?)reader.ReadBits(n_bits);
+    }
+
+    public List<byte> Decompress(byte[] input, bool useCrunched)
+    {
+        var result = new List<byte>();
+        int bits = useCrunched ? CRUNCH_BITS : SQUASH_BITS;
+
+        if (useCrunched)
+        {
+            if (input.Length == 0)
+            {
+                throw new InvalidFormatException("ArcLzwStream: compressed data is empty");
+            }
+            if (input[0] != BITS)
+            {
+                throw new InvalidFormatException($"File packed with {input[0]}, expected {BITS}.");
+            }
+
+            input = input.Skip(1).ToArray();
+        }
+
+        maxcodemax = (ushort)(1 << bits);
+        clearFlag = false;
+        n_bits = INIT_BITS;
+        maxcode = (ushort)((1 << n_bits) - 1);
+
+        for (int i = 0; i < 256; i++)
+        {
+            suffix[i] = (byte)i;
+        }
+
+        var reader = new BitReader(input);
+        freeEnt = FIRST;
+
+        if (GetCode(reader) is ushort old)
+        {
+            oldcode = old;
+            finchar = (byte)oldcode;
+            result.Add(finchar);
+        }
+
+        while (GetCode(reader) is ushort code)
+        {
+            if (code == CLEAR)
+            {
+                Array.Clear(prefix, 0, prefix.Length);
+                clearFlag = true;
+                freeEnt = (ushort)(FIRST - 1);
+
+                if (GetCode(reader) is ushort c)
+                {
+                    code = c;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            ushort incode = code;
+
+            if (code >= freeEnt)
+            {
+                stack.Push(finchar);
+                code = oldcode;
+            }
+
+            while (code >= 256)
+            {
+                if (code >= suffix.Length)
+                {
+                    throw new InvalidFormatException("ArcLzwStream: code out of range");
+                }
+                stack.Push(suffix[code]);
+                code = prefix[code];
+            }
+
+            finchar = suffix[code];
+            stack.Push(finchar);
+
+            while (stack.Count > 0)
+            {
+                result.Add(stack.Pop());
+            }
+            code = freeEnt;
+            if (code < maxcodemax)
+            {
+                prefix[code] = oldcode;
+                suffix[code] = finchar;
+                freeEnt = (ushort)(code + 1);
+            }
+
+            oldcode = incode;
+        }
+
+        return result;
+    }
+
+    // Stream base class implementation
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotImplementedException();
+    public override long Position
+    {
+        get => _stream.Position;
+        set => throw new NotImplementedException();
+    }
+
+    public override void Flush() => throw new NotImplementedException();
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        if (count == 0)
+        {
+            return 0;
+        }
+        if (!_processed)
+        {
+            using var limited = new ReadOnlySubStream(_stream, _compressedSize);
+            using var data = new PooledMemoryStream();
+            limited.CopyTo(data);
+            FinishDecompression(data);
+        }
+        var result = Math.Min(count, _decoded!.Length - _decodedPosition);
+        Buffer.BlockCopy(_decoded, _decodedPosition, buffer, offset, result);
+        _decodedPosition += result;
+        return result;
+    }
+
+    private void FinishDecompression(PooledMemoryStream data)
+    {
+        if (data.Length != _compressedSize)
+        {
+            throw new IncompleteArchiveException("Truncated ARC compressed data.");
+        }
+        // Buffer only bytes actually read, never the size claimed by the ARC header.
+        var decoded = Decompress(data.ToArray(), _useCrunched);
+        _decoded = _useCrunched ? RLE.UnpackRLE(decoded.ToArray()).ToArray() : decoded.ToArray();
+        _processed = true;
+    }
+
+    public override long Seek(long offset, SeekOrigin origin) =>
+        throw new NotImplementedException();
+
+    public override void SetLength(long value) => throw new NotImplementedException();
+
+    public override void Write(byte[] buffer, int offset, int count) =>
+        throw new NotImplementedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+    }
+}

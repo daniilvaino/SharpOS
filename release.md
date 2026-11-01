@@ -16,7 +16,9 @@
 ## 2. Форматы в std
 
 Сделано: `System.IO.Hashing`, интринсики x86, векторы BCL целиком —
-`done/step221.md`; `System.Formats.Tar` и файловый API — `done/step222.md`.
+`done/step221.md`; `System.Formats.Tar` и файловый API — `done/step222.md`;
+сжатие (SharpCompress, `System.IO.Compression`) и криптография —
+`done/step223.md`.
 
 Подключение — как BCL, в своих namespace; что тяжёлое — отдельной строкой в
 csproj, не в `Std.props`.
@@ -26,13 +28,12 @@ csproj, не в `Std.props`.
 - XML: `XmlReader`/`XmlWriter` (и `XDocument`) в std; сейчас TurboXml только в
   ядре.
 - Regex — интерпретатор (`RegexInterpreter`), без компилятора и генератора;
-  вернуть `matches regex` и `extract()` в BabyKusto.
-- Сжатие: SharpCompress (MIT) в `vendor/` целиком; `System.IO.Compression`
-  (`DeflateStream`, `GZipStream`, `ZLibStream`, `ZipArchive`) поверх него.
-  Сначала — чего ему не хватает (ZstdSharp, async `Stream`, `ArrayPool`).
+  вернуть `matches regex` и `extract()` в BabyKusto, тома многотомных архивов
+  в SharpCompress (`SHARPOS_REGEX`).
 - Кодовые страницы: `System.Text.Encoding.CodePages` из BCL (`codepages.nlp`
   612 КБ ресурсом — ресурсы сборки работают); нужны `EncodingProvider`,
-  `Encoding.RegisterProvider`, `Encoder`/`Decoder` с состоянием.
+  `Encoding.RegisterProvider`, `Encoder`/`Decoder` с состоянием; вернуть
+  кодовые страницы имён в SharpCompress (`SHARPOS_CODEPAGES`).
 
 ## 3. Текстовый редактор
 

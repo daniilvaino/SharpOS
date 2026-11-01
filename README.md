@@ -192,11 +192,13 @@ DOOM1.WAD, картриджи `.nes` и PowerShell для самой SharpOS к�
 | Разбор `DateTime` / `TimeSpan` / `Guid` | 🟡 | 🟡 | ✅ | `Parse`/`ParseExact`/`TryParse*` — порт BCL (step212); инвариантная культура, поясов кроме UTC и сдвига из `TZ` нет |
 | Base64 и hex через `Convert` | 🟡 | 🟡 | ✅ | `Convert.From/ToBase64String`, `From/ToHexString` над `System.Buffers.Text.Base64` и `HexConverter` (step212); прогоном не проверены, перенос строк Base64 не портирован |
 | Разбор `.env` | ✅ | ✅ | 🚫 | формат `env_file` Docker Compose, проверен тестами compose-go; ядро читает им `/config/system.env` |
-| Коллекции `Concurrent.*` и `Immutable.*`, `SortedSet`, `BitArray`, `KeyedCollection`, `Array.BinarySearch`, `Regex`, `ValueTuple` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple<T1,T2>` есть |
+| `ConcurrentQueue`, `BlockingCollection`, `SemaphoreSlim`, `Monitor.Wait`/`Pulse`, `WaitHandle` | 🟡 | 🟡 | ✅ | релиз 0.1: BCL 8; `Pulse` будит всех ждущих, `WaitAny`/`WaitAll` по нескольким ручкам опрашивают раз в миллисекунду. В ядре не проверены прогоном |
+| Коллекции `ConcurrentBag`/`ConcurrentStack` и `Immutable.*`, `SortedSet`, `KeyedCollection`, `Array.BinarySearch`, `Regex` | 🔴 | 🔴 | ✅ | пока не портированы; `Tuple` до трёх элементов есть |
 | CBOR (`System.Formats.Cbor`) | 🔴 | ✅ | ✅ | порт из dotnet/runtime; без `Half`, `BigInteger`, `decimal` и `DateTimeOffset` — теги при этом читаются. Разбор проверен на ответе аппаратного ключа, запись пока нет |
 | `System.Uri` | 🟡 | 🟡 | ✅ | порт System.Private.Uri (.NET 10, step212) вместе с `SearchValues`, `IdnMapping` (инвариантный режим) и `Hashtable`; std считает себя Unix-платформой (`OperatingSystem.IsWindows()` = false), `file:///home/x` — путь `/home/x`; прогоном не проверен |
 | `RandomNumberGenerator` | 🟡 | ✅ | ✅ | порт BCL поверх `RDRAND` (step212): ядро — `HardwareRandom`, приложения — служба ядра; процессор без `RDRAND` — `CryptographicException`, а не предсказуемые байты (в QEMU нужен `-cpu …,+rdrand`, `run_build` ставит). В ядре прогоном не проверен |
-| SHA-256 | ✅ | ✅ | ✅ | `System.Security.Cryptography.SHA256.HashData`, своя реализация в std. Других алгоритмов нет: ни P-256, ни AES, ни HMAC |
+| Криптография: SHA-1/256/384/512, HMAC, PBKDF2, AES, `CryptoStream` | 🟡 | 🟡 | ✅ | релиз 0.1: управляемые пути BCL 8 (сборка для браузера), SHA-256 — своя реализация std, ядро AES — `RijndaelManagedTransform` из .NET Framework; проверено векторами FIPS 180/197, RFC 2202/4231/6070, NIST SP 800-38A. AES табличный, не постоянного времени. MD5, SHA-3, RSA, ECDSA, P-256 нет (`PlatformNotSupportedException`). Ядро собирает, прогоном проверен только SHA-256 |
+| Сжатие: `System.IO.Compression` (`DeflateStream`, `GZipStream`, `ZLibStream`, `ZipArchive`, `ZipFile`) и SharpCompress | — | 🟡 | ✅ | релиз 0.1: BCL 8 целиком поверх zlib SharpCompress (MIT, весь, `vendor/SharpCompress`): zip, 7z, rar, tar.gz/bz2/xz/zst, gzip, шифрованные zip/7z/rar5. Без Regex не находятся следующие тома многотомных архивов, без кодовых страниц имена в CP437 читаются как UTF-8 |
 
 ### Потоки и синхронизация
 
@@ -453,6 +455,8 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 Чужой код, который лежит в дереве и попадает в образ. Лицензии этих проектов нас обязывают. Копии живут в `vendor/<имя>/`, рядом `LICENSE` и `PROVENANCE.md`: что взято и что вырезано.
 
 - **[dotnet/runtime](https://github.com/dotnet/runtime) + [runtimelab](https://github.com/dotnet/runtimelab)** (Microsoft, MIT) - toolchain NativeAOT, форк CoreCLR в `dotnet-runtime-sharpos/`, сотни портов BCL в нашу std и `Utf8JsonReader`/`Utf8JsonWriter` из System.Text.Json в `vendor/SystemTextJson/`.
+- **[referencesource](https://github.com/microsoft/referencesource)** (Microsoft, MIT) - `RijndaelManagedTransform` из .NET Framework: ядро AES в `std-no-runtime/Security/Cryptography/`, в .NET 8 управляемого AES нет.
+- **[SharpCompress](https://github.com/adamhathcock/sharpcompress)** (Adam Hathcock, MIT, `vendor/SharpCompress/`; внутри ZstdSharp (MIT), XZ.NET, managed-lzma и код Bouncy Castle (MIT) — по `LICENSE.txt` и README апстрима) - все архивы и сжатие; его zlib стоит под `System.IO.Compression`. Приложение COMPRESSTEST.
 - **[Iced](https://github.com/icedland/iced)** (icedland, MIT) - кодировщик x86-64. Им пишется весь ассемблер проекта: и при сборке, и на лету.
 - **[PeNet](https://github.com/secana/PeNet)** (Stefan Hausotte, Apache-2.0) - разбор PE в загрузчике приложений.
 - **[Terminal.Gui](https://github.com/gui-cs/Terminal.Gui)** (Miguel de Icaza и участники, MIT) - библиотека текстового интерфейса. На ней написан лаунчер.

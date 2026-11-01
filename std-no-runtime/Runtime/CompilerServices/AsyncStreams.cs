@@ -246,6 +246,31 @@ namespace System.Runtime.CompilerServices
         public Type StateMachineType { get; }
     }
 
+    // AsyncStateMachine and IteratorStateMachine (step223): optional for
+    // Roslyn, which emits them only when the type exists — and ILC's dataflow
+    // (CompilerGeneratedState) finds a state machine's owning method only by
+    // them. Without them, a generic async method whose state machine creates
+    // another generic closure crashed ILC with KeyNotFoundException (SharpCompress).
+    /// <summary>Indicates whether a method is marked with the Async modifier.</summary>
+    [AttributeUsage(AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
+    public sealed class AsyncStateMachineAttribute : StateMachineAttribute
+    {
+        public AsyncStateMachineAttribute(Type stateMachineType)
+            : base(stateMachineType)
+        {
+        }
+    }
+
+    /// <summary>Indicates whether a method is an iterator.</summary>
+    [AttributeUsage(AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
+    public sealed class IteratorStateMachineAttribute : StateMachineAttribute
+    {
+        public IteratorStateMachineAttribute(Type stateMachineType)
+            : base(stateMachineType)
+        {
+        }
+    }
+
     /// <summary>Indicates whether a method is an asynchronous iterator.</summary>
     [AttributeUsage(AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
     public sealed class AsyncIteratorStateMachineAttribute : StateMachineAttribute

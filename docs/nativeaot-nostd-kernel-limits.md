@@ -542,6 +542,31 @@ done/step141.md).
   возвращается, когда объект никто не держит и не ждёт, и 64 — предел
   одновременно взятых замков; полосу можно поднимать.
 
+### 🟡 Ожидание и потоки: `Monitor.Wait`/`Pulse`, `SemaphoreSlim`, `BlockingCollection`, `Thread.Start` (step223)
+
+Пришли с SharpCompress (пул потоков Zstd); оба яруса собирают, прогоном
+проверены только в приложении (COMPRESSTEST).
+
+- `Monitor.Wait`/`Pulse`/`PulseAll` — счётчик импульсов на слоте замка: `Wait`
+  читает его под замком, отдаёт замок целиком и ждёт смены слова
+  (`WaitOnAddress`). **`Pulse` будит всех ждущих**, а не одного — очереди нет;
+  код BCL перепроверяет условие в цикле, лишнее пробуждение стоит оборота.
+  Таймауты — по миллисекунде за оборот, как у `ManualResetEventSlim`.
+- `SemaphoreSlim`, `ConcurrentQueue<T>`, `BlockingCollection<T>`,
+  `LazyInitializer` — BCL 8 целиком; проверка STA в `BlockingCollection`
+  вырезана (апартаментов нет).
+- `WaitHandle`, `EventWaitHandle`, `ManualResetEvent`, `AutoResetEvent` — над
+  словом, не над ручкой ОС: нет `Handle`/`SafeWaitHandle`, именованных событий,
+  `SignalAndWait`. `WaitAny`/`WaitAll` по нескольким ручкам **опрашивают раз в
+  миллисекунду**. `CancellationToken.WaitHandle` и `Task` как `IAsyncResult` —
+  на них.
+- `Thread(ThreadStart)`/`Start`/`Join` — через `ThreadBackend.Spawn`, ту же
+  дверь, что `Task.Run`. Id поток узнаёт при старте.
+- `Environment.TickCount`/`TickCount64` — HPET в ядре, счётчик `Stopwatch` в
+  приложении; ноль без HPET.
+- `Task.ConfigureAwait(ConfigureAwaitOptions)` — `SuppressThrowing`,
+  `ForceYielding`; контекста для захвата нет.
+
 ---
 
 ## 6. Exceptions
@@ -615,6 +640,11 @@ step213 — переполнение стека, на втором круге `#
 | `System.Runtime.Intrinsics.Vector128/256` | **Работает** (step 165; с релиза 0.1 — всё семейство `Scalar`, `Vector64/128/256/512` из CoreLib v8.0 целиком, кроме преобразований в `System.Numerics.Vector<T>/Vector2–4/Plane/Quaternion`, которых в std нет). Порт из dotnet/runtime v8.0 в наш std; ILC узнаёт интринсики **по пространству имён и имени типа**, поэтому это единственное место, где правило именования уступает — имя и есть механизм. Три условия, каждое стоило прогона: `[Intrinsic]` обязан висеть и на ТИПЕ (иначе структура раскладывается как два `ulong`), сигнатуры обязаны совпадать с оригиналом дословно (перегрузка под `ushort` там, где в CoreLib `Equals<T>`, никогда не станет инструкцией), и ILC подменяет каждый член отдельно (операторы `-`/`~` без атрибута остались managed). Запасные пути сравнений/вычитания ОТКАЗЫВАЮТ, а не считают: не зная знаковости элемента, они бы гадали. `Vector256.IsHardwareAccelerated` = false — AVX не в целевом наборе ILC. Состояние AVX с step199 сохраняется прерываниями (XSAVE, на процессорах с AVX), так что включить целевой набор можно; кооперативное переключение — FXSAVE, чего по Win64 ABI достаточно |
 | `System.Runtime.Intrinsics.X86` (`Sse`…`Sse42`, `Aes`, `Pclmulqdq`, `Popcnt`, `Lzcnt`, `Bmi1/2`, `Avx`, `Avx2`, `Fma`, `X86Serialize`, `AvxVnni`) | ✅ (релиз 0.1). CoreLib v8.0 как есть — под ILC 8. Без набора инструкций ILC берёт SSE2 и «оптимистичные» SSE3–4.2, AES, PCLMULQDQ, POPCNT, LZCNT, MOVBE, SERIALIZE: их `IsSupported` читает `g_cpuFeatures` при выполнении. Флаги считает ядро (порт `minipal_getcpufeatures`, `HardwareIntrinsicFlags`), отдаёт `AppServiceTable.IntrinsicFlags`; приложение пишет их в свой `g_cpuFeatures` (`[CoffDataSymbol]`, `/EXPORT:…,DATA`, поиск по таблице экспорта своего образа). AVX/AVX2/FMA ILC держит за `false` (не оптимистичны). AVX-512 нет: XCR0 ядра — x87/SSE/AVX. Arm и Wasm — как BCL собирает их под x64: `PlatformNotSupported`. `X86Base.CpuId` в ядре — через `X64Asm.Cpuid`, в приложении — `PlatformNotSupportedException` |
 | `System.IO.Hashing` | 🟡 (релиз 0.1). BCL v8.0 как есть, с векторным путём: CRC32/CRC64 — PCLMULQDQ, где он есть, иначе таблица; xxHash32/64/3/128. Вырез: `XxHash128.HashToUInt128`/`GetCurrentHashAsUInt128` — в std нет `UInt128`. `AppendAsync` — через `Stream.CopyToAsync` |
+| Сжатие: `System.IO.Compression` и SharpCompress | 🟡 (релиз 0.1, ярус приложений, `vendor/SharpCompress/SharpCompress.props`). `DeflateStream`/`GZipStream`/`ZLibStream`/`ZipArchive`/`ZipFile` — BCL 8 как есть, нативный zlib заменён управляемым zlib SharpCompress на уровне `Interop.ZLib` (семь функций; gzip-обёртка и `Z_BUF_ERROR` — свои). SharpCompress 0.50.7 целиком: zip, 7z, rar, tar.*, gzip, bzip2, xz, zstd, шифрованные zip (WinZip AES), 7z (AES), RAR5. Вырезы — в `PROVENANCE.md`: тома многотомных архивов (нет Regex), кодовые страницы имён, `File.OpenHandle`. Исправлена ошибка апстрима: `DeflateStream` с `leaveOpen: true` не писал ничего (с 0.45.0). COMPRESSTEST 44/44 |
+| Криптография | 🟡 (релиз 0.1). `HashAlgorithm`, `SHA1/256/384/512`, `HMAC*`, `IncrementalHash`, `Rfc2898DeriveBytes`/PBKDF2, `Aes`, `CryptoStream` — BCL 8, управляемые пути сборки для браузера; SHA-256 — своя реализация std (общая с мостом CoreCLR); AES — `RijndaelManagedTransform` из .NET Framework (referencesource), **табличный, не постоянного времени**. MD5, SHA-3, их HMAC — `PlatformNotSupportedException`, как у BCL без поставщика; `Create(string)` через `CryptoConfig` — тоже. Асимметричной криптографии нет |
+| `GCHandle`, `SafeHandle`, `NativeMemory` | 🟡 (step223). `GCHandle` — своя таблица (массив из статика — корень обоих сборщиков); **слабые ручки держат объект сильно**, как `WeakReference<T>`. `SafeHandle` — BCL 8; **финализаторы не исполняются**, без `Dispose` ручка не освобождается. `NativeMemory` — массивы управляемой кучи, удерживаемые таблицей до `Free` (сборщики не двигают объекты); выравнивание 16, считается в пределах кучи |
+| `[UnmanagedFunctionPointer]`, маршалинг делегатов | 🔴 Атрибута нет намеренно: с ним ILC строит заглушки маршалинга, которым нужен `InteropHelpers` NativeAOT (не портирован), и падает. Без атрибута код, которому маршалинг нужен, не собирается — ошибка видна сразу |
+| `AsyncStateMachineAttribute`, `IteratorStateMachineAttribute` | ✅ step223. Roslyn ставит их, только если типы есть; без них анализ потоков данных ILC (`CompilerGeneratedState`) не находил метод-владелец машины состояний и падал `KeyNotFoundException` на обобщённом async-методе с замыканием |
 | `System.Formats.Tar` | 🟡 (релиз 0.1, ярус приложений). BCL v8.0: `TarReader`/`TarWriter` (V7, Ustar, Pax, Gnu), `TarFile.CreateFromDirectory`/`ExtractToDirectory`, синхронно и асинхронно. Проверено против архивов GNU tar 1.35 (форматы gnu и pax, путь длиннее 100 байт). Вырезы: `ParseOctal` без `INumber<T>` (только `uint`/`ulong`); обход каталога — `Directory.GetFileSystemEntries` вместо `FileSystemEnumerable`; жёсткая ссылка при распаковке — копия цели (у FAT ссылок нет). Права Unix не сохраняются (FAT), время — до двух секунд |
 | `ArrayPool<T>` | **Пулит** (step208): порт BCL, `Shared` — `ConfigurableArrayPool` (корзины под `lock`), а не `TlsOverPerCoreLockedStacksArrayPool` (его кэш на `[ThreadStatic]`, работающем с step209; порт не сделан). До step208 не хранил ничего, и `BinaryWriter` над `MemoryStream` шёл в 10–20 раз медленнее хоста. Массив из `Rent` — с прежним содержимым, как в BCL |
 | `typeof(T)` / `System.Type` | **Работает в приложениях с step175, в ядре нет.** Тип — это указатель на MethodTable, `==` сравнивает указатели; два объекта, описывающих один тип, равны, не будучи одним объектом — на этом держится равенство `record`. Нужны три вещи разом: `Type.GetTypeFromHandle` (`apps_native/sdk/MinimalRuntime.cs`), `Internal.Runtime.CompilerHelpers.LdTokenHelpers` (ILC ищет по имени в системном модуле) и `IsExternalInit` (без него не компилируется ни один `init`-аксессор, а значит и ни одна запись). Отражения нет и не будет без метаданных: ни `Name`, ни членов, ни `Type.GetType(string)`. В ядре `Type` остался пустой заглушкой — `typeof` там не используется |

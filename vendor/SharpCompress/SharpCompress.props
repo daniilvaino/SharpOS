@@ -1,0 +1,26 @@
+<Project>
+
+  <!-- SharpCompress (Adam Hathcock, MIT) as a compile-in module for SharpOS
+       apps: every format it reads and writes, all managed. What is taken and
+       what is changed, and why: PROVENANCE.md.
+
+       Sources, not a package: apps are their own system module (IlcSystemModule
+       = the app), so a compiled SharpCompress.dll would have no CoreLib to bind
+       against. Opt-in rather than in Std.props: 164 000 lines are not what
+       every app should compile.
+
+       System.IO.Compression comes with it: BCL's own DeflateStream, GZipStream,
+       ZLibStream, ZipArchive and ZipFile (std-no-runtime/IO/Compression), whose
+       zlib is SharpCompress's (Interop.ZLib.SharpCompress.cs). App tier only:
+       ZipFile needs File and Directory. -->
+
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)src\**\*.cs" Link="vendor\SharpCompress\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\std-no-runtime\IO\Compression\**\*.cs" Link="std\IO\Compression\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

@@ -37,6 +37,7 @@
 |---|---|---|
 | `apps_native/Fami/Fami/`, `apps_native/TriCNES/TriCNES/` | CS0162, CS0168, CS0169, CS0414, CS0675 | Подмодули апстрима; `.editorconfig` уровнем выше. |
 | `vendor/XtermSharp/` | CS0162, CS0168, CS0169, CS0414 | Апстрим. |
+| `vendor/SharpCompress/` | CS0162 | Апстрим: ветки для `\` при `Path.DirectorySeparatorChar` = `'/'` недостижимы. |
 | `vendor/Terminal.Gui/Terminal.Gui/` | CS0649 | Апстрим; `SharpOS/` — наш и не заглушён. |
 | `vendor/SystemTextJson/` | CS0108, CS0168, CS0414 | Собран в один образ с std: видит `internal Exception._message` и скрывает его своим; остальное — следы вырезов. |
 | `vendor/BabyKusto/src/opensource/unmodified/` | CS8604 | Скопировано из dotnet/runtime без изменений. |
