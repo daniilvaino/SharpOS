@@ -75,6 +75,11 @@ namespace Shell
                     if (!EditorHasAction(key.Key)) continue;
                 }
 
+                // A key with no character the editor has no action for
+                // (PgUp, F5, Shift+Up) would go in as '\0': unseen on the
+                // screen, and the path it ends up in stops at it.
+                if (key.KeyChar == '\0' && !EditorMoves(key)) continue;
+
                 editor.Handle(key);
             }
         }
@@ -91,6 +96,14 @@ namespace Shell
             => key == ConsoleKey.A || key == ConsoleKey.B || key == ConsoleKey.D || key == ConsoleKey.E
                || key == ConsoleKey.F || key == ConsoleKey.H || key == ConsoleKey.K || key == ConsoleKey.N
                || key == ConsoleKey.P || key == ConsoleKey.T || key == ConsoleKey.U || key == ConsoleKey.W;
+
+        // The keys without a character KeyHandler binds: the arrows, Home,
+        // End, Delete — not with Shift, which BuildKeyInput names apart.
+        private static bool EditorMoves(ConsoleKeyInfo key)
+            => key.Modifiers != ConsoleModifiers.Shift
+               && (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.RightArrow
+                   || key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.DownArrow
+                   || key.Key == ConsoleKey.Home || key.Key == ConsoleKey.End || key.Key == ConsoleKey.Delete);
 
         // A line goes into the history unless it is blank or the same as the
         // one before it; the file gets it at once, so a session that ends by

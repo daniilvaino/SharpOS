@@ -415,6 +415,24 @@ namespace OS.Kernel.Process
         // negative without a keyboard. Console.ReadKey parses it. Zero: an
         // older kernel; the SDK falls back to TryReadKey.
         public ulong TerminalReadAddress;
+
+        // int PipeAttributes(int handle, uint set, uint mask, uint* attributes)
+        // (step219): bits of the pipe both ends see — the reader is a screen
+        // (the shell showing a stage's output), the writer's hints. The bits
+        // in mask become those of set; mask 0 reads. Zero: an older kernel;
+        // no end is a screen.
+        public ulong PipeAttributesAddress;
+
+        // int TerminalSide(int columns): a side panel that wide at the right
+        // of the screen, 0 for none, negative to ask; returns the width it
+        // has (0 while a full-screen program holds the screen), negative
+        // without a screen. The main panel — the program's terminal — takes
+        // the rest. Zero: an older kernel; one panel.
+        public ulong TerminalSideAddress;
+
+        // int TerminalSideWrite(byte* utf8, int length): terminal text for
+        // the side panel (the shell's inspector). Zero: an older kernel.
+        public ulong TerminalSideWriteAddress;
     }
 
     /// <summary>

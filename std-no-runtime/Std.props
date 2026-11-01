@@ -90,6 +90,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\RegionShapes.cs" Link="std\Exchange\RegionShapes.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\Pipe.cs" Link="std\Pipes\Pipe.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeEnds.cs" Link="std\Pipes\PipeEnds.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeScreen.cs" Link="std\Pipes\PipeScreen.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\TypeCheck.cs" Link="std\Pipes\TypeCheck.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeStreams.cs" Link="std\Pipes\PipeStreams.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\ExternalPipe.cs" Link="std\Pipes\ExternalPipe.cs" />

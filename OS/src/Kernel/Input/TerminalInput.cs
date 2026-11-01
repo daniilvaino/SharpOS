@@ -15,7 +15,8 @@ namespace OS.Kernel.Input
     /// key UTF-8, Enter CR, Backspace DEL, Ctrl+letter its control byte, Alt
     /// an ESC before the key, the arrows and the navigation cluster CSI
     /// sequences, F1–F4 SS3 and F5–F12 CSI n ~, modifiers on those as
-    /// "1;m". Releases are not bytes.
+    /// "1;m". Releases are not bytes. The keys the screen takes for itself
+    /// (TerminalConsole.TakeKey) are not either.
     ///
     /// The terminal engine's answers (cursor position, device attributes,
     /// sizes) wait in a queue of their own and go out ahead of keys: a
@@ -77,7 +78,11 @@ namespace OS.Kernel.Input
                 if (status == KeyReadStatus.Unsupported) return n > 0 ? n : -1;
                 if (status != KeyReadStatus.KeyAvailable) break;
 
+                // The screen's own keys — Ctrl+Tab between the panels,
+                // scrolling — are not the program's input.
+                if (TerminalConsole.TakeKey(info.UnicodeChar, info.ScanCode)) continue;
                 int length = Encode(info.UnicodeChar, info.ScanCode, key);
+                if (length > 0) TerminalConsole.KeyForProgram();
                 int i = 0;
                 for (; i < length && n < capacity; i++) buffer[n++] = key[i];
                 for (; i < length && s_carryCount < CarrySize; i++)

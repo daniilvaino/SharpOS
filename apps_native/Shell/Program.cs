@@ -42,6 +42,9 @@ namespace Shell
             // sh -c LINE [--report NAME] (step197): the line runs with this
             // shell's own standard ends — what Pipe.From and Pipe.To start.
             string[] args = AppHost.Arguments;
+            // The screen's pipes are read by tasks (step219); without threads
+            // the stages write to the terminal themselves, as before.
+            Executor.CanShow = TaskBackendInstaller.Install();
             if (args.Length >= 2 && args[0] == "-c")
             {
                 string report = args.Length >= 4 && args[2] == "--report" ? args[3] : null;
@@ -171,6 +174,8 @@ namespace Shell
 
             var reader = new LineReader(new Completion(executor));
             executor.History = reader.History;
+            // Objects at the prompt open a side panel with their trees.
+            executor.Inspector = Inspector.Create();
 
             while (!executor.ExitRequested)
             {
@@ -182,6 +187,7 @@ namespace Shell
                 executor.RunLine(line);
             }
 
+            executor.Inspector?.Hide();
             // `exit N` leaves with N; Ctrl+D with the last command's code, as sh.
             return executor.LastExitCode;
         }

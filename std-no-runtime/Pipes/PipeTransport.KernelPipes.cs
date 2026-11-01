@@ -59,6 +59,9 @@ namespace SharpOS.Std.Pipes
 
         public static PipeStatus Duplicate(int handle, out int copy) => KernelPipes.Duplicate(Holder, handle, out copy);
 
+        public static PipeStatus Attributes(int handle, uint set, uint mask, out uint attributes)
+            => KernelPipes.Attributes(Holder, handle, set, mask, out attributes);
+
         /// <summary>A line on the screen: where a message goes when there is no output to send it to.</summary>
         public static void Print(string line) => OS.Hal.Console.WriteLine(line);
 

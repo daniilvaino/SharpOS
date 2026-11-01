@@ -22,11 +22,31 @@ namespace System
         public static System.IO.TextWriter Out => s_out ??= SharpOS.Std.Pipes.Pipe.ConsoleText();
         private static System.IO.TextWriter s_out;
 
+        /// <summary>Sets <see cref="Out"/>, as BCL does (without its synchronised wrapper).</summary>
+        public static void SetOut(System.IO.TextWriter newOut)
+            => s_out = newOut ?? throw new ArgumentNullException(nameof(newOut));
+
         public static void Write(string value) => Out.Write(value);
 
         public static void WriteLine(string value) => Out.WriteLine(value);
 
         public static void WriteLine() => Out.WriteLine();
+
+        /// <summary>
+        /// An escape sequence for the terminal — cursor, colours, clearing, a
+        /// key's echo — in the same stream as the text (step219), as on Unix:
+        /// when the shell shows the standard output, text sent past it would
+        /// land after the cursor moves meant for it. Straight to the terminal
+        /// otherwise: a file or a pipe gets no escapes, and an output opened
+        /// as a type carries no text.
+        /// </summary>
+        internal static void Control(string sequence)
+        {
+            if (SharpOS.Std.Pipes.Pipe.OutputIsScreenPipe && (s_out != null || !SharpOS.Std.Pipes.Pipe.OutputIsOpen))
+                Out.Write(sequence);
+            else
+                AppHost.Terminal.Write(sequence);
+        }
 
         /// <summary>
         /// The unfinished lines of the standard output, the error stream and
@@ -174,7 +194,7 @@ namespace System
             if (TerminalKeys.Available)
             {
                 TerminalKeys.TryRead(-1, out ConsoleKeyInfo read);
-                if (!intercept && read.KeyChar >= ' ') AppHost.Terminal.WriteChar(read.KeyChar);
+                if (!intercept && read.KeyChar >= ' ') Control(read.KeyChar.ToString());
                 return read;
             }
             while (true)
@@ -185,7 +205,7 @@ namespace System
                     continue;
                 }
                 if (!TryTranslate(raw, out ConsoleKeyInfo key)) continue;
-                if (!intercept && key.KeyChar >= ' ') AppHost.Terminal.WriteChar(key.KeyChar);
+                if (!intercept && key.KeyChar >= ' ') Control(key.KeyChar.ToString());
                 return key;
             }
         }
@@ -219,7 +239,7 @@ namespace System
         }
 
         /// <summary>Clears the screen and puts the cursor at its top left (the terminal's ESC [H ESC [2J).</summary>
-        public static void Clear() => AppHost.Terminal.Write("\u001b[H\u001b[2J");
+        public static void Clear() => Control("\u001b[H\u001b[2J");
 
         // The window (step210), as BCL has it on Unix: the size is what the
         // terminal's owner reports (here the kernel, ConsoleSize — the
@@ -251,7 +271,7 @@ namespace System
                 throw new ArgumentOutOfRangeException(nameof(left), left, "The value must be greater than or equal to zero and less than the console's buffer size in that dimension.");
             if (top < 0 || top >= short.MaxValue)
                 throw new ArgumentOutOfRangeException(nameof(top), top, "The value must be greater than or equal to zero and less than the console's buffer size in that dimension.");
-            AppHost.Terminal.Write("\u001b[" + (top + 1).ToString() + ";" + (left + 1).ToString() + "H");
+            Control("\u001b[" + (top + 1).ToString() + ";" + (left + 1).ToString() + "H");
         }
 
         private static bool s_cursorVisible = true;
@@ -263,7 +283,7 @@ namespace System
             set
             {
                 s_cursorVisible = value;
-                AppHost.Terminal.Write(value ? "\u001b[?25h" : "\u001b[?25l");
+                Control(value ? "\u001b[?25h" : "\u001b[?25l");
             }
         }
 
@@ -282,7 +302,7 @@ namespace System
                 if (value.Length > 24500)
                     throw new ArgumentOutOfRangeException(nameof(value), "The console title is too long.");
                 s_title = value;
-                AppHost.Terminal.Write("\u001b]0;" + value + "\u0007");
+                Control("\u001b]0;" + value + "\u0007");
             }
         }
 
@@ -309,7 +329,7 @@ namespace System
         {
             s_foreground = ConsoleColor.Gray;
             s_background = ConsoleColor.Black;
-            AppHost.Terminal.Write("\u001b[0m");
+            Control("\u001b[0m");
         }
 
         private static void SetColor(ConsoleColor color, bool background)
@@ -321,7 +341,7 @@ namespace System
             int c = (int)color;
             int ansi = ((c & 1) << 2) | (c & 2) | ((c & 4) >> 2);
             int code = (c < 8 ? 30 : 90) + ansi + (background ? 10 : 0);
-            AppHost.Terminal.Write("\u001b[" + code.ToString() + "m");
+            Control("\u001b[" + code.ToString() + "m");
         }
 
         // The key service never blocks: a poll with a sleep, below what a

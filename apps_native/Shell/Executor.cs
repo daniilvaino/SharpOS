@@ -111,9 +111,13 @@ namespace Shell
                 bool skip = (clause.Operator == CompoundOperator.AndIf && last != 0)
                          || (clause.Operator == CompoundOperator.OrIf && last == 0);
                 // `env A=1 prog` starts the program with its own environment,
-                // as a pipeline's stage does.
+                // as a pipeline's stage does. A program alone is a pipeline of
+                // one: its output reaches the screen through the shell, as a
+                // last stage's does. Not a managed one: the hosted runtime
+                // starts it, with no ends.
                 if (!skip)
                     last = end - i > 1 || clause.Redirects.Count > 0 || EnvStartsProgram(clause)
+                           || (CanShow && !IsBuiltin(clause) && !EndsWith(Verb(clause), ".dll"))
                            || (HasEnds && (!IsBuiltin(clause) || WritesText(Verb(clause))))
                         ? RunPipeline(clauses, i, end)
                         : RunClause(clause);
@@ -604,6 +608,8 @@ namespace Shell
             int code = 0;
             string failedStage = null;
             bool failed = false;
+            // What the last stage writes for the screen, shown by the shell (step219).
+            var shown = new List<PipeReadEnd>();
             for (int k = builtinFirst ? 1 : 0; k < count && !failed; k++)
             {
                 string path = ProgramPath(verbs[k], out int missing);
@@ -622,8 +628,9 @@ namespace Shell
                 try
                 {
                     var ends = new List<(int, PipeWriteEnd)>();
-                    PipeWriteEnd output = HandOut(redirects[k], Natural(k, count, pairs, owned),
+                    PipeWriteEnd output = HandOut(redirects[k], Natural(k, count, pairs, owned, shown),
                                                   sideStarted, sidePairs, owned, ends);
+                    if (k == count - 1) ShowText(ends, owned, shown);
                     input = k > 0 ? pairs[k - 1].ReadEnd : TakeInput();
                     started.Add(Process.Start(path, arguments[k].ToArray(),
                         input, output, environments[k], ends.Count > 0 ? ends.ToArray() : null));
@@ -645,6 +652,18 @@ namespace Shell
                 }
             }
 
+            // The screen's pipes are read while the stages run; from before a
+            // builtin first writes: the last stage waits for no one. One whose
+            // stage did not start ends at once (its end was closed above).
+            var showing = new List<System.Threading.Tasks.Task>();
+            Inspector inspector = Inspector;
+            inspector?.Begin();
+            foreach (PipeReadEnd screenEnd in shown)
+            {
+                PipeReadEnd shownEnd = screenEnd;
+                showing.Add(System.Threading.Tasks.Task.Run(() => SharpOS.Std.Pipes.Pipe.Show(shownEnd, inspector)));
+            }
+
             // The builtin runs once the stages after it are up: its text has
             // somewhere to go, however much of it there is.
             int builtinCode = 0;
@@ -653,7 +672,7 @@ namespace Shell
                 var owned = new List<PipeWriteEnd>();
                 try
                 {
-                    PipeWriteEnd output = HandOut(redirects[0], Natural(0, count, pairs, owned),
+                    PipeWriteEnd output = HandOut(redirects[0], Natural(0, count, pairs, owned, null),
                                                   sideStarted, sidePairs, owned, new List<(int, PipeWriteEnd)>());
                     builtinCode = RunBuiltinStage(verbs[0], arguments[0], output);
                 }
@@ -698,6 +717,7 @@ namespace Shell
                 codes[k + offset] = started[k].ExitCode;
                 started[k].Dispose();
             }
+            foreach (System.Threading.Tasks.Task task in showing) task.Wait();
             // A WRITE of `> file` that failed (it says why itself) is the
             // pipeline's code only when no stage failed: its stage's 141 is
             // the echo of it, not the cause.
@@ -781,13 +801,48 @@ namespace Shell
 
         // Where stage k writes when nothing is redirected: the pipe to the next
         // stage, or the shell's own output — a copy, the shell's to close if
-        // the stage does not take it; null: the screen.
-        private PipeWriteEnd Natural(int k, int count, SharpOS.Std.Pipes.PipePair[] pairs, List<PipeWriteEnd> owned)
+        // the stage does not take it. With no output of its own, the screen:
+        // a pipe the shell shows (step219), whose reader goes to shown — the
+        // stage sees the terminal there — or, for a builtin (shown is null)
+        // and on a kernel without pipe attributes, null.
+        private PipeWriteEnd Natural(int k, int count, SharpOS.Std.Pipes.PipePair[] pairs, List<PipeWriteEnd> owned,
+                                     List<PipeReadEnd> shown)
         {
             if (k < count - 1) return pairs[k].WriteEnd;
             PipeWriteEnd output = TakeOutput();
+            if (output == null && shown != null) output = Screen(shown);
             if (output != null) owned.Add(output);
             return output;
+        }
+
+        // stdtext of the last stage, when not redirected and the shell shows
+        // the screen: shown beside its output (step219).
+        private void ShowText(List<(int, PipeWriteEnd)> ends, List<PipeWriteEnd> owned, List<PipeReadEnd> shown)
+        {
+            if (_output != null) return;
+            foreach ((int number, PipeWriteEnd _) in ends)
+                if (number == SharpOS.Std.Pipes.Pipe.TextEnd) return;
+            PipeWriteEnd text = Screen(shown);
+            if (text == null) return;
+            owned.Add(text);
+            ends.Add((SharpOS.Std.Pipes.Pipe.TextEnd, text));
+        }
+
+        /// <summary>The side panel the objects shown go to as trees; null: none (not at the prompt, or no panels).</summary>
+        internal Inspector Inspector { get; set; }
+
+        /// <summary>Whether the shell can read the screen's pipes beside the stages: a thread backend is installed.</summary>
+        internal static bool CanShow { get; set; }
+
+        // A pipe to the screen: its writing end; the reader joins shown. Null
+        // without threads and on a kernel without pipe attributes.
+        private static PipeWriteEnd Screen(List<PipeReadEnd> shown)
+        {
+            if (!CanShow) return null;
+            SharpOS.Std.Pipes.PipePair pair = SharpOS.Std.Pipes.Pipe.CreateScreen();
+            if (pair == null) return null;
+            shown.Add(pair.ReadEnd);
+            return pair.WriteEnd;
         }
 
         /// <summary>

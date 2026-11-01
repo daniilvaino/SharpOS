@@ -121,6 +121,15 @@ namespace OS.Kernel.Pipes
             return (int)status;
         }
 
+        // step219: the pipe's attributes through an end of the caller's; mask 0 reads.
+        [UnmanagedCallersOnly]
+        public static int Attributes(int handle, uint set, uint mask, uint* attributes)
+        {
+            PipeStatus status = KernelPipes.Attributes(KernelPipes.CallerHolder(), handle, set, mask, out uint now);
+            if (attributes != null) *attributes = now;
+            return (int)status;
+        }
+
         // answer: [0] schema bytes, [1] root key. Copies when the buffer is large enough.
         [UnmanagedCallersOnly]
         public static int Schema(int handle, byte* buffer, ulong capacity, ulong* answer)

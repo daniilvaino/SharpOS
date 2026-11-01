@@ -362,8 +362,11 @@ namespace OS.Kernel.Process
                 table.PipeBreakAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.Break;
                 table.PipeWaitSchemaAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.WaitSchema;
                 table.PipeDuplicateAddress = (ulong)(nint)(delegate* unmanaged<int, int*, int>)&OS.Kernel.Pipes.PipeServices.Duplicate;
+                table.PipeAttributesAddress = (ulong)(nint)(delegate* unmanaged<int, uint, uint, uint*, int>)&OS.Kernel.Pipes.PipeServices.Attributes;
             table.RandomFillAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&HardwareRandom.Fill;
             table.TerminalReadAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&TerminalRead;
+            table.TerminalSideAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&TerminalSide;
+            table.TerminalSideWriteAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&TerminalSideWrite;
                 table.ExceptionHeadAddress = (ulong)OS.Boot.EH.ExInfoHead.GetHeadAddress();
                 table.ProcessAddress = (ulong)(nint)(delegate* unmanaged<int, ulong*, int>)&ProcessService;
                 if (OS.Kernel.Diagnostics.Probes.PipeProbe)
@@ -1362,6 +1365,21 @@ namespace OS.Kernel.Process
                 OS.Hal.Platform.FlushConsole();
             int n = OS.Kernel.Input.TerminalInput.Read(buffer, capacity);
             return n < 0 ? -(int)AppServiceStatus.Unsupported : n;
+        }
+
+        // The side panel of the screen; see TerminalConsole.SetSidePanel.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int TerminalSide(int columns)
+        {
+            if (!OS.Hal.TerminalConsole.IsReady) return -(int)AppServiceStatus.Unsupported;
+            return columns < 0 ? OS.Hal.TerminalConsole.SidePanelColumns : OS.Hal.TerminalConsole.SetSidePanel(columns);
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int TerminalSideWrite(byte* utf8, int length)
+        {
+            if (utf8 == null || length < 0) return -(int)AppServiceStatus.InvalidParameter;
+            return OS.Hal.TerminalConsole.WriteSide(utf8, length) ? 0 : -(int)AppServiceStatus.Unsupported;
         }
 
         private static uint TryReadKey(ulong requestAddress)

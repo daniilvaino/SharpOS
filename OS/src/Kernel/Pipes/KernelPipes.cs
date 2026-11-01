@@ -80,6 +80,11 @@ namespace OS.Kernel.Pipes
             // receives answer TypeMismatch; it builds the text itself.
             public bool Mismatch;
 
+            // What the ends say about the stream to each other (step219): the
+            // reader that is a screen, the writer's hints. Bits the kernel
+            // keeps and does not read (PipeAttributes in std).
+            public uint Attributes;
+
             public uint BlockOwner => PipeOwnerBase | Id;
         }
 
@@ -315,6 +320,28 @@ namespace OS.Kernel.Pipes
                 if (role == PipeRole.Writer) p.Writers++;
                 else p.Readers++;
                 copy = e + 1;
+                return PipeStatus.Ok;
+            }
+            finally
+            {
+                Preemption.Allow();
+            }
+        }
+
+        /// <summary>
+        /// The pipe's attributes (step219), read through any of the holder's
+        /// ends: the bits in <paramref name="mask"/> become those of
+        /// <paramref name="set"/>, the others stay; mask 0 only reads.
+        /// </summary>
+        public static PipeStatus Attributes(uint holder, int handle, uint set, uint mask, out uint attributes)
+        {
+            attributes = 0;
+            Preemption.Suppress();
+            try
+            {
+                if (!TryEnd(holder, handle, (PipeRole)0, out Pipe p)) return PipeStatus.BadHandle;
+                p.Attributes = (p.Attributes & ~mask) | (set & mask);
+                attributes = p.Attributes;
                 return PipeStatus.Ok;
             }
             finally

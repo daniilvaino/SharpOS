@@ -33,6 +33,15 @@ namespace SharpOS.Std.Pipes
             PipeTransport.Print(root.ToScreenString());
         }
 
+        /// <summary>An object or an array (not a byte[]) as a tree into <paramref name="objects"/>.</summary>
+        internal static void Inspect(View root, System.IO.TextWriter objects)
+        {
+            ViewKind kind = root.Kind;
+            if (kind != ViewKind.Object && kind != ViewKind.Array) return;
+            if (root.TryGetBytes(out _, out _)) return;
+            objects.Write(root.ToScreenTree());
+        }
+
         private static void PrintBytes(byte* bytes, int length)
         {
             // The carried start of a character comes first.

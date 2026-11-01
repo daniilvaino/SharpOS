@@ -298,7 +298,7 @@ namespace SharpOS.AppSdk
             left = top = 0;
             parser.CursorQueryPending = true;
             parser.ReportedLeft = parser.ReportedTop = -1;
-            AppHost.Terminal.Write("\u001b[6n");
+            Console.Control("\u001b[6n");
             for (int waited = 0; waited < 500 && parser.CursorQueryPending; waited += PollMs)
             {
                 while (parser.TryRead(0, out ConsoleKeyInfo key)) Keep(key);

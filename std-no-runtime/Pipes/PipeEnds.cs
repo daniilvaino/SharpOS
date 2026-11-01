@@ -235,7 +235,13 @@ namespace SharpOS.Std.Pipes
         public static PipeWriter<T> Write<T>(PipeHints hints) where T : class
         {
             int handle = TakeOutput(OutputName<T>());
-            if (handle != 0) return OpenWriter<T>(handle, "the standard output");
+            if (handle != 0)
+            {
+                // A screen's reader leaves the messages out itself (step219).
+                if ((hints & PipeHints.NotForTerminal) != 0 && HintsHonoured && IsScreenEnd(handle))
+                    PipeTransport.Attributes(handle, (uint)PipeAttributes.NotForTerminal, (uint)PipeAttributes.NotForTerminal, out _);
+                return OpenWriter<T>(handle, "the standard output");
+            }
             if ((hints & PipeHints.NotForTerminal) == 0 || !HintsHonoured) return PipeWriter<T>.ToScreen();
             return OpenWriter<T>(Nowhere().Take("the standard output"), "the standard output");
         }
@@ -258,16 +264,18 @@ namespace SharpOS.Std.Pipes
         /// <summary>
         /// The standard output as System.Console's text (step212): a pipe of
         /// strings, a message a line; with no output handed over, the screen,
-        /// written through as it comes so a prompt shows before its input.
+        /// written through as it comes so a prompt shows before its input —
+        /// and so into a pipe the shell shows (step219), a message a write.
         /// One type a pipe: once this is open, Write&lt;T&gt;() is refused, and
         /// the other way round.
         /// </summary>
         public static TextWriter ConsoleText()
         {
             int handle = TakeOutput("text (System.Console)");
-            return handle != 0
-                ? new PipeTextWriter(OpenWriter<string>(handle, "the standard output"))
-                : new TerminalTextWriter();
+            if (handle == 0) return new TerminalTextWriter();
+            return IsScreenEnd(handle)
+                ? ScreenTextWriter(handle, "the standard output")
+                : new PipeTextWriter(OpenWriter<string>(handle, "the standard output"));
         }
 
         /// <summary>The end number stdtext is handed under (step212), as `3>` names it.</summary>
@@ -282,12 +290,23 @@ namespace SharpOS.Std.Pipes
         /// stdtext (step212): text for whoever reads the screen, beside the
         /// data on the standard output — a panel, a report, a summary. A pipe
         /// of strings when an end was handed under <see cref="TextEnd"/>
-        /// (`3> file`); the terminal otherwise.
+        /// (`3> file`); the terminal otherwise — or the shell showing it
+        /// (step219), left out like the terminal is.
         /// </summary>
-        public static TextWriter Text => s_text ??= HandedText(TextEnd, "stdtext") ?? (TextLeftOut ? TextWriter.Null : new TerminalTextWriter());
+        public static TextWriter Text => s_text ??= ShownText() ?? HandedText(TextEnd, "stdtext") ?? (TextLeftOut ? TextWriter.Null : new TerminalTextWriter());
 
         private static bool TextLeftOut
-            => (TextHints & PipeHints.DescribesOutput) != 0 && HintsHonoured && PipeTransport.StandardEnd(1) != 0;
+            => (TextHints & PipeHints.DescribesOutput) != 0 && HintsHonoured && !OutputIsTerminal;
+
+        // stdtext handed to a shell that shows it: what goes to the screen.
+        private static TextWriter ShownText()
+        {
+            int handle = PipeTransport.StandardEnd(TextEnd);
+            if (!IsScreenEnd(handle)) return null;
+            if (!TextLeftOut) return ScreenTextWriter(handle, "stdtext");
+            PipeTransport.Close(handle);
+            return TextWriter.Null;
+        }
 
         /// <summary>stdtext's unfinished line, sent at the program's end (AppRuntime.Finish).</summary>
         internal static void FlushText() => s_text?.Flush();
@@ -302,7 +321,8 @@ namespace SharpOS.Std.Pipes
         private static TextWriter HandedText(int number, string what)
         {
             int handle = PipeTransport.StandardEnd((uint)number);
-            return handle == 0 ? null : new PipeTextWriter(OpenWriter<string>(handle, what));
+            if (handle == 0) return null;
+            return IsScreenEnd(handle) ? ScreenTextWriter(handle, what) : new PipeTextWriter(OpenWriter<string>(handle, what));
         }
 
         // What the standard output is a pipe of, for the refusal to open it twice.

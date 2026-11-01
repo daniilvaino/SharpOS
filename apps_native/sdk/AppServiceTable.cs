@@ -349,6 +349,22 @@ namespace SharpOS.AppSdk
         // terminal's input as bytes, without waiting; 0 when there is nothing,
         // negative without a keyboard. Zero: an older kernel (TryReadKey then).
         public ulong TerminalReadAddress;
+
+        // int PipeAttributes(int handle, uint set, uint mask, uint* attributes)
+        // (step219): bits of the pipe both ends see — a screen, the writer's
+        // hints; mask 0 reads. Zero: an older kernel; no end is a screen.
+        public ulong PipeAttributesAddress;
+
+        // int TerminalSide(int columns): a side panel that wide at the right
+        // of the screen, 0 for none, negative to ask; returns the width it
+        // has (0 while a full-screen program holds the screen), negative
+        // without a screen. The main panel — the program's terminal — takes
+        // the rest. Zero: an older kernel; one panel.
+        public ulong TerminalSideAddress;
+
+        // int TerminalSideWrite(byte* utf8, int length): terminal text for
+        // the side panel (the shell's inspector). Zero: an older kernel.
+        public ulong TerminalSideWriteAddress;
     }
 
     /// <summary>

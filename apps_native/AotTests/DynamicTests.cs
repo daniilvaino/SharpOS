@@ -50,11 +50,11 @@ namespace AotTests
             string probe = null;
             try { probe = DynamicProbe(); }
             catch (Exception e) { probe = "threw " + e.Message; }
-            AppHost.Terminal.Write("[dyn] probe: " + probe + "\n");
+            Console.Write("[dyn] probe: " + probe + "\n");
             Check("dynamic: Expando, class member, +=, ++, *, conversions", probe == "t!12line t/6");
 
             // The shared cases (DynamicCases.cs), the same source tools/DynamicReference runs on desktop .NET.
-            int pass = DynamicCases.Run(line => AppHost.Terminal.Write(line + "\n"), out int total);
+            int pass = DynamicCases.Run(line => Console.Write(line + "\n"), out int total);
             Check("dynamic: " + pass.ToString() + "/" + total.ToString() + " cases as on desktop .NET", pass == total);
 
             // The kernel's probe pipes have fixed names: one battery at a time.
@@ -72,13 +72,13 @@ namespace AotTests
 
         private static int RunDynamicOnly()
         {
-            AppHost.Terminal.Write("==== dynamic ====\n");
+            Console.Write("==== dynamic ====\n");
             CheckDynamic();
-            AppHost.Terminal.Write("==== ");
-            AppHost.Terminal.WriteUInt(s_pass);
-            AppHost.Terminal.Write("/");
-            AppHost.Terminal.WriteUInt(s_total);
-            AppHost.Terminal.Write(" passed ====\n");
+            Console.Write("==== ");
+            Console.Write(s_pass);
+            Console.Write("/");
+            Console.Write(s_total);
+            Console.Write(" passed ====\n");
             return (int)(s_total - s_pass);
         }
 
@@ -346,7 +346,7 @@ namespace AotTests
                 mixed += x.V;
             }
             int two = DynamicRuntime.Lookups - before;
-            AppHost.Terminal.Write("[dyn] cache: one type " + one.ToString() + " lookup(s), two types " + two.ToString() + "\n");
+            Console.Write("[dyn] cache: one type " + one.ToString() + " lookup(s), two types " + two.ToString() + "\n");
             Check("dynamic: one type at a call site — the name looked up once", one == 1 && sum == 200);
             Check("dynamic: two types in turn — once each, the right member for each", two == 2 && mixed == 25 * 2 + 25 * 1);
         }
@@ -386,7 +386,7 @@ namespace AotTests
             try { e["Bad"] = new System.Text.StringBuilder(); }
             catch (ArgumentException) { refusedOk = e.Count == 82 && !e.ContainsKey("Bad"); }
             if (!(counts && kinds && order && refusedOk && sumOk))
-                AppHost.Terminal.Write("[expando] table: counts " + counts.ToString() + ", kinds " + kinds.ToString()
+                Console.Write("[expando] table: counts " + counts.ToString() + ", kinds " + kinds.ToString()
                                     + ", order " + order.ToString() + " (" + string.Join(",", names.ToArray()) + "), refused "
                                     + refusedOk.ToString() + ", sum " + sum.ToString() + "\n");
             Check("Expando: order after removals, a rebuilt table, kinds that change, int stays int, a value that cannot travel refused",
@@ -455,7 +455,7 @@ namespace AotTests
                         view = ns(watch);
                     }
                 }
-            AppHost.Terminal.Write("[bench] dynamic: d.Field — view " + view.ToString() + " ns, Expando " + expando.ToString()
+            Console.Write("[bench] dynamic: d.Field — view " + view.ToString() + " ns, Expando " + expando.ToString()
                                 + " ns, class " + cls.ToString() + " ns (static " + direct.ToString() + " ns); d.Method() "
                                 + call.ToString() + " ns" + (sink == null ? " SINK NULL" : "") + "\n");
         }

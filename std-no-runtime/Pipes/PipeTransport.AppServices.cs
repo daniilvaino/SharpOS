@@ -161,6 +161,22 @@ namespace SharpOS.Std.Pipes
             return status;
         }
 
+        /// <summary>
+        /// The pipe's attributes (step219) through an end: the bits in
+        /// <paramref name="mask"/> become those of <paramref name="set"/>;
+        /// mask 0 reads. Unsupported on an older kernel.
+        /// </summary>
+        public static PipeStatus Attributes(int handle, uint set, uint mask, out uint attributes)
+        {
+            attributes = 0;
+            if (!Available || Services->PipeAttributesAddress == 0 || handle == 0) return PipeStatus.Unsupported;
+            uint now = 0;
+            var status = (PipeStatus)((delegate* unmanaged<int, uint, uint, uint*, int>)Services->PipeAttributesAddress)(
+                handle, set, mask, &now);
+            attributes = now;
+            return status;
+        }
+
         /// <summary>Waits until the other end of the pipe has come; at once on an older kernel.</summary>
         public static PipeStatus WaitPeer(int handle)
         {

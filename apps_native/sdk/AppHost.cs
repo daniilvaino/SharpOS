@@ -85,6 +85,36 @@
                 }
             }
 
+            /// <summary>
+            /// Asks for a side panel <paramref name="columns"/> wide at the
+            /// right of the screen, 0 for none, as tmux splits a window: the
+            /// program's terminal keeps the rest. Returns the width granted;
+            /// negative when the kernel has no panels or no screen.
+            /// </summary>
+            public static int SidePanel(int columns)
+            {
+                AppServiceTable* services = AppRuntime.Services;
+                if (services == null || services->TerminalSideAddress == 0)
+                    return -1;
+                return ((delegate* unmanaged<int, int>)services->TerminalSideAddress)(columns);
+            }
+
+            /// <summary>The side panel's width on the screen now: 0 when it is absent or hidden, negative without panels.</summary>
+            public static int SidePanelColumns => SidePanel(-1);
+
+            /// <summary>Terminal text for the side panel; false when the kernel has none.</summary>
+            public static bool WriteSide(string text)
+            {
+                AppServiceTable* services = AppRuntime.Services;
+                if (services == null || services->TerminalSideWriteAddress == 0)
+                    return false;
+                if (string.IsNullOrEmpty(text))
+                    return true;
+                byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(text);
+                fixed (byte* bytes = utf8)
+                    return ((delegate* unmanaged<byte*, int, int>)services->TerminalSideWriteAddress)(bytes, utf8.Length) >= 0;
+            }
+
             public static void WriteChar(char c)
             {
                 AppServiceTable* services = AppRuntime.Services;

@@ -879,6 +879,88 @@ namespace SharpOS.Std.Pipes
             return text.ToString();
         }
 
+        /// <summary>
+        /// The value laid out as a tree in the terminal's colours, for the
+        /// inspector: the type on the first line, then a field or an element
+        /// a line, nested ones indented under their name.
+        /// </summary>
+        internal string ToScreenTree()
+        {
+            Check();
+            var text = new StringBuilder();
+            AppendTreeHead(text);
+            text.Append('\n');
+            AppendTreeBody(text, "  ", TreeDepth);
+            return text.ToString();
+        }
+
+        private const int TreeDepth = 6, TreeElements = 64;
+
+        // What stands on a value's own line: a scalar itself, an object or
+        // an array its type.
+        private void AppendTreeHead(StringBuilder text)
+        {
+            switch (Kind)
+            {
+                case ViewKind.Array:
+                    PaintType(text, true, _type.Name.Substring(0, _type.Name.Length - 2));
+                    Paint(text, true, Dim, "[" + Length.ToString() + "]");
+                    return;
+                case ViewKind.Object:
+                    string value = StdStructText();
+                    if (value != null) { Paint(text, true, NumberColour, value); return; }
+                    PaintType(text, true, _type.IsExpando ? "Expando" : _type.Name);
+                    return;
+                default:
+                    AppendNested(text, 0, true);
+                    return;
+            }
+        }
+
+        private bool HasTreeBody => (Kind == ViewKind.Array && Length > 0)
+                                    || (Kind == ViewKind.Object && StdStructText() == null);
+
+        // The lines under a value's own: its fields or elements, each with
+        // its own lines under it.
+        private void AppendTreeBody(StringBuilder text, string indent, int depth)
+        {
+            if (!HasTreeBody) return;
+            if (depth <= 0)
+            {
+                text.Append(indent);
+                Paint(text, true, Dim, "…");
+                text.Append('\n');
+                return;
+            }
+            if (Kind == ViewKind.Array)
+            {
+                for (int i = 0; i < Length && i < TreeElements; i++)
+                {
+                    text.Append(indent);
+                    Paint(text, true, Dim, "[" + i.ToString() + "] ");
+                    View element = this[i];
+                    element.AppendTreeHead(text);
+                    text.Append('\n');
+                    element.AppendTreeBody(text, indent + "  ", depth - 1);
+                }
+                if (Length > TreeElements)
+                {
+                    text.Append(indent);
+                    Paint(text, true, Dim, "… " + (Length - TreeElements).ToString() + " more");
+                    text.Append('\n');
+                }
+                return;
+            }
+            foreach (ViewField f in Fields)
+            {
+                text.Append(indent).Append(f.Name);
+                Paint(text, true, Dim, " = ");
+                f.Value.AppendTreeHead(text);
+                text.Append('\n');
+                f.Value.AppendTreeBody(text, indent + "  ", depth - 1);
+            }
+        }
+
         // SGR sequences of the palette; Plain ends each painted run.
         private const string Plain = "\u001b[0m", Dim = "\u001b[90m", TypeColour = "\u001b[1;36m",
                              NumberColour = "\u001b[33m", StringColour = "\u001b[32m", WordColour = "\u001b[35m";

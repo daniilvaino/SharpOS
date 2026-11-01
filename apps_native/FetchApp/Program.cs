@@ -3,7 +3,8 @@
 //
 //   - the standard output: the SystemInfo record, data for programs — not
 //     printed on the terminal (`fetch | kql "project Cpu.Avx, Build.Tests"`);
-//   - stdtext: the panel, a logo column and the facts beside it — left out
+//   - stdtext: the panel, a logo column and the facts beside it, a section
+//     a line — the whole record is the object's, in the inspector; left out
 //     when the record goes to a pipe or a file.
 //
 // `env PIPEHINTS=off FETCH` prints both; `fetch 3>&1 >&- | less` sends the
@@ -55,12 +56,14 @@ namespace FetchApp
             Pipe.TextHints = PipeHints.DescribesOutput;
             string[] logo = Logo;
             List<string> facts = Facts(info);
+            // A section a line, cut at the edge: the panel is as tall as the logo.
+            int room = Console.WindowWidth - LogoWidth - 2;
             int lines = Math.Max(logo.Length, facts.Count);
             for (int i = 0; i < lines; i++)
             {
                 string left = i < logo.Length ? logo[i] : "";
                 string right = i < facts.Count ? facts[i] : "";
-                Pipe.Text.Write(right.Length == 0 ? left + "\n" : left.PadRight(LogoWidth) + "  " + right + "\n");
+                Pipe.Text.Write(right.Length == 0 ? left + "\n" : left.PadRight(LogoWidth) + "  " + Fit(right, room) + "\n");
             }
             Pipe.Text.Write("\n");
             return 0;
@@ -70,66 +73,71 @@ namespace FetchApp
         {
             var facts = new List<string>
             {
-                "\u001b[1mSharpOS\u001b[0m",
+                "\u001b[1mSharpOS\u001b[0m " + s.Build.Id,
                 "────────────────────",
             };
 
-            Section(facts, "build");
-            Line(facts, "id", s.Build.Id);
-            Line(facts, "fork", s.Build.Fork);
-            Line(facts, "tests", YesNo(s.Build.Tests));
-            Line(facts, "hosted runtime", YesNo(s.Build.HostedRuntime));
+            Line(facts, "build", Join(s.Build.Tests ? "tests" : "no tests", s.Build.HostedRuntime ? "hosted runtime" : null,
+                                      s.Build.Fork == "none" ? null : "fork " + s.Build.Fork));
+            Line(facts, "firmware", s.Firmware.Vendor + " rev " + s.Firmware.Revision.ToString() + ", boot " + s.Firmware.BootMedium);
+            Line(facts, "cpu", s.Cpu.Vendor + ", " + s.Cpu.Processors.ToString() + " cpu"
+                               + Join(s.Cpu.Sse41 ? "sse4.1" : null, s.Cpu.Avx ? "avx" : null, s.Cpu.Fma ? "fma" : null, ", "));
+            Line(facts, "memory", s.Memory.FreeMiB.ToString() + " of " + s.Memory.TotalMiB.ToString() + " MiB free");
 
-            Section(facts, "firmware");
-            Line(facts, "vendor", s.Firmware.Vendor + " rev " + s.Firmware.Revision.ToString());
-            Line(facts, "boot medium", s.Firmware.BootMedium);
-
-            Section(facts, "cpu");
-            Line(facts, "vendor", s.Cpu.Vendor);
-            Line(facts, "processors", s.Cpu.Processors.ToString());
-            Line(facts, "sse4.1 / avx / fma", YesNo(s.Cpu.Sse41) + " / " + YesNo(s.Cpu.Avx) + " / " + YesNo(s.Cpu.Fma));
-
-            Section(facts, "memory");
-            Line(facts, "total", s.Memory.TotalMiB.ToString() + " MiB");
-            Line(facts, "free", s.Memory.FreeMiB.ToString() + " MiB");
-
-            Section(facts, "storage");
-            if (s.Storage.Length == 0) Line(facts, "volume", "none");
+            var storage = new List<string>();
             foreach (StorageFacts d in s.Storage)
-                Line(facts, d.Kind, d.Mounted ? "mounted, " + d.FileSystem : "not mounted");
+                storage.Add(d.Mounted ? d.Kind + " " + d.FileSystem : d.Kind + " not mounted");
+            Line(facts, "storage", storage.Count == 0 ? "none" : string.Join(", ", storage));
 
-            Section(facts, "input");
+            var input = new List<string>();
             foreach (InputFacts i in s.Input)
-                Line(facts, i.Kind, i.Present ? "present" : "absent");
+                if (i.Present) input.Add(i.Kind);
+            Line(facts, "input", input.Count == 0 ? "none" : string.Join(", ", input));
 
-            Section(facts, "display");
-            Line(facts, "framebuffer", s.Display.Present
-                ? s.Display.Width.ToString() + "x" + s.Display.Height.ToString() + ", stride " + s.Display.Stride.ToString()
-                  + (s.Display.WriteCombining ? ", write-combining" : "")
+            Line(facts, "display", s.Display.Present
+                ? s.Display.Width.ToString() + "x" + s.Display.Height.ToString() + (s.Display.WriteCombining ? ", write-combining" : "")
                 : "none");
-
-            Section(facts, "timers");
-            Line(facts, "hpet", s.Timers.HpetHz == 0 ? "none" : (s.Timers.HpetHz / 1000000).ToString() + " MHz");
-            Line(facts, "apic timer", YesNo(s.Timers.ApicTimer));
-
-            Section(facts, "bus");
-            Line(facts, "pci devices", s.Bus.PciDevices.ToString());
-            Line(facts, "xhci controllers", s.Bus.XhciControllers.ToString());
-            Line(facts, "usb devices", s.Bus.UsbDevices.ToString());
-            Line(facts, "msi sources", s.Bus.MsiSources.ToString());
-
-            Section(facts, "power");
-            Line(facts, "acpi power off", YesNo(s.Power.PowerOff));
+            Line(facts, "timers", (s.Timers.HpetHz == 0 ? "no hpet" : "hpet " + (s.Timers.HpetHz / 1000000).ToString() + " MHz")
+                                  + (s.Timers.ApicTimer ? ", apic" : ""));
+            Line(facts, "bus", "pci " + s.Bus.PciDevices.ToString() + ", xhci " + s.Bus.XhciControllers.ToString()
+                               + ", usb " + s.Bus.UsbDevices.ToString() + ", msi " + s.Bus.MsiSources.ToString());
+            Line(facts, "power", s.Power.PowerOff ? "acpi power off" : "no acpi power off");
             return facts;
         }
 
-        private static string YesNo(bool value) => value ? "yes" : "no";
+        // The names that are there, by commas; a leading one when the last is the separator.
+        private static string Join(string a, string b, string c, string lead = null)
+        {
+            var parts = new List<string>();
+            if (a != null) parts.Add(a);
+            if (b != null) parts.Add(b);
+            if (c != null) parts.Add(c);
+            if (lead != null) return parts.Count == 0 ? "" : lead + string.Join(", ", parts);
+            return string.Join(", ", parts);
+        }
 
-        private static void Section(List<string> facts, string name)
-            => facts.Add("\u001b[36m" + name + "\u001b[0m");
+        private const int NameWidth = 9;
 
         private static void Line(List<string> facts, string name, string value)
-            => facts.Add("  " + name + new string(' ', Math.Max(1, 20 - name.Length)) + (value ?? ""));
+            => facts.Add("\u001b[36m" + name + "\u001b[0m" + new string(' ', NameWidth - name.Length) + value);
+
+        // A line no wider than the room left of the panel; escapes take no room.
+        private static string Fit(string line, int room)
+        {
+            if (room <= 0) return line;
+            int shown = 0, cut = 0;
+            for (int i = 0; i < line.Length; i++)
+            {
+                if (line[i] == '\u001b')
+                {
+                    while (i < line.Length && line[i] != 'm') i++;
+                    continue;
+                }
+                if (++shown > room) return line.Substring(0, cut) + "…\u001b[0m";
+                if (shown < room) cut = i + 1;
+            }
+            return line;
+        }
 
         // A property rather than a static field with an initialiser: no class
         // constructor needed.

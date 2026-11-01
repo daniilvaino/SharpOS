@@ -25,5 +25,6 @@
     <Compile Include="LineReader.cs" />
     <Compile Include="ReadLineConsole.cs" />
     <Compile Include="Completion.cs" />
+    <Compile Include="Inspector.cs" />
   </ItemGroup>
 </Project>
