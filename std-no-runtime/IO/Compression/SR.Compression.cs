@@ -5,7 +5,6 @@ namespace System
 {
     internal static partial class SR
     {
-        internal const string ArgumentOutOfRange_Enum = @"Enum value was out of legal range.";
         internal const string CannotReadFromDeflateStream = @"Reading from the compression stream is not supported.";
         internal const string CannotWriteToDeflateStream = @"Writing to the compression stream is not supported.";
         internal const string GenericInvalidData = @"Found invalid data while decoding.";

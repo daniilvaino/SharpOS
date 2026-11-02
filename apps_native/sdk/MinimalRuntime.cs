@@ -31,6 +31,9 @@ namespace System
 
         public virtual bool Equals(object obj) => ReferenceEquals(this, obj);
 
+        // BCL's: a shallow copy of this object (std/Runtime/MemberwiseClone.cs).
+        protected object MemberwiseClone() => SharpOS.Std.ObjectCloning.MemberwiseClone(this);
+
         public virtual int GetHashCode()
         {
             object self = this;
@@ -646,6 +649,13 @@ namespace System
             isEnabled = false;
             return false;
         }
+
+        // Nor any data: null, as BCL answers for a name nothing set.
+        public static object? GetData(string name)
+        {
+            if (name == null) throw new ArgumentNullException(nameof(name));
+            return null;
+        }
     }
 
     namespace Runtime.CompilerServices
@@ -695,6 +705,10 @@ namespace System
             // at its exact instantiation. The ported number formatter's
             // IUtfChar<TChar> (char/byte) is the first user.
             public const string VirtualStaticsInInterfaces = nameof(VirtualStaticsInInterfaces);
+
+            // NativeAOT's answers: no code is generated at run time.
+            public static bool IsDynamicCodeSupported => false;
+            public static bool IsDynamicCodeCompiled => false;
         }
     }
 }

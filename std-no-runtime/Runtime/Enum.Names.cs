@@ -63,5 +63,32 @@ namespace System
             result = null;
             return false;
         }
+
+        // Upstream's internal TryFormatUnconstrained (Enum.cs), which the UTF-8 interpolated
+        // string handler calls. SharpOS: by number — no member names here, as above.
+        internal static unsafe bool TryFormatUnconstrained<TEnum>(TEnum value, Span<char> destination, out int charsWritten, ReadOnlySpan<char> format = default)
+        {
+            _ = format;
+            TypeCode code = Type.GetTypeCode(typeof(TEnum));
+            ref byte raw = ref System.Runtime.CompilerServices.Unsafe.As<TEnum, byte>(ref value);
+            string text = code switch
+            {
+                TypeCode.SByte => System.Runtime.CompilerServices.Unsafe.As<byte, sbyte>(ref raw).ToString(),
+                TypeCode.Byte => raw.ToString(),
+                TypeCode.Int16 => System.Runtime.CompilerServices.Unsafe.As<byte, short>(ref raw).ToString(),
+                TypeCode.UInt16 => System.Runtime.CompilerServices.Unsafe.As<byte, ushort>(ref raw).ToString(),
+                TypeCode.Int32 => System.Runtime.CompilerServices.Unsafe.As<byte, int>(ref raw).ToString(),
+                TypeCode.UInt32 => System.Runtime.CompilerServices.Unsafe.As<byte, uint>(ref raw).ToString(),
+                TypeCode.Int64 => System.Runtime.CompilerServices.Unsafe.As<byte, long>(ref raw).ToString(),
+                _ => System.Runtime.CompilerServices.Unsafe.As<byte, ulong>(ref raw).ToString(),
+            };
+            if (text.AsSpan().TryCopyTo(destination))
+            {
+                charsWritten = text.Length;
+                return true;
+            }
+            charsWritten = 0;
+            return false;
+        }
     }
 }

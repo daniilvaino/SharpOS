@@ -50,6 +50,13 @@ namespace System
                 case ExceptionArgument.factor: return "factor";
                 case ExceptionArgument.divisor: return "divisor";
                 case ExceptionArgument.values: return "values";
+                case ExceptionArgument.match: return "match";
+                case ExceptionArgument.byteCount: return "byteCount";
+                case ExceptionArgument.byteIndex: return "byteIndex";
+                case ExceptionArgument.bytes: return "bytes";
+                case ExceptionArgument.charCount: return "charCount";
+                case ExceptionArgument.charIndex: return "charIndex";
+                case ExceptionArgument.chars: return "chars";
                 default: return "";
             }
         }
@@ -90,6 +97,13 @@ namespace System
         factor,         // TimeSpan
         divisor,        // TimeSpan
         values,         // MemoryExtensions SearchValues overloads
+        match,          // List.TrueForAll
+        byteCount,      // encodings
+        byteIndex,
+        bytes,
+        charCount,
+        charIndex,
+        chars,
     }
 
     internal static partial class SR

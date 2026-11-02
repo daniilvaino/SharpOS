@@ -1,0 +1,21 @@
+<Project>
+
+  <!-- System.Text.Encoding.CodePages (dotnet/runtime v8.0.27): every code page
+       .NET knows — Windows-125x, DOS (437, 866), ISO-8859-x, KOI8, Shift-JIS,
+       GB18030, EUC, ISO-2022, ISCII — through CodePagesEncodingProvider and
+       Encoding.RegisterProvider, over std's BCL Encoding. codepages.nlp (612 KB)
+       is embedded under its upstream name. What is changed and why: README.md
+       beside this.
+
+       Opt-in, app tier: the table is 612 KB of every image that takes it. -->
+
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)**\*.cs" Link="std\Text\CodePages\%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)Data\codepages.nlp" LogicalName="codepages.nlp" />
+  </ItemGroup>
+
+</Project>

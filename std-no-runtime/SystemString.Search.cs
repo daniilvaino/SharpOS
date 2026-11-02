@@ -22,6 +22,47 @@ namespace System
 {
     public sealed partial class String
     {
+        // ---- ranged searches, as the BCL (step232: AvaloniaEdit's
+        // StringTextSource): over spans, the range checked as String.Searching.cs does ----
+
+        public int IndexOf(char value, int startIndex, int count)
+        {
+            if ((uint)startIndex > (uint)Length) throw new ArgumentOutOfRangeException(nameof(startIndex), "Index was out of range. Must be non-negative and less than or equal to the size of the collection.");
+            if ((uint)count > (uint)(Length - startIndex)) throw new ArgumentOutOfRangeException(nameof(count), "Count must be positive and count must refer to a location within the string/array/collection.");
+            int result = this.AsSpan(startIndex, count).IndexOf(value);
+            return result < 0 ? result : result + startIndex;
+        }
+
+        public int IndexOfAny(char[] anyOf, int startIndex, int count)
+        {
+            if (anyOf == null) throw new ArgumentNullException(nameof(anyOf));
+            if ((uint)startIndex > (uint)Length) throw new ArgumentOutOfRangeException(nameof(startIndex), "Index was out of range. Must be non-negative and less than or equal to the size of the collection.");
+            if ((uint)count > (uint)(Length - startIndex)) throw new ArgumentOutOfRangeException(nameof(count), "Count must be positive and count must refer to a location within the string/array/collection.");
+            int result = this.AsSpan(startIndex, count).IndexOfAny((ReadOnlySpan<char>)anyOf);
+            return result < 0 ? result : result + startIndex;
+        }
+
+        public int IndexOf(string value, int startIndex, int count, StringComparison comparisonType)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if ((uint)startIndex > (uint)Length) throw new ArgumentOutOfRangeException(nameof(startIndex), "Index was out of range. Must be non-negative and less than or equal to the size of the collection.");
+            if ((uint)count > (uint)(Length - startIndex)) throw new ArgumentOutOfRangeException(nameof(count), "Count must be positive and count must refer to a location within the string/array/collection.");
+            int result = this.AsSpan(startIndex, count).IndexOf(value.AsSpan(), comparisonType);
+            return result < 0 ? result : result + startIndex;
+        }
+
+        // The BCL's window: count characters ending at startIndex.
+        public int LastIndexOf(string value, int startIndex, int count, StringComparison comparisonType)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (Length == 0 && (startIndex == -1 || startIndex == 0)) return value.Length == 0 ? 0 : -1;
+            if ((uint)startIndex >= (uint)Length) throw new ArgumentOutOfRangeException(nameof(startIndex), "Index was out of range. Must be non-negative and less than the size of the collection.");
+            if (count < 0 || startIndex - count + 1 < 0) throw new ArgumentOutOfRangeException(nameof(count), "Count must be positive and count must refer to a location within the string/array/collection.");
+            int start = startIndex - count + 1;
+            int result = this.AsSpan(start, count).LastIndexOf(value.AsSpan(), comparisonType);
+            return result < 0 ? result : result + start;
+        }
+
         public bool Contains(string value, StringComparison comparisonType)
         {
             if (value == null) throw new ArgumentNullException(nameof(value));

@@ -1,0 +1,1239 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:399c4231-5af8-4294-ae59-56a14381be31",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-11-02T12:00:00+02:00",
+    "component": {
+      "type": "operating-system",
+      "bom-ref": "sharpos",
+      "name": "SharpOS",
+      "version": "0.1.0-dev",
+      "description": "Unikernel in C# (NativeAOT + NoStdLib, UEFI). Third-party code is vendored as source: this file is the list of it, kept by hand beside README «Вендоринг и библиотеки» and each vendor/<name>/PROVENANCE.md.",
+      "licenses": [
+        {
+          "license": {
+            "id": "CC0-1.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/daniilvaino/SharpOS",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/daniilvaino/SharpOS"
+        }
+      ]
+    },
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "Microsoft.DotNet.ILCompiler",
+          "version": "8.0.27",
+          "purl": "pkg:nuget/Microsoft.DotNet.ILCompiler@8.0.27",
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT"
+              }
+            }
+          ],
+          "description": "NativeAOT compiler of the kernel and apps (toolchain.json ilcompilerNet8)."
+        },
+        {
+          "type": "application",
+          "name": ".NET SDK",
+          "version": "10.0.105",
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT"
+              }
+            }
+          ],
+          "description": "Roslyn (C# 14) and MSBuild; the exact version is the fork's (toolchain.json)."
+        },
+        {
+          "type": "application",
+          "name": "LLVM",
+          "version": "22.1.8",
+          "licenses": [
+            {
+              "expression": "Apache-2.0 WITH LLVM-exception"
+            }
+          ],
+          "description": "clang-cl, lld-link, llvm-lib, llvm-rc: the fork and the link of the kernel."
+        },
+        {
+          "type": "application",
+          "name": "JWasm",
+          "version": "2.21",
+          "licenses": [
+            {
+              "license": {
+                "name": "Sybase Open Watcom Public License 1.0"
+              }
+            }
+          ],
+          "description": "Assembler of the fork's MASM sources.",
+          "externalReferences": [
+            {
+              "type": "vcs",
+              "url": "https://github.com/Baron-von-Riedesel/JWasm"
+            }
+          ]
+        },
+        {
+          "type": "library",
+          "name": "Microsoft.CodeAnalysis.CSharp",
+          "version": "4.8.0",
+          "purl": "pkg:nuget/Microsoft.CodeAnalysis.CSharp@4.8.0",
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT"
+              }
+            }
+          ],
+          "description": "Roslyn API of the source generators in generators/."
+        },
+        {
+          "type": "application",
+          "name": "Json.Generator",
+          "description": "System.Text.Json source generator from dotnet-runtime-sharpos (commit 47abec00), generators/Json.Generator: its output is compiled into apps.",
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT"
+              }
+            }
+          ]
+        },
+        {
+          "type": "application",
+          "name": "Regex.Generator",
+          "description": "System.Text.RegularExpressions source generator from dotnet-runtime-sharpos (commit 47abec00), generators/Regex.Generator: its output is compiled into apps.",
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "sharpos:scope-note",
+        "value": "Only what goes into the boot image (kernel, std of both tiers, apps on the ESP). The sample, test and Mac projects inside vendor/Terminal.Gui and vendor/XtermSharp, and their NuGet references, are not built and not listed."
+      },
+      {
+        "name": "sharpos:payloads-note",
+        "value": "payloads/ (game WADs, NES cartridges) are supplied by the user and are not part of SharpOS."
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "framework",
+      "bom-ref": "dotnet-runtime-sharpos",
+      "name": "dotnet-runtime-sharpos",
+      "version": "10.0.8+sharpos.47abec00",
+      "description": "Fork of dotnet/runtime: CoreCLR linked statically into the kernel (hosted tier) and the libraries of the hosted runtime on the ESP.",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/daniilvaino/dotnet-runtime-sharpos"
+        }
+      ],
+      "pedigree": {
+        "ancestors": [
+          {
+            "type": "framework",
+            "name": "dotnet/runtime",
+            "version": "10.0.8",
+            "purl": "pkg:github/dotnet/runtime@v10.0.8"
+          }
+        ],
+        "commits": [
+          {
+            "uid": "47abec00311f27dd9b1f084def6b8061ef5cd8f7",
+            "url": "https://github.com/daniilvaino/dotnet-runtime-sharpos/commit/47abec00311f27dd9b1f084def6b8061ef5cd8f7"
+          }
+        ],
+        "notes": "Tag v10.0.8 plus 40 commits: upstream servicing cherry-picks and the SharpOS PAL (TARGET_SHARPOS)."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "dotnet-runtime-sharpos/ (kernel with CoreCLR, hosted runtime)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "dotnet-corelib-ports",
+      "name": "dotnet/runtime System.Private.CoreLib (ports)",
+      "version": "8.0.27",
+      "description": "BCL types ported into std-no-runtime (collections, strings, numbers, encodings, vectors and intrinsics, exceptions) and NativeAOT runtime helpers ported into the kernel; cuts are listed in each file's header.",
+      "licenses": [
+        {
+          "expression": "MIT AND CC-BY-SA-4.0"
+        }
+      ],
+      "pedigree": {
+        "notes": "Copied file by file and cut; not a build of the upstream assembly. std-no-runtime/Runtime/Intrinsics/Vector128.cs and Vector256.cs carry a Stack Overflow snippet (CC BY-SA 4.0), as upstream. Notices: std-no-runtime/THIRD-PARTY-NOTICES-dotnet-runtime.TXT."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "std-no-runtime/, OS/src/"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dotnet/runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "System.Text.Json",
+      "version": "10.0.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:nuget/System.Text.Json@10.0.8",
+      "pedigree": {
+        "ancestors": [
+          {
+            "type": "framework",
+            "name": "dotnet-runtime-sharpos",
+            "purl": "pkg:github/daniilvaino/dotnet-runtime-sharpos@47abec00311f27dd9b1f084def6b8061ef5cd8f7"
+          }
+        ],
+        "notes": "Every .NETCoreApp compile item of the library; cuts in std-no-runtime/Text/Json/README.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "std-no-runtime/Text/Json/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "System.Text.Encodings.Web",
+      "version": "10.0.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:nuget/System.Text.Encodings.Web@10.0.8",
+      "pedigree": {
+        "notes": "From dotnet-runtime-sharpos; cuts in std-no-runtime/Text/Json/README.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "std-no-runtime/Text/Encodings.Web/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "System.IO.Pipelines",
+      "version": "10.0.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:nuget/System.IO.Pipelines@10.0.8",
+      "pedigree": {
+        "notes": "From dotnet-runtime-sharpos; cuts in std-no-runtime/Text/Json/README.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "std-no-runtime/IO/Pipelines/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "System.Text.RegularExpressions",
+      "version": "10.0.8",
+      "description": "Interpreter and NonBacktracking engine; part of the shared framework upstream, no package of its own.",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "pedigree": {
+        "notes": "From dotnet-runtime-sharpos; cuts in std-no-runtime/Text/RegularExpressions/README.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "std-no-runtime/Text/RegularExpressions/"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dotnet/runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "System.Private.Xml",
+      "version": "10.0.8",
+      "description": "XmlReader and XmlConvert; part of the shared framework upstream, no package of its own.",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "pedigree": {
+        "notes": "From dotnet-runtime-sharpos; reader only (no DTD, validation, XmlWriter, async); cuts in std-no-runtime/Xml/README.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "std-no-runtime/Xml/ (apps, opt-in)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dotnet/runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "System.Collections.Immutable",
+      "version": "10.0.8",
+      "description": "ImmutableStack<T> only.",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "pedigree": {
+        "notes": "From dotnet-runtime-sharpos; [DebuggerTypeProxy] cut; std-no-runtime/Collections/Immutable/Immutable.SharpOS.cs."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "std-no-runtime/Collections/Immutable/ (std, both tiers)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dotnet/runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "System.Text.Encoding.CodePages",
+      "version": "8.0.27",
+      "description": "Code page encodings and codepages.nlp, from the runtime tree at v8.0.27 (the 8.0 package itself is 8.0.0).",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "pedigree": {
+        "notes": "Private types renamed CodePages*, ReaderWriterLockSlim replaced by a Monitor lock: std-no-runtime/Text/CodePages/README.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "std-no-runtime/Text/CodePages/"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dotnet/runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "referencesource RijndaelManagedTransform",
+      "description": "AES core from .NET Framework: .NET 8 has no managed AES.",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "std-no-runtime/Security/Cryptography/"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/microsoft/referencesource"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "sharpcompress",
+      "name": "SharpCompress",
+      "version": "0.50.7",
+      "supplier": {
+        "name": "Adam Hathcock"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:nuget/SharpCompress@0.50.7",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/adamhathcock/sharpcompress"
+        }
+      ],
+      "pedigree": {
+        "commits": [
+          {
+            "uid": "b4af8afe6683d019d504954a3b4e4f18b06e2cd6"
+          }
+        ],
+        "notes": "src/SharpCompress at tag 0.50.7; cuts in vendor/SharpCompress/PROVENANCE.md. Not MIT throughout: DotNetZip (MS-PL), JZlib (BSD-3-Clause) and zlib parts inside, found by ScanCode (step229)."
+      },
+      "components": [
+        {
+          "type": "library",
+          "name": "ZstdSharp",
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT"
+              }
+            }
+          ],
+          "description": "Inside SharpCompress, as upstream ships it."
+        },
+        {
+          "type": "library",
+          "name": "XZ.NET",
+          "supplier": {
+            "name": "sambott"
+          },
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT"
+              }
+            }
+          ],
+          "description": "Inside SharpCompress, as upstream ships it; license per its repository.",
+          "externalReferences": [
+            {
+              "type": "vcs",
+              "url": "https://github.com/sambott/XZ.NET"
+            }
+          ]
+        },
+        {
+          "type": "library",
+          "name": "managed-lzma",
+          "supplier": {
+            "name": "weltkante"
+          },
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT"
+              }
+            }
+          ],
+          "description": "Inside SharpCompress, as upstream ships it; license per its repository.",
+          "externalReferences": [
+            {
+              "type": "vcs",
+              "url": "https://github.com/weltkante/managed-lzma"
+            }
+          ]
+        },
+        {
+          "type": "library",
+          "name": "Bouncy Castle (parts)",
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT"
+              }
+            }
+          ],
+          "description": "Inside SharpCompress, as upstream ships it."
+        },
+        {
+          "type": "library",
+          "name": "DotNetZip (Ionic.Zlib)",
+          "supplier": {
+            "name": "Dino Chiesa and Microsoft Corporation"
+          },
+          "licenses": [
+            {
+              "license": {
+                "id": "MS-PL"
+              }
+            }
+          ],
+          "description": "src/Compressors/Deflate/*: the MS-PL text is vendor/SharpCompress/LICENSE-MS-PL.txt."
+        },
+        {
+          "type": "library",
+          "name": "JZlib",
+          "supplier": {
+            "name": "ymnk, JCraft, Inc."
+          },
+          "licenses": [
+            {
+              "license": {
+                "id": "BSD-3-Clause"
+              }
+            }
+          ],
+          "description": "Parts of src/Compressors/Deflate/* (Inflate, InfTree, Tree, Zlib, ZlibCodec, ZlibConstants, DeflateManager); notice in the file headers."
+        },
+        {
+          "type": "library",
+          "name": "zlib",
+          "supplier": {
+            "name": "Jean-loup Gailly and Mark Adler"
+          },
+          "licenses": [
+            {
+              "license": {
+                "id": "Zlib"
+              }
+            }
+          ],
+          "description": "Notices in src/Compressors/Deflate/* and src/Compressors/Deflate64/InflaterManaged.cs (the latter MIT from .NET, derived from zlib)."
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/SharpCompress/ (apps: System.IO.Compression over its zlib)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "Iced",
+      "version": "1.21.0",
+      "supplier": {
+        "name": "icedland"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:nuget/Iced@1.21.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/icedland/iced"
+        }
+      ],
+      "pedigree": {
+        "notes": "C# tree src/csharp/Intel/Iced at v1.21.0 (matched by file hashes), NO_EVEX."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/Iced/ (kernel: run-time assembler; build: BootAsm.Generator)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "PeNet",
+      "version": "6.1.2",
+      "supplier": {
+        "name": "Stefan Hausotte"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:nuget/PeNet@6.1.2",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/secana/PeNet"
+        }
+      ],
+      "pedigree": {
+        "commits": [
+          {
+            "uid": "3bcbdc92f9"
+          }
+        ],
+        "notes": "main snapshot 2026-07-15 (3bcbdc92f9): library sources as at v6.1.2, only PeNet.csproj differs; cuts in vendor/PeNet/PROVENANCE.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/PeNet/ (kernel: app loader)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "Terminal.Gui",
+      "version": "1.19.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:nuget/Terminal.Gui@1.19.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tui-cs/Terminal.Gui"
+        }
+      ],
+      "pedigree": {
+        "commits": [
+          {
+            "uid": "79e2d14b"
+          }
+        ],
+        "notes": "Library only (vendor/Terminal.Gui/Terminal.Gui); NStack cut. vendor/Terminal.Gui/PROVENANCE.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/Terminal.Gui/Terminal.Gui/ (launcher)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "Terminal.Gui.Editor",
+      "version": "b33bf48e",
+      "description": "Syntax highlighting (AvaloniaEdit's engine, .xshd loader and definitions) for EDIT; the v2 Editor view is not compiled.",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tui-cs/Editor"
+        }
+      ],
+      "pedigree": {
+        "commits": [
+          {
+            "uid": "b33bf48e01c80654e6b695e782b0733fbeb29204"
+          }
+        ],
+        "ancestors": [
+          {
+            "type": "library",
+            "name": "AvaloniaEdit",
+            "licenses": [
+              {
+                "license": {
+                  "id": "MIT"
+                }
+              }
+            ],
+            "externalReferences": [
+              {
+                "type": "vcs",
+                "url": "https://github.com/AvaloniaUI/AvaloniaEdit"
+              }
+            ]
+          }
+        ],
+        "notes": "src/Terminal.Gui.Editor snapshot 2026-09-11; vendor/TuiEditor/PROVENANCE.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/TuiEditor/ (EDIT)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "XtermSharp",
+      "version": "1bed529",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "pedigree": {
+        "ancestors": [
+          {
+            "type": "library",
+            "name": "XtermSharp",
+            "purl": "pkg:github/migueldeicaza/XtermSharp"
+          }
+        ],
+        "notes": "Our fork, git subtree --squash; vendor/XtermSharp/PROVENANCE.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/XtermSharp/XtermSharp/ (terminal emulator)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/daniilvaino/XtermSharp"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ReadLine",
+      "version": "9665e3149b8b0614c66729ca5ca6eba6055e70f9",
+      "supplier": {
+        "name": "Toni Solarin-Sodara"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/ReadLine/ (shell line editor)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tonerdo/readline"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "TurboXml",
+      "version": "2.1.0",
+      "supplier": {
+        "name": "Alexandre Mutel"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:nuget/TurboXml@2.1.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/xoofx/TurboXml"
+        }
+      ],
+      "pedigree": {
+        "commits": [
+          {
+            "uid": "191fa69e89"
+          }
+        ],
+        "notes": "main snapshot 2026-08-21 = tag 2.1.0."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/TurboXml/ (std, both tiers)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ShellSyntaxTree",
+      "version": "0.3.5",
+      "supplier": {
+        "name": "Aaron Stannard"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:nuget/ShellSyntaxTree@0.3.5",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Aaronontheweb/ShellSyntaxTree"
+        }
+      ],
+      "pedigree": {
+        "commits": [
+          {
+            "uid": "c8515de2962f825178da10236fdf610f5f7393ec"
+          }
+        ],
+        "notes": "Submodule vendor/ShellSyntaxTree/upstream."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/ShellSyntaxTree/ (shell)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "Microsoft.Azure.Kusto.Language",
+      "version": "12.4.1",
+      "supplier": {
+        "name": "Microsoft"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:nuget/Microsoft.Azure.Kusto.Language@12.4.1",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/microsoft/Kusto-Query-Language"
+        }
+      ],
+      "pedigree": {
+        "commits": [
+          {
+            "uid": "6b5c2f7"
+          }
+        ],
+        "notes": "src/Kusto.Language as sources; vendor/KustoLanguage/PROVENANCE.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/KustoLanguage/ (KQL, KQLTEST)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "BabyKusto",
+      "version": "2b9cc3b",
+      "supplier": {
+        "name": "Microsoft"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "components": [
+        {
+          "type": "library",
+          "name": "t-digest-csharp",
+          "version": "5442c5b",
+          "supplier": {
+            "name": "Heath Milligan"
+          },
+          "licenses": [
+            {
+              "license": {
+                "id": "MIT"
+              }
+            }
+          ],
+          "externalReferences": [
+            {
+              "type": "vcs",
+              "url": "https://github.com/Cyral/t-digest-csharp"
+            }
+          ]
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/BabyKusto/ (KQL, KQLTEST)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/davidnx/baby-kusto-csharp"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "Lua-CSharp",
+      "version": "a97aac88c4de9abbeb412abbecdd34846e41eea7",
+      "supplier": {
+        "name": "Yusuke Nakada"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/LuaCSharp/ (LUA)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/nuskey8/Lua-CSharp"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "Okojo",
+      "version": "478ec2d34df6f880e6e8fb2439419cb82c677c19",
+      "supplier": {
+        "name": "Akito Inoue"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "pedigree": {
+        "notes": "Adapts parts of .NET runtime v10.0.12 (MIT); vendor/Okojo/THIRD_PARTY_NOTICES.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/Okojo/ (JS)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/akeit0/okojo"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "json2dir-aot",
+      "version": "d1515c6fd1754e058c0f33219346a8afa2ddc487",
+      "supplier": {
+        "name": "json2dir-guru"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/json2dir/ (JSON2DIR)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/json2dir-guru/json2dir-aot"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "SharpLibm",
+      "version": "dd70337b36b3280677c397a3b56b5915476d9b07",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "pedigree": {
+        "notes": "Built on CORE-MATH and others: SharpLibm/THIRD-PARTY-NOTICES.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "SharpLibm/ (submodule; Math/MathF of kernel and apps)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/daniilvaino/SharpLibm"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "MOOS drivers",
+      "supplier": {
+        "name": "nifanfa"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "Unlicense"
+          }
+        }
+      ],
+      "pedigree": {
+        "notes": "AHCI, Disk, PCI(Express), CP437 glyphs, adapted to the HAL."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "OS/src/Hal/{Ahci,Disk,Pci,FontCp437.Glyphs}.cs"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/nifanfa/MOOS"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "name": "font8x8",
+      "supplier": {
+        "name": "Daniel Hepper"
+      },
+      "licenses": [
+        {
+          "license": {
+            "name": "Public Domain"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "OS/src/Hal/Font8x8.cs"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dhepper/font8x8"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "ManagedDoom",
+      "supplier": {
+        "name": "sinshu"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-2.0-or-later"
+          }
+        }
+      ],
+      "pedigree": {
+        "notes": "Platform-independent core only (src/Doom, Video, UserInput, Audio); a separate app, never linked into the kernel."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "apps_native/GPL_AHEAD_WARNING_DOOM_managed/ (DOOM)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sinshu/managed-doom"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "TriCNES",
+      "version": "3681e1b8fce09a01f279f829a6775a69f244a91c",
+      "supplier": {
+        "name": "Chris Siebert"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "apps_native/TriCNES/TriCNES (submodule)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/100thCoin/TriCNES"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "Fami",
+      "version": "6dd27bd360b8ae48b51a95882f9920ec3e8391f3",
+      "supplier": {
+        "name": "David Khristepher Santos"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "apps_native/Fami/Fami (submodule)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RupertAvery/Fami"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "Microsoft C runtime (libcmt) and Windows SDK libraries",
+      "version": "MSVC 14.44.35220, Windows SDK 10.0.26100",
+      "scope": "optional",
+      "supplier": {
+        "name": "Microsoft"
+      },
+      "licenses": [
+        {
+          "license": {
+            "name": "Microsoft Visual Studio redistributable terms"
+          }
+        }
+      ],
+      "description": "Linked statically into the kernel with CoreCLR only (SharpOsLinkWinSdk); the plain kernel and the apps link no Microsoft library. From an xwin splat (toolchain.json winsdk).",
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "kernel with CoreCLR (OS/OS.csproj, SharpOsNativeLink.props)"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "PowerShell",
+      "version": "7.6.5",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "description": "Put on the ESP only when payloads/pwsh/PowerShell-7.6.5-win-x64 is present; runs on the hosted runtime.",
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "ESP \\pwsh (run_build.ps1)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/PowerShell/PowerShell"
+        }
+      ]
+    }
+  ]
+}

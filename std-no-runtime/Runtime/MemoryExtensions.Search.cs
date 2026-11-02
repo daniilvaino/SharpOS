@@ -194,6 +194,64 @@ namespace System
             return span.Slice(0, end + 1);
         }
 
+        // ---- Trim (a set of characters; empty set — white space), the BCL's
+        // MemoryExtensions.Trim.cs, step230: System.Xml's XmlConvert ----
+
+        public static ReadOnlySpan<char> Trim(this ReadOnlySpan<char> span, ReadOnlySpan<char> trimChars)
+            => span.TrimStart(trimChars).TrimEnd(trimChars);
+
+        public static ReadOnlySpan<char> TrimStart(this ReadOnlySpan<char> span, ReadOnlySpan<char> trimChars)
+        {
+            if (trimChars.IsEmpty)
+            {
+                return span.TrimStart();
+            }
+
+            int start = 0;
+            for (; start < span.Length; start++)
+            {
+                for (int i = 0; i < trimChars.Length; i++)
+                {
+                    if (span[start] == trimChars[i])
+                    {
+                        goto Next;
+                    }
+                }
+
+                break;
+            Next:
+                ;
+            }
+
+            return span.Slice(start);
+        }
+
+        public static ReadOnlySpan<char> TrimEnd(this ReadOnlySpan<char> span, ReadOnlySpan<char> trimChars)
+        {
+            if (trimChars.IsEmpty)
+            {
+                return span.TrimEnd();
+            }
+
+            int end = span.Length - 1;
+            for (; end >= 0; end--)
+            {
+                for (int i = 0; i < trimChars.Length; i++)
+                {
+                    if (span[end] == trimChars[i])
+                    {
+                        goto Next;
+                    }
+                }
+
+                break;
+            Next:
+                ;
+            }
+
+            return span.Slice(0, end + 1);
+        }
+
         // ---- EqualsOrdinalIgnoreCase (internal in the BCL too) ----
 
         internal static bool EqualsOrdinalIgnoreCase(this ReadOnlySpan<char> span, ReadOnlySpan<char> value)
@@ -259,6 +317,54 @@ namespace System
             if ((uint)start > (uint)segment.Count) throw new ArgumentOutOfRangeException(nameof(start));
             if ((uint)length > (uint)(segment.Count - start)) throw new ArgumentOutOfRangeException(nameof(length));
             return new Span<T>(segment.Array!, segment.Offset + start, length);
+        }
+
+        // IndexOfAnyExcept / LastIndexOfAnyExcept over a set of values, and over three
+        // (System.Text.RegularExpressions). Scalar, like the rest of this file.
+        public static int IndexOfAnyExcept<T>(this Span<T> span, T value0, T value1, T value2) where T : IEquatable<T>
+            => IndexOfAnyExcept((ReadOnlySpan<T>)span, value0, value1, value2);
+
+        public static int IndexOfAnyExcept<T>(this ReadOnlySpan<T> span, T value0, T value1, T value2) where T : IEquatable<T>
+        {
+            for (int i = 0; i < span.Length; i++)
+            {
+                if (!value0.Equals(span[i]) && !value1.Equals(span[i]) && !value2.Equals(span[i])) return i;
+            }
+            return -1;
+        }
+
+        public static int IndexOfAnyExcept<T>(this Span<T> span, ReadOnlySpan<T> values) where T : IEquatable<T>
+            => IndexOfAnyExcept((ReadOnlySpan<T>)span, values);
+
+        public static int IndexOfAnyExcept<T>(this ReadOnlySpan<T> span, ReadOnlySpan<T> values) where T : IEquatable<T>
+        {
+            if (values.IsEmpty)
+            {
+                return span.IsEmpty ? -1 : 0;
+            }
+
+            for (int i = 0; i < span.Length; i++)
+            {
+                if (values.IndexOf(span[i]) < 0) return i;
+            }
+            return -1;
+        }
+
+        public static int LastIndexOfAnyExcept<T>(this Span<T> span, ReadOnlySpan<T> values) where T : IEquatable<T>
+            => LastIndexOfAnyExcept((ReadOnlySpan<T>)span, values);
+
+        public static int LastIndexOfAnyExcept<T>(this ReadOnlySpan<T> span, ReadOnlySpan<T> values) where T : IEquatable<T>
+        {
+            if (values.IsEmpty)
+            {
+                return span.Length - 1;
+            }
+
+            for (int i = span.Length - 1; i >= 0; i--)
+            {
+                if (values.IndexOf(span[i]) < 0) return i;
+            }
+            return -1;
         }
     }
 }

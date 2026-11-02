@@ -11,8 +11,8 @@
 //     (BitVector256 lookup) and BitmapCharSearchValues ("This will also match ASCII values when
 //     IndexOfAnyAsciiSearcher is not supported") - which is what the BCL itself selects on hardware
 //     without vector support. Results are identical; only speed differs.
-//   - SharpOS cut: Create(ReadOnlySpan<string>, StringComparison) - SearchValues<string> needs the
-//     Teddy/Aho-Corasick/Rabin-Karp machinery (StringSearchValues), not ported.
+//   - Create(ReadOnlySpan<string>, StringComparison) is upstream's; StringSearchValues (Strings/)
+//     is cut down the same way - see its header.
 //   - SharpOS cut: TryGetSingleRange (generic math: INumber<T>, IMinMaxValue<T> - not in std) and
 //     ShuffleNativeModified (Ssse3) - used only by the cut implementations.
 
@@ -67,6 +67,23 @@ namespace System.Buffers
             // SharpOS cut: Any1/Range/Any2/Any3/Ascii/Any4/Any5/Probabilistic selection - see the file header.
             // This will also match ASCII values when IndexOfAnyAsciiSearcher is not supported.
             return new BitmapCharSearchValues(values, maxInclusive);
+        }
+
+        /// <summary>
+        /// Creates an optimized representation of <paramref name="values"/> used for efficient searching.
+        /// </summary>
+        /// <param name="values">The set of values.</param>
+        /// <param name="comparisonType">Specifies whether to use <see cref="StringComparison.Ordinal"/> or <see cref="StringComparison.OrdinalIgnoreCase"/> search semantics.</param>
+        /// <returns>The optimized representation of <paramref name="values"/> used for efficient searching.</returns>
+        /// <remarks>Only <see cref="StringComparison.Ordinal"/> or <see cref="StringComparison.OrdinalIgnoreCase"/> may be used.</remarks>
+        public static SearchValues<string> Create(ReadOnlySpan<string> values, StringComparison comparisonType)
+        {
+            if (comparisonType is not (StringComparison.Ordinal or StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(SR.Argument_SearchValues_UnsupportedStringComparison, nameof(comparisonType));
+            }
+
+            return StringSearchValues.Create(values, ignoreCase: comparisonType == StringComparison.OrdinalIgnoreCase);
         }
 
         internal interface IRuntimeConst

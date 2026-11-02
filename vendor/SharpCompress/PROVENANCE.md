@@ -4,8 +4,11 @@
 (commit `b4af8afe6683d019d504954a3b4e4f18b06e2cd6`, 2026-10-20), `src/SharpCompress/`.
 **License:** MIT — © Adam Hathcock; `LICENSE.txt` as upstream ships it, which also
 carries the Bouncy Castle (MIT) notice. Parts the upstream README credits:
-Zstandard from ZstdSharp (oleg-st, MIT), XZ from XZ.NET (sambott), 7-Zip from
-managed-lzma.
+Zstandard from ZstdSharp (oleg-st, MIT), XZ from XZ.NET (sambott, MIT), 7-Zip from
+managed-lzma (weltkante, MIT). Not credited there and not MIT: `src/Compressors/Deflate/*`
+is DotNetZip (Dino Chiesa and Microsoft, **MS-PL** — its headers point at a
+"License.txt" upstream does not ship; the text is `LICENSE-MS-PL.txt` here, step229),
+with parts from JZlib (JCraft, BSD-3-Clause) and zlib (Zlib) noticed in the headers.
 **Purpose:** every archive and compression format for SharpOS apps, all managed:
 zip, tar, gzip, bzip2, 7z, xz, lzma, lz, zstd, rar (read), ace, arj, arc and the
 rest. Its zlib is also the zlib under BCL's `System.IO.Compression` here
@@ -29,8 +32,6 @@ All of `src/SharpCompress/**/*.cs` (874 files). Not taken: `SharpCompress.csproj
 |---|---|---|
 | `AssemblyInfo.cs` | `[assembly: CLSCompliant(false)]` | compiled into the app, whose std already declares it — a duplicate is an error |
 | `Common/Ace/Headers/AceFileHeader.cs`, `Compressors/Arj/LhaStream.cs`, `Factories/ArcFactory.cs` | `using System.Xml.Linq;`, `using System.Data;`, `using static System.Net.Mime.MediaTypeNames;` | unused |
-| `Archives/ArchiveVolumeFactory.cs`, `Archives/Rar/RarArchiveVolumeFactory.cs`, `Archives/Zip/ZipArchiveVolumeFactory.cs` | volume names by `Regex`, under `#if SHARPOS_REGEX` | std has no Regex yet (release.md, section 2). Without it the next volume of a multi-volume archive is not found; single-volume archives are unaffected |
-| `Common/ArchiveEncodingExtensions.cs` | `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)`, under `#if SHARPOS_CODEPAGES` | std has no code pages yet (release.md, section 2): names in legacy code pages (CP437 and the like) are read as UTF-8 |
 | `Utility.Async.cs` | `File.OpenHandle` for async file creation, under `#if SHARPOS_FILE_HANDLES` | no `SafeFileHandle` here; the `FileStream` branch upstream keeps for older targets is taken |
 | `Compressors/ZStandard/Unsafe/ZSTD_getAllMatchesFn.cs`, `ZSTD_BlockCompressor_f.cs` | `[UnmanagedFunctionPointer(CallingConvention.Cdecl)]` | the delegates are only called from managed code; the attribute makes ILC emit marshalling stubs, which need NativeAOT's `InteropHelpers` (not ported). std does not declare the attribute, so code that needs marshalling fails to compile instead of crashing ILC |
 

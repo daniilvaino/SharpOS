@@ -11,9 +11,8 @@
 //
 // Cuts vs BCL — **public API drops**, each listed with replacement:
 //
-//  - GetChunks() + ChunkEnumerator + ManyChunkInfo — uses ReadOnlyMemory
-//    <char> which we haven't ported yet. Re-add once ReadOnlyMemory
-//    lands.
+//  - GetChunks() + ChunkEnumerator + ManyChunkInfo — upstream's, in
+//    StringBuilder.Chunks.cs.
 //  - Append(ReadOnlyMemory<char>) — same reason.
 //  - Append(bool)/Append(sbyte/short/...) — BCL routes through
 //    ISpanFormattable.TryFormat. We route to NumberFormatting.* (managed,

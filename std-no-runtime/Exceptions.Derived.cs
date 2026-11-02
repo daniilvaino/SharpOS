@@ -90,6 +90,13 @@ namespace System
             if (argument == null) Throw(null);
         }
 
+        [CLSCompliant(false)]
+        public static unsafe void ThrowIfNull(void* argument, [System.Runtime.CompilerServices.CallerArgumentExpression(nameof(argument))] string paramName = null)
+        {
+            if (argument is null)
+                throw new ArgumentNullException(paramName);
+        }
+
         public static void ThrowIfNull(object argument, string paramName)
         {
             if (argument == null) Throw(paramName);

@@ -1,6 +1,8 @@
 ﻿# PeNet — vendored cut
 
 **Upstream:** https://github.com/secana/PeNet (`PeNet-main/`, snapshot 2026-07-15)
+**Version:** main at `3bcbdc92f9`; the library's sources are as at tag v6.1.2 —
+between the two only `src/PeNet/PeNet.csproj` changed (step229).
 **License:** Apache-2.0 (see [LICENSE](LICENSE)) — © 2017-2026 Stefan Hausotte
 **Purpose:** native PE (Portable Executable) parsing on bare-metal SharpOS,
 first step of the ELF→PE app-migration (donext.md workstream 2).

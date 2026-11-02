@@ -41,11 +41,10 @@
     <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui\Types\**\*.cs" />
 
     <!-- Dialogs and wizards. Not optional: ComboBox names Dialog by type.
-         FileDialog is out — it holds DirectoryInfo, FileSystemInfo and a
-         FileSystemWatcher as fields, and we have a file system but not that
-         API. -->
-    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui\Windows\**\*.cs"
-             Exclude="$(MSBuildThisFileDirectory)Terminal.Gui\Windows\FileDialog.cs" />
+         FileDialog is in since the SDK's file API (step222), its
+         FileSystemWatcher cut (`SharpOS cut:`): the listing is read when a
+         folder is entered. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui\Windows\**\*.cs" />
 
     <!-- Views. Excluded for what they drag in, not for their size: TableView
          wants ADO.NET, TextValidateField wants MaskedTextProvider and Regex,

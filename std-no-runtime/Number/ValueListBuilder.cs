@@ -208,5 +208,12 @@ namespace System.Collections.Generic
                 ArrayPool<T>.Shared.Return(toReturn);
             }
         }
+
+        // ValueListBuilder.Pop.cs upstream.
+        public T Pop()
+        {
+            _pos--;
+            return _span[_pos];
+        }
     }
 }

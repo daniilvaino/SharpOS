@@ -23,7 +23,7 @@ namespace System
 {
     public abstract partial class Array
     {
-        public static T[] Empty<T>() => new T[0];
+        // Empty<T>() is per tier: Array.Empty.App.cs / Array.Empty.Kernel.cs.
 
         /// <summary>The largest length an array may have; BCL value (CoreLib Array.MaxLength).</summary>
         public static int MaxLength => 0x7FFFFFC7;
@@ -349,32 +349,25 @@ namespace System
 
         // ---- Overload surface (matches BCL) ----
 
-        public static void Sort<T>(T[] array) where T : IComparable<T>
-        {
-            if (array == null || array.Length < 2) return;
-            ComparableIntroSort(array, 0, array.Length - 1, 2 * Log2((uint)array.Length));
-        }
+        // No constraint on T, as in the BCL: the elements are compared by
+        // Comparer<T>.Default, which takes IComparable<T> or IComparable
+        // (step230: System.Xml sorts its attribute nodes, which have only the
+        // latter). A null comparer means the default one, as in the BCL.
+        public static void Sort<T>(T[] array) => Sort(array, Comparer<T>.Default);
 
-        public static void Sort<T>(T[] array, int index, int length) where T : IComparable<T>
-        {
-            if (array == null || length < 2) return;
-            if (index < 0 || index + length > array.Length) return;
-            ComparableIntroSort(array, index, index + length - 1, 2 * Log2((uint)length));
-        }
+        public static void Sort<T>(T[] array, int index, int length) => Sort(array, index, length, Comparer<T>.Default);
 
         public static void Sort<T>(T[] array, IComparer<T> comparer)
         {
             if (array == null || array.Length < 2) return;
-            if (comparer == null) return;
-            ComparerIntroSort(array, 0, array.Length - 1, 2 * Log2((uint)array.Length), comparer);
+            ComparerIntroSort(array, 0, array.Length - 1, 2 * Log2((uint)array.Length), comparer ?? Comparer<T>.Default);
         }
 
         public static void Sort<T>(T[] array, int index, int length, IComparer<T> comparer)
         {
             if (array == null || length < 2) return;
             if (index < 0 || index + length > array.Length) return;
-            if (comparer == null) return;
-            ComparerIntroSort(array, index, index + length - 1, 2 * Log2((uint)length), comparer);
+            ComparerIntroSort(array, index, index + length - 1, 2 * Log2((uint)length), comparer ?? Comparer<T>.Default);
         }
 
         // ---- BinarySearch (step198) ----

@@ -202,6 +202,25 @@ namespace System.Threading.Tasks
         public Task<TResult> ContinueWith<TResult>(Func<Task, TResult> continuationFunction, TaskContinuationOptions continuationOptions)
             => ContinueWith(continuationFunction, CancellationToken.None, continuationOptions, TaskScheduler.Current);
 
+        // Task.Run<TResult>(Func<TResult>): the function on the pool, its result or its
+        // exception in the returned task (std's Run(Action) carries the work).
+        public static Task<TResult> Run<TResult>(Func<TResult> function)
+        {
+            ArgumentNullException.ThrowIfNull(function, nameof(function));
+            var next = new Task<TResult>();
+            Task work = Run(() =>
+            {
+                TResult result;
+                try { result = function(); }
+                catch (Exception e) { next.TrySetException(e); return; }
+                next.TrySetResult(result);
+            });
+            if (work.IsFaulted) next.TrySetException(work.Exception!);
+            return next;
+        }
+
+        public static Task<TResult> Run<TResult>(Func<TResult> function, CancellationToken cancellationToken) => Run(function);
+
         public Task<TResult> ContinueWith<TResult>(Func<Task, TResult> continuationFunction, CancellationToken cancellationToken, TaskContinuationOptions continuationOptions, TaskScheduler scheduler)
         {
             ArgumentNullException.ThrowIfNull(continuationFunction, nameof(continuationFunction));

@@ -128,5 +128,15 @@ namespace System.Runtime.InteropServices
                 Halt();
             return new ReadOnlySpan<TTo>(ref Unsafe.As<TFrom, TTo>(ref Unsafe.AsRef(in span._reference)), (int)scaled);
         }
+
+        /// <summary>
+        /// A reference to the 0th element of the span, or a non-null reference to
+        /// unspecified memory when the span is empty — what `fixed` pins (upstream's).
+        /// </summary>
+        internal static unsafe ref T GetNonNullPinnableReference<T>(Span<T> span) =>
+            ref (span.Length != 0) ? ref Unsafe.AsRef(in span._reference) : ref Unsafe.AsRef<T>((void*)1);
+
+        internal static unsafe ref T GetNonNullPinnableReference<T>(ReadOnlySpan<T> span) =>
+            ref (span.Length != 0) ? ref Unsafe.AsRef(in span._reference) : ref Unsafe.AsRef<T>((void*)1);
     }
 }

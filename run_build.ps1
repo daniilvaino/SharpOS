@@ -456,15 +456,66 @@ else {
     Write-Host "Prepared FS write probe: fswrite.bin (512 x 'A')"
 }
 
+# The license texts of the code in the image, one file per component (step229):
+# MIT, BSD, Apache and MS-PL ask for them beside a binary, not only beside the
+# sources. The list follows sbom.cdx.json; a source missing (a submodule not
+# checked out) is said, not fatal.
+$licenceDir = Join-Path $espSharpOSDir "licence"
+if (Test-Path -LiteralPath $licenceDir) { Remove-Item -LiteralPath $licenceDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $licenceDir | Out-Null
+$licences = [ordered]@{
+    'SharpOS.txt'                       = 'LICENSE'
+    'dotnet-runtime.txt'                = 'std-no-runtime\LICENSE-dotnet-runtime.TXT'
+    'dotnet-runtime-notices.txt'        = 'std-no-runtime\THIRD-PARTY-NOTICES-dotnet-runtime.TXT'
+    'referencesource.txt'               = 'std-no-runtime\Security\Cryptography\LICENSE-referencesource.txt'
+    'SharpCompress.txt'                 = 'vendor\SharpCompress\LICENSE.txt'
+    'SharpCompress-DotNetZip-MS-PL.txt' = 'vendor\SharpCompress\LICENSE-MS-PL.txt'
+    'Iced.txt'                          = 'vendor\Iced\LICENSE.txt'
+    'PeNet.txt'                         = 'vendor\PeNet\LICENSE'
+    'TurboXml.txt'                      = 'vendor\TurboXml\LICENSE'
+    'Terminal.Gui.txt'                  = 'vendor\Terminal.Gui\LICENSE'
+    'Terminal.Gui.Editor.txt'           = 'vendor\TuiEditor\LICENSE'
+    'AvaloniaEdit.txt'                  = 'vendor\TuiEditor\LICENSE-AvaloniaEdit.txt'
+    'XtermSharp.txt'                    = 'vendor\XtermSharp\LICENSE'
+    'ReadLine.txt'                      = 'vendor\ReadLine\LICENSE'
+    'ShellSyntaxTree.txt'               = 'vendor\ShellSyntaxTree\upstream\LICENSE'
+    'Kusto.Language.txt'                = 'vendor\KustoLanguage\LICENSE'
+    'BabyKusto.txt'                     = 'vendor\BabyKusto\LICENSE'
+    't-digest.txt'                      = 'vendor\BabyKusto\tdigest\LICENSE'
+    'Lua-CSharp.txt'                    = 'vendor\LuaCSharp\LICENSE'
+    'Okojo.txt'                         = 'vendor\Okojo\LICENSE'
+    'Okojo-notices.md'                  = 'vendor\Okojo\THIRD_PARTY_NOTICES.md'
+    'json2dir.txt'                      = 'vendor\json2dir\LICENSE'
+    'SharpLibm.txt'                     = 'SharpLibm\LICENSE'
+    'SharpLibm-notices.md'              = 'SharpLibm\THIRD-PARTY-NOTICES.md'
+    'MOOS.txt'                          = 'OS\src\Hal\LICENSE-MOOS.txt'
+    'font8x8.txt'                       = 'OS\src\Hal\LICENSE-font8x8.txt'
+    'ManagedDoom-GPL-2.0.txt'           = 'apps_native\GPL_AHEAD_WARNING_DOOM_managed\licenses\LICENSE_ManagedDoom.txt'
+    'TriCNES.txt'                       = 'apps_native\TriCNES\TriCNES\LICENSE'
+    'Fami.txt'                          = 'apps_native\Fami\Fami\LICENSE'
+}
+$licenceCount = 0
+foreach ($entry in $licences.GetEnumerator()) {
+    $source = Join-Path $repoRoot $entry.Value
+    if (Test-Path -LiteralPath $source) {
+        Copy-Item -LiteralPath $source -Destination (Join-Path $licenceDir $entry.Key) -Force
+        $licenceCount++
+    }
+    else {
+        Write-Warning "licence: $($entry.Value) not found - $($entry.Key) is not in the image"
+    }
+}
+Write-Host "Prepared licence texts: \sharpos\licence\ ($licenceCount of $($licences.Count))"
+
 # The rest of \sharpos is the hosted runtime (CoreCLR), staged below.
 # A kernel without CoreCLR (-SkipCoreClr) runs none of it, so \sharpos keeps
-# only the kernel's own two files, and what an earlier full build left there goes.
+# only the kernel's own files, and what an earlier full build left there goes.
 if ($SkipCoreClr) {
-    $kernelFiles = @('bootlog.txt', 'fswrite.bin')
+    $kernelFiles = @('bootlog.txt', 'fswrite.bin', 'licence')
     Get-ChildItem -LiteralPath $espSharpOSDir -Force |
         Where-Object { $_.Name -notin $kernelFiles } |
         Remove-Item -Recurse -Force
-    Write-Host "SkipCoreClr: \sharpos\ holds only bootlog.txt and fswrite.bin"
+    Write-Host "SkipCoreClr: \sharpos\ holds only bootlog.txt, fswrite.bin and licence\"
 }
 else {
     # CoreCLR expects System.Private.CoreLib.dll at path \sharpos\System.Private.CoreLib.dll

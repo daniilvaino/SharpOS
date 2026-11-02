@@ -116,18 +116,6 @@
     <None Include="..\vendor\Iced\Iced.csproj" />
   </ItemGroup>
 
-  <!-- TurboXml (SAX XML parser) vendored cut at vendor/TurboXml/ (sibling to
-       Iced/). BSD-2-Clause — see vendor/TurboXml/LICENSE. Reads the SharpOS
-       record out of an app's manifest resource. The stream-backed character
-       provider is excluded (needs System.IO.Stream and an incremental decoder);
-       a manifest is already in memory when the kernel gets to it. The SIMD
-       paths are NOT cut — our std now carries Vector128/Vector256 and ILC turns
-       them into instructions. See vendor/TurboXml/PROVENANCE.md. -->
-  <ItemGroup>
-    <Compile Include="..\vendor\TurboXml\TurboXml\**\*.cs"
-             LinkBase="TurboXml" />
-  </ItemGroup>
-
   <!-- PeNet (PE parser) vendored cut at vendor/PeNet/ (sibling to Iced/).
        Apache-2.0 — see vendor/PeNet/LICENSE. Native-PE headers +
        imports/exports/base-relocations (via NativeStructureParsers and the

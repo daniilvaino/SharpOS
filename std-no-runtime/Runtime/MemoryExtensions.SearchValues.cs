@@ -9,8 +9,6 @@
 //   ContainsAny / ContainsAnyExcept                                         Span + ReadOnlySpan
 //   ReplaceAny / ReplaceAnyExcept, CountAny
 //
-// SharpOS cut: the SearchValues<string> overloads (IndexOfAny/ContainsAny over
-// SearchValues<string>) - SearchValues.Create(ReadOnlySpan<string>, ...) is not ported.
 // SharpOS cut: SplitAny(SearchValues<T>) - SpanSplitEnumerator<T> is not in std.
 // SharpOS cut: [OverloadResolutionPriority(-1)] on the Span<T> forwarders - attribute not in std;
 // the ReadOnlySpan<T>/Span<T> pairs resolve without it here because no array-typed overloads exist.
@@ -222,5 +220,26 @@ namespace System
 
             return count;
         }
+
+        /// <inheritdoc cref="IndexOfAny(ReadOnlySpan{char}, SearchValues{string})"/>
+        public static int IndexOfAny(this Span<char> span, SearchValues<string> values) =>
+            IndexOfAny((ReadOnlySpan<char>)span, values);
+
+        public static int IndexOfAny(this ReadOnlySpan<char> span, SearchValues<string> values)
+        {
+            if (values is null)
+            {
+                ThrowHelper.ThrowArgumentNullException(ExceptionArgument.values);
+            }
+
+            return values.IndexOfAnyMultiString(span);
+        }
+
+        /// <inheritdoc cref="ContainsAny(ReadOnlySpan{char}, SearchValues{string})"/>
+        public static bool ContainsAny(this Span<char> span, SearchValues<string> values) =>
+            ContainsAny((ReadOnlySpan<char>)span, values);
+
+        public static bool ContainsAny(this ReadOnlySpan<char> span, SearchValues<string> values) =>
+            IndexOfAny(span, values) >= 0;
     }
 }

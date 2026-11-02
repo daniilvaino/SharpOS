@@ -11,7 +11,7 @@ using System.Collections.Generic;
 
 namespace System
 {
-    public abstract class StringComparer : IComparer<string?>, IEqualityComparer<string?>
+    public abstract class StringComparer : System.Collections.IComparer, System.Collections.IEqualityComparer, IComparer<string?>, IEqualityComparer<string?>
     {
         // Factory properties, not cached statics: lazily initialised static
         // reference fields do not work in this environment (limits §1). The
@@ -23,6 +23,56 @@ namespace System
         public static StringComparer InvariantCultureIgnoreCase => new OrdinalComparer(ignoreCase: true);
         public static StringComparer CurrentCulture => new OrdinalComparer(ignoreCase: false);
         public static StringComparer CurrentCultureIgnoreCase => new OrdinalComparer(ignoreCase: true);
+
+        // BCL's non-generic members (StringComparer.cs): Hashtable and the other
+        // non-generic collections take a comparer through them.
+        public int Compare(object? x, object? y)
+        {
+            if (x == y) return 0;
+            if (x == null) return -1;
+            if (y == null) return 1;
+
+            if (x is string sa)
+            {
+                if (y is string sb)
+                {
+                    return Compare(sa, sb);
+                }
+            }
+
+            if (x is IComparable ia)
+            {
+                return ia.CompareTo(y);
+            }
+
+            throw new ArgumentException(SR.Argument_ImplementIComparable);
+        }
+
+        public new bool Equals(object? x, object? y)
+        {
+            if (x == y) return true;
+            if (x == null || y == null) return false;
+
+            if (x is string sa)
+            {
+                if (y is string sb)
+                {
+                    return Equals(sa, sb);
+                }
+            }
+            return x.Equals(y);
+        }
+
+        public int GetHashCode(object obj)
+        {
+            ArgumentNullException.ThrowIfNull(obj);
+
+            if (obj is string s)
+            {
+                return GetHashCode(s);
+            }
+            return obj.GetHashCode();
+        }
 
         public abstract int Compare(string? x, string? y);
         public abstract bool Equals(string? x, string? y);

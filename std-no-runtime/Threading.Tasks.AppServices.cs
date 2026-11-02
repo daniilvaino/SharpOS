@@ -31,9 +31,7 @@ namespace SharpOS.AppSdk
         /// </summary>
         public static bool Install()
         {
-            // The clock does not need threads: Environment.TickCount from the
-            // counter the kernel hands over (zero without HPET, as Stopwatch).
-            ThreadBackend.InstallClock(&Milliseconds);
+            InstallClock();
 
             if (!AppThreads.IsAvailable) return false;
 
@@ -57,6 +55,13 @@ namespace SharpOS.AppSdk
 
             return true;
         }
+
+        /// <summary>
+        /// The clock does not need threads: Environment.TickCount from the
+        /// counter the kernel hands over (zero without HPET, as Stopwatch).
+        /// AppRuntime.Initialize calls it for every app.
+        /// </summary>
+        public static void InstallClock() => ThreadBackend.InstallClock(&Milliseconds);
 
         private static long Milliseconds()
         {

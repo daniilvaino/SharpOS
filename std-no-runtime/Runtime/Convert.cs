@@ -34,7 +34,17 @@ namespace System
 
         public static double ToDouble(object value) => value == null ? 0 : (double)ChangeType(value, typeof(double));
 
+        public static double ToDouble(object value, IFormatProvider provider) => value == null ? 0 : (double)ChangeType(value, typeof(double), provider);
+
         public static string ToString(object value) => value == null ? string.Empty : value.ToString() ?? string.Empty;
+
+        // As the BCL, less IConvertible (std has none): IFormattable formats with
+        // the provider, anything else by its ToString (step230: XmlConvert).
+        public static string ToString(object value, IFormatProvider provider)
+        {
+            if (value is IFormattable formattable) return formattable.ToString(null, provider);
+            return value == null ? string.Empty : value.ToString() ?? string.Empty;
+        }
 
         public static object ChangeType(object value, Type conversionType) => ChangeType(value, conversionType, null);
 

@@ -1,6 +1,8 @@
 # Iced — vendored cut
 
 **Upstream:** https://github.com/icedland/iced (C# tree, `src/csharp/Intel/Iced/`)
+**Version:** v1.21.0 — found later by file hashes (step229): `BlockEncoderInternal/Instr.cs`
+is as from 1.21.0, `FormatterOptions.cs` as before 1.22.0.
 **License:** MIT (see [LICENSE.txt](LICENSE.txt)) — © iced project
 **Purpose:** emitting x86-64 machine code from C#, which is how this project
 writes assembly at all: the language rule says no `.asm` in the tree, so an

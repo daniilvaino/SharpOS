@@ -219,7 +219,6 @@ namespace System.Runtime.Intrinsics
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector512<ulong> AsUInt64<T>(this Vector512<T> vector) => vector.As<T, ulong>();
 
-#if SHARPOS_NUMERICS_VECTORS // SharpOS cut: System.Numerics.Vector<T>/Vector2/Vector4 are not in std yet
         /// <summary>Reinterprets a <see cref="Vector{T}" /> as a new <see cref="Vector512{T}" />.</summary>
         /// <typeparam name="T">The type of the elements in the vector.</typeparam>
         /// <param name="value">The vector to reinterpret.</param>
@@ -252,7 +251,6 @@ namespace System.Runtime.Intrinsics
             ref byte address = ref Unsafe.As<Vector512<T>, byte>(ref value);
             return Unsafe.ReadUnaligned<Vector<T>>(ref address);
         }
-#endif
 
         /// <summary>Computes the bitwise-and of two vectors.</summary>
         /// <typeparam name="T">The type of the elements in the vector.</typeparam>

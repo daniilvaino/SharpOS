@@ -59,6 +59,30 @@ namespace System
                 ThrowArgumentNullException(argName);
         }
 
+        [DoesNotReturn]
+        internal static void ThrowArgumentNullException(ExceptionArgument argument, ExceptionResource resource) =>
+            throw new ArgumentNullException(GetArgumentName(argument), GetResourceString(resource));
+
+        [DoesNotReturn]
+        internal static void ThrowArgumentOutOfRangeException(ExceptionArgument argument, ExceptionResource resource) =>
+            throw new ArgumentOutOfRangeException(GetArgumentName(argument), GetResourceString(resource));
+
+        [DoesNotReturn]
+        internal static void ThrowNotSupportedException_UnreadableStream() =>
+            throw new NotSupportedException(SR.NotSupported_UnreadableStream);
+
+        [DoesNotReturn]
+        internal static void ThrowNotSupportedException_UnseekableStream() =>
+            throw new NotSupportedException(SR.NotSupported_UnseekableStream);
+
+        [DoesNotReturn]
+        internal static void ThrowInvalidOperationException(ExceptionResource resource) =>
+            throw new InvalidOperationException(GetResourceString(resource));
+
+        [DoesNotReturn]
+        internal static void ThrowInvalidOperationException_InvalidOperation_EnumOpCantHappen() =>
+            throw new InvalidOperationException(SR.InvalidOperation_EnumOpCantHappen);
+
         private static string GetResourceString(ExceptionResource resource)
         {
             switch (resource)
@@ -69,6 +93,12 @@ namespace System
                 case ExceptionResource.Arg_NonZeroLowerBound: return SR.Arg_NonZeroLowerBound;
                 case ExceptionResource.Arg_ArrayPlusOffTooSmall: return SR.Arg_ArrayPlusOffTooSmall;
                 case ExceptionResource.Arg_TypeNotSupported: return SR.Arg_TypeNotSupported;
+                case ExceptionResource.InvalidOperation_SpanOverlappedOperation: return SR.InvalidOperation_SpanOverlappedOperation;
+                case ExceptionResource.ArgumentNull_Array: return SR.ArgumentNull_Array;
+                case ExceptionResource.ArgumentOutOfRange_IndexCount: return SR.ArgumentOutOfRange_IndexCount;
+                case ExceptionResource.ArgumentOutOfRange_IndexCountBuffer: return SR.ArgumentOutOfRange_IndexCountBuffer;
+                case ExceptionResource.ArgumentOutOfRange_IndexMustBeLessOrEqual: return SR.ArgumentOutOfRange_IndexMustBeLessOrEqual;
+                case ExceptionResource.ArgumentOutOfRange_NeedNonNegNum: return SR.ArgumentOutOfRange_NeedNonNegNum;
                 default: return "";
             }
         }
@@ -82,6 +112,12 @@ namespace System
         Arg_NonZeroLowerBound,
         Arg_ArrayPlusOffTooSmall,
         Arg_TypeNotSupported,
+        InvalidOperation_SpanOverlappedOperation, // Ordinal.ToUpperOrdinal
+        ArgumentNull_Array, // encodings
+        ArgumentOutOfRange_IndexCount, // encodings
+        ArgumentOutOfRange_IndexCountBuffer, // encodings
+        ArgumentOutOfRange_IndexMustBeLessOrEqual, // encodings
+        ArgumentOutOfRange_NeedNonNegNum, // encodings
     }
 
     internal static partial class SR

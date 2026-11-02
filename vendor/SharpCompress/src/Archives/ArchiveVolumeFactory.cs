@@ -1,8 +1,6 @@
 using System;
 using System.IO;
-#if SHARPOS_REGEX
 using System.Text.RegularExpressions;
-#endif
 using SharpCompress.Common;
 
 namespace SharpCompress.Archives;
@@ -12,8 +10,6 @@ internal abstract class ArchiveVolumeFactory
     internal static FileInfo? GetFilePart(int index, FileInfo part1) //base the name on the first part
     {
         FileInfo? item = null;
-        // SharpOS cut: volume names by Regex, until std has Regex (release.md, section 2); without it the next volume is not found
-#if SHARPOS_REGEX
 
         //split 001, 002 ...
         var m = Regex.Match(part1.Name, @"^(.*\.)([0-9]+)$", RegexOptions.IgnoreCase);
@@ -32,7 +28,6 @@ internal abstract class ArchiveVolumeFactory
             );
         }
 
-#endif
         return item is null ? null : ResolveFilePart(item);
     }
 

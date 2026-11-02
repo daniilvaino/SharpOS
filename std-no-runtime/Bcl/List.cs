@@ -353,6 +353,23 @@ namespace System.Collections.Generic
 
         public bool Exists(Predicate<T> match) => FindIndex(match) >= 0;
 
+        public bool TrueForAll(Predicate<T> match)
+        {
+            if (match == null)
+            {
+                ThrowHelper.ThrowArgumentNullException(ExceptionArgument.match);
+            }
+
+            for (int i = 0; i < _size; i++)
+            {
+                if (!match(_items[i]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public T? FindLast(Predicate<T> match)
         {
             if (match == null) throw new ArgumentNullException(nameof(match));

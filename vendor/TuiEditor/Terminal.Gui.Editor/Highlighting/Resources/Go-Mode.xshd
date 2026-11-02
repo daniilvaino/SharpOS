@@ -1,0 +1,137 @@
+<?xml version="1.0"?>
+<SyntaxDefinition name="Go" extensions=".go" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+	<Color name="Comment" foreground="Green" exampleText="// comment" />
+	<Color name="String" foreground="Gray" exampleText="&quot;hello&quot;" />
+	<Color name="Keywords" fontWeight="bold" foreground="Blue" exampleText="func" />
+	<Color name="Builtins" foreground="Purple" exampleText="make" />
+	<Color name="MethodCall" foreground="Purple" exampleText="fmt.Println()" />
+	<Color name="NumberLiteral" foreground="DarkBlue" exampleText="3.14" />
+
+	<Property name="DocCommentMarker" value="///" />
+
+	<RuleSet name="CommentMarkerSet">
+		<Keywords fontWeight="bold" foreground="Red">
+			<Word>TODO</Word>
+			<Word>FIXME</Word>
+		</Keywords>
+		<Keywords fontWeight="bold" foreground="#E0E000">
+			<Word>HACK</Word>
+			<Word>UNDONE</Word>
+		</Keywords>
+	</RuleSet>
+
+	<RuleSet>
+		<!-- Line comments -->
+		<Span color="Comment" ruleSet="CommentMarkerSet">
+			<Begin>//</Begin>
+		</Span>
+
+		<!-- Block comments -->
+		<Span color="Comment" ruleSet="CommentMarkerSet" multiline="true">
+			<Begin>/\*</Begin>
+			<End>\*/</End>
+		</Span>
+
+		<!-- Raw string literals (backtick) -->
+		<Span color="String" multiline="true">
+			<Begin>`</Begin>
+			<End>`</End>
+		</Span>
+
+		<!-- Interpreted string literals -->
+		<Span color="String">
+			<Begin>"</Begin>
+			<End>"</End>
+			<RuleSet>
+				<Span begin="\\" end="." />
+			</RuleSet>
+		</Span>
+
+		<!-- Rune literals -->
+		<Span color="String">
+			<Begin>'</Begin>
+			<End>'</End>
+			<RuleSet>
+				<Span begin="\\" end="." />
+			</RuleSet>
+		</Span>
+
+		<!-- Keywords -->
+		<Keywords color="Keywords">
+			<Word>break</Word>
+			<Word>case</Word>
+			<Word>chan</Word>
+			<Word>const</Word>
+			<Word>continue</Word>
+			<Word>default</Word>
+			<Word>defer</Word>
+			<Word>else</Word>
+			<Word>fallthrough</Word>
+			<Word>for</Word>
+			<Word>func</Word>
+			<Word>go</Word>
+			<Word>goto</Word>
+			<Word>if</Word>
+			<Word>import</Word>
+			<Word>interface</Word>
+			<Word>map</Word>
+			<Word>package</Word>
+			<Word>range</Word>
+			<Word>return</Word>
+			<Word>select</Word>
+			<Word>struct</Word>
+			<Word>switch</Word>
+			<Word>type</Word>
+			<Word>var</Word>
+		</Keywords>
+
+		<!-- Predeclared constants and zero value -->
+		<Keywords color="Keywords">
+			<Word>true</Word>
+			<Word>false</Word>
+			<Word>nil</Word>
+			<Word>iota</Word>
+		</Keywords>
+
+		<!-- Built-in functions -->
+		<Keywords color="Builtins">
+			<Word>append</Word>
+			<Word>cap</Word>
+			<Word>clear</Word>
+			<Word>close</Word>
+			<Word>complex</Word>
+			<Word>copy</Word>
+			<Word>delete</Word>
+			<Word>imag</Word>
+			<Word>len</Word>
+			<Word>make</Word>
+			<Word>max</Word>
+			<Word>min</Word>
+			<Word>new</Word>
+			<Word>panic</Word>
+			<Word>print</Word>
+			<Word>println</Word>
+			<Word>real</Word>
+			<Word>recover</Word>
+		</Keywords>
+
+		<!-- Method/function calls -->
+		<Rule color="MethodCall">
+			\b
+			[\d\w_]+  # an identifier
+			(?=\s*\() # followed by (
+		</Rule>
+
+		<!-- Number literals -->
+		<Rule color="NumberLiteral">
+			\b0[xX][0-9a-fA-F_]+  # hex number
+			|	\b0[oO][0-7_]+    # octal number
+			|	\b0[bB][01_]+     # binary number
+			|	(	\b\d[\d_]*(\.\d[\d_]*)?   # number with optional floating point
+				|	\.\d[\d_]*                # or just starting with floating point
+				)
+				([eE][+-]?\d[\d_]*)?          # optional exponent
+				i?                            # optional imaginary suffix
+		</Rule>
+	</RuleSet>
+</SyntaxDefinition>

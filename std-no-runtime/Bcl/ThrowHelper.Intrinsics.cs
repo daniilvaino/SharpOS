@@ -39,6 +39,14 @@ namespace System
             }
         }
 
+        internal static void ThrowForUnsupportedNumericsVectorBaseType<T>()
+        {
+            if (!System.Numerics.Vector<T>.IsSupported)
+            {
+                ThrowNotSupportedException(ExceptionResource.Arg_TypeNotSupported);
+            }
+        }
+
         internal static void ThrowForUnsupportedIntrinsicsVector128BaseType<T>()
         {
             if (!Vector128<T>.IsSupported)

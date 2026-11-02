@@ -455,7 +455,7 @@ public sealed class BootAsmGenerator : IIncrementalGenerator
         public void MovHole(Assembler a, AssemblerRegister64 reg, string name)
         {
             int ordinal = _holes.Count;
-            ulong sentinel = SentinelBase | (ulong)ordinal;
+            ulong sentinel = SentinelBase | (ulong)(uint)ordinal;
             _holes.Add((HoleKind.MovImm64, ordinal, name));
             a.mov(reg, sentinel);
         }
@@ -463,7 +463,7 @@ public sealed class BootAsmGenerator : IIncrementalGenerator
         public void JmpHole(Assembler a, AssemblerRegister64 scratchReg, string name)
         {
             int ordinal = _holes.Count;
-            ulong sentinel = SentinelBase | (ulong)ordinal;
+            ulong sentinel = SentinelBase | (ulong)(uint)ordinal;
             _holes.Add((HoleKind.MovImm64, ordinal, name));
             a.mov(scratchReg, sentinel);
             a.jmp(scratchReg);
@@ -482,7 +482,7 @@ public sealed class BootAsmGenerator : IIncrementalGenerator
                 throw new InvalidOperationException("BootAsm: DataSlotHole ordinal exceeds 16-bit limit.");
             _holes.Add((HoleKind.DataSlot8, ordinal, name));
             a.Label(ref label);
-            ulong sentinel = DataSlotSentinelBase | (ulong)ordinal;
+            ulong sentinel = DataSlotSentinelBase | (ulong)(uint)ordinal;
             a.dq(sentinel);
         }
 

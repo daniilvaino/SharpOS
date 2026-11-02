@@ -66,7 +66,9 @@ namespace System.IO
             base.Dispose(disposing);
         }
 
-        public override Encoding Encoding => new UnicodeEncoding(false);
+        public override Encoding Encoding => s_encoding ??= new UnicodeEncoding(false, false);
+
+        private static UnicodeEncoding? s_encoding;
 
         // Returns the underlying StringBuilder. This is either the StringBuilder
         // that was passed to the constructor, or the StringBuilder that was

@@ -54,6 +54,7 @@ namespace CompressCheckApp
             catch (Exception e)
             {
                 Check(name + ": " + e.GetType().Name + ": " + e.Message, false);
+                Console.WriteLine(e.StackTrace);
             }
         }
 
@@ -74,6 +75,7 @@ namespace CompressCheckApp
             foreach (string name in new[] { "Zip.deflate.WinzipAES.zip", "7Zip.LZMA2.Aes.7z", "7Zip.LZMA.Aes.7z", "7Zip.LZMA2.7z", "Rar5.encrypted_filesOnly.rar" })
                 Run(name, () => CheckEncrypted(name));
             Run("sharpcompress zip writer", CheckSharpZipWriter);
+            Run("code pages", CheckCodePages);
             Console.WriteLine("COMPRESSTEST: " + s_passed + " passed, " + s_failed + " failed");
             return s_passed;
         }
@@ -450,6 +452,57 @@ namespace CompressCheckApp
                   hello != null && data != null
                   && Encoding.UTF8.GetString(ReadAll(hello.Open())) == "hello"
                   && Same(ReadAll(data.Open()), SampleData()));
+        }
+
+        // System.Text.Encoding.CodePages over std's BCL Encoding: bytes each
+        // code page's table gives, both ways; then a zip whose entry name is in
+        // CP437 (no UTF-8 flag), written by BCL's ZipArchive and read back by
+        // SharpCompress told to read names without the flag as CP437 (its
+        // default is Encoding.Default, UTF-8, as upstream on .NET Core).
+        private static void CheckCodePages()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            CheckCodePage(1251, "Привет", "cff0e8e2e5f2");
+            CheckCodePage(866, "Привет", "8fe0a8a2a5e2");
+            CheckCodePage(437, "╔═╗", "c9cdbb");
+            CheckCodePage(932, "日本", "93fa967b");
+            CheckCodePage(54936, "中文", "d6d0cec4");
+            Check("codepages: windows-1252 0x80 is the euro sign", Encoding.GetEncoding("windows-1252").GetString(new byte[] { 0x80 }) == "€");
+            Check("codepages: koi8-r by name is 20866", Encoding.GetEncoding("koi8-r").CodePage == 20866);
+
+            Encoding cp437 = Encoding.GetEncoding(437);
+            var archive = new MemoryStream();
+            using (var zip = new ZipArchive(archive, ZipArchiveMode.Create, leaveOpen: true, entryNameEncoding: cp437))
+            {
+                using Stream entry = zip.CreateEntry("Äpfel.txt").Open();
+                entry.Write(Encoding.UTF8.GetBytes("apples"));
+            }
+            byte[] bytes = archive.ToArray();
+            Check("codepages: zip entry name stored as CP437 (0x8e for Ä)", IndexOf(bytes, new byte[] { 0x8E, (byte)'p', (byte)'f' }) >= 0);
+            archive.Position = 0;
+            var names = new List<string>();
+            using (IArchive sharp = ArchiveFactory.OpenArchive(archive, new ReaderOptions { LeaveStreamOpen = true, ArchiveEncoding = new ArchiveEncoding { Default = cp437 } }))
+                foreach (var e in sharp.Entries)
+                    names.Add(e.Key ?? "");
+            Check("codepages: SharpCompress reads the CP437 name (" + string.Join(", ", names) + ")", names.Count == 1 && names[0] == "Äpfel.txt");
+        }
+
+        private static void CheckCodePage(int codePage, string text, string hex)
+        {
+            Encoding e = Encoding.GetEncoding(codePage);
+            byte[] bytes = e.GetBytes(text);
+            Check("codepages: " + codePage + " " + text + " is " + hex + " (" + Hex(bytes) + ")", Hex(bytes) == hex && e.GetString(bytes) == text);
+        }
+
+        private static int IndexOf(byte[] data, byte[] what)
+        {
+            for (int i = 0; i + what.Length <= data.Length; i++)
+            {
+                int j = 0;
+                while (j < what.Length && data[i + j] == what[j]) j++;
+                if (j == what.Length) return i;
+            }
+            return -1;
         }
     }
 }

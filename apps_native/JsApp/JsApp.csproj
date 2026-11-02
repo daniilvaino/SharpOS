@@ -11,7 +11,8 @@
   </PropertyGroup>
 
   <Import Project="..\sdk\FreestandingPe.props" />
-  <!-- JSON.parse and source maps: JsonDocument from the vendored System.Text.Json. -->
+  <!-- JSON.parse and source maps: JsonDocument from std's System.Text.Json;
+       with it Regex, for Okojo's [GeneratedRegex] patterns. -->
   <Import Project="..\..\std-no-runtime\Text\Json\Json.props" />
 
   <PropertyGroup>
@@ -21,7 +22,6 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="$(T)GlobalUsings.cs" Link="GlobalUsings.cs" />
-    <Compile Include="$(T)OkojoShims.cs" Link="OkojoShims.cs" />
     <Compile Include="$(O)Okojo.JavaScript\**\*.cs" Exclude="$(O)Okojo.JavaScript\obj\**;$(O)Okojo.JavaScript\bin\**" LinkBase="Okojo.JavaScript" />
     <Compile Include="$(O)Okojo.JavaScript.Embedding\**\*.cs" Exclude="$(O)Okojo.JavaScript.Embedding\obj\**;$(O)Okojo.JavaScript.Embedding\bin\**" LinkBase="Okojo.JavaScript.Embedding" />
     <Compile Include="$(O)Okojo.Numerics\**\*.cs" Exclude="$(O)Okojo.Numerics\obj\**;$(O)Okojo.Numerics\bin\**" LinkBase="Okojo.Numerics" />
@@ -37,11 +37,4 @@
     <EmbeddedResource Include="$(O)Okojo.Globalization\Data\LikelySubtags.txt" LogicalName="Okojo.Globalization.Data.LikelySubtags.txt" />
   </ItemGroup>
 
-  <!-- The SDK's Regex source generator answers [GeneratedRegex] with code for
-       the BCL's Regex; OkojoShims.cs gives the bodies instead. -->
-  <Target Name="DropRegexGenerator" BeforeTargets="CoreCompile">
-    <ItemGroup>
-      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'System.Text.RegularExpressions.Generator'" />
-    </ItemGroup>
-  </Target>
 </Project>

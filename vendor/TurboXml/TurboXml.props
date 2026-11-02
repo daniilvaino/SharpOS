@@ -1,0 +1,12 @@
+<Project>
+
+  <!-- TurboXml (xoofx/TurboXml, BSD-2-Clause): SAX XML parser, part of std on
+       both tiers — the kernel reads app manifests with it. The stream-backed
+       character provider is excluded (needs an incremental UTF-8 decoder); the
+       SIMD paths are kept. See PROVENANCE.md beside this. -->
+
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)TurboXml\**\*.cs" Link="std\TurboXml\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

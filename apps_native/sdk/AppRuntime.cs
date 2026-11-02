@@ -197,6 +197,12 @@ namespace SharpOS.AppSdk
                 }
                 System.DateTime.Clock.Install(&WallTicks);
 
+                // And into Environment.TickCount64, the same way: until now only
+                // TaskBackendInstaller.Install set it, so an app that never
+                // started the task backend read zero — Regex's match timeout,
+                // a deadline in TickCount64, never fired.
+                SharpOS.AppSdk.TaskBackendInstaller.InstallClock();
+
                 // RandomNumberGenerator's bytes: the kernel's RDRAND service.
                 if (s_services->RandomFillAddress != 0)
                     SharpOS.Std.NoRuntime.SystemRandom.Install((delegate* unmanaged<byte*, int, int>)s_services->RandomFillAddress);

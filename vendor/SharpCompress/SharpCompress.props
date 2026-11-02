@@ -14,6 +14,11 @@
        zlib is SharpCompress's (Interop.ZLib.SharpCompress.cs). App tier only:
        ZipFile needs File and Directory. -->
 
+  <!-- Volume names of multi-volume archives are matched by Regex. -->
+  <Import Project="$(MSBuildThisFileDirectory)../../std-no-runtime/Text/RegularExpressions/Regex.props" />
+  <!-- Entry names in legacy code pages (zip CP437, ...): CodePagesEncodingProvider. -->
+  <Import Project="$(MSBuildThisFileDirectory)../../std-no-runtime/Text/CodePages/CodePages.props" />
+
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

@@ -101,6 +101,23 @@ namespace SharpOS.Std.Exchange
         }
 
         /// <summary>
+        /// One schema with the descriptions of both (step228): a message laid
+        /// by this image's catalog that holds records of another writer's
+        /// types. A key in both is the same type (name and layout): taken once.
+        /// Null when either is malformed.
+        /// </summary>
+        public static byte[] Merge(byte[] first, byte[] second)
+        {
+            Dictionary<ulong, TypeKeys.Description> a = Parse(first, out _);
+            Dictionary<ulong, TypeKeys.Description> b = Parse(second, out _);
+            if (a == null || b == null) return null;
+            var all = new List<TypeKeys.Description>(a.Values);
+            foreach (TypeKeys.Description d in b.Values)
+                if (!a.ContainsKey(d.Key)) all.Add(d);
+            return Build(all);
+        }
+
+        /// <summary>
         /// Prints the graph in a region, one line per object, by the schema alone.
         /// Returns the number of objects printed; -1 and a complaint when a key
         /// has no description or a record runs past the region.

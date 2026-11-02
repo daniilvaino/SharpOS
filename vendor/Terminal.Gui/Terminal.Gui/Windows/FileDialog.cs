@@ -19,7 +19,9 @@ namespace Terminal.Gui {
 	internal class DirListView : View {
 		int top, selected;
 		DirectoryInfo dirInfo;
-		FileSystemWatcher watcher;
+		// SharpOS cut: no FileSystemWatcher here (the file system raises no change
+		// events); the listing is read when a folder is entered, not kept live.
+		// FileSystemWatcher watcher;
 		List<(string, bool, bool)> infos;
 		internal bool canChooseFiles = true;
 		internal bool canChooseDirectories = false;
@@ -51,24 +53,25 @@ namespace Terminal.Gui {
 			try {
 				dirInfo = new DirectoryInfo (value == null ? directory.ToString () : value.ToString ());
 
-				// Dispose of the old watcher
-				watcher?.Dispose ();
-
-				watcher = new FileSystemWatcher (dirInfo.FullName);
-				watcher.NotifyFilter = NotifyFilters.Attributes
-				 | NotifyFilters.CreationTime
-				 | NotifyFilters.DirectoryName
-				 | NotifyFilters.FileName
-				 | NotifyFilters.LastAccess
-				 | NotifyFilters.LastWrite
-				 | NotifyFilters.Security
-				 | NotifyFilters.Size;
-				watcher.Changed += Watcher_Changed;
-				watcher.Created += Watcher_Changed;
-				watcher.Deleted += Watcher_Changed;
-				watcher.Renamed += Watcher_Changed;
-				watcher.Error += Watcher_Error;
-				watcher.EnableRaisingEvents = true;
+				// SharpOS cut: the watcher (see the field).
+				// // Dispose of the old watcher
+				// watcher?.Dispose ();
+				//
+				// watcher = new FileSystemWatcher (dirInfo.FullName);
+				// watcher.NotifyFilter = NotifyFilters.Attributes
+				//  | NotifyFilters.CreationTime
+				//  | NotifyFilters.DirectoryName
+				//  | NotifyFilters.FileName
+				//  | NotifyFilters.LastAccess
+				//  | NotifyFilters.LastWrite
+				//  | NotifyFilters.Security
+				//  | NotifyFilters.Size;
+				// watcher.Changed += Watcher_Changed;
+				// watcher.Created += Watcher_Changed;
+				// watcher.Deleted += Watcher_Changed;
+				// watcher.Renamed += Watcher_Changed;
+				// watcher.Error += Watcher_Error;
+				// watcher.EnableRaisingEvents = true;
 				infos = (from x in dirInfo.GetFileSystemInfos ()
 					 where IsAllowed (x) && (!canChooseFiles ? x.Attributes.HasFlag (FileAttributes.Directory) : true)
 					 orderby (!x.Attributes.HasFlag (FileAttributes.Directory)) + x.Name
@@ -82,8 +85,9 @@ namespace Terminal.Gui {
 				case DirectoryNotFoundException _:
 				case ArgumentException _:
 					dirInfo = null;
-					watcher?.Dispose ();
-					watcher = null;
+					// SharpOS cut: the watcher (see the field).
+					// watcher?.Dispose ();
+					// watcher = null;
 					infos.Clear ();
 					valid = true;
 					break;
@@ -103,17 +107,18 @@ namespace Terminal.Gui {
 		protected override void Dispose (bool disposing)
 		{
 			if (!_disposedValue) {
-				if (disposing) {
-					if (watcher != null) {
-						watcher.Changed -= Watcher_Changed;
-						watcher.Created -= Watcher_Changed;
-						watcher.Deleted -= Watcher_Changed;
-						watcher.Renamed -= Watcher_Changed;
-						watcher.Error -= Watcher_Error;
-					}
-					watcher?.Dispose ();
-					watcher = null;
-				}
+				// SharpOS cut: the watcher (see the field).
+				// if (disposing) {
+				// 	if (watcher != null) {
+				// 		watcher.Changed -= Watcher_Changed;
+				// 		watcher.Created -= Watcher_Changed;
+				// 		watcher.Deleted -= Watcher_Changed;
+				// 		watcher.Renamed -= Watcher_Changed;
+				// 		watcher.Error -= Watcher_Error;
+				// 	}
+				// 	watcher?.Dispose ();
+				// 	watcher = null;
+				// }
 
 				_disposedValue = true;
 			}
@@ -122,21 +127,22 @@ namespace Terminal.Gui {
 			base.Dispose (disposing);
 		}
 
-		void Watcher_Error (object sender, ErrorEventArgs e)
-		{
-			if (Application.MainLoop == null)
-				return;
-
-			Application.MainLoop.Invoke (() => Reload ());
-		}
-
-		void Watcher_Changed (object sender, FileSystemEventArgs e)
-		{
-			if (Application.MainLoop == null)
-				return;
-
-			Application.MainLoop.Invoke (() => Reload ());
-		}
+		// SharpOS cut: the watcher's handlers (see the field).
+		// void Watcher_Error (object sender, ErrorEventArgs e)
+		// {
+		// 	if (Application.MainLoop == null)
+		// 		return;
+		//
+		// 	Application.MainLoop.Invoke (() => Reload ());
+		// }
+		//
+		// void Watcher_Changed (object sender, FileSystemEventArgs e)
+		// {
+		// 	if (Application.MainLoop == null)
+		// 		return;
+		//
+		// 	Application.MainLoop.Invoke (() => Reload ());
+		// }
 
 		string directory;
 		public string Directory {
@@ -251,16 +257,15 @@ namespace Terminal.Gui {
 			var ustr = RuneText.Make (str);
 
 			Move (allowsMultipleSelection ? 3 : 2, line);
-			int byteLen = ustr.Length;
 			int used = allowsMultipleSelection ? 2 : 1;
-			for (int i = 0; i < byteLen;) {
-				(var rune, var size) = Utf8.DecodeRune (ustr, i, i - byteLen);
+			// SharpOS cut: NStack's byte walk (Utf8.DecodeRune over a ustring) is
+			// a walk over the string's runes, as in the rest of the port.
+			foreach (Rune rune in ustr.ToRunes ()) {
 				var count = Rune.ColumnWidth (rune);
 				if (used + count >= width)
 					break;
 				Driver.AddRune (rune);
 				used += count;
-				i += size;
 			}
 			for (; used < width - 1; used++) {
 				Driver.AddRune (' ');

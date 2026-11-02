@@ -1,8 +1,9 @@
 // Object.MemberwiseClone for ported BCL code (SharpOS, not BCL).
 //
-// System.Object here (MinimalRuntime.cs of each tier) has no MemberwiseClone.
-// Ported code that clones itself (Calendar.Clone, DateTimeFormatInfo.Clone /
-// ReadOnly) calls this instead, marked "SharpOS:" at the call. Same contract
+// System.Object.MemberwiseClone (MinimalRuntime.cs of each tier) calls this;
+// until step226 Object had none, and ported code that clones itself
+// (Calendar.Clone, DateTimeFormatInfo.Clone / ReadOnly) called this directly,
+// marked "SharpOS:" at the call. Same contract
 // as the BCL's: a new object of the same type, every field copied as bits
 // (references shared). As Array.Clone does: the collector does not move
 // objects and has no write barrier to feed, so a raw copy of the field bytes

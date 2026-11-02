@@ -10,14 +10,13 @@
        definitions in one assembly do not compile. -->
 
   <Import Project="..\KustoLanguage\KustoLanguage.props" />
-  <!-- JsonNode: the values of KQL's `dynamic` type. -->
+  <!-- JsonNode: the values of KQL's `dynamic` type; Regex (matches regex,
+       extract()) comes with it. -->
   <Import Project="..\..\std-no-runtime\Text\Json\Json.props" />
 
   <ItemGroup>
-    <!-- MatchRegex / ExtractRegex: no System.Text.RegularExpressions in std yet
-         (their registrations are cut in BuiltInOperators / BuiltInScalarFunctions). -->
     <Compile Include="$(MSBuildThisFileDirectory)src\**\*.cs"
-             Exclude="$(MSBuildThisFileDirectory)src\Util\IsExternalInit.cs;$(MSBuildThisFileDirectory)src\Evaluation\BuiltIns\Operators\MatchRegex.cs;$(MSBuildThisFileDirectory)src\Evaluation\BuiltIns\ScalarFunctions\ExtractRegex.cs" />
+             Exclude="$(MSBuildThisFileDirectory)src\Util\IsExternalInit.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)tdigest\*.cs" />
   </ItemGroup>
 

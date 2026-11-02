@@ -12,7 +12,9 @@
 // remains is the BCL's own scalar fallback: the AnyByteState lookup (BitVector256) loops and the
 // INegator scalar members used by BitmapCharSearchValues.
 
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
 
 namespace System.Buffers
 {
@@ -26,6 +28,48 @@ namespace System.Buffers
 
         // SharpOS cut: Ssse3.IsSupported || AdvSimd.Arm64.IsSupported || PackedSimd.IsSupported - no vector kernels ported.
         internal static bool IsVectorizationSupported => false;
+
+        // Upstream's shape: StringSearchValues' Aho-Corasick keeps one for its starting
+        // characters (only read on the vector path, which is not taken here).
+        public struct AsciiState(Vector128<byte> bitmap, BitVector256 lookup)
+        {
+            public Vector256<byte> Bitmap = Vector256.Create(bitmap, bitmap); // SharpOS: Create(Vector128<T>) is .NET 9's; the same value
+            public readonly BitVector256 Lookup = lookup;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static unsafe void SetBitmapBit(byte* bitmap, int value)
+        {
+            Debug.Assert((uint)value <= 127);
+
+            int highNibble = value >> 4;
+            int lowNibble = value & 0xF;
+            bitmap[(uint)lowNibble] |= (byte)(1 << highNibble);
+        }
+
+        // SharpOS: upstream is generic over T : IUnsignedNumber<T> (byte or char) with
+        // int.CreateChecked; std has no generic math, and the one caller passes chars.
+        internal static unsafe void ComputeAsciiState(ReadOnlySpan<char> values, out AsciiState state)
+        {
+            Vector128<byte> bitmapSpace = default;
+            byte* bitmapLocal = (byte*)&bitmapSpace;
+            BitVector256 lookupLocal = default;
+
+            foreach (char c in values)
+            {
+                int value = c;
+
+                if (value > 127)
+                {
+                    continue;
+                }
+
+                lookupLocal.Set(value);
+                SetBitmapBit(bitmapLocal, value);
+            }
+
+            state = new AsciiState(bitmapSpace, lookupLocal);
+        }
 
         internal static void ComputeAnyByteState(ReadOnlySpan<byte> values, out AnyByteState state)
         {

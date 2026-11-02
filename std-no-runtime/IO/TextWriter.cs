@@ -10,8 +10,6 @@
 //     FlushAsync).
 //   - Synchronized / SyncTextWriter.
 //   - Write(decimal) / WriteLine(decimal): no System.Decimal in this std.
-//   - Write(StringBuilder) writes value.ToString(): no StringBuilder.GetChunks
-//     here. Same output, one intermediate string.
 //   - Format overloads call string.Format(format, ...) without the provider:
 //     our string.Format has no IFormatProvider overloads (StringFormat.cs),
 //     and the only culture is the invariant one anyway.
@@ -272,8 +270,8 @@ namespace System.IO
         {
             if (value != null)
             {
-                // SharpOS cut: upstream walks value.GetChunks(); we have none.
-                Write(value.ToString());
+                foreach (ReadOnlyMemory<char> chunk in value.GetChunks())
+                    Write(chunk.Span);
             }
         }
 

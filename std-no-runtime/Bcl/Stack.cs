@@ -31,6 +31,15 @@ namespace System.Collections.Generic
             _array = capacity <= 0 ? new T[0] : new T[capacity];
         }
 
+        // BCL: the items pushed in enumeration order, so the last is on top
+        // (step232: the highlighter copies a stack through Reverse()).
+        public Stack(IEnumerable<T> collection)
+        {
+            if (collection == null) throw new ArgumentNullException(nameof(collection));
+            _array = new T[0];
+            foreach (T item in collection) Push(item);
+        }
+
         public int Count => _size;
 
         public void Clear()

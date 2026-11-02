@@ -18,7 +18,7 @@ sealed class Utf8Reader
     readonly bool byteStrings;
     int bufPos,
         bufLen;
-    // SharpOS cut: no Decoder (see DecodeWhole).
+    Decoder? decoder;
 
     const int ThreadStaticBufferSize = 1024;
 
@@ -241,10 +241,15 @@ sealed class Utf8Reader
                     continue;
                 }
 
-                // SharpOS cut: no Encoding.GetDecoder — whole sequences only. A
-                // sequence the buffer cuts in two moves to its start and waits
-                // for the rest instead of living in a decoder's state.
-                var charsUsed = DecodeWhole(byteSpan, charSpan, out var bytesUsed);
+                decoder ??= encoding.GetDecoder();
+                decoder.Convert(
+                    byteSpan,
+                    charSpan,
+                    false,
+                    out var bytesUsed,
+                    out var charsUsed,
+                    out _
+                );
 
                 if (charsUsed > 0)
                 {
@@ -255,24 +260,7 @@ sealed class Utf8Reader
                 bufPos += bytesUsed;
                 if (bytesUsed == 0)
                 {
-                    var tail = bufLen - bufPos;
-                    if (tail == 0 || charSpan.Length < 2 && tail >= 4)
-                    {
-                        break;
-                    }
-
-                    Array.Copy(buffer, bufPos, buffer, 0, tail);
-                    var more = stream.Read(buffer, tail, buffer.Length - tail);
-                    bufPos = 0;
-                    bufLen = tail + more;
-                    if (more == 0)
-                    {
-                        // The stream ends inside a sequence: what is left decodes as is.
-                        len += Encoding.UTF8.GetChars(new ReadOnlySpan<byte>(buffer, 0, Math.Min(tail, charSpan.Length)), charSpan);
-                        bufPos = bufLen;
-                        dataRead = true;
-                        break;
-                    }
+                    break;
                 }
             }
 
@@ -302,28 +290,6 @@ sealed class Utf8Reader
 
         segment.CopyTo(buffer.AsSpan(length));
         length += segment.Length;
-    }
-
-    // SharpOS cut: the decoder's part of Read — the UTF-8 sequences that are
-    // whole and fit, decoded; how many bytes they took.
-    static int DecodeWhole(ReadOnlySpan<byte> bytes, Span<char> chars, out int bytesUsed)
-    {
-        int bi = 0, ci = 0;
-        while (bi < bytes.Length)
-        {
-            var b = bytes[bi];
-            var need = b < 0x80 ? 1 : (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3 : (b & 0xF8) == 0xF0 ? 4 : 1;
-            if (bi + need > bytes.Length || ci + (need == 4 ? 2 : 1) > chars.Length)
-            {
-                break;
-            }
-
-            ci += Encoding.UTF8.GetChars(bytes.Slice(bi, need), chars.Slice(ci));
-            bi += need;
-        }
-
-        bytesUsed = bi;
-        return ci;
     }
 
     static bool IsAsciiSpace(char c) => c == ' ' || (c >= '\t' && c <= '\r');

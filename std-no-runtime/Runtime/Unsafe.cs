@@ -179,6 +179,14 @@ namespace System.Runtime.CompilerServices
             throw new PlatformNotSupportedException();
         }
 
+        [NonVersionable]
+        public static bool IsAddressGreaterThanOrEqualTo<T>([AllowNull] ref T left, [AllowNull] ref T right)
+            => !IsAddressLessThan(ref left, ref right);
+
+        [NonVersionable]
+        public static bool IsAddressLessThanOrEqualTo<T>([AllowNull] ref T left, [AllowNull] ref T right)
+            => !IsAddressGreaterThan(ref left, ref right);
+
         [Intrinsic]
         [NonVersionable]
         [CLSCompliant(false)]

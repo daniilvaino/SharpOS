@@ -1,4 +1,4 @@
-// MemoryExtensions.Sort(keys, items) and CommonPrefixLength — BCL's
+// MemoryExtensions.Sort(span, comparison), Sort(keys, items) and CommonPrefixLength — BCL's
 // signatures (System.Private.CoreLib, MemoryExtensions.cs); the sort goes
 // through Array.Sort over copies (step224, System.Text.Json).
 
@@ -8,6 +8,19 @@ namespace System
 {
     public static partial class MemoryExtensions
     {
+        public static void Sort<T>(this Span<T> span, Comparison<T> comparison)
+        {
+            if (comparison == null)
+                throw new ArgumentNullException(nameof(comparison));
+
+            if (span.Length > 1)
+            {
+                T[] copy = span.ToArray();
+                Array.Sort(copy, comparison);
+                copy.AsSpan().CopyTo(span);
+            }
+        }
+
         public static void Sort<TKey, TValue>(this Span<TKey> keys, Span<TValue> items)
         {
             if (keys.Length != items.Length)

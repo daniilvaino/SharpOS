@@ -14,6 +14,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\PipeTransport.AppServices.cs" Link="std\Pipes\PipeTransport.AppServices.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)EnvironmentStore.AppServices.cs" Link="std\EnvironmentStore.AppServices.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)GC\GcStaticsInit.cs" Link="std\GC\GcStaticsInit.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Array.Empty.App.cs" Link="std\Runtime\Array.Empty.App.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Diagnostics.Output.AppHost.cs" Link="std\Runtime\Diagnostics.Output.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StringRuntime.RhNewString.cs" Link="std\StringRuntime.RhNewString.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.AppServices.cs" Link="std\Threading.Tasks.AppServices.cs" />
@@ -45,4 +46,6 @@
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\V7TarEntry.cs" Link="std\Formats\Tar\V7TarEntry.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\SR.Tar.cs" Link="std\Formats\Tar\SR.Tar.cs" />
   </ItemGroup>
+  <!-- Manifest resources as data in the image (ILC drops them without metadata). -->
+  <Import Project="$(MSBuildThisFileDirectory)ManifestResources.targets" />
 </Project>

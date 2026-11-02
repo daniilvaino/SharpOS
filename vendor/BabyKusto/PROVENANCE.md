@@ -1,4 +1,4 @@
-# BabyKusto — vendored
+﻿# BabyKusto — vendored
 
 **Upstream:** https://github.com/davidnx/baby-kusto-csharp (`src/BabyKusto.Core/`)
 **Snapshot:** commit 2b9cc3b, 2023-09-28
@@ -22,8 +22,6 @@ aggregates use. `BabyKusto.props` compiles both and imports
 
 ## SharpOS cuts (marked `SharpOS cut:` in the files)
 
-- `matches regex` and `extract()` — std has no `System.Text.RegularExpressions`
-  (their files are excluded in `BabyKusto.props`, the registrations cut).
 - `url_decode` and `url_encode_component` throw `NotSupportedException` — std
   has no `System.Uri`.
 - `join` and `summarize` build their composite keys without

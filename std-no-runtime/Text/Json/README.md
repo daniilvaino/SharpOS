@@ -5,7 +5,8 @@
 `System.IO.Pipelines/src` — every `.NETCoreApp` compile item of their csproj.
 **License:** MIT, © .NET Foundation and Contributors.
 **Taken by:** `Json.props` beside this file (one line in an app's csproj, app
-tier only). The source generator is `generators/Json.Generator`.
+tier only); it brings `Regex.props` too, as upstream STJ depends on Regex. The
+source generator is `generators/Json.Generator`.
 
 Until step224 a cut of the reader and writer lived in `vendor/SystemTextJson`;
 it is replaced by the libraries whole.
@@ -35,11 +36,9 @@ context is a `NotSupportedException` naming the way out.
 | `Converters/Value/Int128Converter.cs`, `UInt128Converter.cs`, the `Int128`/`UInt128` lines in `JsonMetadataServices.Converters.cs`, `JsonPropertyInfo.cs`, `JsonValueOfT.cs` | removed / `SHARPOS_INT128` | std has no `Int128` |
 | `JsonSerializerOptionsUpdateHandler.cs` | removed | hot reload (`MetadataUpdateHandler`) |
 | `System.Text.Json.Typeforwards.netcoreapp.cs` | removed | type forwards to other assemblies — there is one |
-| `JsonHelpers.IntegerRegex` | the same pattern matched by hand, `SHARPOS_REGEX` | std has no Regex yet (release.md, section 2) |
 | `JsonException`, `JsonReaderException` | serialization constructor, `[Serializable]` | no legacy formatter serialization |
 | `UnsupportedTypeConverterFactory` | `typeof(SerializationInfo)` | no `SerializationInfo` in std |
 | `System/ThrowHelper.cs` (of Json and of Encodings.Web) | removed | std's `System.ThrowHelper` has the same members |
-| Encodings.Web `AllowedBmpCodePointsBitmap` | the `Vector<T>` loop, `SHARPOS_NUMERICS_VECTORS` | no `System.Numerics.Vector<T>`; the scalar loop |
 | Pipelines `StreamPipeReader`, `StreamPipeWriter` | `[AsyncMethodBuilder(PoolingAsyncValueTaskMethodBuilder<>)]` | the pooling builder is not ported |
 | Pipelines `Properties/InternalsVisibleTo.cs` | removed | one assembly |
 

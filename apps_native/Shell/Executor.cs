@@ -501,6 +501,7 @@ namespace Shell
                     Write("sh: an empty stage in a pipeline\n");
                     return 2;
                 }
+                verb = ExpandAlias(verb, args);
                 string[] environment = null;
                 if (verb == "env")
                 {
@@ -515,7 +516,7 @@ namespace Shell
                             Write(" is a builtin\n");
                             return 2;
                         }
-                        verb = program;
+                        verb = ExpandAlias(program, rest);
                         args = rest;
                         environment = programEnvironment;
                     }
@@ -945,6 +946,33 @@ namespace Shell
                 writer.Copy(stage);
             }
             catch (SharpOS.Std.Pipes.PipeException) { }
+        }
+
+        // Two fixed names for CONVERT's one special conversion, between bytes
+        // and lines: LINES is `CONVERT --from lines` — a byte stream
+        // into a string per line, as it comes; BYTES is `CONVERT --to bytes` —
+        // back into byte[] messages, its options (--chunk N) after it. A name,
+        // not a builtin: the stage is CONVERT, a process like any other.
+        public static string[][] Aliases => new[]
+        {
+            new[] { "LINES", "CONVERT", "--from", "lines" },
+            new[] { "BYTES", "CONVERT", "--to", "bytes" },
+        };
+
+        private static string[] AliasOf(string verb)
+        {
+            foreach (string[] alias in Aliases)
+                if (string.Equals(alias[0], verb, System.StringComparison.OrdinalIgnoreCase)) return alias;
+            return null;
+        }
+
+        // The verb a stage runs, with an alias's own arguments put first.
+        private static string ExpandAlias(string verb, List<string> args)
+        {
+            string[] alias = AliasOf(verb);
+            if (alias == null) return verb;
+            for (int i = alias.Length - 1; i >= 2; i--) args.Insert(0, alias[i]);
+            return alias[1];
         }
 
         /// <summary>The builtins, for help and Tab completion.</summary>
@@ -1436,6 +1464,15 @@ namespace Shell
                     Write(": shell builtin\n");
                     continue;
                 }
+                string[] alias = AliasOf(name);
+                if (alias != null)
+                {
+                    Write(name);
+                    Write(": alias for");
+                    for (int i = 1; i < alias.Length; i++) { Write(" "); Write(alias[i]); }
+                    Write("\n");
+                    continue;
+                }
                 string path = LooksLikePath(name) ? Resolve(name) : Process.FindProgram(name);
                 if (path != null && LooksLikePath(name) && AppHost.FileExistsEx(path) != AppServiceStatus.Ok) path = null;
                 if (path == null)
@@ -1745,6 +1782,7 @@ namespace Shell
             Write("buildinfo on|off — programs print their build line at start (on in an autorun battery)\n");
             Write("programs: NAME.EXE by its name, looked for along PATH (" + (System.Environment.GetEnvironmentVariable("PATH") ?? "") + ")\n");
             Write("expect CODE COMMAND — run it, succeed only on that exit code\n");
+            Write("LINES — bytes into lines (CONVERT --from lines); BYTES [--chunk N] — lines into bytes (CONVERT --to bytes)\n");
             Write("a path runs too: .EXE as a program, .DLL on the hosted runtime\n");
             Write("operators: && || ; a | b | c ; n> file, n>> file, n>&m, n>&- on any program, in order:\n");
             Write("           1 the output (left out: > file), 2 errors, 3 stdtext (reports, panels);\n");
@@ -1803,6 +1841,7 @@ namespace Shell
 
         private int RunProgram(string verb, List<string> args, bool reportNonZero = true)
         {
+            verb = ExpandAlias(verb, args);
             string path = ProgramPath(verb, out int missing);
             if (path == null) return missing;
 

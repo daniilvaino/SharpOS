@@ -12,11 +12,7 @@ sealed class LuaByteEncoding : Encoding
 {
     public static LuaByteEncoding Instance { get; } = new();
 
-    // SharpOS cut: our Encoding has no virtual array/pointer overloads, no
-    // GetMaxCharCount and no string.Create. Those stay as plain methods; the
-    // span and string members (and GetString/GetBytes at the end) carry the
-    // overriding.
-    public int GetByteCount(char[] chars, int index, int count) => count;
+    public override int GetByteCount(char[] chars, int index, int count) => count;
 
     public override int GetByteCount(string s) => s.Length;
 
@@ -24,14 +20,14 @@ sealed class LuaByteEncoding : Encoding
 
     // Encoding's pointer defaults copy through temporary arrays. Its string,
     // encoder and decoder APIs use these overloads even when span overrides exist.
-    public unsafe int GetByteCount(char* chars, int count)
+    public override unsafe int GetByteCount(char* chars, int count)
     {
         if (chars == null)
             throw new ArgumentNullException(nameof(chars));
         return new ReadOnlySpan<char>(chars, count).Length;
     }
 
-    public unsafe int GetBytes(char* chars, int charCount, byte* bytes, int byteCount)
+    public override unsafe int GetBytes(char* chars, int charCount, byte* bytes, int byteCount)
     {
         if (chars == null)
             throw new ArgumentNullException(nameof(chars));
@@ -40,7 +36,7 @@ sealed class LuaByteEncoding : Encoding
         return GetBytes(new ReadOnlySpan<char>(chars, charCount), new Span<byte>(bytes, byteCount));
     }
 
-    public int GetBytes(
+    public override int GetBytes(
         char[] chars,
         int charIndex,
         int charCount,
@@ -64,18 +60,18 @@ sealed class LuaByteEncoding : Encoding
         return chars.Length;
     }
 
-    public int GetCharCount(byte[] bytes, int index, int count) => count;
+    public override int GetCharCount(byte[] bytes, int index, int count) => count;
 
     public override int GetCharCount(ReadOnlySpan<byte> bytes) => bytes.Length;
 
-    public unsafe int GetCharCount(byte* bytes, int count)
+    public override unsafe int GetCharCount(byte* bytes, int count)
     {
         if (bytes == null)
             throw new ArgumentNullException(nameof(bytes));
         return new ReadOnlySpan<byte>(bytes, count).Length;
     }
 
-    public unsafe int GetChars(byte* bytes, int byteCount, char* chars, int charCount)
+    public override unsafe int GetChars(byte* bytes, int byteCount, char* chars, int charCount)
     {
         if (bytes == null)
             throw new ArgumentNullException(nameof(bytes));
@@ -84,7 +80,7 @@ sealed class LuaByteEncoding : Encoding
         return GetChars(new ReadOnlySpan<byte>(bytes, byteCount), new Span<char>(chars, charCount));
     }
 
-    public int GetChars(
+    public override int GetChars(
         byte[] bytes,
         int byteIndex,
         int byteCount,
@@ -107,27 +103,20 @@ sealed class LuaByteEncoding : Encoding
         return bytes.Length;
     }
 
-    // SharpOS cut: the base's GetString(byte[], int, int) comes here.
-    public override string GetString(ReadOnlySpan<byte> bytes)
-    {
-        var chars = new char[bytes.Length];
-        for (var i = 0; i < bytes.Length; i++)
-        {
-            chars[i] = (char)bytes[i];
-        }
-
-        return new string(chars);
-    }
-
-    // SharpOS cut: abstract in our Encoding.
-    public override byte[] GetBytes(string s)
-    {
-        var bytes = new byte[s.Length];
-        GetBytes(s.AsSpan(), bytes);
-        return bytes;
-    }
+    public override string GetString(byte[] bytes, int index, int count) =>
+        string.Create(
+            count,
+            (bytes, index),
+            static (span, state) =>
+            {
+                for (var i = 0; i < span.Length; i++)
+                {
+                    span[i] = (char)state.bytes[state.index + i];
+                }
+            }
+        );
 
     public override int GetMaxByteCount(int charCount) => charCount;
 
-    public int GetMaxCharCount(int byteCount) => byteCount;
+    public override int GetMaxCharCount(int byteCount) => byteCount;
 }

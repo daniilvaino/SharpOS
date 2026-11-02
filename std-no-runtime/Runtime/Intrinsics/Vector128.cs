@@ -236,7 +236,7 @@ namespace System.Runtime.Intrinsics
             => Unsafe.As<Quaternion, Vector128<float>>(ref value);
 #endif
 
-#if SHARPOS_NUMERICS_VECTORS // SharpOS cut: System.Numerics.Vector<T>/Vector2/Vector4 are not in std yet
+#if SHARPOS_NUMERICS_VECTORS // SharpOS cut: System.Numerics.Vector2/Vector4 are not in std yet
         /// <summary>Reinterprets a <see cref="Vector2" /> as a new <see cref="Vector128{Single}" />.</summary>
         /// <param name="value">The vector to reinterpret.</param>
         /// <returns><paramref name="value" /> reinterpreted as a new <see cref="Vector128{Single}" />.</returns>
@@ -261,6 +261,8 @@ namespace System.Runtime.Intrinsics
         public static Vector128<float> AsVector128(this Vector4 value)
             => Unsafe.As<Vector4, Vector128<float>>(ref value);
 
+#endif
+
         /// <summary>Reinterprets a <see cref="Vector{T}" /> as a new <see cref="Vector128{T}" />.</summary>
         /// <typeparam name="T">The type of the elements in the vector.</typeparam>
         /// <param name="value">The vector to reinterpret.</param>
@@ -277,6 +279,7 @@ namespace System.Runtime.Intrinsics
             return Unsafe.ReadUnaligned<Vector128<T>>(ref address);
         }
 
+#if SHARPOS_NUMERICS_VECTORS // SharpOS cut: System.Numerics.Vector2/Vector4 are not in std yet
         /// <summary>Reinterprets a <see cref="Vector128{Single}" /> as a new <see cref="Vector2" />.</summary>
         /// <param name="value">The vector to reinterpret.</param>
         /// <returns><paramref name="value" /> reinterpreted as a new <see cref="Vector2" />.</returns>
@@ -307,6 +310,8 @@ namespace System.Runtime.Intrinsics
         public static Vector4 AsVector4(this Vector128<float> value)
             => Unsafe.As<Vector128<float>, Vector4>(ref value);
 
+#endif
+
         /// <summary>Reinterprets a <see cref="Vector128{T}" /> as a new <see cref="Vector{T}" />.</summary>
         /// <typeparam name="T">The type of the elements in the vector.</typeparam>
         /// <param name="value">The vector to reinterpret.</param>
@@ -323,7 +328,6 @@ namespace System.Runtime.Intrinsics
             Unsafe.WriteUnaligned(ref Unsafe.As<Vector<T>, byte>(ref result), value);
             return result;
         }
-#endif
 
         /// <summary>Computes the bitwise-and of two vectors.</summary>
         /// <typeparam name="T">The type of the elements in the vector.</typeparam>

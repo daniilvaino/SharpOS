@@ -30,6 +30,38 @@ namespace System
             ref System.Runtime.CompilerServices.DefaultInterpolatedStringHandler handler) =>
             handler.ToStringAndClear();
 
+        // `new string(char*)` / `(char*, int, int)` — upstream's (String.cs): a
+        // zero-terminated string, and a range of a buffer. ILC redirects the
+        // constructors to these Ctor methods.
+        private static string Ctor(char* ptr)
+        {
+            if (ptr == null)
+                return "";
+
+            int count = 0;
+            while (ptr[count] != '\0')
+                count++;
+            return Ctor(new ReadOnlySpan<char>(ptr, count));
+        }
+
+        private static string Ctor(char* ptr, int startIndex, int length)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(length);
+            ArgumentOutOfRangeException.ThrowIfNegative(startIndex);
+
+            if (length == 0)
+                return "";
+
+            if (ptr == null)
+                throw new ArgumentOutOfRangeException(nameof(ptr), "Pointer startIndex and length do not refer to a valid string.");
+
+            return Ctor(new ReadOnlySpan<char>(ptr + startIndex, length));
+        }
+
+        public String(char* value) { }
+
+        public String(char* value, int startIndex, int length) { }
+
         private static string Ctor(ReadOnlySpan<char> value)
         {
             if (value.Length == 0)
@@ -113,6 +145,26 @@ namespace System
                 retVal = true;
             }
             return retVal;
+        }
+
+        // Upstream's (String.cs): a string decoded from bytes by an encoding.
+        internal static unsafe string CreateStringFromEncoding(byte* bytes, int byteLength, System.Text.Encoding encoding)
+        {
+            // Get our string length
+            int stringLength = encoding.GetCharCount(bytes, byteLength);
+
+            // They gave us an empty string if they needed one
+            // 0 bytelength might be possible if there's something in an encoder
+            if (stringLength == 0)
+                return Empty;
+
+            string s = SharpOS.Std.NoRuntime.StringRuntime.FastAllocateString(stringLength); // SharpOS: was FastAllocateString
+            fixed (char* pTempChars = s)
+            {
+                encoding.GetChars(bytes, byteLength, pTempChars, stringLength);
+            }
+
+            return s;
         }
     }
 }

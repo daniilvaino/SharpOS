@@ -52,7 +52,7 @@ namespace System.Reflection
         public override string ToString() => FullName ?? base.ToString();
     }
 
-    internal sealed unsafe class ImageAssembly : Assembly
+    internal sealed unsafe partial class ImageAssembly : Assembly
     {
         private const int ResourceIndex = 300 + 24, ResourceData = 300 + 25;
 
@@ -65,6 +65,7 @@ namespace System.Reflection
             var names = new List<string>();
             foreach (Entry entry in Entries())
                 names.Add(entry.Name);
+            EmbeddedNames(names);
             return names.ToArray();
         }
 
@@ -86,8 +87,26 @@ namespace System.Reflection
                     bytes[i] = data[entry.Offset + i];
                 return new MemoryStream(bytes, writable: false);
             }
+
+            ReadOnlySpan<byte> embedded = default;
+            bool found = false;
+            FindEmbedded(name, ref embedded, ref found);
+            if (found)
+            {
+                // The blob is image data: never moved, never freed — the stream reads it in place, as BCL's does.
+                fixed (byte* p = embedded)
+                    return new UnmanagedMemoryStream(p, embedded.Length);
+            }
             return null;
         }
+
+        // An app's resources as data (std-no-runtime/ManifestResources.targets): ILC
+        // puts manifest resources in the image only for modules with reflection
+        // metadata, which an app here has none of. Generated per app; unimplemented
+        // (and so removed) in an image without resources, the kernel included.
+        static partial void EmbeddedNames(List<string> names);
+
+        static partial void FindEmbedded(string name, ref ReadOnlySpan<byte> data, ref bool found);
 
         private struct Entry
         {

@@ -35,7 +35,10 @@ namespace Terminal.Gui
 
             Key key = Translate(info);
 
-            if (s_shift && key < Key.CharMask) key |= Key.ShiftMask;
+            // Shift is already in a character (A, ?, "): the stock drivers mark
+            // only keys without one, so Shift+arrows select. Marking characters
+            // made TextView drop every shifted one (step232: "/*" in EDIT).
+            if (s_shift && (key & Key.SpecialMask) != 0) key |= Key.ShiftMask;
             if (s_alt) key |= Key.AltMask;
 
             return new KeyEvent(key, new KeyModifiers
@@ -72,11 +75,15 @@ namespace Terminal.Gui
             char ch = (char)info.UnicodeChar;
             if (ch == 0) return Key.Unknown;
 
-            // Ctrl+letter is reported as the letter here, and the library wants
-            // it as the control code — Ctrl+C is 3, which is what a Quit binding
-            // matches against.
-            if (s_ctrl && ch >= 'a' && ch <= 'z') return (Key)(ch - 'a' + 1) | Key.CtrlMask;
-            if (s_ctrl && ch >= 'A' && ch <= 'Z') return (Key)(ch - 'A' + 1) | Key.CtrlMask;
+            // Ctrl+letter as the stock drivers give it — the capital with
+            // CtrlMask: QuitKey is Key.Q | CtrlMask, TextView binds Key.Y |
+            // CtrlMask and so on. The control code (Ctrl+Q as 17) matched none
+            // of them (step230: EDIT did not quit). Shift rides along as a flag:
+            // Ctrl+Shift+S is a binding of its own.
+            if (s_ctrl && ch >= 'a' && ch <= 'z') return WithShift((Key)(ch - 'a' + 'A') | Key.CtrlMask);
+            if (s_ctrl && ch >= 'A' && ch <= 'Z') return WithShift((Key)ch | Key.CtrlMask);
+            // The kernel may report Ctrl+letter as its control code already.
+            if (s_ctrl && ch >= 1 && ch <= 26) return WithShift((Key)(ch - 1 + 'A') | Key.CtrlMask);
 
             // Alt+letter as the stock drivers give it — the capital: the menu
             // bar compares its hotkeys upper-cased, and Alt+F never matched.
@@ -84,6 +91,8 @@ namespace Terminal.Gui
 
             return (Key)ch;
         }
+
+        private static Key WithShift(Key key) => s_shift ? key | Key.ShiftMask : key;
 
         /// <summary>
         /// The keys that produce no character. Returns Unknown when the scan

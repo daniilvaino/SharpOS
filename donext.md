@@ -20,26 +20,17 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
 Что есть и чего нет — README, таблица «Стандартная библиотека». По пользе:
 
 1. **Целые типы.** `int` и `long` — ручные `Parse(string)`/`TryParse`, дважды (`OS/src/Boot/MinimalRuntime.cs` и `apps_native/sdk/MinimalRuntime.cs`); у `uint`, `ulong`, `short`, `ushort`, `byte`, `sbyte`, `char` нет `Parse`. Порт `Number.Parsing` из dotnet/runtime со всеми перегрузками, как уже лежит для `double`/`float`/`decimal` в `Number/`; ручные копии снести.
-2. **`Regex`** (`System.Text.RegularExpressions`). Самый большой и самый нужный: из-за него вырезаны `matches regex` и `extract()` в BabyKusto, а разбор `.env` (`Formats/Dotenv`) заменяет регулярки compose-go ручным сканированием. Сначала интерпретатор (`RegexInterpreter`), без компилятора и генератора исходников.
-   Порт из `dotnet-runtime-sharpos`: 35 тыс. строк, без компиляторов
-   (`RegexCompiler`, `LWCG`, `AssemblyCompiler` — Reflection.Emit; BCL и сам
-   уходит в интерпретатор без динамического кода) и без `Symbolic`
-   (NonBacktracking) — ≈19 тыс. С step212 в std есть `Hashtable`,
-   `CharUnicodeInfo` с таблицами, `SearchValues<char>`, `IndexOfAnyInRange`,
-   `string.Create`, `Lock`, с step223 `Environment.TickCount64`; не хватает
-   `SearchValues<string>`, слабого `WeakReference<T>` (сейчас сильный).
-   Ещё потребители под `SHARPOS_REGEX`: SharpCompress — имена томов
-   многотомных архивов (`vendor/SharpCompress/PROVENANCE.md`), System.Text.Json —
-   шаблон целых чисел (`JsonHelpers`, сейчас тот же разбор руками).
-   Второй потребитель — Okojo: восемь его внутренних образцов `[GeneratedRegex]`
-   сейчас идут через его собственный движок ECMAScript (`vendor/Okojo/SharpOS/OkojoShims.cs`).
-   Ещё потребитель — подсветка синтаксиса для редактора: все готовые движки на
-   регулярках. Кандидат — подсветка AvaloniaEdit (`.xshd`, построчно с
-   состоянием, MIT), уже вынесенная под терминал в `tui-cs/Editor`; включается
-   в `TextView` v1 через `SetNormalColor(line, idx)`, как в
-   `UICatalog/Scenarios/SyntaxHighlighting.cs`. Загрузчик `.xshd` хочет
-   `XmlReader` — у нас TurboXml.
-3. Позже: `Enum.Parse` по имени (нужны метаданные перечислений; числом есть), `IPAddress`, `System.Collections.Frozen` (у Okojo заглушки), `Encoder`/`Decoder` в `Encoding` (у Lua вырезы); XML в std (сейчас TurboXml только в ядре, для манифестов).
+2. **После Regex.** Regex — только в приложениях: `.env` ядра (`Formats/Dotenv`)
+   по-прежнему ручным сканированием вместо регулярок compose-go. Векторные пути
+   `SearchValues<string>` (Teddy, ThreeChars) ждут `Vector512`/`Avx512*` и
+   `PackedSpanHelpers`.
+3. **Обобщённая математика** (`INumberBase<T>`, `IBinaryInteger<T>` и семья, реализации на примитивах). Её нет в std вовсе, и это последний крупный барьер BCL-кода: публичные `Ascii.Equals`/`ToUpper`/`ToLower`/`Trim` (`Ascii.Equality.cs` и соседи, step226), `MintermClassifier` Regex (обход в step225), `SearchValues.TryGetSingleRange`.
+4. **`BinaryReader`/`BinaryWriter` на `Decoder`/`Encoder`** — после step226 вырезы «нет Decoder» в них лишние; вернуть ветки BCL 8, сохранив ограниченный рост буфера `ReadString` (защита труб, pipe_plan В11).
+5. Позже: `Enum.Parse` по имени (нужны метаданные перечислений; числом есть), `IPAddress`, `System.Collections.Frozen` (у Okojo заглушки).
+6. **`System.Xml` дальше** (читатель — step231, `std-no-runtime/Xml/README.md`):
+   `XmlWriter` с сырыми писателями (вернёт и `ReadInnerXml`/`ReadOuterXml`),
+   асинхронные методы читателя, `XmlDocument`/`XDocument`, DTD (`DtdParser`) —
+   по потребителю. Схемы, XSLT, XPath — нет.
 
 ## SharpCompress: исправление `DeflateStream` — в апстрим
 
@@ -50,6 +41,48 @@ step207: так `RunManagedApp` потерял строку пути, и пос�
 пользователем подготовить issue (и, возможно, PR) с повтором; отправляет
 пользователь. Образец исправления в самом апстриме — PR #1346 (`GZipStream`);
 рабочие копии — `work/foreign/sharpcompress-full`, `work/foreign/screpro`.
+
+## EDIT: что осталось
+
+- **Подсветка в 16 цветах.** Цвета `.xshd` сделаны под белый фон и
+  переводятся в ближайший из шестнадцати консольных, тёмные — в яркие
+  (`HighlightedTextView.ToConsole`); у разных ролей цвета совпадают. Лучше —
+  таблица ролей `XshdRoleMap` апстрима (вырезана: она под темы v2) поверх
+  палитры консоли; повод — жалоба на читаемость.
+- **`FileSystemWatcher`.** `FileDialog` Terminal.Gui собран с вырезом слежения:
+  список папки читается при входе в неё. Настоящий — служба ядра (FAT сообщает
+  о создании, удалении, переименовании) и `System.IO.FileSystemWatcher` по форме
+  BCL; повод — второй потребитель или жалоба на устаревший список.
+- **Резолвер интерфейсов не поднимается от массива к `System.Array`**
+  (`FindImplSlot`: `if (cur->IsArray) break`). `ICloneable`/`ICollection`/`IList`
+  закрыты перечислением в `Array<T>`; если у `Array` появится ещё интерфейс с
+  реализацией только на базе — он упадёт так же (`iface-resolve: no impl slot`).
+  Настоящий обход — `MethodTable` типа `System.Array` того образа, чей объект.
+- Проверка редактора — только клавишами через QMP (`work/tmp/keys25x.py`);
+  в батарее — `EDIT --help` и код 2.
+
+## Вендоренные копии без правок — в подмодули
+
+Решение пользователя: всё, что лежит копией без наших правок, перевести в
+подмодули на upstream — без форков. Коммит тогда держит сам git, а не
+`PROVENANCE.md` (версии Iced, PeNet, TurboXml пришлось восстанавливать по хешам,
+step229); `LICENSE` и история едут вместе с кодом.
+
+- **Iced** — `SharpOS cut:` 0, тег v1.21.0. Сейчас взята только папка
+  `src/csharp/Intel/Iced`: `vendor/Iced/Iced.props` (и `NO_EVEX`) переставить на
+  путь внутри подмодуля.
+- **ManagedDoom** — правок 0, коммит upstream не записан (найти по хешам).
+  Подмодулем — `ManagedDoom/`; наши `DoomApp.csproj`, `Program.cs`, `GopVideo.cs`,
+  `SharpUserInput.cs` остаются снаружи.
+- ShellSyntaxTree — уже подмодуль.
+
+Перед этим проверить, что каждая копия действительно совпадает с upstream
+(`git diff` против тега, не только поиск по маркеру): правка без `SharpOS cut:`
+пропала бы молча. Подмодули не попадают в архив GitHub (`git archive`, «Download
+ZIP») — уже сейчас так с SharpLibm; для релиза нужен архив исходников с ними.
+Библиотеки с правками (PeNet, Terminal.Gui, Kusto, ReadLine, json2dir, TurboXml,
+SharpCompress, BabyKusto, Lua, Okojo) требуют форков — не в этом пункте; порты
+BCL, MOOS, font8x8 остаются копиями.
 
 ## Находки тестеров (2026-10-24)
 

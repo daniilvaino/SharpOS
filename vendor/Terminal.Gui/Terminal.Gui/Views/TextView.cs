@@ -2560,6 +2560,10 @@ namespace Terminal.Gui {
 		/// <returns></returns>
 		public List<Rune> GetCurrentLine () => model.GetLine (currentRow);
 
+		// SharpOS: a row of the model, for a subclass that colours by line
+		// (EDIT's syntax highlighting); upstream has no way to reach it.
+		protected List<Rune> GetLine (int row) => model.GetLine (row);
+
 		// Renamed from InsertText: this one writes into the model directly,
 		// while the public InsertText above replays the text as key events.
 		// They used to be told apart by their parameter type.

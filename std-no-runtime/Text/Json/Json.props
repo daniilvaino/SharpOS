@@ -15,6 +15,9 @@
        Opt-in rather than in Std.App.props: 400 files are not what every app
        should compile. App tier only. -->
 
+  <!-- STJ uses Regex (JsonHelpers.IntegerRegex), as upstream does. -->
+  <Import Project="$(MSBuildThisFileDirectory)../RegularExpressions/Regex.props" />
+
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

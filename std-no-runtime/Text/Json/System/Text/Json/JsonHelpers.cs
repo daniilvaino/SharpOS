@@ -9,9 +9,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
-#if SHARPOS_REGEX
 using System.Text.RegularExpressions;
-#endif
 
 namespace System.Text.Json
 {
@@ -316,7 +314,6 @@ namespace System.Text.Json
         }
 #endif
 
-#if SHARPOS_REGEX
         /// <summary>
         /// Gets a Regex instance for recognizing integer representations of enums.
         /// </summary>
@@ -329,26 +326,6 @@ namespace System.Text.Json
         private static partial Regex CreateIntegerRegex();
 #else
         private static Regex CreateIntegerRegex() => new(IntegerRegexPattern, RegexOptions.Compiled, TimeSpan.FromMilliseconds(IntegerRegexTimeoutMs));
-#endif
-#else
-        // SharpOS cut: std has no Regex yet (release.md, section 2) — the same
-        // pattern, ^\s*(?:\+|\-)?[0-9]+\s*$, matched by hand.
-        public static readonly IntegerPattern IntegerRegex = new IntegerPattern();
-
-        internal sealed class IntegerPattern
-        {
-            public bool IsMatch(string input)
-            {
-                int i = 0, end = input.Length;
-                while (i < end && char.IsWhiteSpace(input[i])) i++;
-                while (end > i && char.IsWhiteSpace(input[end - 1])) end--;
-                if (i < end && (input[i] == '+' || input[i] == '-')) i++;
-                if (i == end) return false;
-                for (; i < end; i++)
-                    if (!char.IsAsciiDigit(input[i])) return false;
-                return true;
-            }
-        }
 #endif
 
         /// <summary>

@@ -82,16 +82,35 @@ namespace SharpOS.Std.Pipes
             return Store(region, expando, name, true, kind, bits, null);
         }
 
+        /// <summary>
+        /// Sets an entry to the graph under <paramref name="source"/>, a record
+        /// of another region (step228, KQL `project Build, Cpu`): its records
+        /// are copied into this block's tail, references moved, and the entry
+        /// points at the copy of <paramref name="source"/> — of its own type,
+        /// not an Expando. Every type the graph holds must be in this region's
+        /// description (a merged one, RegionSchema.Merge).
+        /// </summary>
+        public static EditCost SetGraph(this RawRegion region, View expando, ExpandoName name, View source)
+        {
+            ulong root = GraphRoot(source, out ViewScope from);
+            if (region != null && from == region.Scope)
+                throw new ArgumentException("the source is a record of this region: a reference to it needs no copy", nameof(source));
+            return Store(region, expando, name, false, 0, 0, null, from, root);
+        }
+
         private static NotSupportedException NotInPlace(string type)
             => new NotSupportedException("an Expando in a region takes numbers, bool, char, strings and null in place; a "
                                          + type + " needs a copy (ToExpando, change, Copy)");
 
-        private static EditCost Store(RawRegion region, View expando, ExpandoName name, bool scalar, byte kind, ulong bits, string text)
+        // A value that needs room: a string, or a graph from another region.
+        private static EditCost Store(RawRegion region, View expando, ExpandoName name, bool scalar, byte kind, ulong bits, string text,
+                                      ViewScope graph = null, ulong graphRoot = 0)
         {
             ViewScope scope = Owned(region, expando);
             View.ExpandoShape s = expando.ExpandoLayout();
             int i = expando.ExpandoFind(name.Name.AsSpan(), name.Hash);
-            if (i >= 0 && text == null)
+            bool record = text != null || graph != null;
+            if (i >= 0 && !record)
             {
                 ulong e = Entry(scope, expando, s, i);
                 *(ulong*)(e + (ulong)s.Bits) = scalar ? bits : 0;
@@ -102,7 +121,8 @@ namespace SharpOS.Std.Pipes
 
             RegionShapes shapes = scope.Shapes;
             TypeShape stringType = shapes.ByName("System.String") ?? throw NoType("System.String");
-            ulong need = text != null ? RecordSize(stringType, (uint)text.Length) : 0;
+            ulong need = text != null ? RecordSize(stringType, (uint)text.Length)
+                       : graph != null ? GraphBytes(graph, graphRoot, shapes) : 0;
             bool add = i < 0;
             bool rebuild = false;
             int capacity = 0;
@@ -133,7 +153,8 @@ namespace SharpOS.Std.Pipes
 
             if (rebuild) RebuildTable(region, expando, s, tableType, indexType, capacity);
 
-            ulong valueAt = text != null ? NewString(region, stringType, text) : 0;
+            ulong valueAt = text != null ? NewString(region, stringType, text)
+                          : graph != null ? NewGraph(region, graph, graphRoot) : 0;
             if (!add)
             {
                 ulong e = Entry(scope, expando, s, i);
@@ -149,7 +170,7 @@ namespace SharpOS.Std.Pipes
             *(int*)(at + (ulong)s.Hash) = name.Hash;
             *(ulong*)(at + (ulong)s.Name) = nameAt;
             *(byte*)(at + (ulong)s.Dead) = 0;
-            if (text != null)
+            if (record)
             {
                 *(ulong*)(at + (ulong)s.Ref) = valueAt;
                 *(ulong*)(at + (ulong)s.Bits) = 0;
@@ -463,28 +484,44 @@ namespace SharpOS.Std.Pipes
         // ---- the records a block still reaches ----
 
         // Bytes of the records reachable from the root: what a compacted copy takes.
-        private static ulong LiveBytes(RawRegion region)
+        private static ulong LiveBytes(RawRegion region) => GraphBytes(region.Scope, Region.HeaderSize);
+
+        // `into`: the description the copy will be read by — each record's
+        // type must be in it.
+        private static ulong GraphBytes(ViewScope scope, ulong root, RegionShapes into = null)
         {
             var seen = new Dictionary<ulong, ulong>();
             var order = new List<ulong>();
-            Reach(region, seen, order);
+            Reach(scope, root, seen, order);
             ulong total = 0;
-            for (int i = 0; i < order.Count; i++) total += SizeAt(region, order[i]);
+            for (int i = 0; i < order.Count; i++)
+            {
+                if (into != null && into[*(ulong*)(scope.Block + order[i])] == null) throw NoType(ShapeAt(scope, order[i]).Name);
+                total += SizeAt(scope, order[i]);
+            }
             return total;
         }
 
-        // Every reachable record, root first, breadth first: `seen` maps a
-        // table-word offset to its place in `order`.
-        private static void Reach(RawRegion region, Dictionary<ulong, ulong> seen, List<ulong> order)
+        // A graph of another region at the block's end, in room reserved; the
+        // offset of its root's table word.
+        private static ulong NewGraph(RawRegion region, ViewScope from, ulong root)
         {
-            ulong root = Region.HeaderSize;
+            Dictionary<ulong, ulong> moved = CopyGraph(from, root, region.Block, region.Length, out ulong end);
+            region.Extend(end);
+            return moved[root];
+        }
+
+        // Every record reachable from `root`, it first, breadth first: `seen`
+        // maps a table-word offset to its place in `order`.
+        private static void Reach(ViewScope scope, ulong root, Dictionary<ulong, ulong> seen, List<ulong> order)
+        {
             seen[root] = 0;
             order.Add(root);
             for (int q = 0; q < order.Count; q++)
             {
                 ulong at = order[q];
-                TypeShape t = ShapeAt(region, at);
-                ForEachSlot(region, t, at, slot =>
+                TypeShape t = ShapeAt(scope, at);
+                ForEachSlotAt(t, (ulong)scope.Block + at, slot =>
                 {
                     ulong target = *(ulong*)slot;
                     if (target == 0 || seen.ContainsKey(target)) return;
@@ -494,35 +531,18 @@ namespace SharpOS.Std.Pipes
             }
         }
 
-        private static TypeShape ShapeAt(RawRegion region, ulong offset)
+        private static TypeShape ShapeAt(ViewScope scope, ulong offset)
         {
-            TypeShape t = region.Scope.Shapes[*(ulong*)(region.Block + offset)];
+            TypeShape t = scope.Shapes[*(ulong*)(scope.Block + offset)];
             if (t == null) throw Malformed();
             return t;
         }
 
-        private static ulong SizeAt(RawRegion region, ulong offset)
+        private static ulong SizeAt(ViewScope scope, ulong offset)
         {
-            TypeShape t = ShapeAt(region, offset);
-            uint length = t.ComponentSize != 0 ? *(uint*)(region.Block + offset + 8) : 0;
+            TypeShape t = ShapeAt(scope, offset);
+            uint length = t.ComponentSize != 0 ? *(uint*)(scope.Block + offset + 8) : 0;
             return RecordSize(t, length);
-        }
-
-        // The address of every reference slot of the object at `offset`: its
-        // fields, the fields of structs laid out in it, and its elements.
-        private static void ForEachSlot(RawRegion region, TypeShape t, ulong offset, Action<ulong> slot)
-        {
-            ulong obj = (ulong)region.Block + offset;
-            StructSlots(t.Fields, obj, slot);
-            if (!t.IsArray) return;
-            uint length = *(uint*)(obj + 8);
-            FieldShape el = t.Elements;
-            for (uint k = 0; k < length; k++)
-            {
-                ulong element = obj + (ulong)el.Offset + (ulong)k * t.ComponentSize;
-                if (el.Kind == FieldKind.Reference) slot(element);
-                else if (el.Kind == FieldKind.Struct) StructSlots(el.Struct.Fields, element - 8, slot);
-            }
         }
 
         // `box` is where the fields' offsets count from.
@@ -541,24 +561,36 @@ namespace SharpOS.Std.Pipes
         // moved to its target's new place; the new length. `target` is moved too.
         private static ulong Compact(RawRegion region, byte* block, ref ulong target)
         {
+            Dictionary<ulong, ulong> moved = CopyGraph(region.Scope, Region.HeaderSize, block, 0, out ulong end);
+            if (!moved.TryGetValue(target, out ulong newTarget))
+                throw new InvalidOperationException("the edited Expando is not reachable from the region's root");
+            target = newTarget;
+            return end;
+        }
+
+        // The records reachable from `root` of `scope` into `block` from
+        // `start`, root first, every reference moved to its target's new
+        // place: old table-word offset → new. `end`: past the last record.
+        private static Dictionary<ulong, ulong> CopyGraph(ViewScope scope, ulong root, byte* block, ulong start, out ulong end)
+        {
             var seen = new Dictionary<ulong, ulong>();
             var order = new List<ulong>();
-            Reach(region, seen, order);
+            Reach(scope, root, seen, order);
 
             var moved = new Dictionary<ulong, ulong>(order.Count);
-            ulong cursor = 0;
+            ulong cursor = start;
             for (int i = 0; i < order.Count; i++)
             {
                 ulong at = order[i];
-                ulong size = SizeAt(region, at);
+                ulong size = SizeAt(scope, at);
                 moved[at] = cursor + Region.HeaderSize;
-                Buffer.MemoryCopy(region.Block + at - Region.HeaderSize, block + cursor, (long)size, (long)size);
+                Buffer.MemoryCopy(scope.Block + at - Region.HeaderSize, block + cursor, (long)size, (long)size);
                 cursor += size;
             }
             for (int i = 0; i < order.Count; i++)
             {
                 ulong newAt = moved[order[i]];
-                TypeShape t = ShapeAt(region, order[i]);
+                TypeShape t = ShapeAt(scope, order[i]);
                 // The copy's slots, read through the old shape: same layout.
                 ForEachSlotAt(t, (ulong)block + newAt, s =>
                 {
@@ -566,10 +598,38 @@ namespace SharpOS.Std.Pipes
                     if (old != 0) *(ulong*)s = moved[old];
                 });
             }
-            if (!moved.TryGetValue(target, out ulong newTarget))
-                throw new InvalidOperationException("the edited Expando is not reachable from the region's root");
-            target = newTarget;
-            return cursor;
+            end = cursor;
+            return moved;
+        }
+
+        // An object of a region as the root of a graph to copy: walked whole
+        // once, so the copy may read it by raw address.
+        private static ulong GraphRoot(View obj, out ViewScope scope)
+        {
+            obj.EnsureAlive();
+            scope = obj.Scope;
+            if (scope == null || !obj.IsRecord)
+                throw new ArgumentException("not a record of a region: a struct in place or a value has no graph of its own", nameof(obj));
+            scope.EnsureValid();
+            return obj.Address - (ulong)scope.Block;
+        }
+
+        /// <summary>
+        /// The graph under <paramref name="obj"/> — a record of a received
+        /// region and every record it reaches — copied into an exchange block
+        /// of its own, <paramref name="obj"/> its root (step228, KQL
+        /// `project Build`): a message of the record's own type, read by the
+        /// same description. Nothing is translated; references are offsets
+        /// and are moved. The block is the caller's to send or free.
+        /// </summary>
+        public static byte* CopyOut(View obj, out ulong length)
+        {
+            ulong root = GraphRoot(obj, out ViewScope scope);
+            ulong size = GraphBytes(scope, root);
+            byte* block = (byte*)PipeTransport.Allocate(size);
+            if (block == null) throw new OutOfMemoryException("no exchange block of " + size.ToString() + " bytes for a copy");
+            CopyGraph(scope, root, block, 0, out length);
+            return block;
         }
 
         private static void ForEachSlotAt(TypeShape t, ulong obj, Action<ulong> slot)

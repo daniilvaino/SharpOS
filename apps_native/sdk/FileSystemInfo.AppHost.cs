@@ -432,6 +432,21 @@ namespace System.IO
             for (int i = 0; i < paths.Length; i++) result[i] = new DirectoryInfo(paths[i]);
             return result;
         }
+
+        // Directories, then files (step230: Terminal.Gui's FileDialog lists a folder by it).
+        public FileSystemInfo[] GetFileSystemInfos() => GetFileSystemInfos("*");
+        public FileSystemInfo[] GetFileSystemInfos(string searchPattern)
+        {
+            DirectoryInfo[] directories = GetDirectories(searchPattern);
+            FileInfo[] files = GetFiles(searchPattern);
+            var result = new FileSystemInfo[directories.Length + files.Length];
+            for (int i = 0; i < directories.Length; i++) result[i] = directories[i];
+            for (int i = 0; i < files.Length; i++) result[directories.Length + i] = files[i];
+            return result;
+        }
+
+        public System.Collections.Generic.IEnumerable<FileSystemInfo> EnumerateFileSystemInfos() => GetFileSystemInfos("*");
+        public System.Collections.Generic.IEnumerable<FileSystemInfo> EnumerateFileSystemInfos(string searchPattern) => GetFileSystemInfos(searchPattern);
     }
 
     /// <summary>

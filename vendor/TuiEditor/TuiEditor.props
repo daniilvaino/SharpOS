@@ -1,0 +1,46 @@
+<Project>
+
+  <!-- The syntax highlighting of tui-cs/Editor (AvaloniaEdit's, adapted for a
+       terminal; MIT) for SharpOS apps on Terminal.Gui v1 — the engine, the
+       .xshd definitions and their loader, nothing of the Editor view itself.
+       What is in and why the rest is out: PROVENANCE.md.
+
+       Needs System.Xml's reader (the .xshd loader) and Regex (the rules). -->
+
+  <Import Project="$(MSBuildThisFileDirectory)../../std-no-runtime/Xml/Xml.props" />
+
+  <!-- Annotations, not enable: the setting is the whole app's, and the files
+       carry `?` that upstream compiles with nullable on. -->
+  <PropertyGroup>
+    <Nullable>annotations</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Ours: Terminal.Gui v2's Color and VisualRole, which the highlighting
+         names, for an app built on v1. -->
+    <Compile Include="$(MSBuildThisFileDirectory)SharpOS\*.cs" />
+
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Highlighting\*.cs"
+             Exclude="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Highlighting\DocumentHighlighter.cs;$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Highlighting\XshdRoleMap.cs;$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Highlighting\NamespaceDoc.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Highlighting\Xshd\*.cs"
+             Exclude="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Highlighting\Xshd\SaveXshdVisitor.cs;$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Highlighting\Xshd\NamespaceDoc.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Highlighting\Resources\Resources.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Extensions\ImmutableStackExtensions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Document\IDocument.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Document\ITextSource.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Document\ITextAnchor.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Document\TextLocation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Document\DocumentChangeEventArgs.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Document\OffsetChangeMap.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Utils\IFreezable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Utils\BusyManager.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Utils\NullSafeCollection.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Utils\ThrowUtil.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Utils\Constants.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Utils\IServiceContainer.cs" />
+
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)Terminal.Gui.Editor\Highlighting\Resources\*.xshd"
+                      LogicalName="Terminal.Gui.Editor.Highlighting.Resources.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

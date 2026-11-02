@@ -20,6 +20,14 @@
 //     Array has no IndexOf yet).
 //   - IndexOf(T)/Insert/RemoveAt keep the BCL fixed-size-collection throw
 //     behaviour.
+//
+// SharpOS: ICloneable and the non-generic ICollection and IList are implemented again here,
+// with System.Array's semantics (step230). Upstream they live on System.Array
+// alone, and the runtime reaches them by walking from the array's type to its
+// base; our resolver does not walk an array's chain (its related type is the
+// element, not the base), so `string[]` as an IList — Terminal.Gui's ListView
+// and ComboBox take their source so — panicked "iface-resolve: no impl slot".
+// Listed on Array<T>, they land in every array type's own dispatch map.
 
 using System.Collections;
 using System.Collections.Generic;
@@ -27,7 +35,7 @@ using System.Runtime.CompilerServices;
 
 namespace System
 {
-    public class Array<T> : Array, IEnumerable<T>, ICollection<T>, IList<T>, IReadOnlyList<T>
+    public class Array<T> : Array, IEnumerable<T>, ICollection<T>, IList<T>, IReadOnlyList<T>, ICloneable, ICollection, IList
     {
         // Prevent the C# compiler from generating a public default constructor.
         private Array() { }
@@ -120,6 +128,38 @@ namespace System
         {
             throw new NotSupportedException("Collection was of a fixed size.");
         }
+
+        // ---- ICloneable and the non-generic ICollection and IList, as System.Array has them ----
+
+        object ICloneable.Clone() => Clone();
+
+        int ICollection.Count => this.Length;
+        object ICollection.SyncRoot => this;
+        bool ICollection.IsSynchronized => false;
+        void ICollection.CopyTo(Array array, int index) => Array.Copy(this, 0, array, index, this.Length);
+
+        bool IList.IsReadOnly => false;
+        bool IList.IsFixedSize => true;
+
+        object? IList.this[int index]
+        {
+            get
+            {
+                T[] array = Unsafe.As<T[]>(this);
+                if ((uint)index >= (uint)array.Length)
+                    throw new IndexOutOfRangeException();
+                return array[index];
+            }
+            set => SetValue(value, index);
+        }
+
+        int IList.Add(object? value) => throw new NotSupportedException("Collection was of a fixed size.");
+        bool IList.Contains(object? value) => Array.IndexOf(this, value) >= 0;
+        void IList.Clear() => Array.Clear(Unsafe.As<T[]>(this), 0, this.Length);
+        int IList.IndexOf(object? value) => Array.IndexOf(this, value);
+        void IList.Insert(int index, object? value) => throw new NotSupportedException("Collection was of a fixed size.");
+        void IList.Remove(object? value) => throw new NotSupportedException("Collection was of a fixed size.");
+        void IList.RemoveAt(int index) => throw new NotSupportedException("Collection was of a fixed size.");
 
         private sealed class ArrayEnumerator : IEnumerator<T>
         {

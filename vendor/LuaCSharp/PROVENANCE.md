@@ -36,9 +36,6 @@ runtime's, not the library's:
   `LuaStreamDefaults` and to the implementers (`BufferedOutputStream`,
   `ConsoleStandardIO`, `LuaStream`, `MemoryStreams`, `StandardIOStream`,
   `FileHandle`, `MathematicsLibrary`).
-- **No `Encoder`/`Decoder` in std's `Encoding`**: `LuaStream`, `Utf8Reader`
-  and `LuaByteEncoding` encode and decode whole UTF-8 sequences instead of
-  streaming through a decoder.
 - **No `Regex`**: `StringHelper.ToRegex` (nothing called it).
 - **No temporary-directory convention**: `FileSystem` has no
   `Path.GetTempFileName()`.

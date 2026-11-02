@@ -1,0 +1,6 @@
+# Lifted from AvaloniaEdit per specs/00-plan.md §4 — preserve upstream formatting.
+# Disable analyzer + style warnings here so re-syncs don't get fought by dotnet format
+# or clogged by xUnit/IDE/nullable analyzers responding to upstream conventions.
+[*.cs]
+generated_code = true
+dotnet_analyzer_diagnostic.severity = none

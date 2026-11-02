@@ -14,6 +14,9 @@
        compile into each image; ILC keeps only the functions used. -->
   <Import Project="$(MSBuildThisFileDirectory)..\SharpLibm\SharpLibm.props" />
 
+  <!-- TurboXml (vendor/TurboXml, BSD-2-Clause): SAX XML parsing on both tiers. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\vendor\TurboXml\TurboXml.props" />
+
   <!-- Source generators every image runs (generators/): the kernel and each
        app import this file, so this is the one place that reaches all of
        them. ImageInfo — which image this is; Pipes — [Message] catalog and
@@ -50,6 +53,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Bcl\Boolean.Statics.cs" Link="std\Bcl\Boolean.Statics.cs" />
     <!-- ConcurrentQueue, BlockingCollection (BCL 8) -->
     <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\ConcurrentQueue.cs" Link="std\Collections\Concurrent\ConcurrentQueue.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Collections\Immutable\*.cs" Link="std\Collections\Immutable\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\ConcurrentQueueSegment.cs" Link="std\Collections\Concurrent\ConcurrentQueueSegment.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\IProducerConsumerCollection.cs" Link="std\Collections\Concurrent\IProducerConsumerCollection.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Collections\Concurrent\IProducerConsumerCollectionDebugView.cs" Link="std\Collections\Concurrent\IProducerConsumerCollectionDebugView.cs" />
@@ -144,6 +148,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)EventHandling.cs" Link="std\EventHandling.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exception.cs" Link="std\Exception.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exceptions.Derived.cs" Link="std\Exceptions.Derived.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SystemException.cs" Link="std\SystemException.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IServiceProvider.cs" Link="std\IServiceProvider.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Exchange\ExchangeArena.cs" Link="std\Exchange\ExchangeArena.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\MessageCatalog.cs" Link="std\Pipes\MessageCatalog.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Pipes\Expando.cs" Link="std\Pipes\Expando.cs" />
@@ -242,6 +248,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)IO\PathInternal.cs" Link="std\IO\PathInternal.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\IOException.cs" Link="std\IO\IOException.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\MemoryStream.cs" Link="std\IO\MemoryStream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\UnmanagedMemoryStream.cs" Link="std\IO\UnmanagedMemoryStream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IO\UnmanagedMemoryStreamWrapper.cs" Link="std\IO\UnmanagedMemoryStreamWrapper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\ArrayBufferWriter.cs" Link="std\Buffers\ArrayBufferWriter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\IBufferWriter.cs" Link="std\Buffers\IBufferWriter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\OperationStatus.cs" Link="std\Buffers\OperationStatus.cs" />
@@ -295,9 +303,12 @@
     <Compile Include="$(MSBuildThisFileDirectory)IO\TextReader.cs" Link="std\IO\TextReader.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IO\TextWriter.cs" Link="std\IO\TextWriter.cs" />
     <!-- Encoding.CodePage/Default (step223) -->
-    <Compile Include="$(MSBuildThisFileDirectory)Text\Encoding.CodePage.cs" Link="std\Text\Encoding.CodePage.cs" />
     <!-- NativeMemory, RuntimeInformation, OSPlatform, Architecture (step223) -->
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\NativeMemory.cs" Link="std\Runtime\InteropServices\NativeMemory.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\Marshal.HGlobal.cs" Link="std\Runtime\InteropServices\Marshal.HGlobal.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\SafeBuffer.cs" Link="std\Runtime\InteropServices\SafeBuffer.cs" />
+    <!-- Microsoft.Win32.SafeHandles; not under a Win32\ folder: .gitignore drops those. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\SafeHandleZeroOrMinusOneIsInvalid.cs" Link="std\Runtime\InteropServices\SafeHandleZeroOrMinusOneIsInvalid.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\RuntimeInformation.SharpOS.cs" Link="std\Runtime\InteropServices\RuntimeInformation.SharpOS.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\OSPlatform.cs" Link="std\Runtime\InteropServices\OSPlatform.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\Architecture.cs" Link="std\Runtime\InteropServices\Architecture.cs" />
@@ -341,6 +352,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)Number\ThrowHelper.cs" Link="std\Number\ThrowHelper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Number\ValueListBuilder.cs" Link="std\Number\ValueListBuilder.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Numerics\Vector3.cs" Link="std\Numerics\Vector3.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Numerics\Vector.cs" Link="std\Numerics\Vector.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Numerics\Vector_1.cs" Link="std\Numerics\Vector_1.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Numerics\VectorDebugView_1.cs" Link="std\Numerics\VectorDebugView_1.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\ActionFunc.cs" Link="std\Runtime\ActionFunc.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Dynamic\CompilerSurface.cs" Link="std\Dynamic\CompilerSurface.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Dynamic\DynamicMembers.cs" Link="std\Dynamic\DynamicMembers.cs" />
@@ -369,6 +383,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerFeatures.cs" Link="std\Runtime\CompilerFeatures.cs" />
     <!-- InlineArray (C# 12; ILC 8 lays it out) -->
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\InlineArrayAttribute.cs" Link="std\Runtime\CompilerServices\InlineArrayAttribute.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\CollectionBuilderAttribute.cs" Link="std\Runtime\CompilerServices\CollectionBuilderAttribute.cs" />
     <!-- CallingConvention (BCL 8; was in both MinimalRuntime files) -->
     <!-- CharSet (BCL 8; was in both MinimalRuntime files) -->
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\InteropServices\CharSet.cs" Link="std\Runtime\InteropServices\CharSet.cs" />
@@ -541,10 +556,14 @@
     <Compile Include="$(MSBuildThisFileDirectory)Globalization\ThrowHelper.DateTime.cs" Link="std\Globalization\ThrowHelper.DateTime.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\ValueStringBuilder.AppendSpanFormattable.cs" Link="std\Text\ValueStringBuilder.AppendSpanFormattable.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemberwiseClone.cs" Link="std\Runtime\MemberwiseClone.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\HResults.cs" Link="std\Runtime\HResults.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SR.Encoding.cs" Link="std\SR.Encoding.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SR.Interop.cs" Link="std\SR.Interop.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Serialization\SerializationException.cs" Link="std\Runtime\Serialization\SerializationException.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TimeProvider.cs" Link="std\TimeProvider.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Number\Number.Parsing.Integer.cs" Link="std\Number\Number.Parsing.Integer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Number\Primitives.Parsing.Integer.cs" Link="std\Number\Primitives.Parsing.Integer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Number\Primitives.Parsing.SmallInteger.cs" Link="std\Number\Primitives.Parsing.SmallInteger.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Number\Primitives.IntegerPredicates.cs" Link="std\Number\Primitives.IntegerPredicates.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Number\ParseNumbers.cs" Link="std\Number\ParseNumbers.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemoryExtensions.AsMemory.cs" Link="std\Runtime\MemoryExtensions.AsMemory.cs" />
@@ -591,6 +610,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)Globalization\CompareOptions.cs" Link="std\Globalization\CompareOptions.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Globalization\CompareInfo.cs" Link="std\Globalization\CompareInfo.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Globalization\TextInfo.cs" Link="std\Globalization\TextInfo.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Globalization\Ordinal.cs" Link="std\Globalization\Ordinal.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Globalization\InvariantModeCasing.cs" Link="std\Globalization\InvariantModeCasing.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Globalization\SurrogateCasing.cs" Link="std\Globalization\SurrogateCasing.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\UnicodeDebug.cs" Link="std\Text\UnicodeDebug.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\UnicodeUtility.cs" Link="std\Text\UnicodeUtility.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\GraphemeClusterBreakType.cs" Link="std\Text\Unicode\GraphemeClusterBreakType.cs" />
@@ -599,8 +621,45 @@
     <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\Utf16Utility.cs" Link="std\Text\Unicode\Utf16Utility.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\Rune.cs" Link="std\Text\Rune.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\Encoding.cs" Link="std\Text\Encoding.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)Text\FallbackExceptions.cs" Link="std\Text\FallbackExceptions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\ASCIIEncoding.cs" Link="std\Text\ASCIIEncoding.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Ascii.Transcoding.cs" Link="std\Text\Ascii.Transcoding.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Ascii.Utility.cs" Link="std\Text\Ascii.Utility.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Ascii.Utility.Helpers.cs" Link="std\Text\Ascii.Utility.Helpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\CodePageDataItem.cs" Link="std\Text\CodePageDataItem.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Decoder.cs" Link="std\Text\Decoder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\DecoderExceptionFallback.cs" Link="std\Text\DecoderExceptionFallback.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\DecoderFallback.cs" Link="std\Text\DecoderFallback.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\DecoderNLS.cs" Link="std\Text\DecoderNLS.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\DecoderReplacementFallback.cs" Link="std\Text\DecoderReplacementFallback.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Encoder.cs" Link="std\Text\Encoder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\EncoderExceptionFallback.cs" Link="std\Text\EncoderExceptionFallback.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\EncoderFallback.cs" Link="std\Text\EncoderFallback.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\EncoderLatin1BestFitFallback.Data.cs" Link="std\Text\EncoderLatin1BestFitFallback.Data.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\EncoderLatin1BestFitFallback.cs" Link="std\Text\EncoderLatin1BestFitFallback.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\EncoderNLS.cs" Link="std\Text\EncoderNLS.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\EncoderReplacementFallback.cs" Link="std\Text\EncoderReplacementFallback.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Encoding.Internal.cs" Link="std\Text\Encoding.Internal.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\EncodingData.cs" Link="std\Text\EncodingData.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\EncodingInfo.cs" Link="std\Text\EncodingInfo.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\EncodingProvider.cs" Link="std\Text\EncodingProvider.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\EncodingTable.cs" Link="std\Text\EncodingTable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Latin1Encoding.Sealed.cs" Link="std\Text\Latin1Encoding.Sealed.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Latin1Encoding.cs" Link="std\Text\Latin1Encoding.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Latin1Utility.Helpers.cs" Link="std\Text\Latin1Utility.Helpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Latin1Utility.cs" Link="std\Text\Latin1Utility.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\TranscodingStream.cs" Link="std\Text\TranscodingStream.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\UTF7Encoding.cs" Link="std\Text\UTF7Encoding.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\UTF8Encoding.Sealed.cs" Link="std\Text\UTF8Encoding.Sealed.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\UTF8Encoding.cs" Link="std\Text\UTF8Encoding.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\UnicodeEncoding.cs" Link="std\Text\UnicodeEncoding.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\Utf16Utility.Validation.cs" Link="std\Text\Unicode\Utf16Utility.Validation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\Utf8Utility.cs" Link="std\Text\Unicode\Utf8Utility.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\Utf8Utility.Helpers.cs" Link="std\Text\Unicode\Utf8Utility.Helpers.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\Utf8Utility.Transcoding.cs" Link="std\Text\Unicode\Utf8Utility.Transcoding.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Unicode\Utf8Utility.Validation.cs" Link="std\Text\Unicode\Utf8Utility.Validation.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\StringBuilder.cs" Link="std\Text\StringBuilder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\StringBuilder.Chunks.cs" Link="std\Text\StringBuilder.Chunks.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\StringBuilder.AppendFormat.cs" Link="std\Text\StringBuilder.AppendFormat.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\ValueStringBuilder.cs" Link="std\Text\ValueStringBuilder.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Atomics.cs" Link="std\Threading.Atomics.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.ManagedThreadId.cs" Link="std\Threading.ManagedThreadId.cs" />
@@ -721,6 +780,18 @@
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\SearchValues.cs" Link="std\Buffers\SearchValues\SearchValues.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\SearchValues.T.cs" Link="std\Buffers\SearchValues\SearchValues.T.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\EmptySearchValues.cs" Link="std\Buffers\SearchValues\EmptySearchValues.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\StringSearchValues.cs" Link="std\Buffers\SearchValues\Strings\StringSearchValues.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\StringSearchValuesBase.cs" Link="std\Buffers\SearchValues\Strings\StringSearchValuesBase.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\StringSearchValuesAhoCorasick.cs" Link="std\Buffers\SearchValues\Strings\StringSearchValuesAhoCorasick.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\StringSearchValuesRabinKarp.cs" Link="std\Buffers\SearchValues\Strings\StringSearchValuesRabinKarp.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\SingleStringSearchValuesFallback.cs" Link="std\Buffers\SearchValues\Strings\SingleStringSearchValuesFallback.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\MultiStringIgnoreCaseSearchValuesFallback.cs" Link="std\Buffers\SearchValues\Strings\MultiStringIgnoreCaseSearchValuesFallback.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\Helpers\AhoCorasick.cs" Link="std\Buffers\SearchValues\Strings\Helpers\AhoCorasick.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\Helpers\AhoCorasickBuilder.cs" Link="std\Buffers\SearchValues\Strings\Helpers\AhoCorasickBuilder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\Helpers\AhoCorasickNode.cs" Link="std\Buffers\SearchValues\Strings\Helpers\AhoCorasickNode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\Helpers\CharacterFrequencyHelper.cs" Link="std\Buffers\SearchValues\Strings\Helpers\CharacterFrequencyHelper.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\Helpers\RabinKarp.cs" Link="std\Buffers\SearchValues\Strings\Helpers\RabinKarp.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\Strings\Helpers\StringSearchValuesHelper.cs" Link="std\Buffers\SearchValues\Strings\Helpers\StringSearchValuesHelper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\BitmapCharSearchValues.cs" Link="std\Buffers\SearchValues\BitmapCharSearchValues.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\BitVector256.cs" Link="std\Buffers\SearchValues\BitVector256.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Buffers\SearchValues\AnyByteSearchValues.cs" Link="std\Buffers\SearchValues\AnyByteSearchValues.cs" />
@@ -738,8 +809,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\MemoryExtensions.Overlaps.cs" Link="std\Runtime\MemoryExtensions.Overlaps.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\SR.MemoryExtensions.cs" Link="std\Runtime\SR.MemoryExtensions.cs" />
     <!-- Ascii case in place (step224) -->
-    <Compile Include="$(MSBuildThisFileDirectory)Text\Ascii.CaseInPlace.cs" Link="std\Text\Ascii.CaseInPlace.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\Ascii.cs" Link="std\Text\Ascii.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Text\Ascii.CaseInPlace.cs" Link="std\Text\Ascii.CaseInPlace.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Text\SpanRuneEnumerator.cs" Link="std\Text\SpanRuneEnumerator.cs" />
   </ItemGroup>
   <!-- `dynamic`: every CallSite<T> the compiler emitted has a thunk the

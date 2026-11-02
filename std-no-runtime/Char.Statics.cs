@@ -25,6 +25,23 @@ namespace System
 
         public static bool IsLetterOrDigit(char c) => SharpOS.Std.NoRuntime.CharHelpers.IsLetterOrDigit(c);
 
+        // The (string, int) forms, as the BCL: the character at index, the
+        // range checked (step232: AvaloniaEdit's keyword rules).
+        public static bool IsLetterOrDigit(string s, int index) => IsLetterOrDigit(At(s, index));
+
+        public static bool IsLetter(string s, int index) => IsLetter(At(s, index));
+
+        public static bool IsDigit(string s, int index) => IsDigit(At(s, index));
+
+        public static bool IsWhiteSpace(string s, int index) => IsWhiteSpace(At(s, index));
+
+        private static char At(string s, int index)
+        {
+            if (s == null) throw new ArgumentNullException(nameof(s));
+            if ((uint)index >= (uint)s.Length) throw new ArgumentOutOfRangeException(nameof(index), "Index was out of range. Must be non-negative and less than the size of the collection.");
+            return s[index];
+        }
+
         public static bool IsWhiteSpace(char c) => SharpOS.Std.NoRuntime.CharHelpers.IsWhiteSpace(c);
 
         public static bool IsUpper(char c) => c >= 'A' && c <= 'Z';

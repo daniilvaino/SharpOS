@@ -6,7 +6,8 @@
 
 ## 1. Чистка и раскладка образа
 
-Сделано — `done/step220.md`. Осталось:
+Сделано — `done/step220.md`; SBOM чужого кода (`sbom.cdx.json`) и тексты
+лицензий в образе (`\sharpos\licence\`) — `done/step229.md`. Осталось:
 
 - ROM: свободный homebrew вместо `GAME.NES` (Super Mario Bros.) — ищет
   пользователь. WAD — из репозитория MOOS.
@@ -19,25 +20,20 @@
 `done/step221.md`; `System.Formats.Tar` и файловый API — `done/step222.md`;
 сжатие (SharpCompress, `System.IO.Compression`) и криптография —
 `done/step223.md`; System.Text.Json целиком с сериализатором через генератор
-источников — `done/step224.md`.
+источников — `done/step224.md`; Regex целиком (интерпретатор, NonBacktracking,
+`[GeneratedRegex]`), TurboXml в std обоих ярусов (порт `System.Xml` — не в
+0.1, по первому потребителю: donext) — `done/step225.md`; BCL `Encoding` целиком
+и кодовые страницы — `done/step226.md`. Раздел закрыт.
 
 Подключение — как BCL, в своих namespace; что тяжёлое — отдельной строкой в
 csproj, не в `Std.props`.
 
-- XML: `XmlReader`/`XmlWriter` (и `XDocument`) в std; сейчас TurboXml только в
-  ядре.
-- Regex — интерпретатор (`RegexInterpreter`), без компилятора и генератора;
-  вернуть `matches regex` и `extract()` в BabyKusto, тома многотомных архивов
-  в SharpCompress и шаблон целых чисел в System.Text.Json (`SHARPOS_REGEX`).
-- Кодовые страницы: `System.Text.Encoding.CodePages` из BCL (`codepages.nlp`
-  612 КБ ресурсом — ресурсы сборки работают); нужны `EncodingProvider`,
-  `Encoding.RegisterProvider`, `Encoder`/`Decoder` с состоянием; вернуть
-  кодовые страницы имён в SharpCompress (`SHARPOS_CODEPAGES`).
-
 ## 3. Текстовый редактор
 
-Кандидат — `TextView` Terminal.Gui (собирается), основа — пример Editor из
-UICatalog (MIT). Подсветка — после Regex (AvaloniaEdit `.xshd`, MIT).
+`EDIT [путь]` — `done/step230.md` (TextView, правка, поиск и замена, диалоги
+открытия и сохранения), подсветка синтаксиса — `done/step232.md` (движок
+AvaloniaEdit из tui-cs/Editor, `.xshd` читает `XmlReader` из BCL, step231).
+Раздел закрыт.
 
 ## 4. Владение терминалом
 

@@ -18,8 +18,11 @@ namespace System
         OrdinalIgnoreCase = 5,
     }
 
-    public sealed unsafe partial class String
+    public sealed unsafe partial class String : IComparable, IComparable<string>, IEquatable<string>
     {
+        internal ref ushort GetRawStringDataAsUInt16() => ref System.Runtime.CompilerServices.Unsafe.As<char, ushort>(ref GetRawStringData());
+        internal ref byte GetRawStringDataAsUInt8() => ref System.Runtime.CompilerServices.Unsafe.As<char, byte>(ref GetRawStringData());
+
         // ---- Compare (static) ----
 
         public static int Compare(string strA, string strB)
@@ -76,6 +79,10 @@ namespace System
 
         // ---- CompareOrdinal (static) ----
 
+        // Upstream's internal span overload (String.Comparison.cs).
+        internal static int CompareOrdinal(ReadOnlySpan<char> strA, ReadOnlySpan<char> strB)
+            => strA.SequenceCompareTo(strB);
+
         public static int CompareOrdinal(string strA, string strB)
         {
             if ((object)strA == (object)strB) return 0;
@@ -107,8 +114,7 @@ namespace System
         {
             if (value == null) return 1;
             if (value is string s) return CompareOrdinal(this, s);
-            Halt();
-            return 0;
+            throw new ArgumentException("Object must be of type String.");
         }
 
         // ---- Equals overloads ----
@@ -176,6 +182,17 @@ namespace System
             uint hash = 2166136261u;
             for (int i = 0; i < Length; i++)
                 hash = (hash ^ this[i]) * 16777619u;
+            return (int)hash;
+        }
+
+        // The same hash over a span (BCL: equal to GetHashCode of the string
+        // with these characters). Step230: System.Xml's NameTable hashes
+        // name slices of its buffer without making strings.
+        public static int GetHashCode(ReadOnlySpan<char> value)
+        {
+            uint hash = 2166136261u;
+            for (int i = 0; i < value.Length; i++)
+                hash = (hash ^ value[i]) * 16777619u;
             return (int)hash;
         }
 

@@ -29,6 +29,7 @@
 | `Diagnostics.Output.KernelConsole` | `Diagnostics.Output.AppHost` | куда идёт `Debug` |
 | `Pipes/PipeTransport.KernelPipes` | `Pipes/PipeTransport.AppServices` | транспорт труб: прямой вызов или служба |
 | `EnvironmentStore.Kernel` | `EnvironmentStore.AppServices` | где окружение и рабочая папка: загрузочное окружение ядра или запись процесса в ядре (step207) |
+| `Runtime/Array.Empty.Kernel` | `Runtime/Array.Empty.App` | `Array.Empty<T>()`: новый массив (GC-статики ядра — с Phase 2) или один на тип, как в BCL (step225) |
 
 Плюс `GcStaticsInit` — только у приложений: у ядра своя материализация статик,
 в `OS/src`.

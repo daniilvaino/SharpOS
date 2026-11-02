@@ -1,8 +1,6 @@
 using System;
 using System.IO;
-#if SHARPOS_REGEX
 using System.Text.RegularExpressions;
-#endif
 using SharpCompress.Common;
 
 namespace SharpCompress.Archives.Zip;
@@ -12,8 +10,6 @@ internal static class ZipArchiveVolumeFactory
     internal static FileInfo? GetFilePart(int index, FileInfo part1) //base the name on the first part
     {
         FileInfo? item = null;
-        // SharpOS cut: volume names by Regex, until std has Regex (release.md, section 2); without it the next volume is not found
-#if SHARPOS_REGEX
 
         //load files with zip/zipx first. Swapped to end once loaded in ZipArchive
         //new style .zip, z01.. | .zipx, zx01 - if the numbers go beyond 99 then they use 100 ...1000 etc
@@ -36,7 +32,6 @@ internal static class ZipArchiveVolumeFactory
             return ArchiveVolumeFactory.GetFilePart(index, part1);
         }
 
-#endif
         return item is null ? null : ArchiveVolumeFactory.ResolveFilePart(item);
     }
 }

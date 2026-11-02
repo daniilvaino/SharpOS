@@ -134,6 +134,8 @@ namespace System.Collections.Generic
             _numEntries = 0;
         }
 
+        public void CopyTo(T[] array) => CopyTo(array, 0);
+
         public void CopyTo(T[] array, int arrayIndex)
         {
             int j = arrayIndex;

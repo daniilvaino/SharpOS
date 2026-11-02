@@ -31,10 +31,6 @@ image (`JsApp.csproj`):
 - `GlobalUsings.cs` — the implicit usings the upstream projects get from the
   SDK, and aliases for `DateTimeFormat`/`CalendarData`, whose names std's
   internal BCL types share once both are compiled into one assembly.
-- `OkojoShims.cs` — std has no `System.Text.RegularExpressions` yet. Okojo
-  uses .NET `Regex` only for eight fixed internal patterns (`[GeneratedRegex]`);
-  this layer runs them through Okojo's own ECMAScript engine and supplies the
-  bodies the source generator would have written. It goes when std has `Regex`.
 
 ## Excluded
 

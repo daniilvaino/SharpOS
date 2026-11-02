@@ -289,6 +289,25 @@ namespace System
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static T[] EmptyArray<T>() => new T[0];
 
+        // BCL: SpanHelpers.SequenceEqual(ref byte, ref byte, nuint) — vectorized there;
+        // byte by byte here (SearchValues<string>).
+        internal static bool SequenceEqual(ref byte first, ref byte second, nuint length)
+        {
+            if (Unsafe.AreSame(ref first, ref second))
+            {
+                return true;
+            }
+
+            for (nuint i = 0; i < length; i++)
+            {
+                if (Unsafe.Add(ref first, i) != Unsafe.Add(ref second, i))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         // Was `while (true) ;`. Shared by Span, ReadOnlySpan, MemoryExtensions
         // and the span-based string paths, so an index past the end anywhere in
         // them hung the machine without a word. EH works on every tier — throw,

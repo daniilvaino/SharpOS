@@ -71,5 +71,18 @@ namespace System.Globalization
         public override int GetHashCode() => CultureName.GetHashCode();
 
         public override string ToString() => "TextInfo - " + _cultureName;
+
+        // Upstream's static casing helpers (TextInfo.cs). ToUpperOrdinal is upstream's
+        // invariant branch: std is always in invariant mode (GlobalizationMode.cs).
+        internal static char ToUpperOrdinal(char c) => InvariantModeCasing.ToUpper(c);
+
+        internal static char ToUpperAsciiInvariant(char c)
+        {
+            if (char.IsAsciiLetterLower(c))
+            {
+                c = (char)(c & 0x5F); // = low 7 bits of ~0x20
+            }
+            return c;
+        }
     }
 }

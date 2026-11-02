@@ -1,0 +1,120 @@
+// Adapted for Terminal.Gui from AvaloniaEdit d7a6b63
+
+#nullable disable
+// Copyright (c) 2014 AlphaSierraPapa for the SharpDevelop Team
+// 
+// Permission is hereby granted, free of charge, to any person obtaining a copy of this
+// software and associated documentation files (the "Software"), to deal in the Software
+// without restriction, including without limitation the rights to use, copy, modify, merge,
+// publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+// to whom the Software is furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in all copies or
+// substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+// PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+// FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS IN THE SOFTWARE.
+
+using System.Xml;
+
+namespace Terminal.Gui.Editor.Highlighting.Xshd;
+
+/// <summary>
+///     Static class with helper methods to load XSHD highlighting files.
+/// </summary>
+public static class HighlightingLoader
+{
+    #region XSHD loading
+
+    /// <summary>
+    ///     Lodas a syntax definition from the xml reader.
+    /// </summary>
+    public static XshdSyntaxDefinition LoadXshd (XmlReader reader)
+    {
+        return LoadXshd (reader, false);
+    }
+
+    internal static XshdSyntaxDefinition LoadXshd (XmlReader reader, bool skipValidation)
+    {
+        if (reader == null)
+        {
+            throw new ArgumentNullException (nameof (reader));
+        }
+
+        try
+        {
+            reader.MoveToContent ();
+            //if (reader.NamespaceURI == V2Loader.Namespace)
+            //{
+            return V2Loader.LoadDefinition (reader, skipValidation);
+            //}
+            //else
+            //{
+            //    return V1Loader.LoadDefinition(reader, skipValidation);
+            //}
+        }
+        catch (XmlException ex)
+        {
+            throw WrapException (ex, ex.LineNumber, ex.LinePosition);
+        }
+    }
+
+    private static Exception WrapException (Exception ex, int lineNumber, int linePosition)
+    {
+        return new HighlightingDefinitionInvalidException (
+            FormatExceptionMessage (ex.Message, lineNumber, linePosition), ex);
+    }
+
+    internal static string FormatExceptionMessage (string message, int lineNumber, int linePosition)
+    {
+        if (lineNumber <= 0)
+        {
+            return message;
+        }
+
+        return "Error at position (line " + lineNumber + ", column " + linePosition + "):\n" + message;
+    }
+
+    internal static XmlReader GetValidatingReader (XmlReader input, bool ignoreWhitespace)
+    {
+        XmlReaderSettings settings = new ()
+        {
+            CloseInput = true,
+            IgnoreComments = true,
+            IgnoreWhitespace = ignoreWhitespace
+        };
+        return XmlReader.Create (input, settings);
+    }
+
+    #endregion
+
+    #region Load Highlighting from XSHD
+
+    /// <summary>
+    ///     Creates a highlighting definition from the XSHD file.
+    /// </summary>
+    public static IHighlightingDefinition Load (XshdSyntaxDefinition syntaxDefinition,
+        IHighlightingDefinitionReferenceResolver resolver)
+    {
+        if (syntaxDefinition == null)
+        {
+            throw new ArgumentNullException (nameof (syntaxDefinition));
+        }
+
+        return new XmlHighlightingDefinition (syntaxDefinition, resolver);
+    }
+
+    /// <summary>
+    ///     Creates a highlighting definition from the XSHD file.
+    /// </summary>
+    public static IHighlightingDefinition Load (XmlReader reader, IHighlightingDefinitionReferenceResolver resolver)
+    {
+        return Load (LoadXshd (reader), resolver);
+    }
+
+    #endregion
+}

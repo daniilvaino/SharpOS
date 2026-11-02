@@ -69,7 +69,7 @@ namespace System.Text.Encodings.Web
                 Span<uint> thisAllowedCharactersBitmap = new Span<uint>(pBitmap, BitmapLengthInDWords);
                 Debug.Assert(definedCharsBitmapAsLittleEndian.Length == thisAllowedCharactersBitmap.Length * sizeof(uint));
 
-#if NET && SHARPOS_NUMERICS_VECTORS // SharpOS cut: no System.Numerics.Vector<T> in std; the scalar loop below
+#if NET
                 if (Vector.IsHardwareAccelerated && BitConverter.IsLittleEndian)
                 {
                     while (!definedCharsBitmapAsLittleEndian.IsEmpty)

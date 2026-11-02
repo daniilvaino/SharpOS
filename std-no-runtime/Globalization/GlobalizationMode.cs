@@ -5,6 +5,7 @@
 //   * GlobalizationMode.Invariant is true: std has one culture, the invariant
 //     one (Globalization.cs), so upstream's invariant-mode branches are the
 //     ones that run.
+//   * GlobalizationMode.UseNls is false: no Windows NLS.
 //   * The LocalAppContextSwitches the date/time code reads are at their
 //     defaults (false), as when nothing configures them.
 
@@ -13,6 +14,7 @@ namespace System.Globalization
     internal static partial class GlobalizationMode
     {
         internal static bool Invariant => true;
+        internal static bool UseNls => false;
     }
 }
 
@@ -23,5 +25,6 @@ namespace System
         internal static bool EnforceJapaneseEraYearRanges => false;
         internal static bool FormatJapaneseFirstYearAsANumber => false;
         internal static bool EnforceLegacyJapaneseDateParsing => false;
+        internal static bool EnableUnsafeUTF7Encoding => false;
     }
 }

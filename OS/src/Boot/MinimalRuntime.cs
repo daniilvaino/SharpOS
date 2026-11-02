@@ -47,6 +47,9 @@ namespace System
         // reference types where object-identity is the right semantic use as is.
         public virtual bool Equals(object obj) => ReferenceEquals(this, obj);
 
+        // BCL's: a shallow copy of this object (std/Runtime/MemberwiseClone.cs).
+        protected object MemberwiseClone() => SharpOS.Std.ObjectCloning.MemberwiseClone(this);
+
         // Address-derived hash. Stable because our GC is non-moving. Not cryptographic,
         // good enough for bucket selection. Value types override with value hashing.
         public virtual int GetHashCode()

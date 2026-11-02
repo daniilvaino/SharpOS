@@ -122,6 +122,21 @@ namespace System
 
         public string ToString(string? format, IFormatProvider? provider) => ToString(format);
 
+        // BCL surface over ToString (step230: XmlConvert.TryFormat(Guid)): the
+        // text is made, then copied; false when it does not fit.
+        public bool TryFormat(Span<char> destination, out int charsWritten, ReadOnlySpan<char> format = default)
+        {
+            string text = ToString(format.IsEmpty ? null : format.ToString());
+            if (text.Length > destination.Length)
+            {
+                charsWritten = 0;
+                return false;
+            }
+            text.AsSpan().CopyTo(destination);
+            charsWritten = text.Length;
+            return true;
+        }
+
         private static int Hex(char[] into, int at, uint value, int digits)
         {
             for (int i = digits - 1; i >= 0; i--)

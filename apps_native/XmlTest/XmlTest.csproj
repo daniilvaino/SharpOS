@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Where the image puts it (tools/Apps.ps1, step207). -->
+    <SharpOsCategory>tests</SharpOsCategory>
+    <IlcSystemModule>XmlTest</IlcSystemModule>
+  </PropertyGroup>
+
+  <!-- The freestanding win-x64 PE recipe every AOT app uses. -->
+  <Import Project="..\sdk\FreestandingPe.props" />
+
+  <!-- System.Xml's reader (std-no-runtime/Xml). -->
+  <Import Project="..\..\std-no-runtime\Xml\Xml.props" />
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>

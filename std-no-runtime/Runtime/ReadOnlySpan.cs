@@ -52,7 +52,7 @@ namespace System
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public ReadOnlySpan(in T reference)
+        public ReadOnlySpan(ref readonly T reference)
         {
             _reference = ref Unsafe.AsRef(in reference);
             _length = 1;

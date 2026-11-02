@@ -58,7 +58,11 @@ namespace PipeApps
     // a value that does not fit the field is an error. A tail of project,
     // project-away and project-rename by name, over Expandos, is done to each
     // block too — entries kept, removed, renamed where they are, their order
-    // unchanged (step205). Any other result goes out as Expando messages —
+    // unchanged (step205). Over a type of fields, a project (-keep, -away,
+    // -rename, -reorder) at the end, after where, take and sort, keeps the
+    // records it names (step228): one record column is the message itself,
+    // its graph copied out of the block; others beside it make an Expando
+    // with the records in it, of their own types. Any other result goes out as Expando messages —
     // over Expandos, the entries of Value with the other columns beside them.
     //
     // A query that fails while its output is open breaks the output: the next
@@ -207,6 +211,27 @@ namespace PipeApps
                     if (!Analyze(query, columns.Symbol().WithIsOpen(true), out KustoCode open, null)) return 2;
                     columns.Name(InputNames(open));
                     s_firstBound = Stopwatch.GetTimestamp();
+                }
+
+                // Over a type of fields: a project at the end keeps the
+                // records it names, of their own types (step228).
+                Projection projection = columns.Typed ? Projection.Of(query) : null;
+                if (projection != null)
+                {
+                    columns.Row = true;
+                    TableSymbol carried = columns.Symbol();
+                    KustoCode bound = KustoCode.ParseAndAnalyze(projection.Query,
+                        GlobalState.Default.WithDatabase(new DatabaseSymbol("db", carried)));
+                    if (bound.GetDiagnostics().Count == 0 && bound.ResultType is TableSymbol projected && projection.Bind(projected, columns))
+                    {
+                        s_bound = Stopwatch.GetTimestamp();
+                        source = new PipeTable(carried, columns, input, first, keep: true, release: Plan.Of(projection.Rest).Streaming);
+                        first = null;
+                        var projecting = new BabyKustoEngine();
+                        projecting.AddGlobalTable(source);
+                        return Projected(projecting.Evaluate(projection.Query), source, input, projection);
+                    }
+                    columns.Row = false;
                 }
 
                 // A tail of project / project-away / project-rename by name,
@@ -678,6 +703,97 @@ namespace PipeApps
             }
         }
 
+        // project, project-keep, -away, -rename or -reorder at the end of a
+        // query over a type of fields, after where, take and sort (step228):
+        // a column that is a record field of the input (an object, an array),
+        // named as it is or renamed, keeps the record — its graph copied
+        // from the message's block, of its own type, never dynamic. One such
+        // column alone is the message itself: `project Build` over SystemInfo
+        // sends BuildFacts. With other columns beside it the message is an
+        // Expando, the record in it as itself. The query runs with the row
+        // number carried through the project, to find each row's message.
+        private sealed class Projection
+        {
+            public string Query;  // the query, the row number carried
+            public string Rest;   // before the project
+            public FieldShape[] Records;  // by result column: the field it is, or null
+            public int Row;
+            public int Single = -1;  // the one column, when it is the only one and a record
+
+            private readonly Dictionary<string, string> _from = new Dictionary<string, string>();
+            private bool _identity;  // a column not in _from is the input's column of its name
+
+            public static Projection Of(string query)
+            {
+                PipeExpression last = null;
+                KustoCode.Parse(query).Syntax.WalkElements(e =>
+                {
+                    if (last == null && e is PipeExpression p) last = p;
+                });
+                if (last == null) return null;
+                QueryOperator op = last.Operator;
+                var projection = new Projection();
+                bool carry = false;
+                if (op is ProjectOperator project)
+                {
+                    carry = true;
+                    foreach (SeparatedElement<Expression> x in project.Expressions)
+                    {
+                        if (x.Element is NameReference plain) projection._from[plain.SimpleName] = plain.SimpleName;
+                        else if (x.Element is SimpleNamedExpression named && named.Expression is NameReference old)
+                            projection._from[named.Name.SimpleName] = old.SimpleName;
+                    }
+                }
+                else if (op is ProjectRenameOperator rename)
+                {
+                    projection._identity = true;
+                    foreach (SeparatedElement<Expression> x in rename.Expressions)
+                        if (x.Element is SimpleNamedExpression named && named.Expression is NameReference old)
+                            projection._from[named.Name.SimpleName] = old.SimpleName;
+                }
+                else if (op is ProjectKeepOperator) carry = projection._identity = true;
+                else if (op is ProjectAwayOperator || op is ProjectReorderOperator) projection._identity = true;
+                else return null;
+
+                projection.Rest = query.Substring(0, last.Expression.End);
+                if (!Plan.Of(projection.Rest).Forward) return null;
+                projection.Query = carry ? query.Substring(0, op.End) + ", " + RowColumn + query.Substring(op.End) : query;
+                return projection;
+            }
+
+            // The result's columns that are records of the input; false when
+            // none is, or the row number did not come through.
+            public bool Bind(TableSymbol result, Columns columns)
+            {
+                Row = IndexOf(result, RowColumn);
+                if (Row < 0) return false;
+                Records = new FieldShape[result.Columns.Count];
+                int found = 0, others = 0;
+                for (int c = 0; c < result.Columns.Count; c++)
+                {
+                    if (c == Row) continue;
+                    ColumnSymbol column = result.Columns[c];
+                    if (!_from.TryGetValue(column.Name, out string name))
+                    {
+                        if (!_identity) { others++; continue; }
+                        name = column.Name;
+                    }
+                    Source s = columns.Find(name);
+                    if (s == null || s.Field == null || s.Kind != ColumnKind.Dynamic || s.Field.Kind != FieldKind.Reference)
+                    {
+                        others++;
+                        continue;
+                    }
+                    Records[c] = s.Field;
+                    found++;
+                    Single = c;
+                }
+                if (found == 0) return false;
+                if (found != 1 || others != 0) Single = -1;
+                return true;
+            }
+        }
+
         // What the query does, read from its syntax before the input's type is known.
         private sealed class Plan
         {
@@ -813,6 +929,130 @@ namespace PipeApps
             {
                 // A query that fails halfway breaks the output: the next stage
                 // must not take what it got for the whole answer.
+                if (output != 0) PipeTransport.End(output);
+            }
+        }
+
+        // A project's rows (Projection): the one record column as the message
+        // itself, its graph copied out of the input's block; or an Expando of
+        // the columns, the records in it copied as they are (SetGraph), read
+        // by this image's catalog and the input's description together.
+        private static int Projected(EvaluationResult evaluated, PipeTable source, RawPipeReader input, Projection projection)
+        {
+            if (evaluated is not TabularResult table) return 0;
+            TableSymbol type = table.Value.Type;
+            byte[] inputSchema = input.Schema ?? PipeTransport.Schema(input.Handle, out _);
+            bool single = projection.Single >= 0;
+            RegionShapes shapes = null;
+            ulong key;
+            if (single)
+            {
+                // The field's declared type; a record of a subclass goes as itself.
+                RegionShapes inputShapes = RegionShapes.Parse(inputSchema, out _);
+                key = inputShapes?.ByName(projection.Records[projection.Single].TypeName)?.Key ?? 0;
+            }
+            else
+            {
+                key = MessageCatalog.KeyOf(typeof(Expando));
+                byte[] merged = RegionSchema.Merge(MessageCatalog.WriterSchema(key), inputSchema);
+                shapes = merged == null ? null : RegionShapes.Parse(merged, out _);
+                if (shapes == null)
+                {
+                    Console.Error.WriteLine("KQL: the input's description does not go with this program's");
+                    return 1;
+                }
+            }
+            var names = new ExpandoName[type.Columns.Count];
+            for (int c = 0; c < names.Length; c++) names[c] = new ExpandoName(type.Columns[c].Name);
+
+            int output = Pipe.TakeOutput("the records a project names");
+            bool screen = output == 0;
+            bool declared = false;
+            try
+            {
+                foreach (ITableChunk chunk in table.Value.GetData())
+                {
+                    Array ids = chunk.Columns[projection.Row].RawData;
+                    for (int r = 0; r < chunk.RowCount; r++)
+                    {
+                        RawRegion region = source.Take((long)ids.GetValue(r));
+                        if (region == null) continue;
+                        byte* block = null;
+                        ulong length = 0;
+                        RawRegion message = null;
+                        try
+                        {
+                            ReportStart();
+                            if (single)
+                            {
+                                View record = region.Root.FieldAt(projection.Records[projection.Single]);
+                                if (record.IsNull) continue;
+                                if (screen)
+                                {
+                                    ScreenText.Print(record);
+                                    continue;
+                                }
+                                block = ExpandoEdits.CopyOut(record, out length);
+                                if (key == 0) key = *(ulong*)(block + Region.HeaderSize);
+                            }
+                            else
+                            {
+                                var e = new Expando();
+                                for (int c = 0; c < names.Length; c++)
+                                    if (c != projection.Row)
+                                        e[names[c].Name] = projection.Records[c] != null ? null : Out(chunk.Columns[c].RawData.GetValue(r));
+                                message = RawRegion.Lay(e, shapes);
+                                for (int c = 0; c < names.Length; c++)
+                                {
+                                    if (projection.Records[c] == null) continue;
+                                    View record = region.Root.FieldAt(projection.Records[c]);
+                                    if (!record.IsNull) message.SetGraph(message.Root, names[c], record);
+                                }
+                                if (screen)
+                                {
+                                    ScreenText.Print(message.Root);
+                                    continue;
+                                }
+                                block = message.Block;
+                                length = message.Length;
+                            }
+                            if (!declared)
+                            {
+                                PipeStatus opened = PipeTransport.OpenEnd(output, single ? inputSchema : shapes.Schema, key, out string error);
+                                if (opened != PipeStatus.Ok)
+                                {
+                                    Console.Error.WriteLine("KQL: the output: " + (error ?? Pipe.Explain(opened)));
+                                    return 1;
+                                }
+                                declared = true;
+                            }
+                            PipeStatus sent = PipeTransport.Send(output, block, length);
+                            if (sent != PipeStatus.Ok)
+                            {
+                                if (sent == PipeStatus.Broken) return 141;
+                                Console.Error.WriteLine("KQL: the output: " + Pipe.Explain(sent));
+                                return 1;
+                            }
+                            // The block is the pipe's now.
+                            if (message != null) message.End("the region went on to the standard output");
+                            block = null;
+                        }
+                        finally
+                        {
+                            region.Dispose();
+                            if (message != null) message.Dispose();
+                            else if (block != null) PipeTransport.Free(block);
+                        }
+                    }
+                }
+                ReportStart();
+                // Nothing passed: the output still carries the type, and its end.
+                if (!declared && !screen && key != 0)
+                    PipeTransport.OpenEnd(output, single ? inputSchema : shapes.Schema, key, out _);
+                return 0;
+            }
+            finally
+            {
                 if (output != 0) PipeTransport.End(output);
             }
         }

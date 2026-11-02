@@ -100,7 +100,7 @@ public sealed class LuaStream(LuaFileOpenMode mode, Stream innerStream, LuaStrin
 
         using PooledArray<byte> byteBuffer = new(4096);
         var bytes = byteBuffer.AsSpan();
-        // SharpOS cut: no Encoding.GetEncoder (std has no Encoder) — see the UTF-8 branch below.
+        var encoder = stringMode == LuaStringMode.Bytes ? null : Encoding.UTF8.GetEncoder();
         var remainingChars = buffer.Span;
         var totalBytes = 0;
         while (!remainingChars.IsEmpty)
@@ -114,16 +114,14 @@ public sealed class LuaStream(LuaFileOpenMode mode, Stream innerStream, LuaStrin
             }
             else
             {
-                // SharpOS cut: was encoder.Convert(remainingChars, bytes, flush: true, ...). The
-                // text is whole here, so a chunk that fits the buffer (at most 3 bytes a UTF-16
-                // unit) and does not end between the halves of a surrogate pair converts alone.
-                charsUsed = Math.Min(remainingChars.Length, bytes.Length / 3);
-                if (charsUsed < remainingChars.Length && char.IsHighSurrogate(remainingChars[charsUsed - 1]))
-                {
-                    charsUsed--;
-                }
-
-                bytesUsed = Encoding.UTF8.GetBytes(remainingChars[..charsUsed], bytes);
+                encoder!.Convert(
+                    remainingChars,
+                    bytes,
+                    flush: true,
+                    out charsUsed,
+                    out bytesUsed,
+                    out _
+                );
             }
 
             if (bytesUsed > 0)

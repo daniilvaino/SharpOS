@@ -547,6 +547,13 @@ namespace OS.PAL.SharpOSHost
         [BootAsm.CoffDataSymbol("__security_cookie", Section = ".data", Alignment = 8)]
         public static ulong SecurityCookie = 0x2B992DDFA232UL;
 
+        // What ILC's optimistic X.IsSupported reads (std HardwareIntrinsicFlags),
+        // as in the apps (apps_native/sdk/WinCrtStubs.cs). Zero: the kernel runs
+        // on the baseline sets only — nothing writes the CPU's flags here. Needed
+        // since step226: BCL's Ascii.Utility asks the optimistic sets.
+        [BootAsm.CoffDataSymbol("g_cpuFeatures", Section = ".data", Alignment = 4)]
+        public static int CpuFeatures = 0;
+
         // `__security_check_cookie` — verifies cookie matches at epilogue.
         // Phase 6.1.b: false-positive прошёл empirically на CoreCLR boot —
         // MSVC's __security_init_cookie clears low byte (`& ~0xff`) BEFORE

@@ -1,5 +1,5 @@
 // SR keys of System.Private.CoreLib and System.Collections (dotnet/runtime
-// v8.0.27 Strings.resx) for AggregateException and BitArray (step224).
+// v8.0.27 Strings.resx) for AggregateException and BitArray (step224), SearchValues<string>.
 
 namespace System
 {
@@ -12,5 +12,6 @@ namespace System
         internal const string InvalidOperation_EnumEnded = @"Enumeration already finished.";
         internal const string Argument_ArrayTooLarge = @"The input array length must not exceed Int32.MaxValue / {0}. Otherwise BitArray.Length would exceed Int32.MaxValue.";
         internal const string Arg_BitArrayTypeUnsupported = @"Only supported array types for CopyTo on BitArrays are Boolean[], Int32[] and Byte[].";
+        internal const string Argument_SearchValues_UnsupportedStringComparison = @"SearchValues<string> supports only StringComparison.Ordinal and StringComparison.OrdinalIgnoreCase.";
     }
 }

@@ -156,6 +156,29 @@ namespace SharpOS.Std.Pipes
             return this;
         }
 
+        /// <summary>
+        /// A message of this image's catalog laid into an exchange block, as
+        /// Copy lays it, and held as a region read by <paramref name="shapes"/>
+        /// — a description of the catalog's types and more (step228: an
+        /// Expando that takes records of another writer's types,
+        /// ExpandoEdits.SetGraph). The block goes on by PipeTransport.Send.
+        /// </summary>
+        public static RawRegion Lay(object message, RegionShapes shapes)
+        {
+            MessageCatalog.Ensure();
+            var layout = new RegionWriter();
+            if (!layout.Lay(message)) throw new PipeException(PipeStatus.Refused, "a message could not be laid out: " + layout.Complaint);
+            ulong size = layout.Size;
+            byte* block = (byte*)PipeTransport.Allocate(size);
+            if (block == null)
+            {
+                layout.Forget();
+                throw new OutOfMemoryException("no exchange block of " + size.ToString() + " bytes for a message");
+            }
+            layout.Write(block);
+            return new RawRegion(block, size, shapes.Schema, 0, shapes);
+        }
+
         /// <summary>The root object, as a view: read and written in place, never translated.</summary>
         public View Root
         {

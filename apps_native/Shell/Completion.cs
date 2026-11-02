@@ -49,6 +49,8 @@ namespace Shell
             {
                 foreach (string builtin in Executor.Builtins)
                     if (StartsWith(builtin, word)) found.Add(builtin);
+                foreach (string[] alias in Executor.Aliases)
+                    if (StartsWith(alias[0], word)) found.Add(alias[0]);
                 string path = System.Environment.GetEnvironmentVariable("PATH") ?? "";
                 foreach (string directory in Process.SplitPathList(path))
                 {

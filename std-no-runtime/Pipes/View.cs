@@ -1110,6 +1110,10 @@ namespace SharpOS.Std.Pipes
 
         internal ViewScope Scope => _scope;
         internal ulong Address => _at;
+
+        // A record of the block (an object, an array, a string): not a struct
+        // laid out in another record, not a value.
+        internal bool IsRecord => _shape == Obj;
         internal void EnsureAlive() => Check();
         internal TypeShape Shape => _type;
         internal FieldKind ValueKind => _value;

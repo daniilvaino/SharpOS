@@ -24,7 +24,7 @@ public enum EncodingType
 /// </summary>
 public static class ArchiveEncodingExtensions
 {
-#if !NETFRAMEWORK && SHARPOS_CODEPAGES // SharpOS cut: no CodePagesEncodingProvider until std has code pages (release.md, section 2)
+#if !NETFRAMEWORK
     /// <summary>
     /// Registers the code pages encoding provider.
     /// </summary>

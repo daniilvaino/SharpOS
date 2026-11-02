@@ -31,10 +31,40 @@ namespace AotTests
             }
         }
 
+        // An array as the non-generic ICollection and IList (step230): Terminal.Gui's
+        // ListView and ComboBox take their source so, and the call panicked the
+        // kernel ("iface-resolve: no impl slot") before Array<T> listed them.
+        private static void CheckArrayInterfaces()
+        {
+            string[] words = { "a", "b", "c" };
+            System.Collections.IList list = words;
+            System.Collections.ICollection collection = words;
+            Check("array as ICollection: Count", collection.Count == 3);
+            Check("array as IList: index, IndexOf, Contains", (string)list[1] == "b" && list.IndexOf("c") == 2 && list.Contains("a") && !list.Contains("z"));
+            Check("array as IList: fixed size, not read-only", list.IsFixedSize && !list.IsReadOnly);
+            list[0] = "x";
+            Check("array as IList: set through the indexer", words[0] == "x");
+            bool refused = false;
+            try { list.Add("d"); } catch (NotSupportedException) { refused = true; }
+            Check("array as IList: Add refused", refused);
+            var copy = new string[4];
+            collection.CopyTo(copy, 1);
+            Check("array as ICollection: CopyTo at an offset", copy[0] == null && copy[1] == "x" && copy[3] == "c");
+            int[] numbers = { 1, 2, 3 };
+            System.Collections.IList boxes = numbers;
+            Check("int[] as IList: boxed element", (int)boxes[2] == 3 && boxes.Count == 3);
+            ICloneable cloneable = numbers;
+            var cloned = (int[])cloneable.Clone();
+            Check("array as ICloneable: a copy", cloned.Length == 3 && cloned[1] == 2 && !ReferenceEquals(cloned, numbers));
+        }
+
         private static void CheckFormats()
         {
             CheckIntrinsics();
+            CheckArrayInterfaces();
             CheckTar();
+            CheckXml();
+            CheckEncodings();
             byte[] check = new byte[] { (byte)'1', (byte)'2', (byte)'3', (byte)'4', (byte)'5', (byte)'6', (byte)'7', (byte)'8', (byte)'9' };
 
             // CRC-32 (IEEE 802.3) and CRC-64 (ECMA-182) of "123456789".
@@ -70,6 +100,77 @@ namespace AotTests
         // System.Formats.Tar: archives GNU tar wrote on the build machine (its
         // two formats; a path past ustar's 100 bytes), one written and read
         // back here, and a directory through the file system and back.
+        // TurboXml, in std on both tiers: every kind of event in document
+        // order, entities decoded; a malformed document reaches OnError.
+        private static void CheckXml()
+        {
+            var trace = new XmlTrace();
+            TurboXml.XmlParser.Parse("<?xml version=\"1.0\"?><a x=\"1&amp;2\"><b>hi</b><!--c--><![CDATA[d<]]><e/></a>", ref trace);
+            Check("xml: TurboXml events in order (" + trace.Text + ")",
+                  trace.Text == "decl 1.0|<a|@x=1&2|<b|t hi|/b|!c|cd d<|<e|/>|/a|");
+            var bad = new XmlTrace();
+            TurboXml.XmlParser.Parse("<a><b></a>", ref bad);
+            Check("xml: a mismatched end tag is an error", bad.Text.Contains("error"));
+        }
+
+        private struct XmlTrace : TurboXml.IXmlReadHandler
+        {
+            public string Text;
+            private void Add(string s) => Text = (Text ?? "") + s + "|";
+            public void OnXmlDeclaration(ReadOnlySpan<char> version, ReadOnlySpan<char> encoding, ReadOnlySpan<char> standalone, int line, int column) => Add("decl " + version.ToString());
+            public void OnProcessingInstruction(ReadOnlySpan<char> target, ReadOnlySpan<char> data, int line, int column) => Add("pi " + target.ToString());
+            public void OnBeginTag(ReadOnlySpan<char> name, int line, int column) => Add("<" + name.ToString());
+            public void OnEndTagEmpty() => Add("/>");
+            public void OnEndTag(ReadOnlySpan<char> name, int line, int column) => Add("/" + name.ToString());
+            public void OnAttribute(ReadOnlySpan<char> name, ReadOnlySpan<char> value, int nameLine, int nameColumn, int valueLine, int valueColumn) => Add("@" + name.ToString() + "=" + value.ToString());
+            public void OnText(ReadOnlySpan<char> text, int line, int column) => Add("t " + text.ToString());
+            public void OnComment(ReadOnlySpan<char> comment, int line, int column) => Add("!" + comment.ToString());
+            public void OnCData(ReadOnlySpan<char> cdata, int line, int column) => Add("cd " + cdata.ToString());
+            public void OnError(string message, int line, int column) => Add("error " + message);
+        }
+
+        // The BCL encoding hierarchy (std, release 0.1): a decoder carrying a
+        // split UTF-8 sequence between calls, the fallbacks, the encodings by
+        // name and number, preambles, a transcoding stream.
+        private static void CheckEncodings()
+        {
+            byte[] zhe = { 0xD0, 0x96 }; // Ж
+            System.Text.Decoder d = System.Text.Encoding.UTF8.GetDecoder();
+            char[] chars = new char[4];
+            int first = d.GetChars(zhe, 0, 1, chars, 0);
+            int second = d.GetChars(zhe, 1, 1, chars, 0);
+            Check("encoding: UTF-8 decoder carries a split sequence (" + first + "+" + second + ")", first == 0 && second == 1 && chars[0] == 'Ж');
+
+            Check("encoding: invalid UTF-8 becomes U+FFFD", System.Text.Encoding.UTF8.GetString(new byte[] { 0x41, 0xFF, 0x42 }) == "A�B");
+            bool threw = false;
+            try { new System.Text.UTF8Encoding(false, true).GetString(new byte[] { 0xC3 }); }
+            catch (System.Text.DecoderFallbackException) { threw = true; }
+            Check("encoding: throwOnInvalidBytes is DecoderFallbackException", threw);
+
+            System.Text.Encoding asciiStrict = System.Text.Encoding.GetEncoding("us-ascii", System.Text.EncoderFallback.ExceptionFallback, System.Text.DecoderFallback.ExceptionFallback);
+            threw = false;
+            try { asciiStrict.GetBytes("é"); }
+            catch (System.Text.EncoderFallbackException e) { threw = e.CharUnknown == 'é'; }
+            Check("encoding: ASCII with the exception fallback names the char", threw);
+            Check("encoding: ASCII replacement fallback is '?'", System.Text.Encoding.ASCII.GetString(System.Text.Encoding.ASCII.GetBytes("aé")) == "a?");
+
+            Check("encoding: Latin1 round-trips 0xE9", System.Text.Encoding.Latin1.GetString(System.Text.Encoding.Latin1.GetBytes("é")) == "é" && System.Text.Encoding.Latin1.GetBytes("é")[0] == 0xE9);
+            Check("encoding: UTF-32 of U+1F600 is four bytes, little-endian", Hex(System.Text.Encoding.UTF32.GetBytes("😀")) == "00F60100");
+            Check("encoding: UTF-16 BE preamble is fe ff", Hex(System.Text.Encoding.BigEndianUnicode.GetPreamble()) == "FEFF");
+            Check("encoding: by name utf-8 is 65001, iso-8859-1 is 28591",
+                  System.Text.Encoding.GetEncoding("utf-8").CodePage == 65001 && System.Text.Encoding.GetEncoding("iso-8859-1").CodePage == 28591);
+            threw = false;
+            try { System.Text.Encoding.GetEncoding(1251); }
+            catch (NotSupportedException) { threw = true; }
+            Check("encoding: 1251 without a provider is NotSupportedException", threw);
+
+            var utf16 = new MemoryStream(System.Text.Encoding.Unicode.GetBytes("Жук"));
+            using var transcoder = System.Text.Encoding.CreateTranscodingStream(utf16, System.Text.Encoding.Unicode, System.Text.Encoding.UTF8);
+            var outBytes = new MemoryStream();
+            transcoder.CopyTo(outBytes);
+            Check("encoding: transcoding stream UTF-16 to UTF-8", System.Text.Encoding.UTF8.GetString(outBytes.ToArray()) == "Жук");
+        }
+
         private static void CheckTar()
         {
             var when = new DateTimeOffset(2024, 1, 2, 3, 4, 5, TimeSpan.Zero);
