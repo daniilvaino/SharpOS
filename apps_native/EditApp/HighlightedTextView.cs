@@ -1,6 +1,7 @@
 // TextView with syntax highlighting: tui-cs/Editor's engine (vendor/TuiEditor,
 // AvaloniaEdit's) over TextView's lines, the definition chosen by the file's
-// extension.
+// extension or by hand. Definitions: the built-in ones, and any .xshd the
+// program loads from a folder (LoadDefinitions).
 //
 // The engine colours one line at a time from the state its previous line left
 // (inside a comment, a string, ...). That state is kept per line with the text
@@ -11,9 +12,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Xml;
 using Terminal.Gui;
 using Terminal.Gui.Editor.Document;
 using Terminal.Gui.Editor.Highlighting;
+using Terminal.Gui.Editor.Highlighting.Xshd;
 using Attribute = Terminal.Gui.Attribute;
 using Rune = System.Rune;
 using SpanStack = System.Collections.Immutable.ImmutableStack<Terminal.Gui.Editor.Highlighting.HighlightingSpan>;
@@ -40,24 +43,78 @@ namespace EditApp
         // Set when the engine failed on this text; highlighting is then off.
         public string Failure { get; private set; }
 
+        // By the file's extension; plain text for a path without one.
         public void SetLanguage(string path)
         {
-            IHighlightingDefinition definition = null;
+            string extension = path == null ? "" : Path.GetExtension(path);
+            SetDefinition(extension.Length > 0 ? HighlightingManager.Instance.GetDefinitionByExtension(extension) : null);
+        }
+
+        // A definition chosen by hand (the Language menu); null is plain text.
+        public void SetDefinition(IHighlightingDefinition definition)
+        {
             Failure = null;
+            _engine = null;
+            Language = null;
             try
             {
-                string extension = path == null ? "" : Path.GetExtension(path);
-                if (extension.Length > 0) definition = HighlightingManager.Instance.GetDefinitionByExtension(extension);
+                if (definition != null)
+                {
+                    // A built-in one is read from its .xshd here, on first use.
+                    _engine = new HighlightingEngine(definition.MainRuleSet);
+                    Language = definition.Name;
+                }
             }
             catch (Exception ex)
             {
                 Failure = ex.Message;
+                _engine = null;
+                Language = null;
             }
-            _engine = definition == null ? null : new HighlightingEngine(definition.MainRuleSet);
-            Language = definition?.Name;
             _starts.Clear();
             _scanned.Clear();
             SetNeedsDisplay();
+        }
+
+        // Every .xshd in a folder, registered after the built-in ones: one of
+        // the same name or extension takes their place. Returns what could not
+        // be loaded, as "file: why".
+        public static List<string> LoadDefinitions(string folder)
+        {
+            var failed = new List<string>();
+            if (!Directory.Exists(folder)) return failed;
+            foreach (string path in Directory.GetFiles(folder, "*.xshd"))
+            {
+                try
+                {
+                    XshdSyntaxDefinition xshd;
+                    using (XmlReader reader = XmlReader.Create(new StringReader(File.ReadAllText(path))))
+                        xshd = HighlightingLoader.LoadXshd(reader);
+                    IHighlightingDefinition definition = HighlightingLoader.Load(xshd, HighlightingManager.Instance);
+                    string name = xshd.Name ?? Path.GetFileNameWithoutExtension(path);
+                    HighlightingManager.Instance.RegisterHighlighting(name, new List<string>(xshd.Extensions).ToArray(), definition);
+                }
+                catch (Exception ex)
+                {
+                    failed.Add(Path.GetFileName(path) + ": " + ex.Message);
+                }
+            }
+            return failed;
+        }
+
+        // Each name once, as it resolves now (a loaded one over the built-in),
+        // in alphabetical order.
+        public static List<IHighlightingDefinition> Definitions()
+        {
+            var seen = new HashSet<string>();
+            var list = new List<IHighlightingDefinition>();
+            foreach (IHighlightingDefinition d in HighlightingManager.Instance.HighlightingDefinitions)
+            {
+                if (d.Name == null || !seen.Add(d.Name)) continue;
+                list.Add(HighlightingManager.Instance.GetDefinition(d.Name) ?? d);
+            }
+            list.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            return list;
         }
 
         public override void Redraw(Rect bounds)

@@ -8,11 +8,12 @@
 // from the command line; a save is said on the status line, not in a box per
 // save; Open and Save As go through FileDialog, whose FileSystemWatcher is cut
 // (the listing is read when a folder is entered). Syntax highlighting by the
-// file's extension (HighlightedTextView.cs).
+// file's extension or from the Language menu (HighlightedTextView.cs); .xshd
+// files in /config/syntax add definitions or replace built-in ones.
 //
 // Keys are TextView's own: Ctrl+C copy, Ctrl+W cut, Ctrl+Y paste, Ctrl+Z undo,
 // Ctrl+R redo; F2 open, F3 save, F4 save as, Ctrl+Q quit (asks to save);
-// Alt+F/E/T or F9 the menus.
+// Alt+F/E/T/L or F9 the menus.
 
 using SharpOS.AppSdk;
 using System;
@@ -21,6 +22,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime;
 using Terminal.Gui;
+using Terminal.Gui.Editor.Highlighting;
 
 namespace EditApp
 {
@@ -30,6 +32,10 @@ namespace EditApp
         private static Window s_win = null!;
         private static HighlightedTextView s_textView = null!;
         private static StatusItem s_language = null!;
+        private static readonly List<(MenuItem Item, string Language)> s_syntaxItems = new List<(MenuItem, string)>();
+
+        // User syntax definitions: every .xshd here, over the built-in ones.
+        private const string SyntaxFolder = "/config/syntax";
         private static ScrollBarView s_scrollBar = null!;
         private static StatusItem s_note = null!;
         private static StatusBar s_statusBar = null!;
@@ -82,9 +88,12 @@ namespace EditApp
             }
             SharpOSTheme.Apply(driver);
 
+            List<string> badSyntax = HighlightedTextView.LoadDefinitions(SyntaxFolder);
             Build();
             if (args.Length == 1) Open(args[0]);
             else New(false);
+            if (badSyntax.Count > 0)
+                Note("syntax " + badSyntax[0] + (badSyntax.Count > 1 ? " (+" + (badSyntax.Count - 1).ToString() + ")" : ""));
 
             Application.Run(Application.Top);
             Application.Shutdown();
@@ -163,6 +172,7 @@ namespace EditApp
                     Toggle("Allows _Tab", () => s_textView.AllowsTab, v => s_textView.AllowsTab = v),
                     Toggle("Read _Only", () => s_textView.ReadOnly, v => s_textView.ReadOnly = v),
                 }),
+                new MenuBarItem("_Language", SyntaxItems()),
             }));
 
             var position = new StatusItem(Key.Null, "Ln 1, Col 1", null);
@@ -319,11 +329,44 @@ namespace EditApp
             s_statusBar.SetNeedsDisplay();
         }
 
-        // Highlighting by the file's extension; the status bar names it.
+        // Highlighting by the file's extension.
         private static void SetLanguage(string path)
         {
             s_textView.SetLanguage(path);
+            ShowLanguage();
+        }
+
+        // The Language menu: plain text and every definition by name, the one in
+        // use checked. Alt+L: an Alt+letter goes to the first item in menu
+        // order with that hotkey, children included, so Alt+S was File's Save.
+        private static MenuItem[] SyntaxItems()
+        {
+            s_syntaxItems.Add((SyntaxItem("Text", null), null));
+            foreach (IHighlightingDefinition d in HighlightedTextView.Definitions())
+                s_syntaxItems.Add((SyntaxItem(d.Name, d), d.Name));
+            var items = new MenuItem[s_syntaxItems.Count];
+            for (int i = 0; i < items.Length; i++) items[i] = s_syntaxItems[i].Item;
+            return items;
+        }
+
+        private static MenuItem SyntaxItem(string title, IHighlightingDefinition definition)
+        {
+            var item = new MenuItem { Title = title };
+            item.CheckType |= MenuItemCheckStyle.Radio;
+            item.Action += () =>
+            {
+                s_textView.SetDefinition(definition);
+                ShowLanguage();
+            };
+            return item;
+        }
+
+        // The status bar names the language, the Language menu checks it.
+        private static void ShowLanguage()
+        {
             s_language.Title = s_textView.Language ?? "Text";
+            foreach ((MenuItem item, string language) in s_syntaxItems)
+                item.Checked = language == s_textView.Language;
             if (s_textView.Failure != null) Note("no highlighting: " + s_textView.Failure);
             s_statusBar.SetNeedsDisplay();
         }
