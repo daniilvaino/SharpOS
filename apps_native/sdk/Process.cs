@@ -17,7 +17,7 @@ namespace SharpOS.AppSdk
     /// </remarks>
     public sealed unsafe class Process : IDisposable
     {
-        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18, OpSystemInfo = 21, OpStartWithEnds = 22;
+        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18, OpSystemInfo = 21, OpStartWithEnds = 22, OpTerminal = 23;
 
         private bool _released;
         private bool _exited;
@@ -35,6 +35,42 @@ namespace SharpOS.AppSdk
             {
                 ulong* request = stackalloc ulong[6];
                 return Call(OpCurrentId, request) == AppServiceStatus.Ok ? (uint)request[1] : 0u;
+            }
+        }
+
+        /// <summary>
+        /// Opens a foreground job: what this program starts from now on is in a
+        /// process group of its own, and the terminal's input is that group's
+        /// (tcsetpgrp on Unix). This program reads no keys until
+        /// <see cref="EndForegroundJob"/>. False when the terminal is not this
+        /// program's to give; the job is then open, without it.
+        /// </summary>
+        public static bool BeginForegroundJob() => TerminalAction(1);
+
+        /// <summary>
+        /// All the job's programs are started: the terminal is the job's, also
+        /// if a program that ended before the next one started had emptied it.
+        /// </summary>
+        public static bool ForegroundJobStarted() => TerminalAction(2);
+
+        /// <summary>Closes the job and takes the terminal back.</summary>
+        public static bool EndForegroundJob() => TerminalAction(3);
+
+        private static bool TerminalAction(ulong action)
+        {
+            ulong* request = stackalloc ulong[5];
+            request[0] = action;
+            return Call(OpTerminal, request) == AppServiceStatus.Ok && request[1] != 0;
+        }
+
+        /// <summary>Whether a read of the terminal by this program gets keys.</summary>
+        public static bool OwnsTerminal
+        {
+            get
+            {
+                ulong* request = stackalloc ulong[5];
+                request[0] = 0;
+                return Call(OpTerminal, request) == AppServiceStatus.Ok && (request[3] == 0 || request[3] == request[2]);
             }
         }
 

@@ -15,6 +15,9 @@ namespace DataApps
             string a2 = args.Length > 2 ? args[2] : "";
             switch (role)
             {
+                case "terminal-answer": return TerminalAnswerChild();
+                case "terminal-lost": return TerminalLostChild();
+
                 // Reads n messages of any type, then leaves: the stage before
                 // it finds its output broken.
                 case "take":

@@ -44,6 +44,69 @@ namespace DataApps
                   left == 7 && top == Console.WindowHeight - 1);
         }
 
+        // Test 30: who gets the terminal's input. No keyboard needed: the
+        // terminal's answer to a question goes out the same way as keys.
+        private static void TerminalOwnership()
+        {
+            if (!TerminalKeys.Available) { Check("30: TerminalRead service", false); return; }
+            Check("30: the program the shell ran owns the terminal", Process.OwnsTerminal);
+
+            Check("30: a job takes the terminal", Process.BeginForegroundJob() && !Process.OwnsTerminal);
+            AppHost.Terminal.Write("\u001b[6n");
+            Check("30: the answer is not given to the one that gave the terminal away", ReadTerminal() == 0);
+            Process child = Process.Start("DATATEST.EXE", new[] { "--child", "terminal-answer" });
+            Process.ForegroundJobStarted();
+            child.WaitForExit();
+            Check("30: it waited for the job's program (" + child.ExitCode.ToString() + ")", child.ExitCode == 0);
+            child.Dispose();
+            Check("30: the job gone, the terminal is back by itself", Process.OwnsTerminal);
+            Check("30: closing the job after that", Process.EndForegroundJob() && Process.OwnsTerminal);
+
+            Process.BeginForegroundJob();
+            child = Process.Start("DATATEST.EXE", new[] { "--child", "terminal-lost" });
+            Process.ForegroundJobStarted();
+            Check("30: closing a job still running takes it back", Process.EndForegroundJob() && Process.OwnsTerminal);
+            child.WaitForExit();
+            Check("30: the program left in it no longer owns it (" + child.ExitCode.ToString() + ")", child.ExitCode == 0);
+            child.Dispose();
+        }
+
+        private static int ReadTerminal()
+        {
+            byte* buffer = stackalloc byte[64];
+            return ((delegate* unmanaged<byte*, int, int>)AppRuntime.Services->TerminalReadAddress)(buffer, 64);
+        }
+
+        // Its parent asked the terminal where the cursor is and could not read
+        // the answer; it is here, whole, up to the R.
+        private static int TerminalAnswerChild()
+        {
+            if (!Process.OwnsTerminal) return 2;
+            byte* buffer = stackalloc byte[64];
+            var read = (delegate* unmanaged<byte*, int, int>)AppRuntime.Services->TerminalReadAddress;
+            for (int tries = 0; tries < 500; tries++)
+            {
+                int n = read(buffer, 64);
+                for (int i = 0; i < n; i++)
+                    if (buffer[i] == (byte)'R') return 0;
+                System.Threading.Thread.Sleep(10);
+            }
+            return 3;
+        }
+
+        // Owns the terminal at the start, or will; ends when it has lost it.
+        private static int TerminalLostChild()
+        {
+            bool owned = false;
+            for (int tries = 0; tries < 500; tries++)
+            {
+                if (Process.OwnsTerminal) owned = true;
+                else if (owned || tries > 50) return 0;
+                System.Threading.Thread.Sleep(10);
+            }
+            return 3;
+        }
+
         // The keys a terminal's bytes make, "char:Key+mods" or "Key+mods" for
         // keys with no character; pieces fed with a pause between them.
         private static string Keys(params string[] pieces)

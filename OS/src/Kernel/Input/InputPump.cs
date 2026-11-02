@@ -111,7 +111,7 @@ namespace OS.Kernel.Input
                     if (!ScancodeSource.TryReadHardware(out byte sc)) break;
                     s_scancodes++;
                     if (DetectBreak(sc)) s_breaks++;
-                    ScancodeSource.Push(sc);
+                    PushUnlessScreens(sc);
                 }
 
                 // Paints what was written since the last pass (the pipe to
@@ -122,6 +122,48 @@ namespace OS.Kernel.Input
 
                 Scheduler.Sleep(PollIntervalMs);
             }
+        }
+
+        // The screen's own keys (TerminalConsole.TakeKey) go no further: not to
+        // a reader of bytes, of raw events or the hosted console, and they work
+        // while nobody reads at all. On scan codes, for the reason below; the
+        // release of a key taken goes too, or a game would see one it never
+        // saw pressed. A 0xE0 waits for the byte it prefixes.
+        private static bool s_prefixHeld;
+        private static bool s_leftShift, s_rightShift, s_leftCtrl, s_rightCtrl;
+        private static bool s_taken, s_takenExtended;
+        private static byte s_takenMake;
+
+        private static void PushUnlessScreens(byte sc)
+        {
+            if (sc == Extended) { s_prefixHeld = true; return; }
+            bool extended = s_prefixHeld;
+            s_prefixHeld = false;
+            byte make = (byte)(sc & 0x7F);
+            bool down = (sc & 0x80) == 0;
+
+            if (make == CtrlMake)
+            {
+                if (extended) s_rightCtrl = down; else s_leftCtrl = down;
+            }
+            else if (!extended && make == 0x2A) s_leftShift = down;   // E0 2A is a fake one, of Print Screen
+            else if (!extended && make == 0x36) s_rightShift = down;
+
+            if (!down && s_taken && make == s_takenMake && extended == s_takenExtended)
+            {
+                s_taken = false;
+                return;
+            }
+            if (down && TerminalConsole.TakeKey(make, extended, s_leftShift || s_rightShift, s_leftCtrl || s_rightCtrl))
+            {
+                s_taken = true;
+                s_takenMake = make;
+                s_takenExtended = extended;
+                return;
+            }
+
+            if (extended) ScancodeSource.Push(Extended);
+            ScancodeSource.Push(sc);
         }
 
         // A detector for exactly one combination, deliberately separate from

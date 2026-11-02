@@ -136,6 +136,11 @@ namespace OS.Kernel.Process
         // Who started it, and whether that one still holds the record.
         public uint LauncherId;
         public bool LauncherHolds;
+
+        // Its process group, and the group of the job it has open (0: none),
+        // which what it starts then goes into. See TerminalOwner.
+        public uint Group;
+        public uint JobGroup;
     }
 
     /// <summary>The process table: address ranges, records, lookups by thread and by address.</summary>
@@ -207,6 +212,14 @@ namespace OS.Kernel.Process
         }
 
         public static int Records => s_records?.Count ?? 0;
+
+        /// <summary>Whether a process holding a slot is in the group.</summary>
+        public static bool GroupHasMember(uint group)
+        {
+            for (int i = 0; i < MaxRunning && s_slots != null; i++)
+                if (s_slots[i] != null && s_slots[i].Group == group) return true;
+            return false;
+        }
 
         /// <summary>Pages the heaps of the running processes hold.</summary>
         public static ulong RunningHeapPages()

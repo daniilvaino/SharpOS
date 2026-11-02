@@ -86,6 +86,7 @@ namespace DataApps
             Test("27 JSON2DIR: a tree from a document; READ's explicit modes", Json2Dir);
             Test("28 the program cache: kept across other writes, dropped on its own", ProgramCacheKeeps);
             Test("29 the terminal's input: keys, sequences, answers", TerminalInputBytes);
+            Test("30 the terminal's owner: a job reads, the rest wait", TerminalOwnership);
 
             // The last stages leave on their own time (slowly under --gc-stress):
             // the counters settle within seconds, not at once.

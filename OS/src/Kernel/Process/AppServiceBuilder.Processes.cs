@@ -81,6 +81,11 @@ namespace OS.Kernel.Process
         // finds it under its number (stderr 2, stdtext 3).
         public const int ProcessOpStartWithEnds = 22;
         internal const int MaxHandedEnds = 8;
+        // The terminal's owner (TerminalOwner). [0]: 1 opens a job and hands
+        // the terminal to it, 2 hands it again, 3 closes the job and takes it
+        // back, 0 only asks. Out: [1] 1 when the action took, [2] the caller's
+        // group, [3] the owning group, [4] the caller's job.
+        public const int ProcessOpTerminal = 23;
 
         // A path answered in UTF-8 (step208; before, a byte a char): written
         // when it fits the caller's buffer; its length in bytes either way.
@@ -190,6 +195,25 @@ namespace OS.Kernel.Process
                 char* path = stackalloc char[(int)MaxPathChars];
                 if (!TryReadUtf8Path(request[0], path, MaxPathChars)) return (int)AppServiceStatus.InvalidParameter;
                 self.WorkingDirectory = string.FromUtf16Z(path, (int)MaxPathChars);
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpTerminal)
+            {
+                if (self == null) return (int)AppServiceStatus.Unsupported;
+                bool took = true;
+                switch (request[0])
+                {
+                    case 0: break;
+                    case 1: took = TerminalOwner.BeginJob(self); break;
+                    case 2: took = TerminalOwner.HandToJob(self); break;
+                    case 3: took = TerminalOwner.EndJob(self); break;
+                    default: return (int)AppServiceStatus.InvalidParameter;
+                }
+                request[1] = took ? 1UL : 0UL;
+                request[2] = self.Group;
+                request[3] = TerminalOwner.Foreground;
+                request[4] = self.JobGroup;
                 return (int)AppServiceStatus.Ok;
             }
 
@@ -569,6 +593,7 @@ namespace OS.Kernel.Process
                 DebugLog.EndLine();
                 return AppServiceStatus.LimitReached;
             }
+            proc.Group = TerminalOwner.GroupForNew(proc, AppProcesses.Current);
 
             bool imageLoaded = false, processBuilt = false;
             AppServiceStatus result = AppServiceStatus.DeviceError;
@@ -776,6 +801,7 @@ namespace OS.Kernel.Process
             if (!CleanupProcessMappings(ref proc.Built, ref proc.Image))
                 DebugLog.Write(LogLevel.Warn, "process cleanup mappings failed");
             AppProcesses.FreeSlot(proc);
+            TerminalOwner.OnProcessEnded();
             ulong e4 = Ticks();
 
             proc.ExitCode = code;

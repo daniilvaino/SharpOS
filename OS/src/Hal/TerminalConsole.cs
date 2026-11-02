@@ -275,14 +275,17 @@ namespace OS.Hal
         /// Shift+PgUp/PgDn/Home/End scroll the panel that has them; with the
         /// side panel, the arrows, PgUp/PgDn, Home and End scroll it without
         /// Shift and Esc gives the keys back to the main one. True when the
-        /// key was the screen's.
+        /// key was the screen's. On the alternate screen none is: it has no
+        /// scrollback, and Shift+PgUp selects in an editor. Asked by the input
+        /// pump for each press, before any program can read it; a program
+        /// drawing on the framebuffer itself gets the terminal painted over
+        /// its frame by a scroll, until its next one.
         /// </summary>
-        public static bool TakeKey(ushort unicode, ushort scan)
+        public static bool TakeKey(byte make, bool extended, bool shift, bool ctrl)
         {
-            if (!s_ready) return false;
-            bool shift = Ps2Keyboard.ShiftHeld, ctrl = Ps2Keyboard.CtrlHeld;
+            if (!s_ready || IsAlternateScreen) return false;
 
-            if (unicode == '\t' && ctrl)
+            if (make == 0x0F && !extended && ctrl)
             {
                 if (s_sideShown == 0) return false;
                 // Two panels: the next one and the one before are the same.
@@ -292,22 +295,24 @@ namespace OS.Hal
             }
 
             bool side = s_focus == 1 && s_sideShown > 0;
-            if (unicode != 0 || !(shift || side)) return false;
+            if (!(shift || side)) return false;
+            if (!extended)
+            {
+                if (make != 0x01 || !side) return false;   // Esc
+                s_focus = 0;
+                Scroll(s_main, 0, paint: true);
+                return true;
+            }
             TerminalPane pane = side ? s_side : s_main;
             int page = s_screenRows - 1;
-            switch (scan)
+            switch (make)
             {
-                case 0x01: return side && Scroll(pane, -1, paint: true);
-                case 0x02: return side && Scroll(pane, 1, paint: true);
-                case 0x05: return Scroll(pane, int.MinValue / 2, paint: true);
-                case 0x06: return Scroll(pane, int.MaxValue / 2, paint: true);
-                case 0x09: return Scroll(pane, -page, paint: true);
-                case 0x0A: return Scroll(pane, page, paint: true);
-                case 0x17:
-                    if (!side) return false;
-                    s_focus = 0;
-                    Scroll(s_main, 0, paint: true);
-                    return true;
+                case 0x48: return side && Scroll(pane, -1, paint: true);
+                case 0x50: return side && Scroll(pane, 1, paint: true);
+                case 0x47: return Scroll(pane, int.MinValue / 2, paint: true);
+                case 0x4F: return Scroll(pane, int.MaxValue / 2, paint: true);
+                case 0x49: return Scroll(pane, -page, paint: true);
+                case 0x51: return Scroll(pane, page, paint: true);
                 default: return false;
             }
         }

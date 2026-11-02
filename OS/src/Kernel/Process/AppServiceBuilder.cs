@@ -1366,6 +1366,7 @@ namespace OS.Kernel.Process
             // As TryReadKey: the output before a read is on screen first.
             if (OS.Hal.TerminalConsole.HasPendingOutput)
                 OS.Hal.Platform.FlushConsole();
+            if (!TerminalOwner.MayRead(AppProcesses.Current)) return 0;
             int n = OS.Kernel.Input.TerminalInput.Read(buffer, capacity);
             return n < 0 ? -(int)AppServiceStatus.Unsupported : n;
         }
@@ -1400,6 +1401,9 @@ namespace OS.Kernel.Process
             request->UnicodeChar = 0;
             request->ScanCode = 0;
             request->Reserved = 0;
+
+            if (!TerminalOwner.MayRead(AppProcesses.Current))
+                return (uint)AppServiceStatus.NoData;
 
             // Raw variant (step143): Reserved carries the set-1 make/break
             // event (see Platform.TryReadKeyRaw packing) so apps can track

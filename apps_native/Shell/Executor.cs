@@ -611,6 +611,9 @@ namespace Shell
             bool failed = false;
             // What the last stage writes for the screen, shown by the shell (step219).
             var shown = new List<PipeReadEnd>();
+            // The stages and their WRITEs are a job: the terminal is theirs
+            // until the last has ended.
+            Process.BeginForegroundJob();
             for (int k = builtinFirst ? 1 : 0; k < count && !failed; k++)
             {
                 string path = ProgramPath(verbs[k], out int missing);
@@ -652,6 +655,8 @@ namespace Shell
                     if (k == 0) input?.Dispose();
                 }
             }
+
+            Process.ForegroundJobStarted();
 
             // The screen's pipes are read while the stages run; from before a
             // builtin first writes: the last stage waits for no one. One whose
@@ -729,6 +734,7 @@ namespace Shell
                 if (sideCode == 0 && side.ExitCode != 0 && side.ExitCode != QuietExitCode) sideCode = side.ExitCode;
                 side.Dispose();
             }
+            Process.EndForegroundJob();
 
             if (!failed)
             {
