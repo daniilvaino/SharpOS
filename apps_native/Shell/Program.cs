@@ -7,7 +7,7 @@
 // there to type. Without it there is a prompt.
 //
 // The parsing is not ours: quoting, word splitting, && || ; and redirections
-// are a decade of other people's edge cases, and vendor/ShellSyntaxTree
+// are a decade of other people's edge cases, and vendor/Meziantou.Shell
 // already holds them. What is ours is the half that has to be — turning a
 // clause into a call into this kernel.
 
@@ -91,6 +91,10 @@ namespace Shell
             // builtins write to the output, each a copy of the end — the screen
             // when none was handed over — and read the input in turn.
             var executor = new Executor(SharpOS.Std.Pipes.Pipe.InputEnd(), SharpOS.Std.Pipes.Pipe.OutputEnd(), null);
+            string[] given = AppHost.Arguments;
+            var scriptArguments = new string[given.Length > 1 ? given.Length - 1 : 0];
+            for (int i = 0; i < scriptArguments.Length; i++) scriptArguments[i] = given[i + 1];
+            executor.SetArguments(scriptArguments);
             uint ran = 0;
             uint failed = 0;
             bool handOver = false;
@@ -100,6 +104,7 @@ namespace Shell
             {
                 string line = NextLine(buffer, length, ref index);
                 if (line.Length == 0 || line[0] == '#') continue;
+                while (index < length && Executor.IsIncomplete(line)) line += "\n" + NextLine(buffer, length, ref index);
 
                 // The one word that is not a command: finish the list, then
                 // give the machine to whoever is sitting at it. Worth having
@@ -161,6 +166,7 @@ namespace Shell
             {
                 string line = NextLine(buffer, length, ref index);
                 if (line.Length == 0 || line[0] == '#') continue;
+                while (index < length && Executor.IsIncomplete(line)) line += "\n" + NextLine(buffer, length, ref index);
                 executor.RunLine(line);
             }
         }
@@ -183,6 +189,14 @@ namespace Shell
                 string line = reader.Read(prompt, width);
                 if (line == null) break;                 // Ctrl+D
                 if (line.Trim().Length == 0) continue;
+
+                // `if a; then`: the rest on the next lines, as in sh.
+                while (Executor.IsIncomplete(line))
+                {
+                    string more = reader.Read("\u001b[90m>\u001b[0m ", 2);
+                    if (more == null) break;
+                    line += "\n" + more;
+                }
 
                 executor.RunLine(line);
             }

@@ -219,6 +219,23 @@ namespace System
         // BCL shape: no constraint on T, equality by EqualityComparer<T>.Default
         // (IEquatable<T> when the type has it, Object.Equals otherwise).
 
+        public static bool Exists<T>(T[] array, Predicate<T> match) => FindIndex(array, match) != -1;
+
+        public static T? Find<T>(T[] array, Predicate<T> match)
+        {
+            int found = FindIndex(array, match);
+            return found < 0 ? default : array[found];
+        }
+
+        public static int FindIndex<T>(T[] array, Predicate<T> match)
+        {
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            if (match == null) throw new ArgumentNullException(nameof(match));
+            for (int i = 0; i < array.Length; i++)
+                if (match(array[i])) return i;
+            return -1;
+        }
+
         public static int IndexOf<T>(T[] array, T value)
         {
             if (array == null) throw new ArgumentNullException(nameof(array));

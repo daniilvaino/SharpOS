@@ -27,6 +27,7 @@
     <Compile Include="ProgramCacheTest.cs" />
     <Compile Include="TerminalInputTest.cs" />
     <Compile Include="UtilsTest.cs" />
+    <Compile Include="ShellLanguageTest.cs" />
     <Compile Include="..\PipeGen\StressArgs.cs" />
   </ItemGroup>
 </Project>

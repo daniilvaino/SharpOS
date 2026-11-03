@@ -71,6 +71,13 @@ namespace System
 
         public bool Contains(char value, StringComparison comparisonType) => IndexOf(value, comparisonType) != -1;
 
+        public int IndexOf(char value, int startIndex, StringComparison comparisonType)
+        {
+            if ((uint)startIndex > (uint)Length) throw new ArgumentOutOfRangeException(nameof(startIndex));
+            int found = this.AsSpan(startIndex).IndexOf(MemoryMarshal.CreateReadOnlySpan(ref value, 1), comparisonType);
+            return found < 0 ? -1 : found + startIndex;
+        }
+
         public int IndexOf(char value, StringComparison comparisonType)
         {
             switch (comparisonType)

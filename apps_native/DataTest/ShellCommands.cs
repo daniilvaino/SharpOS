@@ -90,8 +90,8 @@ namespace DataApps
             // Refused whole, before anything runs: 2.
             string[] refused =
             {
-                "echo $(pwd)", "for i in a b; do echo $i; done", "x=1", "X=1 SAMPLE_PIPEGEN 1", "echo $1", "echo $?",
-                "$T19", "echo ${T19:-d}", "(pwd)", "export T19=1; echo `pwd`",
+                "export T19=1; f() { echo a; }", "echo <(pwd)", "[[ a ]]", "a=(1 2)", "echo a &",
+                "cat << E\nx\nE\n", "echo ${T19/a/b}",
             };
             foreach (string line in refused)
                 Check("19: refused: " + line, Sh(line) == 2);

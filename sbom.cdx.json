@@ -817,37 +817,37 @@
     },
     {
       "type": "library",
-      "name": "ShellSyntaxTree",
-      "version": "0.3.5",
+      "name": "Meziantou.Framework.Language.Shell",
+      "version": "3.0.5",
       "supplier": {
-        "name": "Aaron Stannard"
+        "name": "Gérald Barré"
       },
       "licenses": [
         {
           "license": {
-            "id": "Apache-2.0"
+            "id": "MIT"
           }
         }
       ],
-      "purl": "pkg:nuget/ShellSyntaxTree@0.3.5",
+      "purl": "pkg:nuget/Meziantou.Framework.Language.Shell@3.0.5",
       "externalReferences": [
         {
           "type": "vcs",
-          "url": "https://github.com/Aaronontheweb/ShellSyntaxTree"
+          "url": "https://github.com/meziantou/Meziantou.Framework"
         }
       ],
       "pedigree": {
         "commits": [
           {
-            "uid": "c8515de2962f825178da10236fdf610f5f7393ec"
+            "uid": "aebd59eee3f7ca8ca956aafdcb5e82567c43b80e"
           }
         ],
-        "notes": "Submodule vendor/ShellSyntaxTree/upstream."
+        "notes": "With Meziantou.Framework.Language. Cuts in vendor/Meziantou.Shell/PROVENANCE.md."
       },
       "properties": [
         {
           "name": "sharpos:where",
-          "value": "vendor/ShellSyntaxTree/ (shell)"
+          "value": "vendor/Meziantou.Shell/ (shell)"
         }
       ]
     },

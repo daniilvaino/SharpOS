@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Text;
-using ShellSyntaxTree;
 using SharpOS.AppSdk;
 using SharpOS.Std.Pipes;
 
@@ -17,7 +16,7 @@ namespace Shell
     /// <c>a</c>, both <c>b</c> and <c>c</c> in <c>a &amp;&amp; b &amp;&amp; c</c>
     /// see the same failure and stand down.
     /// </remarks>
-    internal sealed unsafe class Executor
+    internal sealed unsafe partial class Executor
     {
         private string _cwd;
 
@@ -49,361 +48,6 @@ namespace Shell
         public int LastExitCode { get; private set; }
         public string WorkingDirectory => _cwd;
 
-        /// <summary>
-        /// One line: parsed once, refused whole when it holds what this shell
-        /// does not run, then run a command at a time — each command's words
-        /// expanded just before it runs, so <c>export A=1; echo $A</c> sees
-        /// the new value, as in bash (step208).
-        /// </summary>
-        /// <remarks>
-        /// ShellSyntaxTree is a safety analyser: it refuses <c>export</c> and
-        /// <c>unset</c> outright, as commands that change bindings, and takes
-        /// <c>read</c> for the bash builtin. They are
-        /// renamed before the parse (<see cref="RenameBindingCommands"/>), and
-        /// back in <see cref="Split"/>. The parser runs in
-        /// IsolatedNonInteractive mode, the one that takes <c>$NAME</c>; what
-        /// that mode claims about values is not used — only the syntax is,
-        /// and the values come from this process's environment at run time.
-        /// </remarks>
-        public int RunLine(string line)
-        {
-            // The parser resolves a redirect's target against its working
-            // directory (step197): it gets the shell's, or `> out.txt` lands
-            // in the root.
-            string source = RenameBindingCommands(line, out _renamedAt);
-            var parser = new BashParser(new BashParserOptions
-            {
-                WorkingDirectory = _cwd,
-                InitialStateMode = BashInitialStateMode.IsolatedNonInteractive,
-            });
-            ParsedCommand parsed = parser.Parse(source);
-            if (parsed.IsUnparseable)
-            {
-                Write("sh: cannot parse: ");
-                Write(parsed.UnparseableReason ?? line);
-                Write("\n");
-                return LastExitCode = 2;
-            }
-
-            // Everything this shell does not run is refused before anything
-            // runs: half a line run is worse than none.
-            if (FindUnsupported(parsed, out string what, out int at))
-            {
-                Write("sh: not supported: ");
-                Write(what);
-                Write(" (column ");
-                WriteInt(OriginalColumn(at) + 1);
-                Write(")\n");
-                return LastExitCode = 2;
-            }
-
-            int last = 0;
-            var clauses = parsed.Clauses;
-            for (int i = 0; i < clauses.Count; i++)
-            {
-                Clause clause = clauses[i];
-
-                // The stages of a pipeline are the clauses after this one that
-                // the parser joined to it with `|`.
-                int end = i + 1;
-                while (end < clauses.Count && clauses[end].Operator == CompoundOperator.Pipe) end++;
-
-                bool skip = (clause.Operator == CompoundOperator.AndIf && last != 0)
-                         || (clause.Operator == CompoundOperator.OrIf && last == 0);
-                // `env A=1 prog` starts the program with its own environment,
-                // as a pipeline's stage does. A program alone is a pipeline of
-                // one: its output reaches the screen through the shell, as a
-                // last stage's does. Not a managed one: the hosted runtime
-                // starts it, with no ends.
-                if (!skip)
-                    last = end - i > 1 || clause.Redirects.Count > 0 || EnvStartsProgram(clause)
-                           || (CanShow && !IsBuiltin(clause) && !EndsWith(Verb(clause), ".dll"))
-                           || (HasEnds && (!IsBuiltin(clause) || WritesText(Verb(clause))))
-                        ? RunPipeline(clauses, i, end)
-                        : RunClause(clause);
-                i = end - 1;
-                if (ExitRequested) break;
-            }
-
-            return LastExitCode = last;
-        }
-
-        // ---- step208: the parse's way in, and what is refused ----
-
-        // Where RenameBindingCommands put "__" in, in the renamed line.
-        private List<int> _renamedAt;
-
-        /// <summary>
-        /// <c>export</c> and <c>unset</c> as commands — a bare word where a
-        /// command starts — become <c>__export</c> and <c>__unset</c>, which
-        /// the parser takes for programs. Found with the parser's own lexer, so
-        /// a quoted "export" or one inside an argument is left alone.
-        /// </summary>
-        private static string RenameBindingCommands(string line, out List<int> renamedAt)
-        {
-            renamedAt = new List<int>();
-            IReadOnlyList<ShellSyntaxTree.Internal.Bash.Lexing.BashToken> tokens =
-                ShellSyntaxTree.Internal.Bash.Lexing.BashLexer.Tokenize(line);
-
-            var built = new StringBuilder();
-            int copied = 0;
-            bool commandPlace = true;
-            foreach (var token in tokens)
-            {
-                switch (token.Kind)
-                {
-                    case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Whitespace:
-                    case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Continuation:
-                    case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Comment:
-                        if (token.IsStatementSeparator) commandPlace = true;
-                        continue;
-                    case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Operator:
-                        string op = token.OperatorText;
-                        commandPlace = op == ";" || op == "|" || op == "&&" || op == "||" || op == "(" || token.IsStatementSeparator;
-                        continue;
-                    case ShellSyntaxTree.Internal.Bash.Lexing.BashTokenKind.Word:
-                        if (commandPlace && IsRenamed(token.Value) && token.SourceLength == token.Value.Length)
-                        {
-                            built.Append(line, copied, token.SourceStart - copied);
-                            renamedAt.Add(built.Length);
-                            built.Append("__");
-                            copied = token.SourceStart;
-                        }
-                        commandPlace = false;
-                        continue;
-                    default:
-                        commandPlace = false;
-                        continue;
-                }
-            }
-            if (renamedAt.Count == 0) return line;
-            built.Append(line, copied, line.Length - copied);
-            return built.ToString();
-        }
-
-        // export and unset change bindings; `read` is READ.EXE here, not the
-        // bash builtin the parser takes it for (step213).
-        private static bool IsRenamed(string word) => word == "export" || word == "unset" || word == "read";
-
-        // A place in the renamed line as a place in the line typed.
-        private int OriginalColumn(int at)
-        {
-            int column = at;
-            if (_renamedAt != null)
-                foreach (int inserted in _renamedAt)
-                    if (inserted < at) column -= at - inserted < 2 ? at - inserted : 2;
-            return column;
-        }
-
-        /// <summary>
-        /// The first thing in the line this shell does not run: what it is and
-        /// where. The syntax tree says which constructs there are; the words
-        /// say which expansions — every word is expanded once here without
-        /// looking anything up, which finds those that cannot be.
-        /// </summary>
-        private static bool FindUnsupported(ParsedCommand parsed, out string what, out int at)
-        {
-            if (FindUnsupportedNode(parsed.Syntax, out what, out at)) return true;
-
-            foreach (Clause clause in parsed.Clauses)
-            {
-                bool verbSeen = false;
-                foreach (ClauseElement element in clause.Elements)
-                {
-                    int start = element.SourceStart ?? 0;
-                    string raw = element.Raw;
-                    if (element.Role == ClauseElementRole.Redirect)
-                    {
-                        string target = RedirectTarget(raw);
-                        start += raw.Length - target.Length;
-                        raw = target;
-                    }
-                    else if (element.Role == ClauseElementRole.Verb && !verbSeen)
-                    {
-                        verbSeen = true;
-                        if (raw.IndexOf('$') >= 0)
-                        {
-                            what = "a command named by a variable";
-                            at = start;
-                            return true;
-                        }
-                        if (element.Value.IndexOf('=') > 0 && raw[0] != '"' && raw[0] != '\'')
-                        {
-                            what = "shell variables — export NAME=value sets an environment variable";
-                            at = start;
-                            return true;
-                        }
-                    }
-                    try { Expand(raw, false); }
-                    catch (UnsupportedExpansion e)
-                    {
-                        what = e.Message;
-                        at = start + e.Offset;
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        private static bool FindUnsupportedNode(ShellSyntaxNode node, out string what, out int at)
-        {
-            what = null;
-            at = node.SourceStart ?? 0;
-            switch (node)
-            {
-                case ShellBlockSyntax block:
-                    foreach (ShellSyntaxNode statement in block.Statements)
-                        if (FindUnsupportedNode(statement, out what, out at)) return true;
-                    return false;
-                case CommandListSyntax list:
-                    foreach (CommandListItemSyntax item in list.Items)
-                        if (FindUnsupportedNode(item.Command, out what, out at)) return true;
-                    return false;
-                case PipelineSyntax pipeline:
-                    foreach (ShellSyntaxNode stage in pipeline.Stages)
-                        if (FindUnsupportedNode(stage, out what, out at)) return true;
-                    return false;
-                case SimpleCommandSyntax command:
-                    if (command.Substitutions.Count > 0)
-                    {
-                        what = "command substitution $(...)";
-                        at = command.Substitutions[0].SourceStart ?? at;
-                        return true;
-                    }
-                    if (command.ExecutionRegions.Count > 0)
-                    {
-                        what = "this construct";
-                        at = command.ExecutionRegions[0].SourceStart ?? at;
-                        return true;
-                    }
-                    return false;
-                case ForEachSyntax:
-                    what = "for loops";
-                    return true;
-                case GroupSyntax:
-                    what = "( ... ) and { ...; } groups";
-                    return true;
-                case CommandSubstitutionSyntax:
-                    what = "command substitution $(...)";
-                    return true;
-                default:
-                    what = "this construct";
-                    return true;
-            }
-        }
-
-        private sealed class UnsupportedExpansion : System.Exception
-        {
-            public readonly int Offset;
-            public UnsupportedExpansion(string what, int offset) : base(what) => Offset = offset;
-        }
-
-        /// <summary>
-        /// A word as the command gets it: quotes removed, <c>\</c> escapes
-        /// taken, <c>$NAME</c> and <c>${NAME}</c> replaced by the environment
-        /// variable's value — empty when it is not set — outside single quotes,
-        /// and <c>~</c> at the start by HOME. No word splitting: a value with
-        /// spaces stays one argument. With <paramref name="lookup"/> false
-        /// nothing is looked up; the word is only checked.
-        /// </summary>
-        /// <exception cref="UnsupportedExpansion">An expansion this shell does not do.</exception>
-        private static string Expand(string raw, bool lookup)
-        {
-            var built = new StringBuilder();
-            bool doubleQuoted = false;
-            for (int i = 0; i < raw.Length; i++)
-            {
-                char c = raw[i];
-                if (c == '\'' && !doubleQuoted)
-                {
-                    int close = raw.IndexOf('\'', i + 1);
-                    if (close < 0) close = raw.Length;
-                    built.Append(raw, i + 1, close - i - 1);
-                    i = close;
-                    continue;
-                }
-                if (c == '"')
-                {
-                    doubleQuoted = !doubleQuoted;
-                    continue;
-                }
-                if (c == '\\' && i + 1 < raw.Length)
-                {
-                    // Inside double quotes a backslash escapes only these.
-                    char next = raw[i + 1];
-                    if (!doubleQuoted || next == '$' || next == '"' || next == '\\' || next == '`')
-                    {
-                        built.Append(next);
-                        i++;
-                    }
-                    else if (next == '\n')
-                    {
-                        i++;
-                    }
-                    else
-                    {
-                        built.Append(c);
-                    }
-                    continue;
-                }
-                if (c == '~' && i == 0 && (raw.Length == 1 || raw[1] == '/'))
-                {
-                    if (lookup) built.Append(System.Environment.GetEnvironmentVariable("HOME") ?? "");
-                    continue;
-                }
-                if (c == '$' && i + 1 < raw.Length)
-                {
-                    char next = raw[i + 1];
-                    string name = null;
-                    int last = i;
-                    if (next == '{')
-                    {
-                        int close = raw.IndexOf('}', i + 2);
-                        if (close < 0 || !IsName(raw.Substring(i + 2, close - i - 2)))
-                            throw new UnsupportedExpansion("${...} other than ${NAME}", i);
-                        name = raw.Substring(i + 2, close - i - 2);
-                        last = close;
-                    }
-                    else if (IsNameStart(next))
-                    {
-                        int j = i + 1;
-                        while (j < raw.Length && IsNameChar(raw[j])) j++;
-                        name = raw.Substring(i + 1, j - i - 1);
-                        last = j - 1;
-                    }
-                    else if ((next >= '0' && next <= '9') || "?#@*!$-".IndexOf(next) >= 0)
-                    {
-                        throw new UnsupportedExpansion("$" + next.ToString() + " (only $NAME and ${NAME})", i);
-                    }
-                    else if (next == '(' || next == '\'' || (next == '"' && !doubleQuoted))
-                    {
-                        throw new UnsupportedExpansion("$" + next.ToString() + "...", i);
-                    }
-
-                    if (name != null)
-                    {
-                        if (lookup) built.Append(System.Environment.GetEnvironmentVariable(name) ?? "");
-                        i = last;
-                        continue;
-                    }
-                }
-                built.Append(c);
-            }
-            return built.ToString();
-        }
-
-        // The target of `> file` / `>> file` as written: the operator and
-        // the blanks after it gone, the word left to expand.
-        private static string RedirectTarget(string raw)
-        {
-            int i = 0;
-            while (i < raw.Length && raw[i] >= '0' && raw[i] <= '9') i++;
-            while (i < raw.Length && (raw[i] == '>' || raw[i] == '<' || raw[i] == '|' || raw[i] == '&')) i++;
-            while (i < raw.Length && (raw[i] == ' ' || raw[i] == '\t')) i++;
-            return raw.Substring(i);
-        }
-
         /// <summary>A stage's `n> file`, `n>&amp;m` or `n>&amp;-`, in the order written (step212).</summary>
         private sealed class Redirection
         {
@@ -412,42 +56,11 @@ namespace Shell
             public bool Append;
             // `n>&m`: n gets what m has at this point; Discard for `n>&-`; -1 for a file.
             public int CopyOf = -1;
+            public string Written;
         }
 
         // Redirection.CopyOf of `n>&-`: n goes nowhere.
         private const int Discard = 0;
-
-        /// <summary>
-        /// The operator of a redirect as written: `>` / `>>` with an optional
-        /// end number before it (1 when none; 9 at most), `n>&amp;m`
-        /// (<paramref name="copyOf"/> m) or `n>&amp;-` (<see cref="Discard"/>);
-        /// -1 for a file. False for anything else — `<`, `&>`, here-documents —
-        /// which this shell does not run.
-        /// </summary>
-        private static bool ParseRedirect(string raw, out int number, out bool append, out int copyOf)
-        {
-            number = 1;
-            append = false;
-            copyOf = -1;
-            int i = 0;
-            while (i < raw.Length && raw[i] >= '0' && raw[i] <= '9') i++;
-            if (i > 1) return false;
-            if (i == 1) number = raw[0] - '0';
-            if (i >= raw.Length || raw[i] != '>') return false;
-            i++;
-            if (i < raw.Length && raw[i] == '&')
-            {
-                i++;
-                if (i < raw.Length && raw[i] == '-') copyOf = Discard;
-                else if (i < raw.Length && raw[i] >= '1' && raw[i] <= '9') copyOf = raw[i] - '0';
-                else return false;
-                i++;
-                return i == raw.Length && number >= 1;
-            }
-            if (i < raw.Length && raw[i] == '>') { append = true; i++; }
-            if (i < raw.Length && (raw[i] == '>' || raw[i] == '&' || raw[i] == '|')) return false;
-            return number >= 1;
-        }
 
         /// <summary>A name $NAME can take: a letter or _, then letters, digits and _.</summary>
         internal static bool IsName(string name)
@@ -478,7 +91,7 @@ namespace Shell
         /// the rest: the ends not handed to anyone are closed here, and the
         /// stages already started are waited for.
         /// </remarks>
-        private int RunPipeline(IReadOnlyList<Clause> clauses, int first, int end)
+        private int RunPipeline(List<Stage> stages)
         {
             var verbs = new List<string>();
             var arguments = new List<List<string>>();
@@ -491,18 +104,18 @@ namespace Shell
             // a string per line. `cat FILE` there is READ FILE — the file
             // streams instead of being gathered.
             bool builtinFirst = false;
-            for (int k = first; k < end; k++)
+            for (int k = 0; k < stages.Count; k++)
             {
-                Clause stage = clauses[k];
-                var args = new List<string>();
-                string verb = Split(stage, args);
+                Stage stage = stages[k];
+                List<string> args = stage.Arguments;
+                string verb = stage.Verb;
                 if (verb.Length == 0)
                 {
                     Write("sh: an empty stage in a pipeline\n");
                     return 2;
                 }
                 verb = ExpandAlias(verb, args);
-                string[] environment = null;
+                string[] environment = stage.Environment;
                 if (verb == "env")
                 {
                     int envCode = ParseEnv(args, out string program, out List<string> rest, out string[] programEnvironment);
@@ -521,7 +134,7 @@ namespace Shell
                         environment = programEnvironment;
                     }
                 }
-                if (environment == null && IsBuiltinName(verb))
+                if (IsBuiltinName(verb))
                 {
                     if (!WritesText(verb))
                     {
@@ -530,7 +143,7 @@ namespace Shell
                         Write(" changes the shell itself and cannot be a stage of a pipeline\n");
                         return 2;
                     }
-                    if (k != first)
+                    if (k != 0)
                     {
                         Write("sh: ");
                         Write(verb);
@@ -559,41 +172,41 @@ namespace Shell
                 // a WRITE beside the stage, `n>&m` what m has at that point,
                 // `n>&-` nowhere. 1 is the output, 2 the error stream, 3 stdtext;
                 // `3>&1 1>&-` sends stdtext on down the pipeline instead.
-                List<Redirection> stageRedirects = null;
                 var named = new bool[10];
                 named[1] = true;
-                foreach (ClauseElement element in stage.Elements)
+                if (stage.Redirects != null)
+                    foreach (Redirection r in stage.Redirects)
+                    {
+                        if (builtinFirst && k == 0 && (r.Number != 1 || r.CopyOf > 0))
+                        {
+                            Write("sh: `");
+                            Write(r.Written);
+                            Write("` is for programs; ");
+                            Write(verb);
+                            Write(" has only its output, for `> file` or `>&-`\n");
+                            return 2;
+                        }
+                        // 2 and 3 not redirected are the screen, as 1 is at the
+                        // end of a pipeline: `1>&2` sends the output there
+                        // (step218). From 4 there is nothing to copy.
+                        if (r.CopyOf > 3 && !named[r.CopyOf])
+                        {
+                            Write("sh: `" + r.Written + "`: " + r.CopyOf.ToString()
+                                  + " is not redirected before it on this stage\n");
+                            return 2;
+                        }
+                        named[r.Number] = true;
+                    }
+                redirects.Add(stage.Redirects);
+
+                // `< file`: there, or nothing starts, as in sh.
+                if (stage.InputFile != null && AppHost.FileExistsEx(stage.InputFile) != AppServiceStatus.Ok)
                 {
-                    if (element.Role != ClauseElementRole.Redirect) continue;
-                    if (!ParseRedirect(element.Raw, out int number, out bool append, out int copyOf))
-                    {
-                        Write("sh: only `n> file`, `n>> file`, `n>&m` and `n>&-` are supported (n 1 to 9; 1 when left out)\n");
-                        return 2;
-                    }
-                    if (builtinFirst && k == first && (number != 1 || copyOf > 0))
-                    {
-                        Write("sh: `");
-                        Write(element.Raw);
-                        Write("` is for programs; ");
-                        Write(verb);
-                        Write(" has only its output, for `> file` or `>&-`\n");
-                        return 2;
-                    }
-                    // 2 and 3 not redirected are the screen, as 1 is at the
-                    // end of a pipeline: `1>&2` sends the output there
-                    // (step218). From 4 there is nothing to copy.
-                    if (copyOf > 3 && !named[copyOf])
-                    {
-                        Write("sh: `" + element.Raw + "`: " + copyOf.ToString()
-                              + " is not redirected before it on this stage\n");
-                        return 2;
-                    }
-                    named[number] = true;
-                    string target = copyOf >= 0 ? null : Resolve(Expand(RedirectTarget(element.Raw), true));
-                    stageRedirects ??= new List<Redirection>();
-                    stageRedirects.Add(new Redirection { Number = number, Target = target, Append = append, CopyOf = copyOf });
+                    Write("sh: cannot read ");
+                    Write(stage.InputFile);
+                    Write("\n");
+                    return 1;
                 }
-                redirects.Add(stageRedirects);
             }
 
             int count = verbs.Count;
@@ -635,7 +248,8 @@ namespace Shell
                     PipeWriteEnd output = HandOut(redirects[k], Natural(k, count, pairs, owned, shown),
                                                   sideStarted, sidePairs, owned, ends);
                     if (k == count - 1) ShowText(ends, owned, shown);
-                    input = k > 0 ? pairs[k - 1].ReadEnd : TakeInput();
+                    input = stages[k].InputFile != null ? OpenInput(stages[k].InputFile, sideStarted, sidePairs)
+                          : k > 0 ? pairs[k - 1].ReadEnd : TakeInput();
                     started.Add(Process.Start(path, arguments[k].ToArray(),
                         input, output, environments[k], ends.Count > 0 ? ends.ToArray() : null));
                     names.Add(verbs[k]);
@@ -662,12 +276,17 @@ namespace Shell
             // builtin first writes: the last stage waits for no one. One whose
             // stage did not start ends at once (its end was closed above).
             var showing = new List<System.Threading.Tasks.Task>();
-            Inspector inspector = Inspector;
+            Inspector inspector = _capturing ? null : Inspector;
             inspector?.Begin();
             foreach (PipeReadEnd screenEnd in shown)
             {
                 PipeReadEnd shownEnd = screenEnd;
-                showing.Add(System.Threading.Tasks.Task.Run(() => SharpOS.Std.Pipes.Pipe.Show(shownEnd, inspector)));
+                StringBuilder sink = _capturing ? _capture : null;
+                showing.Add(System.Threading.Tasks.Task.Run(() =>
+                {
+                    if (sink != null) ReadInto(shownEnd, sink);
+                    else SharpOS.Std.Pipes.Pipe.Show(shownEnd, inspector);
+                }));
             }
 
             // The builtin runs once the stages after it are up: its text has
@@ -786,9 +405,10 @@ namespace Shell
             {
                 // The screen, plain as into a pipe.
                 var gathered = new StringBuilder();
+                StringBuilder outer = _capture;
                 _capture = gathered;
                 try { return RunBuiltin(verb, args); }
-                finally { _capture = null; Write(gathered.ToString()); }
+                finally { _capture = outer; Write(gathered.ToString()); }
             }
             int code;
             try
@@ -816,6 +436,14 @@ namespace Shell
                                      List<PipeReadEnd> shown)
         {
             if (k < count - 1) return pairs[k].WriteEnd;
+            if (_capturing)
+            {
+                if (shown == null) return null;
+                SharpOS.Std.Pipes.PipePair pair = SharpOS.Std.Pipes.Pipe.Create();
+                shown.Add(pair.ReadEnd);
+                owned.Add(pair.WriteEnd);
+                return pair.WriteEnd;
+            }
             PipeWriteEnd output = TakeOutput();
             if (output == null && shown != null) output = Screen(shown);
             if (output != null) owned.Add(output);
@@ -826,7 +454,7 @@ namespace Shell
         // the screen: shown beside its output (step219).
         private void ShowText(List<(int, PipeWriteEnd)> ends, List<PipeWriteEnd> owned, List<PipeReadEnd> shown)
         {
-            if (_output != null) return;
+            if (_output != null || _capturing) return;
             foreach ((int number, PipeWriteEnd _) in ends)
                 if (number == SharpOS.Std.Pipes.Pipe.TextEnd) return;
             PipeWriteEnd text = Screen(shown);
@@ -904,6 +532,18 @@ namespace Shell
                 ends.Add((n, end));
             }
             return at[1];
+        }
+
+        // `< file`: a READ beside the stage, as `> file` is a WRITE: objects come
+        // back as objects, a file of bytes as bytes.
+        private PipeReadEnd OpenInput(string path, List<Process> sideStarted, List<SharpOS.Std.Pipes.PipePair> sidePairs)
+        {
+            string readPath = ProgramPath("READ", out _)
+                              ?? throw new System.InvalidOperationException("no READ on PATH for `< file`");
+            SharpOS.Std.Pipes.PipePair pair = SharpOS.Std.Pipes.Pipe.Create();
+            sidePairs.Add(pair);
+            sideStarted.Add(Process.Start(readPath, new[] { path }, null, pair.WriteEnd, null));
+            return pair.ReadEnd;
         }
 
         // The shell's own input, a copy for each command (step216): they read
@@ -1000,14 +640,11 @@ namespace Shell
         {
             "buildinfo", "cat", "cd", "clear", "dir", "echo", "env", "exit", "expect", "export", "help", "history", "ls",
             "mkdir", "mv", "pwd", "rm", "rmdir", "type", "unset", "which", "cp", "df",
+            "true", "false", ":", "test", "[", "break", "continue",
         };
 
         /// <summary>The prompt's history (Program.Interactive sets it; a script has none).</summary>
         public List<string> History { get; set; }
-
-        private static string Verb(Clause clause) => Split(clause, new List<string>());
-
-        private static bool IsBuiltin(Clause clause) => IsBuiltinName(Verb(clause));
 
         private static bool IsBuiltinName(string verb)
         {
@@ -1015,35 +652,6 @@ namespace Shell
                 if (verb == builtin) return true;
             return false;
         }
-
-        // The verb and the arguments of a clause, expanded now (step208): from
-        // the words as written, not from the parser's values — those are its
-        // guesses at what a variable holds.
-        private static string Split(Clause clause, List<string> args)
-        {
-            string verb = "";
-            foreach (ClauseElement element in clause.Elements)
-            {
-                // The parser marks a run of bare words as a verb chain
-                // ("git commit"): the program is the first, the rest are its
-                // arguments, as in argv.
-                if (element.Role == ClauseElementRole.Verb && verb.Length == 0)
-                {
-                    verb = Expand(element.Raw, true);
-                    if (verb.StartsWith("__") && IsRenamed(verb.Substring(2))) verb = verb.Substring(2);
-                    // FAT names have no case, so neither do programs; the
-                    // builtins answer in any case too (step213).
-                    string lower = verb.ToLowerInvariant();
-                    if (lower != verb && IsBuiltinName(lower)) verb = lower;
-                }
-                else if (element.Role != ClauseElementRole.Redirect)
-                {
-                    args.Add(Expand(element.Raw, true));
-                }
-            }
-            return verb;
-        }
-
 
         // ---- step208: environment builtins ----
 
@@ -1083,15 +691,6 @@ namespace Shell
                 for (int k = i + 1; k < args.Count; k++) rest.Add(args[k]);
             }
             return 0;
-        }
-
-        private static bool EnvStartsProgram(Clause clause)
-        {
-            var args = new List<string>();
-            if (Split(clause, args) != "env") return false;
-            foreach (string arg in args)
-                if (arg.IndexOf('=') < 0) return true;
-            return false;
         }
 
         // env, env NAME=value...: the environment, a NAME=value a line.
@@ -1134,12 +733,13 @@ namespace Shell
                     code = 1;
                     continue;
                 }
-                // `export NAME` exports a shell variable in bash; this shell
-                // has none, so there is nothing to do.
-                if (eq < 0) continue;
+                string value;
+                if (eq >= 0) value = arg.Substring(eq + 1);
+                else if (!_variables.TryGetValue(name, out value)) continue;
+                _variables.Remove(name);
                 // The kernel keeps a block of 64 Ki characters at most: past
                 // that the variable is refused, and the shell stays.
-                try { System.Environment.SetEnvironmentVariable(name, arg.Substring(eq + 1)); }
+                try { System.Environment.SetEnvironmentVariable(name, value); }
                 catch (System.InvalidOperationException e)
                 {
                     Write("sh: export: ");
@@ -1166,6 +766,7 @@ namespace Shell
                     code = name.Length > 0 && name[0] == '-' ? 2 : 1;
                     continue;
                 }
+                _variables.Remove(name);
                 System.Environment.SetEnvironmentVariable(name, null);
             }
             return code;
@@ -1509,20 +1110,15 @@ namespace Shell
             return code;
         }
 
-        private int RunClause(Clause clause)
-        {
-
-            // Elements carry the decoded value; Raw still has its quotes.
-            var args = new List<string>();
-            string verb = Split(clause, args);
-
-            if (verb.Length == 0) return 0;
-            return RunBuiltin(verb, args);
-        }
-
         // A builtin by its verb; anything else is a program.
         private int RunBuiltin(string verb, List<string> args)
         {
+            if (verb == "true" || verb == ":") return 0;
+            if (verb == "false") return 1;
+            if (verb == "test") return Test(args);
+            if (verb == "[") return Bracket(args);
+            if (verb == "break") return BreakOrContinue(args, true);
+            if (verb == "continue") return BreakOrContinue(args, false);
             if (verb == "expect") return Expect(args);
             if (verb == "exit") return Exit(args);
             if (verb == "echo") return Echo(args);
@@ -1810,7 +1406,9 @@ namespace Shell
             Write("           1 the output (left out: > file), 2 errors, 3 stdtext (reports, panels);\n");
             Write("           fetch 3>&1 1>&- | less — the panel down the pipe, the data nowhere;\n");
             Write("           hints leave out what is not for the screen; env PIPEHINTS=off shows all\n");
-            Write("not here: shell variables (x=1), $(...), loops, if, functions, X=1 prog\n");
+            Write("language: if/elif/else, while, until, for, case, break, continue, { }, ( ), ! ; x=1, X=1 prog, $?, $#, $1,\n");
+            Write("          ${x:-word}, $(...), $((...)), globs (* ? [a-z]), test and [, < file\n");
+            Write("not here: functions, here-documents, [[ ]], arrays, background jobs (&); read is READ.EXE, not a builtin\n");
             Write("keys: Up/Down history, Tab completes, Home/End, Ctrl+A/E/U/K/W, Ctrl+L clears,\n");
             Write("      Ctrl+C drops the line, Ctrl+D on an empty line leaves\n");
             Write("paths: /bin/NAME.EXE; a backslash escapes the next character, as in bash\n");
@@ -1966,10 +1564,22 @@ namespace Shell
         // A builtin's output: the screen, or — while the builtin starts a
         // pipeline — the text gathered for the pipe (RunBuiltinStage).
         private StringBuilder _capture;
+        private bool _complaining;
 
         private void Write(string text)
         {
-            if (_captureWriter != null) _captureWriter.Write(text);
+            if (_complaining)
+            {
+                AppHost.Terminal.Write(text);
+                if (text.EndsWith("\n")) _complaining = false;
+            }
+            else if (_capturing && text.StartsWith("sh: "))
+            {
+                // The shell's own complaint inside $(...) is not its output.
+                AppHost.Terminal.Write("\u001b[31msh:\u001b[0m " + text.Substring(4));
+                _complaining = !text.EndsWith("\n");
+            }
+            else if (_captureWriter != null) _captureWriter.Write(text);
             else if (_capture != null) _capture.Append(text);
             else if (text == "sh: ") AppHost.Terminal.Write("\u001b[31msh:\u001b[0m ");   // the shell's own complaints, marked
             else AppHost.Terminal.Write(text);

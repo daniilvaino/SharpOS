@@ -23,6 +23,9 @@ namespace System.Linq
 
     public static partial class Enumerable
     {
+        public static IOrderedEnumerable<T> Order<T>(this IEnumerable<T> source)
+            => OrderBy(source, static element => element, null);
+
         public static IOrderedEnumerable<TSource> OrderBy<TSource, TKey>(this IEnumerable<TSource> source, Func<TSource, TKey> keySelector)
             => OrderBy(source, keySelector, null);
 

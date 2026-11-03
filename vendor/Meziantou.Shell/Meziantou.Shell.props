@@ -1,0 +1,26 @@
+<Project>
+
+  <!-- Meziantou.Framework.Language.Shell compiled into the app: the parser the
+       shell's language runs on. See PROVENANCE.md. -->
+
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>annotations</Nullable>
+    <!-- The library is null-annotated, our std is not: object.ReferenceEquals(object, object). -->
+    <NoWarn>$(NoWarn);CS8604</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="System" />
+    <Using Include="System.Linq" />
+    <Using Include="System.IO" />
+    <Using Include="System.Text" />
+    <Using Include="System.Globalization" />
+    <Using Include="System.Threading" />
+    <Using Include="System.Diagnostics.CodeAnalysis" />
+    <Using Include="System.Collections.Generic" />
+    <Compile Include="$(MSBuildThisFileDirectory)Meziantou.Framework.Language\**\*.cs" Link="vendor\Language\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)Meziantou.Framework.Language.Shell\**\*.cs" Link="vendor\Shell\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

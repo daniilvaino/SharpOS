@@ -74,7 +74,6 @@ step229); `LICENSE` и история едут вместе с кодом.
 - **ManagedDoom** — правок 0, коммит upstream не записан (найти по хешам).
   Подмодулем — `ManagedDoom/`; наши `DoomApp.csproj`, `Program.cs`, `GopVideo.cs`,
   `SharpUserInput.cs` остаются снаружи.
-- ShellSyntaxTree — уже подмодуль.
 
 Перед этим проверить, что каждая копия действительно совпадает с upstream
 (`git diff` против тега, не только поиск по маркеру): правка без `SharpOS cut:`

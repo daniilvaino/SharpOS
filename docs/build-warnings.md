@@ -42,5 +42,6 @@
 | `std-no-runtime/Text/RegularExpressions` (`NoWarn` в `Regex.props`) | CS8500 | Указатель на `ReadOnlySpan<int>` в `RegexReplacement`; dotnet/runtime собирает все библиотеки с этим кодом выключенным (`Directory.Build.props`). |
 | `generators/Regex.Generator` (`NoWarn` в csproj) | CS0436, CS0649, CA1872, CS8500, nullable | Генератор Regex из форка: NoWarn апстримного csproj и `Directory.Build.props`; netstandard2.0 без аннотаций BCL. |
 | `generators/Json.Generator` (`NoWarn` в csproj) | CS1574, RS2008, RS1036, nullable | Генератор System.Text.Json из форка: ссылки в XML-доках и правила анализаторов Roslyn — как в сборке dotnet/runtime, где они отключены; netstandard2.0 без аннотаций BCL. |
+| `vendor/Meziantou.Shell/` (`NoWarn` в props) | CS8604 | Библиотека размечена по null, наша std нет: `object.ReferenceEquals(object, object)`. |
 | `vendor/BabyKusto/src/opensource/unmodified/` | CS8604 | Скопировано из dotnet/runtime без изменений. |
 | `JsApp`, `LuaApp` (`NoWarn` в csproj) | CS0436, CS8632, CS0649 | Исторически; кандидат на перенос в `.editorconfig`. |

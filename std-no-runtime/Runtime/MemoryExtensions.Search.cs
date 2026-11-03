@@ -155,6 +155,13 @@ namespace System
             return count;
         }
 
+        public static bool IsWhiteSpace(this ReadOnlySpan<char> span)
+        {
+            for (int i = 0; i < span.Length; i++)
+                if (!char.IsWhiteSpace(span[i])) return false;
+            return true;
+        }
+
         // ---- Trim (whitespace, char.IsWhiteSpace) ----
 
         public static ReadOnlySpan<char> Trim(this ReadOnlySpan<char> span)

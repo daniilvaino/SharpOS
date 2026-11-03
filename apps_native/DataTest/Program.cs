@@ -88,6 +88,7 @@ namespace DataApps
             Test("29 the terminal's input: keys, sequences, answers", TerminalInputBytes);
             Test("30 the terminal's owner: a job reads, the rest wait", TerminalOwnership);
             Test("31 the small commands, over lines and objects", UtilsCommands);
+            Test("32 the shell's language", ShellLanguage);
 
             // The last stages leave on their own time (slowly under --gc-stress):
             // the counters settle within seconds, not at once.
