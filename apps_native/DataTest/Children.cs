@@ -18,6 +18,12 @@ namespace DataApps
                 case "terminal-answer": return TerminalAnswerChild();
                 case "terminal-lost": return TerminalLostChild();
 
+                // BCL's three questions (step239), the answers as bits of the
+                // exit code: 1 output, 2 errors, 4 input redirected.
+                case "redirected":
+                    return (Console.IsOutputRedirected ? 1 : 0) | (Console.IsErrorRedirected ? 2 : 0)
+                         | (Console.IsInputRedirected ? 4 : 0);
+
                 // Reads n messages of any type, then leaves: the stage before
                 // it finds its output broken.
                 case "take":

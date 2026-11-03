@@ -70,6 +70,16 @@ namespace DataApps
             Check("16: READ f > g keeps it too", HintsIn("t16f2.pipe") == PipeHints.NotForTerminal);
             Check("16: a stream without hints has none", HintsIn("t16g.pipe") == PipeHints.None);
 
+            // Console.IsOutputRedirected and its two siblings, as BCL code asks
+            // them (step239): each end on its own.
+            int toFile = Sh("DATATEST --child redirected > t16r.txt");
+            int errToFile = Sh("DATATEST --child redirected 2> t16r.txt");
+            int fromFile = Sh("DATATEST --child redirected < t16g.pipe");
+            Check("16: > file: IsOutputRedirected (" + toFile.ToString() + ")", (toFile & 1) != 0);
+            Check("16: 2> file: IsErrorRedirected (" + errToFile.ToString() + ")", (errToFile & 2) != 0);
+            Check("16: < file: IsInputRedirected (" + fromFile.ToString() + ")", (fromFile & 4) != 0);
+            Check("16: > file leaves the error stream the terminal (" + toFile.ToString() + ")", (toFile & 2) == 0);
+
             // A cut file: the whole messages, then a failure naming READ.
             byte[] whole = File.ReadAllBytes("t16.pipe");
             byte[] cut = new byte[whole.Length - 10];
@@ -87,7 +97,7 @@ namespace DataApps
             Check("16: a stream of strings is text", !ExternalPipe.StartsWithSignature(File.ReadAllBytes("t16s.txt"))
                   && Text("t16s.txt").StartsWith("PipeApps.LogEntry"));
 
-            foreach (string f in new[] { "t16.pipe", "t16b.pipe", "t16x.pipe", "t16g.pipe", "t16cut.pipe", "t16f.pipe", "t16f2.pipe" })
+            foreach (string f in new[] { "t16.pipe", "t16b.pipe", "t16x.pipe", "t16g.pipe", "t16cut.pipe", "t16f.pipe", "t16f2.pipe", "t16r.txt" })
                 File.WriteAllBytes(f, new byte[0]);
         }
 

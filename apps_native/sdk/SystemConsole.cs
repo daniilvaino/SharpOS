@@ -62,6 +62,20 @@ namespace System
         }
 
         /// <summary>
+        /// As BCL (step239): whether the standard output goes elsewhere than
+        /// the terminal — a file, the next stage, nowhere. The screen the
+        /// shell shows is the terminal (isatty, Pipe.OutputIsTerminal). What
+        /// ported code asks before it colours: `!IsOutputRedirected`.
+        /// </summary>
+        public static bool IsOutputRedirected => !SharpOS.Std.Pipes.Pipe.OutputIsTerminal;
+
+        /// <summary>As BCL: whether the error stream goes elsewhere than the terminal (`2&gt; file`, `2&gt;&amp;1 | …`).</summary>
+        public static bool IsErrorRedirected => !SharpOS.Std.Pipes.Pipe.ErrorIsTerminal;
+
+        /// <summary>As BCL: whether the standard input comes from elsewhere than the keyboard — a pipe, `&lt; file`.</summary>
+        public static bool IsInputRedirected => !SharpOS.Std.Pipes.Pipe.InputIsTerminal;
+
+        /// <summary>
         /// The error stream (step208): the kernel's error port (COM4), or the
         /// console when the kernel has no such service.
         /// </summary>

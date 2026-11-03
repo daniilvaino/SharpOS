@@ -66,6 +66,29 @@ namespace SharpOS.Std.Pipes
         /// </summary>
         public static bool OutputIsTerminal => PipeTransport.StandardEnd(1) == 0 || OutputIsScreenPipe;
 
+        private static int s_errorScreen;       // 0 not asked, 1 the terminal, 2 not
+
+        /// <summary>
+        /// Whether the error stream is the terminal (isatty(2), step239): none
+        /// was handed over — the kernel's error port, on the screen — or the
+        /// one handed over is shown on the screen by the shell.
+        /// </summary>
+        public static bool ErrorIsTerminal
+        {
+            get
+            {
+                if (s_errorScreen == 0)
+                {
+                    int handle = PipeTransport.StandardEnd(ErrorEnd);
+                    s_errorScreen = handle == 0 || IsScreenEnd(handle) ? 1 : 2;
+                }
+                return s_errorScreen == 1;
+            }
+        }
+
+        /// <summary>Whether the standard input is the keyboard (isatty(0), step239): none was handed over.</summary>
+        public static bool InputIsTerminal => PipeTransport.StandardEnd(0) == 0;
+
         /// <summary>Whether the standard output was opened already, as text or as a type.</summary>
         public static bool OutputIsOpen => s_outputOpened;
 
