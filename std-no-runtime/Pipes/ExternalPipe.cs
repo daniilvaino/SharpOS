@@ -23,22 +23,26 @@ namespace SharpOS.Std.Pipes
     /// the blocks as they came:
     ///
     ///     "SharpOS externalpipe\n"     the signature, ASCII
-    ///     u32 format (1), u32 the block layout (Region.LayoutVersion)
+    ///     u32 format (2), u32 the block layout (Region.LayoutVersion)
     ///     u64 root key, u32 n, n bytes of the description (RegionSchema)
+    ///     u32 the writer's hints (PipeHints) — format 2, step239
     ///     then per message: u64 length, u32 CRC-32C of the block, the block
     ///
     /// Little-endian. Both versions are checked before anything is read
     /// (step207): a file of another layout refuses by name, not by
     /// misreading. A block whose checksum differs refuses where it is; a
     /// whole one is checked against the description by its reader, as any
-    /// writer's is.
+    /// writer's is. Format 1 — the same without the hints — is still read.
     /// </remarks>
     public static unsafe class ExternalPipe
     {
         public static ReadOnlySpan<byte> Signature => "SharpOS externalpipe\n"u8;
 
         /// <summary>This file format: the header and the records around the blocks.</summary>
-        public const uint FormatVersion = 1;
+        public const uint FormatVersion = 2;
+
+        // The format before the hints: still read.
+        internal const uint FormatWithoutHints = 1;
 
         // Signature, the two versions, the root key, the description's length.
         internal static int HeaderFixed => Signature.Length + 4 + 4 + 8 + 4;
@@ -52,11 +56,11 @@ namespace SharpOS.Std.Pipes
         public static bool StartsWithSignature(ReadOnlySpan<byte> bytes)
             => bytes.Length >= Signature.Length && bytes.Slice(0, Signature.Length).SequenceEqual(Signature);
 
-        /// <summary>The signature, the versions, the root key and the description.</summary>
-        public static byte[] Header(byte[] schema, ulong rootKey)
+        /// <summary>The signature, the versions, the root key, the description and the hints.</summary>
+        public static byte[] Header(byte[] schema, ulong rootKey, PipeHints hints = PipeHints.None)
         {
             int at = Signature.Length;
-            var header = new byte[HeaderFixed + schema.Length];
+            var header = new byte[HeaderFixed + schema.Length + 4];
             Signature.CopyTo(header);
             fixed (byte* p = header)
             {
@@ -64,9 +68,17 @@ namespace SharpOS.Std.Pipes
                 *(uint*)(p + at + 4) = Region.LayoutVersion;
                 *(ulong*)(p + at + 8) = rootKey;
                 *(uint*)(p + at + 16) = (uint)schema.Length;
+                *(uint*)(p + HeaderFixed + schema.Length) = (uint)hints;
             }
             schema.CopyTo(header, HeaderFixed);
             return header;
+        }
+
+        /// <summary>The hints the writer of the pipe at <paramref name="handle"/> gave it.</summary>
+        public static PipeHints HintsOf(int handle)
+        {
+            if (PipeTransport.Attributes(handle, 0, 0, out uint attributes) != PipeStatus.Ok) return PipeHints.None;
+            return (attributes & (uint)PipeAttributes.NotForTerminal) != 0 ? PipeHints.NotForTerminal : PipeHints.None;
         }
 
         /// <summary>CRC-32C (Castagnoli) of a block, as written beside it.</summary>
@@ -81,13 +93,13 @@ namespace SharpOS.Std.Pipes
 
         /// <summary>
         /// Every message of <paramref name="input"/> to <paramref name="sink"/>,
-        /// the header first when <paramref name="header"/>; the messages copied.
-        /// The description must be known (PipeTransport.WaitSchema). A broken
-        /// input throws, as in any loop.
+        /// the header first when <paramref name="header"/> — with the hints its
+        /// writer gave the pipe; the messages copied. The description must be
+        /// known (PipeTransport.WaitSchema). A broken input throws, as in any loop.
         /// </summary>
         public static long Copy(RawPipeReader input, byte[] schema, ulong rootKey, bool header, ExternalPipeSink sink)
         {
-            if (header) sink(Header(schema, rootKey), default);
+            if (header) sink(Header(schema, rootKey, HintsOf(input.Handle)), default);
             byte* prefix = stackalloc byte[RecordPrefix];
             long count = 0;
             RawRegion region = null;
@@ -135,17 +147,23 @@ namespace SharpOS.Std.Pipes
         /// <summary>
         /// The messages of <paramref name="file"/> (its header read) to the
         /// standard output under the file's description; on the screen when
-        /// the output was handed to nobody. The exit code: 0; 1 for a broken
-        /// file — said, the output broken; 141 when the output broke.
+        /// the output was handed to nobody. The writer's hints come back with
+        /// them (step239): data not for the terminal is marked so on the
+        /// output, and shown nowhere when there is none — as its writer did.
+        /// The exit code: 0; 1 for a broken file — said, the output broken;
+        /// 141 when the output broke.
         /// </summary>
         public static int Replay(ExternalPipeReader file, string program)
         {
             int output = Pipe.TakeOutput("the file's type");
             RegionShapes shapes = null;
+            bool hidden = (file.Hints & PipeHints.NotForTerminal) != 0 && Pipe.HintsHonoured;
             try
             {
                 if (output != 0)
                 {
+                    if (hidden)
+                        PipeTransport.Attributes(output, (uint)PipeAttributes.NotForTerminal, (uint)PipeAttributes.NotForTerminal, out _);
                     PipeStatus opened = PipeTransport.OpenEnd(output, file.Schema, file.RootKey, out string error);
                     if (opened != PipeStatus.Ok)
                     {
@@ -169,7 +187,7 @@ namespace SharpOS.Std.Pipes
                     if (output == 0)
                     {
                         var region = new RawRegion((byte*)block, length, file.Schema, 0, shapes);
-                        try { ScreenText.Print(region.Root); }
+                        try { if (!hidden) ScreenText.Print(region.Root); }
                         finally { region.Dispose(); }
                         continue;
                     }
@@ -233,8 +251,8 @@ namespace SharpOS.Std.Pipes
             SignatureSeen = true;
             if (got < fixedSize) return Fail("the file ends inside the header");
             uint format = *(uint*)(head + length), layout = *(uint*)(head + length + 4);
-            if (format != ExternalPipe.FormatVersion)
-                return Fail("an externalpipe of format " + format.ToString() + "; this program reads format " + ExternalPipe.FormatVersion.ToString());
+            if (format != ExternalPipe.FormatVersion && format != ExternalPipe.FormatWithoutHints)
+                return Fail("an externalpipe of format " + format.ToString() + "; this program reads formats 1 and " + ExternalPipe.FormatVersion.ToString());
             if (layout != Region.LayoutVersion)
                 return Fail("blocks of layout " + layout.ToString() + "; this program reads layout " + Region.LayoutVersion.ToString());
             RootKey = *(ulong*)(head + length + 8);
@@ -244,8 +262,17 @@ namespace SharpOS.Std.Pipes
             if (Fill(schema) != schema.Length) return Fail("the file ends inside the description");
             if (RegionSchema.Parse(schema, out string bad) == null) return Fail("the description is malformed: " + bad);
             Schema = schema;
+            if (format >= ExternalPipe.FormatVersion)
+            {
+                uint hints;
+                if (Fill(new Span<byte>(&hints, 4)) != 4) return Fail("the file ends inside the header");
+                Hints = (PipeHints)hints;
+            }
             return true;
         }
+
+        /// <summary>What the stream's writer said about it (format 2); none in a format-1 file.</summary>
+        public PipeHints Hints { get; private set; }
 
         /// <summary>
         /// The next message's block, in the exchange arena — the caller sends

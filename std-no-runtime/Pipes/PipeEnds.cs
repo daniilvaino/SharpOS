@@ -237,8 +237,10 @@ namespace SharpOS.Std.Pipes
             int handle = TakeOutput(OutputName<T>());
             if (handle != 0)
             {
-                // A screen's reader leaves the messages out itself (step219).
-                if ((hints & PipeHints.NotForTerminal) != 0 && HintsHonoured && IsScreenEnd(handle))
+                // A screen's reader leaves the messages out itself (step219);
+                // any other reader keeps the hint — WRITE puts it in the file,
+                // and READ gives it back (step239: `FETCH > f; READ f`).
+                if ((hints & PipeHints.NotForTerminal) != 0 && HintsHonoured)
                     PipeTransport.Attributes(handle, (uint)PipeAttributes.NotForTerminal, (uint)PipeAttributes.NotForTerminal, out _);
                 return OpenWriter<T>(handle, "the standard output");
             }
@@ -306,6 +308,20 @@ namespace SharpOS.Std.Pipes
             if (!TextLeftOut) return ScreenTextWriter(handle, "stdtext");
             PipeTransport.Close(handle);
             return TextWriter.Null;
+        }
+
+        /// <summary>
+        /// Text for whoever reads the screen through stdtext, when that is a
+        /// screen a shell shows (step239): in the order of what the program
+        /// sends, not ahead of it as a write past the shell was — the build
+        /// banner. False when stdtext is not that, or is left out.
+        /// </summary>
+        internal static bool WriteShownText(string text)
+        {
+            if (s_text == null && (!IsScreenEnd(PipeTransport.StandardEnd(TextEnd)) || TextLeftOut)) return false;
+            if (s_text != null && s_text is not PipeScreenWriter) return false;
+            Text.Write(text);
+            return true;
         }
 
         /// <summary>stdtext's unfinished line, sent at the program's end (AppRuntime.Finish).</summary>

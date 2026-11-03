@@ -95,7 +95,11 @@ namespace OS.Hal
         // switched off and the medium handed back. On the test rig the other
         // end of this port is the phone, which can read the run as it happens
         // — and, when the machine hangs, still has everything up to the hang.
-        private const int SerialSize = 512;
+        // Filled by printing, sent by the writer thread every interval
+        // (step239): printing runs with switching suppressed, where a USB
+        // transfer is not allowed, and before this the buffer was only sent
+        // from a line end — never, so all but the first 512 bytes were lost.
+        private const int SerialSize = 16 * 1024;
 
         private struct SerialBuffer
         {
@@ -152,8 +156,18 @@ namespace OS.Hal
             if (!ok || !Fat32.Sync(s_handle)) { s_failure = 2; return false; }
 
             s_ready = true;
-            OS.Kernel.Threading.Scheduler.Spawn(&WriterEntry, 32 * 1024);
+            StartWriter();
             return true;
+        }
+
+        private static bool s_writerStarted;
+
+        // One writer for both sinks, started by whichever comes first.
+        private static void StartWriter()
+        {
+            if (s_writerStarted) return;
+            s_writerStarted = true;
+            OS.Kernel.Threading.Scheduler.Spawn(&WriterEntry, 32 * 1024);
         }
 
         private static bool Append(byte* bytes, int length)
@@ -167,10 +181,11 @@ namespace OS.Hal
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static void WriterEntry()
         {
-            while (s_ready)
+            while (s_ready || s_serialReady)
             {
                 OS.Kernel.Threading.Scheduler.Sleep(WriteIntervalMs);
                 Flush();
+                SerialFlushQueued();
             }
         }
 
@@ -194,6 +209,7 @@ namespace OS.Hal
                 SerialPutc(c);
             }
             SerialFlush();
+            StartWriter();
         }
 
         private static void SerialPutc(char ch)
@@ -207,6 +223,32 @@ namespace OS.Hal
 
             if (ch == '\n' || s_serialUsed >= SerialSize) SerialFlush();
         }
+
+        // The writer thread's turn for the port: what printing could not send.
+        private static void SerialFlushQueued()
+        {
+            if (!s_serialReady || s_serialUsed == 0) return;
+            OS.Kernel.Threading.Preemption.Suppress();
+            if (s_inSerial || s_serialUsed == 0)
+            {
+                OS.Kernel.Threading.Preemption.Allow();
+                return;
+            }
+            int n = s_serialUsed;
+            byte[] copy = s_serialBatch ??= new byte[SerialSize];
+            fixed (byte* p = s_serial.Data)
+                for (int i = 0; i < n; i++) copy[i] = p[i];
+            s_serialUsed = 0;
+            s_inSerial = true;
+            OS.Kernel.Threading.Preemption.Allow();
+
+            bool ok;
+            fixed (byte* p = copy) ok = Usb.UsbCdcAcm.Write(p, n);
+            if (!ok) s_serialReady = false;
+            s_inSerial = false;
+        }
+
+        private static byte[] s_serialBatch;
 
         private static bool InInterrupt()
             => (OS.Kernel.Threading.Scheduler.Current?.InterruptDepth ?? 0) != 0;
@@ -250,14 +292,98 @@ namespace OS.Hal
             }
 
             // Queued only: printing happens with switching suppressed, where a
-            // disk write is not allowed (Flush says why).
+            // disk write is not allowed (Flush says why). A line at a time,
+            // per thread (step239): the kernel says a line in several writes —
+            // Write, WriteUInt, WriteLine — and another thread's text landed
+            // in between, in the middle of the line.
             OS.Kernel.Threading.Preemption.Suppress();
+            int slot = LineSlotOf(OS.Kernel.Threading.Scheduler.Current?.Id ?? 0);
+            if (slot < 0) Queue(ch);
+            else
+            {
+                fixed (byte* lines = s_lines.Data)
+                fixed (int* used = s_lineState.Used)
+                fixed (int* owner = s_lineState.Owner)
+                {
+                    lines[slot * LineBytes + used[slot]++] = (byte)ch;
+                    if (ch == '\n' || used[slot] == LineBytes)
+                    {
+                        for (int i = 0; i < used[slot]; i++) Queue((char)lines[slot * LineBytes + i]);
+                        used[slot] = 0;
+                        owner[slot] = 0;
+                    }
+                }
+            }
+            OS.Kernel.Threading.Preemption.Allow();
+        }
+
+        private static void Queue(char ch)
+        {
             if (s_pendingUsed < PendingSize)
             {
                 fixed (byte* p = s_pending.Data) p[s_pendingUsed++] = (byte)ch;
             }
             else s_lost++;
+        }
+
+        // A line being said, per thread: up to LineSlots threads at once; a
+        // thread past them, or none (early), goes straight to the queue.
+        private const int LineSlots = 8, LineBytes = 512;
+
+        private struct LineData
+        {
+            public fixed byte Data[LineSlots * LineBytes];
+        }
+
+        private struct LineState
+        {
+            public fixed int Owner[LineSlots];   // thread id; 0 free
+            public fixed int Used[LineSlots];
+        }
+
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
+        private static LineData s_lines;
+        private static LineState s_lineState;
+        #pragma warning restore CS0169
+
+        // The slot of the thread's unfinished line, a free one for a new line, -1 for neither.
+        private static int LineSlotOf(int thread)
+        {
+            if (thread == 0) return -1;
+            int free = -1;
+            fixed (int* owner = s_lineState.Owner)
+            {
+                for (int i = 0; i < LineSlots; i++)
+                {
+                    if (owner[i] == thread) return i;
+                    if (owner[i] == 0 && free < 0) free = i;
+                }
+                if (free >= 0) owner[free] = thread;
+            }
+            return free;
+        }
+
+        // Unfinished lines go as they are: before the power goes.
+        private static void QueueOpenLines()
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            fixed (byte* lines = s_lines.Data)
+            fixed (int* used = s_lineState.Used)
+            fixed (int* owner = s_lineState.Owner)
+                for (int slot = 0; slot < LineSlots; slot++)
+                {
+                    for (int i = 0; i < used[slot]; i++) Queue((char)lines[slot * LineBytes + i]);
+                    used[slot] = 0;
+                    owner[slot] = 0;
+                }
             OS.Kernel.Threading.Preemption.Allow();
+        }
+
+        /// <summary>Before the power goes: unfinished lines too, then all of it to the disk.</summary>
+        public static void FlushForShutdown()
+        {
+            QueueOpenLines();
+            Flush();
         }
 
         /// <summary>

@@ -1006,7 +1006,10 @@ namespace XtermSharp {
 				if (buffer.Y >= buffer.ScrollBottom) {
 					terminal.Scroll (isWrapped: true);
 				} else {
-					buffer.Lines [++buffer.Y].IsWrapped = true;
+					// SharpOS cut: the line at YBase + Y, as xterm.js has it; upstream
+					// indexed by Y alone and, with scrollback above, marked an old line.
+					buffer.Y++;
+					buffer.Lines [buffer.YBase + buffer.Y].IsWrapped = true;
 				}
 				line = buffer.Lines [buffer.YBase + buffer.Y];
 			}
@@ -1419,8 +1422,11 @@ namespace XtermSharp {
 							terminal.Scroll (isWrapped: true);
 						} else if (buffer.Y + 1 < terminal.Rows) {
 							// The line already exists (eg. the initial viewport), mark it as a
-							// wrapped line
-							buffer.Lines [++buffer.Y].IsWrapped = true;
+							// wrapped line. SharpOS cut: at YBase + Y — upstream indexed by Y
+							// alone and, with scrollback above, marked an old line instead
+							// (the side panel's reflow then joined unrelated lines, step239).
+							buffer.Y++;
+							buffer.Lines [buffer.YBase + buffer.Y].IsWrapped = true;
 						}
 
 						// row changed, get it again

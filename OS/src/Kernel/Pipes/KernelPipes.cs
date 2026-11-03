@@ -63,6 +63,7 @@ namespace OS.Kernel.Pipes
             public ulong[] Blocks;
             public ulong[] Lengths;
             public uint[] Dropped;
+            public ulong[] Sequences;        // each queued message's number in s_sequence (step239)
             public int Head;
             public int Count;
             public ulong QueuedBytes;
@@ -427,6 +428,7 @@ namespace OS.Kernel.Pipes
                 p.Blocks[tail] = (ulong)block;
                 p.Lengths[tail] = length;
                 p.Dropped[tail] = p.DroppedPending;
+                p.Sequences[tail] = ++s_sequence;
                 p.DroppedPending = 0;
                 p.Count++;
                 p.QueuedBytes += length;
@@ -735,6 +737,7 @@ namespace OS.Kernel.Pipes
                 Blocks = new ulong[capacity],
                 Lengths = new ulong[capacity],
                 Dropped = new uint[capacity],
+                Sequences = new ulong[capacity],
             };
         }
 
@@ -800,6 +803,73 @@ namespace OS.Kernel.Pipes
             p.Version++;
             fixed (int* version = &p.Version)
                 AddressWait.WakeByAddressAll(version);
+            s_activity++;
+            if (s_activityWaiters > 0)
+                fixed (int* activity = &s_activity)
+                    AddressWait.WakeByAddressAll(activity);
+        }
+
+        // Every message ever queued gets the next number (step239): one order
+        // across all pipes, so a reader of several — the shell showing a
+        // stage's output, errors and stdtext — gives them in the order they
+        // were sent. Single CPU, set under suppression, together with the queue.
+        private static ulong s_sequence;
+
+        // Any pipe changed; the waiters of NextOf sleep on it.
+        private static int s_activity;
+        private static int s_activityWaiters;
+
+        /// <summary>
+        /// Which of <paramref name="handles"/> (reading ends of the holder) to
+        /// receive from next (step239): the one whose first message was sent
+        /// earliest, or one with nothing more to come — its Receive says how it
+        /// ended. With <paramref name="wait"/> the caller sleeps until there is
+        /// one; without it Empty comes back.
+        /// </summary>
+        public static PipeStatus NextOf(uint holder, int* handles, int count, bool wait, out int index)
+        {
+            index = -1;
+            Preemption.Suppress();
+            try
+            {
+                while (true)
+                {
+                    ulong earliest = ulong.MaxValue;
+                    for (int i = 0; i < count; i++)
+                    {
+                        if (!TryEnd(holder, handles[i], PipeRole.Reader, out Pipe p)) return PipeStatus.BadHandle;
+                        if (p.Count > 0)
+                        {
+                            ulong sequence = p.Sequences[p.Head];
+                            if (sequence < earliest)
+                            {
+                                earliest = sequence;
+                                index = i;
+                            }
+                        }
+                        else if (p.WriterGone || p.Mismatch)
+                        {
+                            index = i;
+                            return PipeStatus.Ok;
+                        }
+                    }
+                    if (index >= 0) return PipeStatus.Ok;
+                    if (!wait) return PipeStatus.Empty;
+                    if (Scheduler.Current?.KillRequested ?? false) return PipeStatus.Broken;
+
+                    int seen = s_activity;
+                    s_activityWaiters++;
+                    Preemption.Allow();
+                    fixed (int* activity = &s_activity)
+                        AddressWait.WaitOnAddress(activity, &seen, 4, 0xFFFFFFFFu);
+                    Preemption.Suppress();
+                    s_activityWaiters--;
+                }
+            }
+            finally
+            {
+                Preemption.Allow();
+            }
         }
 
         private static byte[] Copy(byte[] bytes)

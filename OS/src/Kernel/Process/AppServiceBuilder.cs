@@ -366,6 +366,7 @@ namespace OS.Kernel.Process
                 table.PipeWaitSchemaAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&OS.Kernel.Pipes.PipeServices.WaitSchema;
                 table.PipeDuplicateAddress = (ulong)(nint)(delegate* unmanaged<int, int*, int>)&OS.Kernel.Pipes.PipeServices.Duplicate;
                 table.PipeAttributesAddress = (ulong)(nint)(delegate* unmanaged<int, uint, uint, uint*, int>)&OS.Kernel.Pipes.PipeServices.Attributes;
+                table.PipeNextOfAddress = (ulong)(nint)(delegate* unmanaged<int*, int, uint, int*, int>)&OS.Kernel.Pipes.PipeServices.NextOf;
             table.RandomFillAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&HardwareRandom.Fill;
             table.TerminalReadAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&TerminalRead;
             table.TerminalSideAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&TerminalSide;

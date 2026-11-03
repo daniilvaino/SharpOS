@@ -115,6 +115,14 @@ namespace XtermSharp {
 							Buffer.YBase++;
 							Buffer.YDisp++;
 						}
+					} else if (Buffer.Y < newRows - 1 && Buffer.Lines [Buffer.Lines.Length - 1].GetTrimmedLength () == 0) {
+						// SharpOS cut: room below the cursor with scrollback above it (a
+						// screen cleared after the boot log) — grow down, as the branch
+						// above does for a buffer not yet scrolled. Upstream always
+						// scrolled up here: the side panel opening pushed the start of a
+						// command off the top while the screen below it stayed empty.
+						Buffer.Y++;
+						Buffer.Lines.Pop ();
 					} else {
 						// Ensure ybase does not exceed its maximum value
 						if (Buffer.YBase < Math.Min (Buffer.Lines.MaxLength, Buffer.Lines.Length + countToInsert) - newRows) {

@@ -176,8 +176,33 @@ internal static unsafe class AppEntry
         public Lua.IO.ILuaStream Output =>
             _output ??= s_output = new Lua.IO.BufferedOutputStream(text => Console.Write(text.ToString()));
 
-        public Lua.IO.ILuaStream Error =>
-            _error ??= new Lua.IO.BufferedOutputStream(text => Console.Error.Write(text.ToString()));
+        public Lua.IO.ILuaStream Error => _error ??= new ErrorStream();
+    }
+
+    // The error stream unbuffered, as C's stderr (step239): each write goes at
+    // once, in order with the output around it. Buffered, it was flushed by
+    // nobody — `io.stderr:write` without a flush printed nothing.
+    private sealed class ErrorStream : Lua.IO.LuaStreamDefaults, Lua.IO.ILuaStream
+    {
+        public void Dispose() => IsOpen = false;
+
+        public bool IsOpen { get; set; } = true;
+
+        public Lua.IO.LuaFileOpenMode Mode => Lua.IO.LuaFileOpenMode.Write;
+
+        public System.Threading.Tasks.ValueTask WriteAsync(ReadOnlyMemory<char> text, System.Threading.CancellationToken cancellationToken = default)
+        {
+            Console.Error.Write(text.ToString());
+            return default;
+        }
+
+        public System.Threading.Tasks.ValueTask FlushAsync(System.Threading.CancellationToken cancellationToken = default) => default;
+
+        public System.Threading.Tasks.ValueTask CloseAsync(System.Threading.CancellationToken cancellationToken = default)
+        {
+            IsOpen = false;
+            return default;
+        }
     }
 
     private static LuaState NewState(Lua.Platforms.LuaPlatform platform = null)

@@ -130,6 +130,17 @@ namespace OS.Kernel.Pipes
             return (int)status;
         }
 
+        // step239: which of the caller's reading ends to receive from next — the
+        // earliest sent first message, or one that has ended; -1 with Empty.
+        [UnmanagedCallersOnly]
+        public static int NextOf(int* handles, int count, uint wait, int* index)
+        {
+            if (handles == null || count <= 0 || count > 16) return (int)PipeStatus.BadHandle;
+            PipeStatus status = KernelPipes.NextOf(KernelPipes.CallerHolder(), handles, count, wait != 0, out int next);
+            if (index != null) *index = next;
+            return (int)status;
+        }
+
         // answer: [0] schema bytes, [1] root key. Copies when the buffer is large enough.
         [UnmanagedCallersOnly]
         public static int Schema(int handle, byte* buffer, ulong capacity, ulong* answer)

@@ -263,7 +263,7 @@ namespace OS.Hal
 
             // The boot log's last lines, this one among them (step238: the
             // writer thread takes them every 50 ms, and the power is quicker).
-            BootLog.Flush();
+            BootLog.FlushForShutdown();
 
             // What the volume holds, to the medium before the power goes
             // (step208): a stick acknowledges writes it still has in its cache.

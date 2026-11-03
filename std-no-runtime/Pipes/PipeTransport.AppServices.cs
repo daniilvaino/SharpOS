@@ -177,6 +177,22 @@ namespace SharpOS.Std.Pipes
             return status;
         }
 
+        /// <summary>
+        /// Which of <paramref name="handles"/> to receive from next (step239):
+        /// the earliest sent first message, or one that has ended. Unsupported
+        /// on an older kernel.
+        /// </summary>
+        public static PipeStatus NextOf(int* handles, int count, bool wait, out int index)
+        {
+            index = -1;
+            if (!Available || Services->PipeNextOfAddress == 0) return PipeStatus.Unsupported;
+            int next = -1;
+            var status = (PipeStatus)((delegate* unmanaged<int*, int, uint, int*, int>)Services->PipeNextOfAddress)(
+                handles, count, wait ? 1u : 0u, &next);
+            index = next;
+            return status;
+        }
+
         /// <summary>Waits until the other end of the pipe has come; at once on an older kernel.</summary>
         public static PipeStatus WaitPeer(int handle)
         {
@@ -199,6 +215,18 @@ namespace SharpOS.Std.Pipes
         public static void PrintText(string text)
         {
             if (text != null) AppHost.Terminal.Write(text);
+        }
+
+        /// <summary>
+        /// Text of a stage's error stream shown by the shell (step239): on the
+        /// screen like the rest, and in the error log (COM4) as the stage's own
+        /// errors would be.
+        /// </summary>
+        public static void PrintError(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            if (AppHost.HasErrorStream) AppHost.WriteError(text);
+            else AppHost.Terminal.Write(text);
         }
 
         public static PipeStatus Close(int handle)

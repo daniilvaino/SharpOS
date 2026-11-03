@@ -62,10 +62,16 @@ namespace SharpOS.Std.Pipes
         public static PipeStatus Attributes(int handle, uint set, uint mask, out uint attributes)
             => KernelPipes.Attributes(Holder, handle, set, mask, out attributes);
 
+        public static PipeStatus NextOf(int* handles, int count, bool wait, out int index)
+            => KernelPipes.NextOf(Holder, handles, count, wait, out index);
+
         /// <summary>A line on the screen: where a message goes when there is no output to send it to.</summary>
         public static void Print(string line) => OS.Hal.Console.WriteLine(line);
 
         public static void PrintText(string text) => OS.Hal.Console.Write(text);
+
+        /// <summary>Text of an error stream: the kernel's log is its one stream.</summary>
+        public static void PrintError(string text) => OS.Hal.Console.Write(text);
 
         public static byte[] Schema(int handle, out ulong rootKey) => KernelPipes.SchemaOf(Holder, handle, out rootKey);
     }

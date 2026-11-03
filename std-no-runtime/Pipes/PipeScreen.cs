@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace SharpOS.Std.Pipes
@@ -25,6 +26,19 @@ namespace SharpOS.Std.Pipes
 
         /// <summary>Strings are terminal text as written — escapes, pieces of lines — not a line each.</summary>
         TerminalText = 4,
+    }
+
+    /// <summary>Which stream of a stage a shown pipe carries (step239).</summary>
+    public enum ScreenStream
+    {
+        /// <summary>The standard output: shown, and kept by the inspector.</summary>
+        Output,
+
+        /// <summary>stdtext: text for people beside the output.</summary>
+        Text,
+
+        /// <summary>The error stream: shown, and logged as errors.</summary>
+        Errors,
     }
 
     public static partial class Pipe
@@ -101,27 +115,9 @@ namespace SharpOS.Std.Pipes
                         PipeTransport.Attributes(reader.Handle, 0, 0, out attributes);
                         asked = true;
                     }
-                    // Data for programs is not a line for a person; the
-                    // inspector is where one looks at it.
-                    if ((attributes & (uint)PipeAttributes.NotForTerminal) != 0 && HintsHonoured)
-                    {
-                        if (inspector != null)
-                            lock (showing) inspector.Take(region.Root, false);
-                        continue;
-                    }
-                    lock (showing)
-                    {
-                        bool terminalText = (attributes & (uint)PipeAttributes.TerminalText) != 0
-                                            && region.Root.TryGetChars(out _, out _);
-                        if (terminalText && region.Root.TryGetChars(out char* chars, out int count))
-                        {
-                            ScreenText.EndRun();
-                            PipeTransport.PrintText(new string(new ReadOnlySpan<char>(chars, count)));
-                        }
-                        else
-                            ScreenText.Print(region.Root, inspector);
-                        inspector?.Take(region.Root, terminalText);
-                    }
+                    // Data for programs is not a line for a person: only the
+                    // inspector, where one looks at it, gets it (ShowOne).
+                    lock (showing) ShowOne(region, attributes, ScreenStream.Output, inspector);
                 }
                 finally
                 {
@@ -129,6 +125,143 @@ namespace SharpOS.Std.Pipes
                 }
             }
             lock (showing) ScreenText.End();
+        }
+
+        /// <summary>
+        /// The streams of a stage the screen shows, read as one (step239): each
+        /// message in the order it was sent across all of them — an error after
+        /// the line printed before it, not ahead of it as when each stream had
+        /// a reader of its own. The output goes to <paramref name="inspector"/>
+        /// as <see cref="Show(PipeReadEnd, IScreenInspector)"/> gives it; stdtext
+        /// and errors do not; errors are printed as errors (the error log). On
+        /// a kernel without an order across pipes, each is shown on its own.
+        /// </summary>
+        public static unsafe void Show(IReadOnlyList<(PipeReadEnd End, ScreenStream Stream)> ends, IScreenInspector inspector = null)
+        {
+            int count = ends.Count;
+            if (count == 0) return;
+            var readers = new RawPipeReader[count];
+            var streams = new ScreenStream[count];
+            var attributes = new uint[count];
+            var asked = new bool[count];
+            int* handles = stackalloc int[count];
+            for (int i = 0; i < count; i++)
+            {
+                readers[i] = ends[i].End.Read();
+                streams[i] = ends[i].Stream;
+                handles[i] = readers[i].Handle;
+            }
+
+            object showing = s_showing ??= new object();
+            int live = count;
+            try
+            {
+                while (live > 0)
+                {
+                    PipeStatus next = PipeTransport.NextOf(handles, live, true, out int at);
+                    if (next == PipeStatus.Unsupported)
+                    {
+                        ShowEachAlone(readers, streams, live, inspector);
+                        return;
+                    }
+                    if (next != PipeStatus.Ok || at < 0 || at >= live) break;
+
+                    RawRegion region = readers[at].Receive();
+                    if (region == null)
+                    {
+                        readers[at].Dispose();
+                        live--;
+                        readers[at] = readers[live];
+                        streams[at] = streams[live];
+                        attributes[at] = attributes[live];
+                        asked[at] = asked[live];
+                        handles[at] = handles[live];
+                        continue;
+                    }
+                    try
+                    {
+                        if (!asked[at])
+                        {
+                            PipeTransport.Attributes(readers[at].Handle, 0, 0, out attributes[at]);
+                            asked[at] = true;
+                        }
+                        lock (showing) ShowOne(region, attributes[at], streams[at], inspector);
+                    }
+                    finally
+                    {
+                        region.Dispose();
+                    }
+                }
+            }
+            finally
+            {
+                for (int i = 0; i < live; i++) readers[i].Dispose();
+                lock (showing) ScreenText.End();
+            }
+        }
+
+        // An older kernel: a task per stream, as before step239.
+        private static void ShowEachAlone(RawPipeReader[] readers, ScreenStream[] streams, int count, IScreenInspector inspector)
+        {
+            var tasks = new System.Threading.Tasks.Task[count];
+            for (int i = 0; i < count; i++)
+            {
+                RawPipeReader reader = readers[i];
+                ScreenStream stream = streams[i];
+                tasks[i] = System.Threading.Tasks.Task.Run(() =>
+                {
+                    object showing = s_showing;
+                    uint attributes = 0;
+                    bool asked = false;
+                    try
+                    {
+                        RawRegion region;
+                        while ((region = reader.Receive()) != null)
+                        {
+                            try
+                            {
+                                if (!asked)
+                                {
+                                    PipeTransport.Attributes(reader.Handle, 0, 0, out attributes);
+                                    asked = true;
+                                }
+                                lock (showing) ShowOne(region, attributes, stream, inspector);
+                            }
+                            finally { region.Dispose(); }
+                        }
+                    }
+                    finally { reader.Dispose(); }
+                });
+            }
+            foreach (System.Threading.Tasks.Task task in tasks) task.Wait();
+        }
+
+        // One message of a shown stream; callers hold the screen's lock.
+        private static unsafe void ShowOne(RawRegion region, uint attributes, ScreenStream stream, IScreenInspector inspector)
+        {
+            IScreenInspector keeper = stream == ScreenStream.Output ? inspector : null;
+            if ((attributes & (uint)PipeAttributes.NotForTerminal) != 0 && HintsHonoured)
+            {
+                keeper?.Take(region.Root, false);
+                return;
+            }
+            bool terminalText = (attributes & (uint)PipeAttributes.TerminalText) != 0
+                                && region.Root.TryGetChars(out _, out _);
+            if (terminalText && region.Root.TryGetChars(out char* chars, out int count))
+            {
+                ScreenText.EndRun();
+                string text = new string(new ReadOnlySpan<char>(chars, count));
+                if (stream == ScreenStream.Errors) PipeTransport.PrintError(text);
+                else PipeTransport.PrintText(text);
+            }
+            else if (stream == ScreenStream.Errors && region.Root.TryGetChars(out char* line, out int length))
+            {
+                ScreenText.EndRun();
+                PipeTransport.PrintError(ScreenText.Visible(new ReadOnlySpan<char>(line, length), keepColours: true) + "\n");
+            }
+            else
+                ScreenText.Print(region.Root, keeper);
+            keeper?.Take(region.Root, terminalText);
         }
 
         // A writer of text to a screen pipe: each write a message as it is,

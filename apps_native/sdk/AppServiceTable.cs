@@ -382,6 +382,12 @@ namespace SharpOS.AppSdk
         // shown, 1 hidden by the person, 2 has the keys); 2 shows it, 3 hides
         // it, 4 shows it with the keys. Zero: an older kernel.
         public ulong TerminalSideControlAddress;
+
+        // int PipeNextOf(int* handles, int count, uint wait, int* index)
+        // (step239): which of the caller's reading ends to receive from next —
+        // the one whose first message was sent earliest across all pipes, or
+        // one that has ended. Zero: an older kernel; no order across pipes.
+        public ulong PipeNextOfAddress;
     }
 
     /// <summary>

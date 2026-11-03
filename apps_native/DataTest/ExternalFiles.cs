@@ -62,6 +62,14 @@ namespace DataApps
             }
             Check("16: READ | KQL 'where Level > 2': levels 3 and 4", count == 2 && levels == 7);
 
+            // The writer's hints go into the file and come back with READ
+            // (step239): `FETCH > f; READ f` showed the record it hides.
+            Sh("FETCH > t16f.pipe");
+            Check("16: FETCH > f keeps 'not for the terminal'", HintsIn("t16f.pipe") == PipeHints.NotForTerminal);
+            Sh("READ t16f.pipe > t16f2.pipe");
+            Check("16: READ f > g keeps it too", HintsIn("t16f2.pipe") == PipeHints.NotForTerminal);
+            Check("16: a stream without hints has none", HintsIn("t16g.pipe") == PipeHints.None);
+
             // A cut file: the whole messages, then a failure naming READ.
             byte[] whole = File.ReadAllBytes("t16.pipe");
             byte[] cut = new byte[whole.Length - 10];
@@ -79,8 +87,23 @@ namespace DataApps
             Check("16: a stream of strings is text", !ExternalPipe.StartsWithSignature(File.ReadAllBytes("t16s.txt"))
                   && Text("t16s.txt").StartsWith("PipeApps.LogEntry"));
 
-            foreach (string f in new[] { "t16.pipe", "t16b.pipe", "t16x.pipe", "t16g.pipe", "t16cut.pipe" })
+            foreach (string f in new[] { "t16.pipe", "t16b.pipe", "t16x.pipe", "t16g.pipe", "t16cut.pipe", "t16f.pipe", "t16f2.pipe" })
                 File.WriteAllBytes(f, new byte[0]);
+        }
+
+        // The hints in an externalpipe file's header; -1 when it has none to read.
+        private static PipeHints HintsIn(string path)
+        {
+            byte[] bytes = File.Exists(path) ? File.ReadAllBytes(path) : new byte[0];
+            int at = 0;
+            var reader = new ExternalPipeReader(into =>
+            {
+                int n = Math.Min(into.Length, bytes.Length - at);
+                new ReadOnlySpan<byte>(bytes, at, n).CopyTo(into);
+                at += n;
+                return n;
+            });
+            return reader.ReadHeader() ? reader.Hints : (PipeHints)(-1);
         }
 
         // "" when READ's records are the test's, numbered from 0 again after the first three; otherwise why not.

@@ -247,7 +247,11 @@ namespace Shell
                     var ends = new List<(int, PipeWriteEnd)>();
                     PipeWriteEnd output = HandOut(redirects[k], Natural(k, count, pairs, owned, shown),
                                                   sideStarted, sidePairs, owned, ends);
-                    if (k == count - 1) ShowText(ends, owned, shown);
+                    if (k == count - 1)
+                    {
+                        ShowText(ends, owned, shown);
+                        ShowErrors(ends, owned, shown);
+                    }
                     input = stages[k].InputFile != null ? OpenInput(stages[k].InputFile, sideStarted, sidePairs)
                           : k > 0 ? pairs[k - 1].ReadEnd : TakeInput();
                     started.Add(Process.Start(path, arguments[k].ToArray(),
@@ -278,20 +282,30 @@ namespace Shell
             var showing = new List<System.Threading.Tasks.Task>();
             Inspector inspector = _capturing ? null : Inspector;
             inspector?.Begin(Describe(verbs, arguments));
-            PipeReadEnd textShown = _textShown;
+            PipeReadEnd textShown = _textShown, errorsShown = _errorsShown;
             _textShown = null;
-            foreach (PipeReadEnd screenEnd in shown)
+            _errorsShown = null;
+            if (_capturing)
             {
-                PipeReadEnd shownEnd = screenEnd;
-                StringBuilder sink = _capturing ? _capture : null;
-                // stdtext is for a person as it is — a report, a panel — not
-                // data: the feed shows it, the inspector keeps the output only.
-                IScreenInspector keeper = screenEnd == textShown ? null : inspector;
-                showing.Add(System.Threading.Tasks.Task.Run(() =>
+                foreach (PipeReadEnd screenEnd in shown)
                 {
-                    if (sink != null) ReadInto(shownEnd, sink);
-                    else SharpOS.Std.Pipes.Pipe.Show(shownEnd, keeper);
-                }));
+                    PipeReadEnd shownEnd = screenEnd;
+                    StringBuilder sink = _capture;
+                    showing.Add(System.Threading.Tasks.Task.Run(() => ReadInto(shownEnd, sink)));
+                }
+            }
+            else if (shown.Count > 0)
+            {
+                // One reader for all of them, in the order they were sent
+                // (step239). stdtext is for a person as it is — a report, a
+                // panel — not data, and errors are errors: the feed shows both,
+                // the inspector keeps the output only.
+                var streams = new List<(PipeReadEnd, ScreenStream)>();
+                foreach (PipeReadEnd screenEnd in shown)
+                    streams.Add((screenEnd, screenEnd == textShown ? ScreenStream.Text
+                                          : screenEnd == errorsShown ? ScreenStream.Errors
+                                          : ScreenStream.Output));
+                showing.Add(System.Threading.Tasks.Task.Run(() => SharpOS.Std.Pipes.Pipe.Show(streams, inspector)));
             }
 
             // The builtin runs once the stages after it are up: its text has
@@ -496,6 +510,24 @@ namespace Shell
 
         // The reading end of the stdtext ShowText made for the pipeline being started.
         private PipeReadEnd _textShown;
+
+        // The error stream of the last stage, when not redirected: shown by the
+        // shell too (step239), read with its output and stdtext as one, so an
+        // error comes after the lines printed before it. Written straight to
+        // the kernel it overtook them — they still had the shell to pass.
+        private void ShowErrors(List<(int, PipeWriteEnd)> ends, List<PipeWriteEnd> owned, List<PipeReadEnd> shown)
+        {
+            if (_output != null || _capturing) return;
+            foreach ((int number, PipeWriteEnd _) in ends)
+                if (number == SharpOS.Std.Pipes.Pipe.ErrorEnd) return;
+            PipeWriteEnd errors = Screen(shown);
+            if (errors == null) return;
+            _errorsShown = shown[shown.Count - 1];
+            owned.Add(errors);
+            ends.Add((SharpOS.Std.Pipes.Pipe.ErrorEnd, errors));
+        }
+
+        private PipeReadEnd _errorsShown;
 
         /// <summary>The side panel the objects shown go to as trees; null: none (not at the prompt, or no panels).</summary>
         internal Inspector Inspector { get; set; }

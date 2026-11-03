@@ -273,8 +273,12 @@ namespace SharpOS.AppSdk
             {
                 // One write (step216): a write reaches the screen whole, and
                 // two programs starting together put their banners in between
-                // each other's pieces.
-                AppHost.Terminal.Write("\u001b[90m[app] " + AppBuildInfo.Name + " build " + AppBuildInfo.Id + "\u001b[0m\n");
+                // each other's pieces. Through stdtext when the shell shows it
+                // (step239), in order with the program's output; written past
+                // the shell it came ahead of lines sent before it.
+                string banner = "\u001b[90m[app] " + AppBuildInfo.Name + " build " + AppBuildInfo.Id + "\u001b[0m\n";
+                if (!SharpOS.Std.Pipes.Pipe.WriteShownText(banner))
+                    AppHost.Terminal.Write(banner);
             }
             Process.Mark(1);
         }
