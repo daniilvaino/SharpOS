@@ -688,10 +688,45 @@ namespace OS.Hal
             {
                 if (!TryEnter()) { s_paintSkips++; return; }
                 FeedQueued();
-                PaintOrRedrawLocked();
+                if (HoldingFrame()) s_dirty = true;
+                else PaintOrRedrawLocked();
                 Exit();
             }
             finally { OS.Kernel.Threading.Preemption.Allow(); }
+        }
+
+        // A program's frame in synchronized output (DEC mode 2026) is painted
+        // when the program ends it, not half-way through its writes; a frame
+        // left open — its program died in it — freezes the screen for
+        // SyncHoldMs at most, and the next frame is timed afresh. No
+        // initialisers: limits §1, as above.
+        private const ulong SyncHoldMs = 150;
+        private static ulong s_syncSince;
+        private static int s_syncFrame;
+        private static bool s_syncExpired;
+
+        private static bool HoldingFrame()
+        {
+            if (!s_terminal.SynchronizedOutput || !Timer.Hpet.IsInitialized)
+                return false;
+            ulong now = Timer.Hpet.ReadCounter();
+            if (s_syncFrame != s_terminal.SynchronizedFrames)
+            {
+                s_syncFrame = s_terminal.SynchronizedFrames;
+                s_syncSince = now;
+                s_syncExpired = false;
+            }
+            if ((now - s_syncSince) * 1000UL < SyncHoldMs * Timer.Hpet.FrequencyHz)
+            {
+                OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.TerminalHeld);
+                return true;
+            }
+            if (!s_syncExpired)
+            {
+                s_syncExpired = true;
+                OS.Kernel.Diagnostics.PerfCounters.Increment(OS.Kernel.Diagnostics.PerfCounter.TerminalHoldExpired);
+            }
+            return false;
         }
 
         // Callers hold the engine lock and have fed the queue. The main panel

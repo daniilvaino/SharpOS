@@ -218,6 +218,10 @@
 				case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
 					terminal.BracketedPasteMode = true;
 					break;
+				case 2026: // SharpOS cut: synchronized output — the renderer holds the frame until 2026l
+					terminal.SynchronizedOutput = true;
+					terminal.SynchronizedFrames++;
+					break;
 				}
 			}
 		}
@@ -404,6 +408,9 @@
 					break;
 				case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
 					terminal.BracketedPasteMode = false;
+					break;
+				case 2026: // SharpOS cut: synchronized output ends — the renderer paints the frame
+					terminal.SynchronizedOutput = false;
 					break;
 				}
 			}

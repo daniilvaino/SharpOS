@@ -71,7 +71,7 @@
                 // at all.
                 if (services->WriteStringAddress != 0)
                 {
-                    WriteUtf8Chunks(text, (delegate* unmanaged<ulong, void>)services->WriteStringAddress);
+                    WriteUtf8Chunks(text, (delegate* unmanaged<ulong, void>)services->WriteStringAddress, frame: true);
                     return;
                 }
 
@@ -286,10 +286,14 @@
         // on the stack and a chunk boundary costs only an extra call.
         private const int WriteChunkBytes = 4096;
 
-        private static void WriteUtf8Chunks(string text, delegate* unmanaged<ulong, void> write)
+        // A write in several chunks with frame set goes in synchronized output
+        // (ESC [?2026h … ESC [?2026l): the screen shows it whole or not yet,
+        // never the first chunks of a frame over the rest of the last one.
+        private static void WriteUtf8Chunks(string text, delegate* unmanaged<ulong, void> write, bool frame = false)
         {
             byte* buffer = stackalloc byte[WriteChunkBytes + 1];
             int used = 0;
+            bool framed = false;
 
             fixed (char* source = text)
             {
@@ -300,6 +304,11 @@
                     // different rune.
                     if (used + 4 > WriteChunkBytes)
                     {
+                        if (frame && !framed)
+                        {
+                            WriteMode(write, set: true);
+                            framed = true;
+                        }
                         buffer[used] = 0;
                         write((ulong)buffer);
                         used = 0;
@@ -314,6 +323,18 @@
                 buffer[used] = 0;
                 write((ulong)buffer);
             }
+            if (framed)
+                WriteMode(write, set: false);
+        }
+
+        private static void WriteMode(delegate* unmanaged<ulong, void> write, bool set)
+        {
+            byte* mode = stackalloc byte[10];
+            mode[0] = 0x1B; mode[1] = (byte)'['; mode[2] = (byte)'?';
+            mode[3] = (byte)'2'; mode[4] = (byte)'0'; mode[5] = (byte)'2'; mode[6] = (byte)'6';
+            mode[7] = set ? (byte)'h' : (byte)'l';
+            mode[8] = 0;
+            write((ulong)mode);
         }
 
         /// <summary>

@@ -137,6 +137,13 @@ namespace XtermSharp {
 		public bool CursorHidden { get; internal set; }
 		public bool BracketedPasteMode { get; internal set; }
 
+		// SharpOS cut: DEC private mode 2026 (synchronized output). Set by the
+		// program around a frame; the renderer does not paint while it is on.
+		public bool SynchronizedOutput { get; internal set; }
+		// SharpOS cut: how many frames began, so the renderer tells a new frame
+		// from one left open by a program that died in it.
+		public int SynchronizedFrames { get; internal set; }
+
 		public TerminalOptions Options { get; private set; }
 		public int Cols { get; private set; }
 		public int Rows { get; private set; }

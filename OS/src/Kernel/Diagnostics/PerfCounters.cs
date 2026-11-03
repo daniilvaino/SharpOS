@@ -82,6 +82,11 @@ namespace OS.Kernel.Diagnostics
         TerminalFeedTsc,
         TerminalDrops,
 
+        // Paints put off because a synchronized frame (DEC 2026) was still
+        // open, and frames painted open because they outlived the hold.
+        TerminalHeld,
+        TerminalHoldExpired,
+
         // Collections of the kernel's own heap, and their time.
         KernelGcs,
         KernelGcTicks,
@@ -428,6 +433,8 @@ namespace OS.Kernel.Diagnostics
                 Line(scope, "terminal.feed_ms", TscToUs(Get(ref delta, PerfCounter.TerminalFeedTsc), elapsedTsc, elapsedUs) / 1000);
             }
             Line(scope, "terminal.drops", Get(ref delta, PerfCounter.TerminalDrops));
+            Line(scope, "terminal.held", Get(ref delta, PerfCounter.TerminalHeld));
+            Line(scope, "terminal.hold_expired", Get(ref delta, PerfCounter.TerminalHoldExpired));
             Timed(scope, "kgc", ref delta, PerfCounter.KernelGcs, PerfCounter.KernelGcTicks);
             Timed(scope, "usb.wait", ref delta, PerfCounter.UsbWaits, PerfCounter.UsbWaitTicks);
             Line(scope, "usb.wait.spins", Get(ref delta, PerfCounter.UsbWaitSpins));

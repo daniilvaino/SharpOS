@@ -294,6 +294,12 @@ namespace OS.Kernel.Diagnostics
             WriteNumber(PerfCounters.Read(PerfCounter.ScreenCellsDrawn));
             PerfLine(" skipped=");
             WriteNumber(PerfCounters.Read(PerfCounter.ScreenCellsSkipped));
+            PerfLine(" held=");
+            WriteNumber(PerfCounters.Read(PerfCounter.TerminalHeld));
+            PerfLine(" expired=");
+            WriteNumber(PerfCounters.Read(PerfCounter.TerminalHoldExpired));
+            PerfLine(" drops=");
+            WriteNumber(PerfCounters.Read(PerfCounter.TerminalDrops));
             PerfLine("\r\n");
         }
 
