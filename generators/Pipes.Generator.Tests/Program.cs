@@ -69,6 +69,7 @@ namespace SharpOS.Std.Pipes
     public readonly struct View
     {
         public View this[string n] { get => default; set { } }
+        public string TypeName => null;
         public static implicit operator View(int v) => default;
         public static implicit operator View(bool v) => default;
         public static explicit operator int(View v) => 0;
@@ -241,6 +242,7 @@ class C
         foreach (View v in raw)
         {
             s_text = (string)v[""Text""];
+            s_text = v.TypeName;
             s_n = (int)v[""I""];
             s_boxed = (int)v[""I""];
             s_bag = v;

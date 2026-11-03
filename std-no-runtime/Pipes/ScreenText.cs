@@ -16,30 +16,83 @@ namespace SharpOS.Std.Pipes
         private static byte[] s_carry;
         private static int s_carryLength;
 
-        internal static void Print(View root)
+        // A run of objects of one type beside an inspector (step237): the
+        // first on its line, the rest counted on the summary line under it,
+        // which is rewritten in place while it is the last thing on the screen.
+        private static string s_runType;
+        private static int s_runCount;
+        private static int s_runShown;
+        private static int s_runPainted;
+        private static IScreenInspector s_runInspector;
+
+        // How often the count on the summary line moves, in milliseconds.
+        private const int SummaryInterval = 100;
+
+        internal static void Print(View root, IScreenInspector inspector = null)
         {
             if (root.TryGetChars(out char* chars, out int count))
             {
+                EndRun();
                 Flush();
                 PipeTransport.Print(new string(new ReadOnlySpan<char>(chars, count)));
                 return;
             }
             if (root.TryGetBytes(out byte* bytes, out int length))
             {
+                EndRun();
                 PrintBytes(bytes, length);
                 return;
             }
             Flush();
+            if (inspector != null && inspector.Summary)
+            {
+                string type = root.TypeName;
+                if (s_runCount > 0 && type == s_runType)
+                {
+                    s_runCount++;
+                    int now = Environment.TickCount;
+                    if (s_runShown == 1 || now - s_runPainted >= SummaryInterval) PaintSummary(now);
+                    return;
+                }
+                EndRun();
+                s_runType = type;
+                s_runCount = 1;
+                s_runShown = 1;
+                s_runInspector = inspector;
+            }
+            else EndRun();
             PipeTransport.Print(root.ToScreenString());
         }
 
-        /// <summary>An object or an array (not a byte[]) as a tree into <paramref name="objects"/>.</summary>
-        internal static void Inspect(View root, System.IO.TextWriter objects)
+        // `▸ 1000 × T  #3`: the count, the type, and the inspector's mark.
+        private static void PaintSummary(int now)
         {
-            ViewKind kind = root.Kind;
-            if (kind != ViewKind.Object && kind != ViewKind.Array) return;
-            if (root.TryGetBytes(out _, out _)) return;
-            objects.Write(root.ToScreenTree());
+            var line = new StringBuilder();
+            line.Append('\r').Append("\u001b[90m▸\u001b[0m ").Append(s_runCount.ToString())
+                .Append(" \u001b[90m×\u001b[0m ");
+            string type = s_runType ?? "";
+            int dot = type.LastIndexOf('.');
+            if (dot > 0) line.Append("\u001b[90m").Append(type, 0, dot + 1).Append("\u001b[0m");
+            line.Append("\u001b[1;36m").Append(dot > 0 ? type.Substring(dot + 1) : type).Append("\u001b[0m");
+            string mark = s_runInspector?.Mark;
+            if (!string.IsNullOrEmpty(mark)) line.Append("\u001b[90m  ").Append(mark).Append("\u001b[0m");
+            line.Append("\u001b[K");
+            PipeTransport.PrintText(line.ToString());
+            s_runShown = s_runCount;
+            s_runPainted = now;
+        }
+
+        /// <summary>The run is over: its summary line shows the last count and ends.</summary>
+        internal static void EndRun()
+        {
+            if (s_runCount > 1)
+            {
+                if (s_runShown != s_runCount) PaintSummary(Environment.TickCount);
+                PipeTransport.PrintText("\n");
+            }
+            s_runCount = 0;
+            s_runType = null;
+            s_runInspector = null;
         }
 
         private static void PrintBytes(byte* bytes, int length)
@@ -101,7 +154,11 @@ namespace SharpOS.Std.Pipes
         }
 
         /// <summary>The end of what goes to the screen: a carried piece is shown as it is.</summary>
-        internal static void End() => Flush();
+        internal static void End()
+        {
+            EndRun();
+            Flush();
+        }
 
         // Valid UTF-8 without control characters but tab, CR and LF.
         private static bool IsText(ReadOnlySpan<byte> s)

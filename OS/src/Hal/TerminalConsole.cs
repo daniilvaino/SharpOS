@@ -114,6 +114,17 @@ namespace OS.Hal
         private static int s_sideShown;
         // The panel the keys are for (Ctrl+Tab): 0 the main one, 1 the side one.
         private static int s_focus;
+        // Hidden by the person (F12, or its owner on their behalf): the width
+        // asked stays, the panel comes back as it was.
+        private static bool s_sideHidden;
+        // Someone reads the side panel's keys (SideControl op 0): while it has
+        // them they go there, a tmux pane's input, and it scrolls itself.
+        private static bool s_sideReader;
+        // Those keys, as terminal bytes, until the reader takes them. Written
+        // by the input pump, read by the reader, both with switching suppressed.
+        private const int SideKeyBytes = 256;
+        private static byte[] s_sideKeys;
+        private static int s_sideKeyHead, s_sideKeyCount;
 
         public static bool IsReady => s_ready;
 
@@ -271,15 +282,17 @@ namespace OS.Hal
 
         /// <summary>
         /// A key the screen takes for itself before it is the program's input:
-        /// Ctrl+Tab and Ctrl+Shift+Tab move the keys between the panels,
-        /// Shift+PgUp/PgDn/Home/End scroll the panel that has them; with the
-        /// side panel, the arrows, PgUp/PgDn, Home and End scroll it without
-        /// Shift and Esc gives the keys back to the main one. True when the
-        /// key was the screen's. On the alternate screen none is: it has no
-        /// scrollback, and Shift+PgUp selects in an editor. Asked by the input
-        /// pump for each press, before any program can read it; a program
-        /// drawing on the framebuffer itself gets the terminal painted over
-        /// its frame by a scroll, until its next one.
+        /// Ctrl+Tab and Ctrl+Shift+Tab move the keys between the panels — to
+        /// a hidden side panel that has a reader too, showing it — F12 shows
+        /// and hides the side panel, Shift+PgUp/PgDn/Home/End scroll the panel
+        /// that has the keys. With the side panel Esc gives the keys back to
+        /// the main one; the rest go to its reader, when it has one, or the
+        /// arrows, PgUp/PgDn, Home and End scroll it without Shift. True when
+        /// the key was the screen's. On the alternate screen none is: it has
+        /// no scrollback, and Shift+PgUp selects in an editor. Asked by the
+        /// input pump for each press, before any program can read it; a
+        /// program drawing on the framebuffer itself gets the terminal painted
+        /// over its frame by a scroll, until its next one.
         /// </summary>
         public static bool TakeKey(byte make, bool extended, bool shift, bool ctrl)
         {
@@ -287,14 +300,51 @@ namespace OS.Hal
 
             if (make == 0x0F && !extended && ctrl)
             {
-                if (s_sideShown == 0) return false;
+                if (s_sideShown == 0)
+                {
+                    if (!s_sideReader) return false;
+                    ShowSide(focus: true);
+                    return true;
+                }
                 // Two panels: the next one and the one before are the same.
                 s_focus = 1 - s_focus;
                 Scroll(s_main, 0, paint: true);
                 return true;
             }
 
+            if (make == 0x58 && !extended && !shift && !ctrl)            // F12
+            {
+                if (s_sideShown > 0) HideSide();
+                else if (s_sideReader || s_sideAsked > 0) ShowSide(focus: false);
+                else return false;
+                return true;
+            }
+
             bool side = s_focus == 1 && s_sideShown > 0;
+            if (side && s_sideReader)
+            {
+                if (make == 0x01 && !extended)                            // Esc
+                {
+                    s_focus = 0;
+                    Scroll(s_main, 0, paint: true);
+                    return true;
+                }
+                // Modifiers stay the program's: its decoder keeps their latch.
+                if (make == 0x2A || make == 0x36 || make == 0x1D || make == 0x38) return false;
+                byte* key = stackalloc byte[8];
+                int length = SideKey(make, extended, shift, ctrl, key);
+                OS.Kernel.Threading.Preemption.Suppress();
+                try
+                {
+                    for (int i = 0; i < length && s_sideKeyCount < SideKeyBytes; i++)
+                    {
+                        s_sideKeys[(s_sideKeyHead + s_sideKeyCount) % SideKeyBytes] = key[i];
+                        s_sideKeyCount++;
+                    }
+                }
+                finally { OS.Kernel.Threading.Preemption.Allow(); }
+                return true;
+            }
             if (!(shift || side)) return false;
             if (!extended)
             {
@@ -325,6 +375,120 @@ namespace OS.Hal
             if (buffer.YDisp != buffer.YBase) Scroll(s_main, int.MaxValue / 2, paint: true);
         }
 
+        // A press as xterm sends it, for the side panel's reader: the arrows,
+        // the navigation cluster, Enter, Tab, Space, Backspace, letters and
+        // digits; 0 for the rest. Set 1 scan codes, as TakeKey gets them.
+        private static int SideKey(byte make, bool extended, bool shift, bool ctrl, byte* o)
+        {
+            if (extended)
+            {
+                switch (make)
+                {
+                    case 0x48: return Csi(o, 'A');
+                    case 0x50: return Csi(o, 'B');
+                    case 0x4D: return Csi(o, 'C');
+                    case 0x4B: return Csi(o, 'D');
+                    case 0x47: return Csi(o, 'H');
+                    case 0x4F: return Csi(o, 'F');
+                    case 0x49: return Tilde(o, '5');
+                    case 0x51: return Tilde(o, '6');
+                    case 0x1C: o[0] = 0x0D; return 1;
+                    default: return 0;
+                }
+            }
+            switch (make)
+            {
+                case 0x1C: o[0] = 0x0D; return 1;
+                case 0x0F: o[0] = (byte)'\t'; return 1;
+                case 0x39: o[0] = (byte)' '; return 1;
+                case 0x0E: o[0] = 0x7F; return 1;
+            }
+            char c = make >= 0x10 && make <= 0x19 ? "qwertyuiop"[make - 0x10]
+                   : make >= 0x1E && make <= 0x26 ? "asdfghjkl"[make - 0x1E]
+                   : make >= 0x2C && make <= 0x32 ? "zxcvbnm"[make - 0x2C]
+                   : make >= 0x02 && make <= 0x0B ? "1234567890"[make - 0x02]
+                   : make == 0x0C ? '-' : make == 0x0D ? '=' : make == 0x35 ? '/' : '\0';
+            if (c == '\0') return 0;
+            if (ctrl && c >= 'a' && c <= 'z') { o[0] = (byte)(c - 'a' + 1); return 1; }
+            if (shift && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+            else if (shift && c == '=') c = '+';
+            else if (shift && c == '/') c = '?';
+            o[0] = (byte)c;
+            return 1;
+        }
+
+        private static int Csi(byte* o, char final)
+        {
+            o[0] = 0x1B; o[1] = (byte)'['; o[2] = (byte)final;
+            return 3;
+        }
+
+        private static int Tilde(byte* o, char number)
+        {
+            o[0] = 0x1B; o[1] = (byte)'['; o[2] = (byte)number; o[3] = (byte)'~';
+            return 4;
+        }
+
+        // Brings the side panel back, at the width its owner asked or two
+        // fifths of the screen when it asked none yet.
+        private static void ShowSide(bool focus)
+        {
+            OS.Kernel.Threading.Preemption.Suppress();
+            try
+            {
+                EnsureSide();
+                if (s_sideAsked == 0) s_sideAsked = ClampSide(s_screenCols * 2 / 5);
+                s_sideHidden = false;
+                if (focus) s_focus = 1;
+                s_dirty = true;
+            }
+            finally { OS.Kernel.Threading.Preemption.Allow(); }
+            Redraw();
+        }
+
+        private static void HideSide()
+        {
+            s_sideHidden = true;
+            s_focus = 0;
+            s_dirty = true;
+            Redraw();
+        }
+
+        /// <summary>
+        /// The side panel as a person uses it (AppServiceTable.TerminalSideControl):
+        /// op 0 reads its keys into <paramref name="buffer"/> without waiting
+        /// and makes the caller its reader; 1 its state — bit 0 shown, bit 1
+        /// hidden by the person, bit 2 has the keys; 2 shows it, 3 hides it,
+        /// 4 shows it with the keys. int.MinValue for an unknown op.
+        /// </summary>
+        public static int SideControl(int op, byte* buffer, int capacity)
+        {
+            switch (op)
+            {
+                case 0:
+                    int n = 0;
+                    OS.Kernel.Threading.Preemption.Suppress();
+                    try
+                    {
+                        s_sideReader = true;
+                        while (n < capacity && s_sideKeyCount > 0)
+                        {
+                            buffer[n++] = s_sideKeys[s_sideKeyHead];
+                            s_sideKeyHead = (s_sideKeyHead + 1) % SideKeyBytes;
+                            s_sideKeyCount--;
+                        }
+                    }
+                    finally { OS.Kernel.Threading.Preemption.Allow(); }
+                    return n;
+                case 1:
+                    return (s_sideShown > 0 ? 1 : 0) | (s_sideHidden ? 2 : 0) | (s_focus == 1 && s_sideShown > 0 ? 4 : 0);
+                case 2: ShowSide(focus: false); return 0;
+                case 3: HideSide(); return 0;
+                case 4: ShowSide(focus: true); return 0;
+                default: return int.MinValue;
+            }
+        }
+
         // Moves a panel's view by lines (up when negative), then paints. True:
         // the key that asked is taken whether or not the view could move.
         private static bool Scroll(TerminalPane pane, int lines, bool paint)
@@ -352,18 +516,33 @@ namespace OS.Hal
         public static int SetSidePanel(int columns)
         {
             if (!s_ready) return -1;
-            if (columns < 0) columns = 0;
-            if (columns > 0 && columns < MinSideColumns) columns = MinSideColumns;
-            if (columns > s_screenCols - 1 - MinMainColumns) columns = s_screenCols - 1 - MinMainColumns;
-            if (columns < MinSideColumns) columns = 0;
+            columns = ClampSide(columns);
             OS.Kernel.Threading.Preemption.Suppress();
             try
             {
                 if (columns > 0) EnsureSide();
                 s_sideAsked = columns;
+                // None at all: its owner is done with it — no reader, and the
+                // next owner's panel shows when it asks.
+                if (columns == 0)
+                {
+                    s_sideReader = false;
+                    s_sideHidden = false;
+                    s_sideKeyCount = 0;
+                }
             }
             finally { OS.Kernel.Threading.Preemption.Allow(); }
             Redraw();
+            return s_sideHidden ? 0 : columns;
+        }
+
+        // A width the screen can give, 0 when it cannot give one.
+        private static int ClampSide(int columns)
+        {
+            if (columns < 0) columns = 0;
+            if (columns > 0 && columns < MinSideColumns) columns = MinSideColumns;
+            if (columns > s_screenCols - 1 - MinMainColumns) columns = s_screenCols - 1 - MinMainColumns;
+            if (columns < MinSideColumns) columns = 0;
             return columns;
         }
 
@@ -371,6 +550,7 @@ namespace OS.Hal
         // next redraw. Callers suppress switching.
         private static void EnsureSide()
         {
+            s_sideKeys ??= new byte[SideKeyBytes];
             if (s_side == null)
                 s_side = new TerminalPane(new XtermSharp.SimpleTerminalDelegate(),
                     s_sideAsked > 0 ? s_sideAsked : MinSideColumns, s_screenRows, Margin, Margin);
@@ -564,7 +744,7 @@ namespace OS.Hal
         // The side panel's width as things stand: none while the main panel is
         // on the alternate screen — a full-screen program gets the screen.
         private static int SideWanted
-            => s_sideAsked > 0 && s_side != null && !s_terminal.Buffers.IsAlternateBuffer ? s_sideAsked : 0;
+            => s_sideAsked > 0 && s_side != null && !s_sideHidden && !s_terminal.Buffers.IsAlternateBuffer ? s_sideAsked : 0;
 
         // Callers hold the engine lock and have fed the queue. Lays the
         // panels out as asked, then paints all of the screen, margins and the

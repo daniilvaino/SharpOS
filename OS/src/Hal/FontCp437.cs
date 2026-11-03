@@ -24,6 +24,7 @@ namespace OS.Hal
             {
                 // The ellipsis has no CP437 glyph; the font draws one of its own.
                 case (char)0x2026: return Ellipsis;   // …
+                case (char)0x00D7: return Times;      // ×
 
                 // Single-line box drawing.
                 case (char)0x2500: return 0xC4;   // ─
@@ -65,7 +66,9 @@ namespace OS.Hal
                 // Arrows and marks, for scrollbars and list selection.
                 case (char)0x25B2: return 0x1E;   // ▲
                 case (char)0x25BA: return 0x10;   // ►
+                case (char)0x25B8: return 0x10;   // ▸ the inspector's closed node
                 case (char)0x25BC: return 0x1F;   // ▼
+                case (char)0x25BE: return 0x1F;   // ▾ and its open one
                 case (char)0x25C4: return 0x11;   // ◄
                 case (char)0x25C6: return 0x04;   // ◆ (CP437 diamond)
                 case (char)0x2022: return 0x07;   // •

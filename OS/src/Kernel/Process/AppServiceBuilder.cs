@@ -370,6 +370,7 @@ namespace OS.Kernel.Process
             table.TerminalReadAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&TerminalRead;
             table.TerminalSideAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&TerminalSide;
             table.TerminalSideWriteAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&TerminalSideWrite;
+            table.TerminalSideControlAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, int, int>)&TerminalSideControl;
                 table.ExceptionHeadAddress = (ulong)OS.Boot.EH.ExInfoHead.GetHeadAddress();
                 table.ProcessAddress = (ulong)(nint)(delegate* unmanaged<int, ulong*, int>)&ProcessService;
                 if (OS.Kernel.Diagnostics.Probes.PipeProbe)
@@ -1384,6 +1385,16 @@ namespace OS.Kernel.Process
         {
             if (utf8 == null || length < 0) return -(int)AppServiceStatus.InvalidParameter;
             return OS.Hal.TerminalConsole.WriteSide(utf8, length) ? 0 : -(int)AppServiceStatus.Unsupported;
+        }
+
+        // The side panel's keys and visibility; see TerminalConsole.SideControl.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int TerminalSideControl(int op, byte* buffer, int capacity)
+        {
+            if (!OS.Hal.TerminalConsole.IsReady) return -(int)AppServiceStatus.Unsupported;
+            if (op == 0 && (buffer == null || capacity < 0)) return -(int)AppServiceStatus.InvalidParameter;
+            int result = OS.Hal.TerminalConsole.SideControl(op, buffer, capacity);
+            return result == int.MinValue ? -(int)AppServiceStatus.InvalidParameter : result;
         }
 
         private static uint TryReadKey(ulong requestAddress)

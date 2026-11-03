@@ -260,6 +260,10 @@ public sealed class RegionAnalyzer : DiagnosticAnalyzer
                 case IPropertyReferenceOperation p when p.Property.Name == "Root" && IsRegionType(p.Property.ContainingType):
                     region = SymbolOf(p.Instance);
                     return true;
+                // A string a view answers (TypeName) is a copy: a .NET string
+                // never lies in a region.
+                case IPropertyReferenceOperation p when IsViewType(p.Instance?.Type) && p.Type?.SpecialType == SpecialType.System_String:
+                    return false;
                 // A property or an indexer of a region reference answers from
                 // the region (pipe types are plain fields; a property over them
                 // returns what they hold).

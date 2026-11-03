@@ -442,6 +442,14 @@ namespace OS.Kernel.Process
         // writes them into its g_cpuFeatures. Zero: an older kernel; every
         // optimistic instruction set reads as absent.
         public ulong IntrinsicFlags;
+
+        // int TerminalSideControl(int op, byte* buffer, int capacity): the
+        // side panel as a person uses it (step237). Op 0 reads the keys
+        // pressed while it has them, as terminal bytes, without waiting — the
+        // first read makes the caller the panel's reader; 1 its state (bit 0
+        // shown, 1 hidden by the person, 2 has the keys); 2 shows it, 3 hides
+        // it, 4 shows it with the keys. Zero: an older kernel.
+        public ulong TerminalSideControlAddress;
     }
 
     /// <summary>

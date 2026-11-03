@@ -277,15 +277,20 @@ namespace Shell
             // stage did not start ends at once (its end was closed above).
             var showing = new List<System.Threading.Tasks.Task>();
             Inspector inspector = _capturing ? null : Inspector;
-            inspector?.Begin();
+            inspector?.Begin(Describe(verbs, arguments));
+            PipeReadEnd textShown = _textShown;
+            _textShown = null;
             foreach (PipeReadEnd screenEnd in shown)
             {
                 PipeReadEnd shownEnd = screenEnd;
                 StringBuilder sink = _capturing ? _capture : null;
+                // stdtext is for a person as it is — a report, a panel — not
+                // data: the feed shows it, the inspector keeps the output only.
+                IScreenInspector keeper = screenEnd == textShown ? null : inspector;
                 showing.Add(System.Threading.Tasks.Task.Run(() =>
                 {
                     if (sink != null) ReadInto(shownEnd, sink);
-                    else SharpOS.Std.Pipes.Pipe.Show(shownEnd, inspector);
+                    else SharpOS.Std.Pipes.Pipe.Show(shownEnd, keeper);
                 }));
             }
 
@@ -387,6 +392,24 @@ namespace Shell
             return code;
         }
 
+        // A pipeline as the inspector names it: its stages as they will run.
+        private static string Describe(List<string> verbs, List<List<string>> arguments)
+        {
+            var text = new StringBuilder();
+            for (int k = 0; k < verbs.Count; k++)
+            {
+                if (k > 0) text.Append(" | ");
+                text.Append(verbs[k]);
+                foreach (string a in arguments[k])
+                {
+                    text.Append(' ');
+                    bool plain = a.Length > 0 && a.IndexOf(' ') < 0 && a.IndexOf('\'') < 0;
+                    text.Append(plain ? a : "'" + a + "'");
+                }
+            }
+            return text.ToString();
+        }
+
         /// <summary>The exit code of a stage whose neighbour's end broke: quiet, never the pipeline's failure.</summary>
         private const int QuietExitCode = 141;
 
@@ -408,7 +431,14 @@ namespace Shell
                 StringBuilder outer = _capture;
                 _capture = gathered;
                 try { return RunBuiltin(verb, args); }
-                finally { _capture = outer; Write(gathered.ToString()); }
+                finally
+                {
+                    _capture = outer;
+                    string text = gathered.ToString();
+                    Write(text);
+                    // What it printed waits in the inspector, as a program's text does.
+                    if (!_capturing && Inspector != null && text.Length > 0) Inspector.TakeText(text);
+                }
             }
             int code;
             try
@@ -459,9 +489,13 @@ namespace Shell
                 if (number == SharpOS.Std.Pipes.Pipe.TextEnd) return;
             PipeWriteEnd text = Screen(shown);
             if (text == null) return;
+            _textShown = shown[shown.Count - 1];
             owned.Add(text);
             ends.Add((SharpOS.Std.Pipes.Pipe.TextEnd, text));
         }
+
+        // The reading end of the stdtext ShowText made for the pipeline being started.
+        private PipeReadEnd _textShown;
 
         /// <summary>The side panel the objects shown go to as trees; null: none (not at the prompt, or no panels).</summary>
         internal Inspector Inspector { get; set; }
@@ -640,7 +674,7 @@ namespace Shell
         {
             "buildinfo", "cat", "cd", "clear", "dir", "echo", "env", "exit", "expect", "export", "help", "history", "ls",
             "mkdir", "mv", "pwd", "rm", "rmdir", "type", "unset", "which", "cp", "df",
-            "true", "false", ":", "test", "[", "break", "continue",
+            "true", "false", ":", "test", "[", "break", "continue", "inspect",
         };
 
         /// <summary>The prompt's history (Program.Interactive sets it; a script has none).</summary>
@@ -1140,8 +1174,35 @@ namespace Shell
             if (verb == "mv") return Move(args);
             if (verb == "cp") return Copy(args);
             if (verb == "df") return DiskFree();
+            if (verb == "inspect") return Inspect(args);
 
             return RunProgram(verb, args);
+        }
+
+        // `inspect` shows the inspector with the keys, `inspect N` with
+        // command N in it, `inspect off` hides it.
+        private int Inspect(List<string> args)
+        {
+            if (Inspector == null)
+            {
+                Write("sh: inspect: no inspector here (a prompt on a screen has one)\n");
+                return 1;
+            }
+            if (args.Count == 0) return Inspector.Show(0) ? 0 : 1;
+            if (args.Count == 1 && args[0] == "off") { Inspector.Close(); return 0; }
+            string number = args[0].Length > 1 && args[0][0] == '#' ? args[0].Substring(1) : args[0];
+            if (args.Count == 1 && TryParseInt(number, out int n) && n > 0)
+            {
+                if (Inspector.Show(n)) return 0;
+                Write("sh: inspect: no command #");
+                WriteInt(n);
+                Write(" kept (the last ");
+                WriteInt(Inspector.Kept);
+                Write(" are)\n");
+                return 1;
+            }
+            Write("sh: usage: inspect [N|off]\n");
+            return 2;
         }
 
         /// <summary>
@@ -1411,6 +1472,13 @@ namespace Shell
             Write("not here: functions, here-documents, [[ ]], arrays, background jobs (&); read is READ.EXE, not a builtin\n");
             Write("keys: Up/Down history, Tab completes, Home/End, Ctrl+A/E/U/K/W, Ctrl+L clears,\n");
             Write("      Ctrl+C drops the line, Ctrl+D on an empty line leaves\n");
+            Write("inspector (the panel at the right): what the last commands showed — objects open it, text and bytes\n");
+            Write("      wait in it; F12 shows and hides it, Ctrl+Tab gives it the keys, Esc gives them back;\n");
+            Write("      in it: Up/Down, PgUp/PgDn, Home/End move, Right/Enter open, Left closes, t table or tree,\n");
+            Write("      p/n the command before or after, q hides it; inspect [N|off] — show it (command N, the mark\n");
+            Write("      after a summary line such as '▸ 1000 × T  #3'), or hide it;\n");
+            Write("      settings (system.env, or export at once): INSPECTOR=auto|on|off, INSPECTOR_WIDTH=40 (percent),\n");
+            Write("      INSPECTOR_KEEP=16, INSPECTOR_DEPTH=auto|N, INSPECTOR_SUMMARY=on|off\n");
             Write("paths: /bin/NAME.EXE; a backslash escapes the next character, as in bash\n");
             return 0;
         }
@@ -1582,7 +1650,11 @@ namespace Shell
             else if (_captureWriter != null) _captureWriter.Write(text);
             else if (_capture != null) _capture.Append(text);
             else if (text == "sh: ") AppHost.Terminal.Write("\u001b[31msh:\u001b[0m ");   // the shell's own complaints, marked
-            else AppHost.Terminal.Write(text);
+            else
+            {
+                AppHost.Terminal.Write(text);
+                if (_teeInspector) Inspector?.TakeText(text);
+            }
         }
 
         // Colour for the screen only: a builtin's text going into a pipe stays plain.
@@ -1590,8 +1662,15 @@ namespace Shell
         {
             if (_captureWriter != null) _captureWriter.Write(text);
             else if (_capture != null) _capture.Append(text);
-            else AppHost.Terminal.Write(sgr + text + "\u001b[0m");
+            else
+            {
+                AppHost.Terminal.Write(sgr + text + "\u001b[0m");
+                if (_teeInspector) Inspector?.TakeText(text);
+            }
         }
+
+        // A builtin at the prompt writing to the screen: its text waits in the inspector too.
+        private bool _teeInspector;
 
         private void WriteInt(int value) => Write(value.ToString());
     }

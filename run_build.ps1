@@ -998,7 +998,16 @@ $systemEnv = @(
     'HOME=/home',
     "TZ=$tzOffset",
     "INIT=$init",
-    "BUILDINFO=$buildInfo"
+    "BUILDINFO=$buildInfo",
+    '# The inspector at the prompt (step237; export changes them at once):',
+    '# auto - objects open it, on - open from the start, off - F12 or inspect only;',
+    '# width in percent of the screen; commands kept; levels a lone object opens',
+    '# first (auto: as many as the panel holds); on - a run of objects is a summary line.',
+    'INSPECTOR=auto',
+    'INSPECTOR_WIDTH=40',
+    'INSPECTOR_KEEP=16',
+    'INSPECTOR_DEPTH=auto',
+    'INSPECTOR_SUMMARY=on'
 ) -join "`n"
 [System.IO.File]::WriteAllText((Join-Path $espDirs['config'] "system.env"), $systemEnv + "`n", (New-Object System.Text.UTF8Encoding($false)))
 # The name it had before it was .env: left there it would look like the one in force.

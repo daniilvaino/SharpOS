@@ -77,12 +77,13 @@ namespace SharpOS.Std.Pipes
         /// on its line — as it is when the writer said it is terminal text —
         /// a byte[] as text, anything else as a view prints it. Nothing of a
         /// stream marked not for the terminal, unless PIPEHINTS=off. Two
-        /// streams shown at once take turns a message each. An object or an
-        /// array also goes to <paramref name="objects"/>, as a tree, when
-        /// one is given: the inspector beside the screen — one marked not for
-        /// the terminal too.
+        /// streams shown at once take turns a message each. Every message
+        /// also goes to <paramref name="inspector"/> when one is given — the
+        /// inspector beside the screen, step237 — one marked not for the
+        /// terminal too; a run of objects of one type is then its first line
+        /// and a summary line, not a line each.
         /// </summary>
-        public static unsafe void Show(PipeReadEnd end, TextWriter objects = null)
+        public static unsafe void Show(PipeReadEnd end, IScreenInspector inspector = null)
         {
             object showing = s_showing ??= new object();
             using RawPipeReader reader = end.Read();
@@ -104,20 +105,22 @@ namespace SharpOS.Std.Pipes
                     // inspector is where one looks at it.
                     if ((attributes & (uint)PipeAttributes.NotForTerminal) != 0 && HintsHonoured)
                     {
-                        if (objects != null)
-                            lock (showing) ScreenText.Inspect(region.Root, objects);
+                        if (inspector != null)
+                            lock (showing) inspector.Take(region.Root, false);
                         continue;
                     }
                     lock (showing)
                     {
-                        if ((attributes & (uint)PipeAttributes.TerminalText) != 0
-                            && region.Root.TryGetChars(out char* chars, out int count))
-                            PipeTransport.PrintText(new string(new ReadOnlySpan<char>(chars, count)));
-                        else
+                        bool terminalText = (attributes & (uint)PipeAttributes.TerminalText) != 0
+                                            && region.Root.TryGetChars(out _, out _);
+                        if (terminalText && region.Root.TryGetChars(out char* chars, out int count))
                         {
-                            ScreenText.Print(region.Root);
-                            if (objects != null) ScreenText.Inspect(region.Root, objects);
+                            ScreenText.EndRun();
+                            PipeTransport.PrintText(new string(new ReadOnlySpan<char>(chars, count)));
                         }
+                        else
+                            ScreenText.Print(region.Root, inspector);
+                        inspector?.Take(region.Root, terminalText);
                     }
                 }
                 finally

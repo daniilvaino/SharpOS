@@ -364,7 +364,11 @@ namespace Shell
                             || (CanShow && !builtin && !EndsWith(stage.Verb, ".dll"))
                             || (HasEnds && !_capturing && (!builtin || WritesText(stage.Verb)));
             if (pipeline) return RunPipeline(new List<Stage> { stage });
-            return RunBuiltin(stage.Verb, stage.Arguments);
+            if (Inspector == null || _capturing || !WritesText(stage.Verb)) return RunBuiltin(stage.Verb, stage.Arguments);
+            Inspector.Begin(Describe(new List<string> { stage.Verb }, new List<List<string>> { stage.Arguments }));
+            _teeInspector = true;
+            try { return RunBuiltin(stage.Verb, stage.Arguments); }
+            finally { _teeInspector = false; }
         }
 
         // Set by a $(...) in the command being made: `x=$(false)` is 1.

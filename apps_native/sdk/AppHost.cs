@@ -115,6 +115,37 @@
                     return ((delegate* unmanaged<byte*, int, int>)services->TerminalSideWriteAddress)(bytes, utf8.Length) >= 0;
             }
 
+            /// <summary>
+            /// The keys pressed while the side panel has them, as terminal
+            /// bytes, without waiting; the first call makes this program the
+            /// panel's reader, so that they come here and not to the main
+            /// panel. 0 when there are none, negative on an older kernel.
+            /// </summary>
+            public static int ReadSideKeys(byte* buffer, int capacity) => SideControl(0, buffer, capacity);
+
+            /// <summary>Whether the side panel is on the screen now.</summary>
+            public static bool SideShown => SideControl(1, null, 0) is int s && s > 0 && (s & 1) != 0;
+
+            /// <summary>Whether the person hid the side panel (F12): it stays hidden until shown.</summary>
+            public static bool SideHidden => SideControl(1, null, 0) is int s && s > 0 && (s & 2) != 0;
+
+            /// <summary>Whether the side panel has the keys.</summary>
+            public static bool SideHasKeys => SideControl(1, null, 0) is int s && s > 0 && (s & 4) != 0;
+
+            /// <summary>Shows the side panel; <paramref name="keys"/> gives it the keys too.</summary>
+            public static bool ShowSide(bool keys = false) => SideControl(keys ? 4 : 2, null, 0) >= 0;
+
+            /// <summary>Hides the side panel as F12 does: what it holds stays.</summary>
+            public static bool HideSide() => SideControl(3, null, 0) >= 0;
+
+            private static int SideControl(int op, byte* buffer, int capacity)
+            {
+                AppServiceTable* services = AppRuntime.Services;
+                if (services == null || services->TerminalSideControlAddress == 0)
+                    return -1;
+                return ((delegate* unmanaged<int, byte*, int, int>)services->TerminalSideControlAddress)(op, buffer, capacity);
+            }
+
             public static void WriteChar(char c)
             {
                 AppServiceTable* services = AppRuntime.Services;
