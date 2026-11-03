@@ -43,9 +43,8 @@ AvaloniaEdit из tui-cs/Editor, `.xshd` читает `XmlReader` из BCL, step
 
 ## 5. Команды
 
-- Над объектами: `head`, `tail`, `grep`, `wc`, `sort`, `uniq`, `tee`, `find`.
-- `ps`, `kill`, `sleep`, `date`.
-- `xxd`.
+`done/step235.md`: `head`, `tail`, `grep`, `wc`, `sort`, `uniq`, `tee`, `find`,
+`xxd`, `ps`, `kill`, `sleep`, `date` — одна программа `UTILS.EXE`. Раздел закрыт.
 
 ## 6. Язык оболочки
 

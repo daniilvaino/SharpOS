@@ -86,6 +86,17 @@ namespace OS.Kernel.Process
         // back, 0 only asks. Out: [1] 1 when the action took, [2] the caller's
         // group, [3] the owning group, [4] the caller's job.
         public const int ProcessOpTerminal = 23;
+        // `ps`: [0] a buffer of ProcessListWords ulongs a process, [1] how many
+        // fit; out [2] how many are running. A process's words: id, its
+        // starter, group, 1 while it is ending, threads, heap bytes,
+        // milliseconds alive, 1 when its group owns the terminal; then its name,
+        // NUL-ended UTF-8, cut to fit.
+        public const int ProcessOpList = 24;
+        internal const int ProcessListWords = 16;
+        private const int ProcessListNameWord = 8;
+        // `kill`: [0] any running process but the caller; it ends with 137.
+        // There are no users here: the process is whoever's it is.
+        public const int ProcessOpKillById = 25;
 
         // A path answered in UTF-8 (step208; before, a byte a char): written
         // when it fits the caller's buffer; its length in bytes either way.
@@ -214,6 +225,51 @@ namespace OS.Kernel.Process
                 request[2] = self.Group;
                 request[3] = TerminalOwner.Foreground;
                 request[4] = self.JobGroup;
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpList)
+            {
+                ulong* into = (ulong*)request[0];
+                ulong hz = OS.Hal.Timer.Hpet.FrequencyHz;
+                ulong count = 0;
+                for (int i = 0; i < AppProcesses.MaxRunning; i++)
+                {
+                    AppProcess listed = AppProcesses.InSlot(i);
+                    if (listed == null) continue;
+                    if (into != null && count < request[1])
+                    {
+                        ulong* words = into + count * ProcessListWords;
+                        words[0] = listed.Id;
+                        words[1] = listed.LauncherId;
+                        words[2] = listed.Group;
+                        words[3] = listed.State == AppProcessState.Running ? 0UL : 1UL;
+                        words[4] = (ulong)listed.LiveThreads;
+                        words[5] = listed.HeapCommitted;
+                        words[6] = hz != 0 && listed.TRunnable != 0 ? (Ticks() - listed.TRunnable) / (hz / 1000) : 0;
+                        words[7] = listed.Group == TerminalOwner.Foreground ? 1UL : 0UL;
+                        string listedName = listed.Name ?? "";
+                        uint room = (ProcessListWords - ProcessListNameWord) * 8 - 1;
+                        byte* nameAt = (byte*)(words + ProcessListNameWord);
+                        fixed (char* text = listedName)
+                        {
+                            uint chars = (uint)listedName.Length;
+                            while (chars > 0 && Utf8Encode(text, chars, null, 0) > room) chars--;
+                            nameAt[Utf8Encode(text, chars, nameAt, room)] = 0;
+                        }
+                    }
+                    count++;
+                }
+                request[2] = count;
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpKillById)
+            {
+                AppProcess target = AppProcesses.Find((uint)request[0]);
+                if (target == null || target == self || target.ExitedWord != 0)
+                    return (int)AppServiceStatus.InvalidParameter;
+                RequestEnd(target, KilledExitCode, failed: true);
                 return (int)AppServiceStatus.Ok;
             }
 

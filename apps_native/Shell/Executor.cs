@@ -958,11 +958,25 @@ namespace Shell
         // and lines: LINES is `CONVERT --from lines` — a byte stream
         // into a string per line, as it comes; BYTES is `CONVERT --to bytes` —
         // back into byte[] messages, its options (--chunk N) after it. A name,
-        // not a builtin: the stage is CONVERT, a process like any other.
+        // not a builtin: the stage is CONVERT, a process like any other. The
+        // small commands are one program, UTILS, under their own names.
         public static string[][] Aliases => new[]
         {
             new[] { "LINES", "CONVERT", "--from", "lines" },
             new[] { "BYTES", "CONVERT", "--to", "bytes" },
+            new[] { "head", "UTILS", "head" },
+            new[] { "tail", "UTILS", "tail" },
+            new[] { "grep", "UTILS", "grep" },
+            new[] { "wc", "UTILS", "wc" },
+            new[] { "sort", "UTILS", "sort" },
+            new[] { "uniq", "UTILS", "uniq" },
+            new[] { "tee", "UTILS", "tee" },
+            new[] { "find", "UTILS", "find" },
+            new[] { "xxd", "UTILS", "xxd" },
+            new[] { "ps", "UTILS", "ps" },
+            new[] { "kill", "UTILS", "kill" },
+            new[] { "sleep", "UTILS", "sleep" },
+            new[] { "date", "UTILS", "date" },
         };
 
         private static string[] AliasOf(string verb)
@@ -1789,6 +1803,8 @@ namespace Shell
             Write("programs: NAME.EXE by its name, looked for along PATH (" + (System.Environment.GetEnvironmentVariable("PATH") ?? "") + ")\n");
             Write("expect CODE COMMAND — run it, succeed only on that exit code\n");
             Write("LINES — bytes into lines (CONVERT --from lines); BYTES [--chunk N] — lines into bytes (CONVERT --to bytes)\n");
+            Write("over messages of any type, or lines of a file: head tail grep wc sort uniq tee; sort -k FIELD, grep -k FIELD\n");
+            Write("find, xxd; ps, kill ID, sleep N, date; each takes --help\n");
             Write("a path runs too: .EXE as a program, .DLL on the hosted runtime\n");
             Write("operators: && || ; a | b | c ; n> file, n>> file, n>&m, n>&- on any program, in order:\n");
             Write("           1 the output (left out: > file), 2 errors, 3 stdtext (reports, panels);\n");

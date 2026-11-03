@@ -15,9 +15,19 @@ namespace SharpOS.AppSdk
     /// The record of an ended process stays until <see cref="Dispose"/> or until
     /// this program ends.
     /// </remarks>
+    /// <summary>One process, as <see cref="Process.Running"/> finds it.</summary>
+    public sealed class RunningProcess
+    {
+        public uint Id, Parent, Group;
+        public string Name;
+        public bool Ending, Foreground;
+        public int Threads;
+        public long HeapBytes, Milliseconds;
+    }
+
     public sealed unsafe class Process : IDisposable
     {
-        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18, OpSystemInfo = 21, OpStartWithEnds = 22, OpTerminal = 23;
+        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18, OpSystemInfo = 21, OpStartWithEnds = 22, OpTerminal = 23, OpList = 24, OpKillById = 25;
 
         private bool _released;
         private bool _exited;
@@ -72,6 +82,50 @@ namespace SharpOS.AppSdk
                 request[0] = 0;
                 return Call(OpTerminal, request) == AppServiceStatus.Ok && (request[3] == 0 || request[3] == request[2]);
             }
+        }
+
+        /// <summary>The processes running now, this one among them.</summary>
+        public static RunningProcess[] Running()
+        {
+            const int words = 16, nameWord = 8, room = 32;
+            ulong* request = stackalloc ulong[3];
+            ulong[] buffer = new ulong[room * words];
+            fixed (ulong* into = buffer)
+            {
+                request[0] = (ulong)into;
+                request[1] = room;
+                if (Call(OpList, request) != AppServiceStatus.Ok) return new RunningProcess[0];
+                int count = request[2] < room ? (int)request[2] : room;
+                var running = new RunningProcess[count];
+                for (int i = 0; i < count; i++)
+                {
+                    ulong* w = into + i * words;
+                    byte* name = (byte*)(w + nameWord);
+                    int length = 0;
+                    while (length < (words - nameWord) * 8 && name[length] != 0) length++;
+                    running[i] = new RunningProcess
+                    {
+                        Id = (uint)w[0],
+                        Parent = (uint)w[1],
+                        Group = (uint)w[2],
+                        Ending = w[3] != 0,
+                        Threads = (int)w[4],
+                        HeapBytes = (long)w[5],
+                        Milliseconds = (long)w[6],
+                        Foreground = w[7] != 0,
+                        Name = System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(name, length)),
+                    };
+                }
+                return running;
+            }
+        }
+
+        /// <summary>Ends a running process with 137, whoever started it; false when there is none of that id, or it is this one.</summary>
+        public static bool KillById(uint id)
+        {
+            ulong* request = stackalloc ulong[1];
+            request[0] = id;
+            return Call(OpKillById, request) == AppServiceStatus.Ok;
         }
 
         /// <summary>

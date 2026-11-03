@@ -213,6 +213,9 @@ namespace OS.Kernel.Process
 
         public static int Records => s_records?.Count ?? 0;
 
+        /// <summary>The process holding a slot, or null.</summary>
+        public static AppProcess InSlot(int slot) => s_slots?[slot];
+
         /// <summary>Whether a process holding a slot is in the group.</summary>
         public static bool GroupHasMember(uint group)
         {
