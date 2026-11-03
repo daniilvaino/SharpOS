@@ -927,7 +927,11 @@ namespace SharpOS.Std.Pipes
             {
                 case ViewKind.Null: Paint(text, colour, WordColour, "null"); return;
                 case ViewKind.Bool: Paint(text, colour, WordColour, Integer() != 0 ? "true" : "false"); return;
-                case ViewKind.Char: text.Append((char)Integer()); return;
+                case ViewKind.Char:
+                    char ch = (char)Integer();
+                    if (colour) text.Append(ScreenText.Visible(ch.ToString(), keepColours: false));
+                    else text.Append(ch);
+                    return;
                 case ViewKind.Float: Paint(text, colour, NumberColour, Float().ToString()); return;
                 case ViewKind.Integer:
                     string member = _enum?.EnumName(Integer());
@@ -935,7 +939,7 @@ namespace SharpOS.Std.Pipes
                     else if (_value == FieldKind.UInt64) Paint(text, colour, NumberColour, ((ulong)Integer()).ToString());
                     else Paint(text, colour, NumberColour, Integer().ToString());
                     return;
-                case ViewKind.String: text.Append(CopyText()); return;
+                case ViewKind.String: text.Append(colour ? ScreenText.Visible(CopyText(), keepColours: false) : CopyText()); return;
                 case ViewKind.Array:
                     PaintType(text, colour, _type.Name.Substring(0, _type.Name.Length - 2));
                     Paint(text, colour, Dim, "[" + Length.ToString() + "]");
@@ -998,7 +1002,9 @@ namespace SharpOS.Std.Pipes
         {
             if (Kind == ViewKind.String)
             {
-                Paint(text, colour, StringColour, "\"" + CopyText() + "\"");
+                // On the screen a field's control characters show, never act.
+                string value = colour ? ScreenText.Visible(CopyText(), keepColours: false) : CopyText();
+                Paint(text, colour, StringColour, "\"" + value + "\"");
                 return;
             }
             Append(text, depth, colour);

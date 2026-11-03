@@ -355,10 +355,11 @@ $buildId = Get-SharpOsBuildId -RepoRoot $repoRoot
 $coffStubProj = Join-Path $repoRoot "generators\CoffStub.Generator\CoffStub.Generator.csproj"
 if (Test-Path -LiteralPath $coffStubProj) {
     Write-Host "Building CoffStub.Generator (MSBuild task host)..."
-    # Output captured, not discarded: a bare exit code says nothing, and the
-    # usual cause here is a file lock (a VM still holding the DLL, a parallel
-    # build) whose message names the file. Shown only on failure so a good
-    # build stays quiet.
+    # Output captured, not discarded: a bare exit code says nothing, and a
+    # failure here is usually a file lock (a parallel build) whose message
+    # names the file. Shown only on failure so a good build stays quiet. The
+    # lock every build used to hit — the MSBuild node holding the task DLL —
+    # is gone since the task runs in a task host (step238).
     $coffStubLog = & dotnet build $coffStubProj -c Release --nologo -v quiet 2>&1
     if ($LASTEXITCODE -ne 0) {
         $coffStubLog | ForEach-Object { Write-Output $_ }
@@ -418,30 +419,11 @@ Copy-Item -LiteralPath $builtEfi -Destination $bootx64 -Force
 
 $espSharpOSDir = Join-Path $qemuWorkDir "esp\sharpos"
 New-Item -ItemType Directory -Force -Path $espSharpOSDir | Out-Null
-# Boot log target: the kernel mirrors every console line into this file, one
-# sector per line. Pre-staged at a fixed size because writing in place needs
-# no cluster allocation - 16 MiB is ~32k lines, far more than a boot produces.
+# The boot log (\sharpos\bootlog.txt) is the kernel's to make: it opens the
+# file anew at each boot and grows it as it writes (step238). Nothing is
+# staged; one left from an older build would only be cut by the next boot.
 $bootLog = Join-Path $espSharpOSDir "bootlog.txt"
-# Only a kernel with tests needs it staged: its battery says far more than the
-# 1 MiB the kernel creates on a medium without the file (BootLog.TryInit) —
-# which is what a release image is.
-if ($NoTests) {
-    if (Test-Path -LiteralPath $bootLog) { Remove-Item -LiteralPath $bootLog -Force }
-}
-else {
-    # Written as 256 copies of a 64 KiB blank chunk. A per-byte loop over 16M
-    # elements takes minutes, and [Array]::Fill would be one call but does not
-    # exist on .NET Framework, so it breaks under Windows PowerShell 5.1.
-    $blankChunk = New-Object byte[] (64 * 1024)
-    for ($i = 0; $i -lt $blankChunk.Length; $i++) { $blankChunk[$i] = 0x20 }
-    $bootLogStream = [System.IO.File]::Create($bootLog)
-    try {
-        for ($i = 0; $i -lt 256; $i++) { $bootLogStream.Write($blankChunk, 0, $blankChunk.Length) }
-    } finally {
-        $bootLogStream.Dispose()
-    }
-    Write-Host "Prepared boot log: bootlog.txt (16 MiB)"
-}
+if (Test-Path -LiteralPath $bootLog) { Remove-Item -LiteralPath $bootLog -Force }
 
 # Target for the filesystem write probe: a file of known size and content
 # that the kernel overwrites in place. Staged fresh every run so a previous
@@ -511,11 +493,11 @@ Write-Host "Prepared licence texts: \sharpos\licence\ ($licenceCount of $($licen
 # A kernel without CoreCLR (-SkipCoreClr) runs none of it, so \sharpos keeps
 # only the kernel's own files, and what an earlier full build left there goes.
 if ($SkipCoreClr) {
-    $kernelFiles = @('bootlog.txt', 'fswrite.bin', 'licence')
+    $kernelFiles = @('fswrite.bin', 'licence')
     Get-ChildItem -LiteralPath $espSharpOSDir -Force |
         Where-Object { $_.Name -notin $kernelFiles } |
         Remove-Item -Recurse -Force
-    Write-Host "SkipCoreClr: \sharpos\ holds only bootlog.txt, fswrite.bin and licence\"
+    Write-Host "SkipCoreClr: \sharpos\ holds only fswrite.bin and licence\ (the kernel makes bootlog.txt)"
 }
 else {
     # CoreCLR expects System.Private.CoreLib.dll at path \sharpos\System.Private.CoreLib.dll

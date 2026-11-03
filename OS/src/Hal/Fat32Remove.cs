@@ -221,15 +221,12 @@ namespace OS.Hal
             return false;
         }
 
-        // Open for writing by a handle, or written by sectors.
+        // Open for writing by a handle (the boot log is one, for the whole run).
         private static bool WrittenNow(ulong entryLba, uint entryOffset, uint first)
         {
             if (s_open != null)
                 foreach (OpenFile o in s_open)
                     if (o != null && o.Writing && o.EntryLba == entryLba && o.EntryOffset == entryOffset) return true;
-            if (s_linearRuns != null && first >= 2)
-                for (int i = 0; i < s_linearRuns.Count; i += 2)
-                    if (s_linearRuns[i] == ClusterLba(first)) return true;
             return false;
         }
 
@@ -383,8 +380,7 @@ namespace OS.Hal
             return s_disk.Write(lba, 1, s_sec);
         }
 
-        // Open by a handle (a reader by its clusters, a writer by its entry),
-        // or a file written by sectors.
+        // Open by a handle (a reader by its clusters, a writer by its entry).
         private static bool InUse(ulong entryLba, uint entryOffset, uint first)
         {
             if (s_open != null)
@@ -392,9 +388,6 @@ namespace OS.Hal
                     if (o != null && ((o.Writing && o.EntryLba == entryLba && o.EntryOffset == entryOffset)
                                       || (first >= 2 && o.First == first)))
                         return true;
-            if (s_linearRuns != null && first >= 2)
-                for (int i = 0; i < s_linearRuns.Count; i += 2)
-                    if (s_linearRuns[i] == ClusterLba(first)) return true;
             return false;
         }
 

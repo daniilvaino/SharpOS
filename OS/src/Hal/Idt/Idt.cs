@@ -80,6 +80,14 @@ namespace OS.Hal.Idt
 
         public static bool IsInstalled => s_installed;
 
+        /// <summary>
+        /// Whether the address is in the entry stubs (step238): the return
+        /// address of Dispatch is, and a stack walk that reaches it has reached
+        /// an interrupt boundary, not a frame it failed to resolve.
+        /// </summary>
+        public static bool ContainsStub(ulong address)
+            => s_installed && address >= (ulong)s_buffer && address < (ulong)s_buffer + s_bufferSize;
+
         public static bool Install(BootInfo bootInfo)
         {
             if (s_installed)

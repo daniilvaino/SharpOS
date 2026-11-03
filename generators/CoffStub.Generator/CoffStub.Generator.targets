@@ -13,8 +13,15 @@
     <_CoffStubOutputDir>$(MSBuildProjectDirectory)\obj\native\</_CoffStubOutputDir>
   </PropertyGroup>
 
+  <!-- In a task host of its own, not in the MSBuild node (step238). A node
+       lives on between builds (node reuse) and cannot unload an assembly: it
+       kept CoffStub.Generator.dll open, so the next build could not copy a
+       rebuilt one over it (MSB3026, "locked by .NET Host"), and it ran the task
+       code it had loaded first, not the rebuilt one. The workaround was to kill
+       the build server before every build. The task host ends with the build. -->
   <UsingTask TaskName="BootAsm.EmitCoffStubsTask"
-             AssemblyFile="$(_CoffStubGeneratorAssembly)" />
+             AssemblyFile="$(_CoffStubGeneratorAssembly)"
+             TaskFactory="TaskHostFactory" />
 
   <!-- CoffDataSymbolAttribute defn — master живёт в generators/CoffStub.Generator/, csc
        компилит его напрямую как часть consumer'а. Никакого copy, никакого

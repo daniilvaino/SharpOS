@@ -16,8 +16,7 @@ namespace OS.Kernel.Process
     /// sector write from outside any file, or a journal outrun, counts as a
     /// change to every file. Before step208 any write dropped the whole
     /// cache, and the shell's history line after each command meant an
-    /// interactive start never hit it. A file opened for sector writes, the
-    /// boot log's, is never kept. At most <see cref="LimitBytes"/>;
+    /// interactive start never hit it. At most <see cref="LimitBytes"/>;
     /// the least recently started program goes first, never one a start is
     /// reading. Only once the kernel's own file system is mounted: before
     /// that the firmware reads files, into memory the arena does not own.
@@ -105,7 +104,6 @@ namespace OS.Kernel.Process
             }
 
             // These take the volume's lock: not under suppression.
-            bool sectorWritten = Fat32.IsSectorWritten(key);
             bool same = located && Fat32.Locate(path, out uint firstAfter, out uint sizeAfter)
                         && firstAfter == first && sizeAfter == fileSize
                         && !Fat32.ChangedSince(first, ref generation);
@@ -116,7 +114,7 @@ namespace OS.Kernel.Process
             // A file that changed while it was read, a second copy of one
             // read meanwhile, or one too small to give back is not kept for
             // others: no key, freed when its start is done.
-            if (!same || Find(key) != null || !Cacheable(fileSize) || sectorWritten)
+            if (!same || Find(key) != null || !Cacheable(fileSize))
                 entry.Key = null;
             s_entries.Add(entry);
             s_bytes += PagedBytes(fileSize);

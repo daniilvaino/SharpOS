@@ -18,7 +18,7 @@ namespace OS.Kernel.File
             // at boot says nothing about that.
             if (Platform.BootServicesGone)
                 return Fs.Current != null;
-            return Platform.HasCapability(PlatformCapabilities.ExternalElf);
+            return UefiPlatformBridge.HasFileAccess();
         }
 
         public static bool Exists(string path)

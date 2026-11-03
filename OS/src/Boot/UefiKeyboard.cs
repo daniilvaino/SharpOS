@@ -5,14 +5,6 @@ namespace OS.Boot
         private const ulong EfiSuccess = 0;
         private const ulong EfiNotReady = 0x8000000000000006UL;
 
-        public static bool IsAvailable(EFI_SYSTEM_TABLE* systemTable)
-        {
-            if (systemTable == null || systemTable->ConIn == null)
-                return false;
-
-            return systemTable->ConIn->ReadKeyStroke != null;
-        }
-
         public static bool TryReadKey(BootContext context, out ushort unicodeChar, out ushort scanCode, out BootKeyReadStatus status)
         {
             unicodeChar = 0;

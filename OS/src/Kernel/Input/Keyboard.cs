@@ -5,8 +5,6 @@ namespace OS.Kernel.Input
 {
     internal static class Keyboard
     {
-        public static bool IsAvailable => Platform.HasCapability(PlatformCapabilities.KeyboardInput);
-
         public static KeyReadStatus TryReadKey(out KeyInfo key)
         {
             key = default;

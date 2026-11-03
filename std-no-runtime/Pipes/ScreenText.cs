@@ -34,7 +34,7 @@ namespace SharpOS.Std.Pipes
             {
                 EndRun();
                 Flush();
-                PipeTransport.Print(new string(new ReadOnlySpan<char>(chars, count)));
+                PipeTransport.Print(Visible(new ReadOnlySpan<char>(chars, count), keepColours: true));
                 return;
             }
             if (root.TryGetBytes(out byte* bytes, out int length))
@@ -151,6 +151,61 @@ namespace SharpOS.Std.Pipes
                 return need > back ? n - back : n;
             }
             return n;
+        }
+
+        /// <summary>
+        /// A string of data as the screen may show it (step238): a control
+        /// character as `less` shows one, ^[ for ESC, ^H for backspace; with
+        /// <paramref name="keepColours"/> a colour sequence (ESC [ … m) stays.
+        /// A string in a pipe is data, not terminal text — that is the
+        /// TerminalText attribute's — and a log line read back with its escapes
+        /// switched the terminal to the alternate screen and left it there,
+        /// the side panel and F12 with it.
+        /// </summary>
+        internal static string Visible(ReadOnlySpan<char> s, bool keepColours)
+        {
+            int i = 0;
+            while (i < s.Length && !IsControl(s[i])) i++;
+            if (i == s.Length) return new string(s);
+
+            var text = new StringBuilder(s.Length + 8);
+            text.Append(s.Slice(0, i));
+            for (; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (!IsControl(c)) { text.Append(c); continue; }
+                if (c == '\u001b' && keepColours)
+                {
+                    int end = ColourEnd(s, i);
+                    if (end > i)
+                    {
+                        text.Append(s.Slice(i, end - i + 1));
+                        i = end;
+                        continue;
+                    }
+                }
+                if (c < ' ') text.Append('^').Append((char)(c + '@'));
+                else if (c == '\u007f') text.Append("^?");
+                else text.Append('?');                       // C1: 0x80-0x9F
+            }
+            return text.ToString();
+        }
+
+        // Tab is the one control a line keeps.
+        private static bool IsControl(char c)
+            => (c < ' ' && c != '\t') || c == '\u007f' || (c >= '\u0080' && c <= '\u009f');
+
+        // ESC [ digits and semicolons m: the index of the m, or -1.
+        private static int ColourEnd(ReadOnlySpan<char> s, int at)
+        {
+            if (at + 1 >= s.Length || s[at + 1] != '[') return -1;
+            for (int j = at + 2; j < s.Length; j++)
+            {
+                char c = s[j];
+                if (c == 'm') return j;
+                if ((c < '0' || c > '9') && c != ';') return -1;
+            }
+            return -1;
         }
 
         /// <summary>The end of what goes to the screen: a carried piece is shown as it is.</summary>

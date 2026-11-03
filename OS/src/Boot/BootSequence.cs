@@ -37,7 +37,7 @@ namespace OS.Boot
         {
             Phase0_Critical(bootInfo);
 
-            if ((bootInfo.Capabilities & PlatformCapabilities.MemoryMap) != PlatformCapabilities.MemoryMap)
+            if (bootInfo.MemoryMapAvailable == 0)
             {
                 // The UEFI builder always sets it; without it there is no heap
                 // and nothing after this can run.

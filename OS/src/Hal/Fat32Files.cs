@@ -127,6 +127,28 @@ namespace OS.Hal
             finally { Leave(); }
         }
 
+        /// <summary>
+        /// A writer's data, the FAT and its size to the disk, the file kept
+        /// open (step238: the boot log, which grows for the whole run and has
+        /// to be readable — and survive a crash — up to its last line).
+        /// </summary>
+        public static bool Sync(int handle)
+        {
+            Enter();
+            try
+            {
+                OpenFile f = Find(handle);
+                if (f == null || !f.Writing) return false;
+                FileChanged(f.First);
+                bool ok = FlushRun(f);
+                ok &= FlushFatCache();
+                ok &= UpdateEntry(f);
+                FlushDevice();
+                return ok;
+            }
+            finally { Leave(); }
+        }
+
         private static OpenFile Find(int handle)
             => s_open != null && handle >= 1 && handle <= s_open.Count ? s_open[handle - 1] : null;
 

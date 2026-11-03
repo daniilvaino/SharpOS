@@ -7,24 +7,52 @@ namespace OS.Hal
     // dies mid-boot takes its own explanation with it. The screen has been
     // the only channel, and it holds about forty lines.
     //
-    // The file is pre-staged by run_build.ps1 at a fixed size; this never
-    // grows it, allocates nothing and does not touch the directory entry, so
-    // a bug here cannot damage anything but the log's own contents.
+    // An ordinary file since step238, made anew at each boot and grown as the
+    // text comes, its size in the directory always what was written. Before,
+    // it was staged at a fixed size (16 MiB of spaces by the build, 1 MiB made
+    // by the kernel) and written by sectors in place: `cat` printed megabytes
+    // of padding, and — the worse half — nothing after the mount reached the
+    // disk. A character is printed with switching suppressed, and a disk
+    // write there is refused (step210: it may sleep in the driver), so every
+    // flush was put off and the one-sector buffer filled and dropped the rest.
     //
-    // Flushed once per line rather than at the end: the runs worth reading are
-    // exactly the ones that never reach the end.
+    // Now printing only queues (Putc); a kernel thread of its own writes what
+    // is queued every WriteIntervalMs and syncs it — data, FAT, size — so the
+    // file reads whole up to its last write, and a crash loses at most that
+    // interval.
     internal static unsafe class BootLog
     {
+        private const string Directory = "sharpos";
         private const string Path = "sharpos/bootlog.txt";
-        private const int SectorSize = 512;
 
         private static bool s_ready;
-        private static bool s_inFlush;      // re-entrancy: flushing writes, writing logs
-        private static ulong s_startLba;
-        private static uint s_sectorCount;
-        private static uint s_sector;       // next sector to write
-        private static int s_used;          // bytes staged in s_line
-        private static byte[] s_line;
+        private static int s_handle;        // the open file
+        private static uint s_written;      // bytes in the file
+
+        // At most this much: past it the writer stops with a line saying so.
+        private const uint MaxBytes = 16 * 1024 * 1024;
+        private static bool s_full;
+
+        // What was printed since the last write. A fixed buffer for the same
+        // reason as the early one: filled with switching suppressed, from any
+        // thread, without allocating. Lines that do not fit are counted and
+        // the file says how much went missing.
+        private const int PendingSize = 64 * 1024;
+
+        private struct PendingBuffer
+        {
+            public fixed byte Data[PendingSize];
+        }
+
+        #pragma warning disable CS0169 // used through fixed, which Roslyn does not count as a use
+        private static PendingBuffer s_pending;
+        #pragma warning restore CS0169
+        private static int s_pendingUsed;
+        private static uint s_lost;
+        private static byte[] s_batch;      // the writer's copy of what it takes
+        private static bool s_writing;      // one writer at a time: the thread, or Shutdown's last flush
+
+        private const uint WriteIntervalMs = 50;
 
         // Everything printed before the disk was ours.
         //
@@ -80,91 +108,70 @@ namespace OS.Hal
         private static int s_serialUsed;
         private static bool s_serialReady;
         private static bool s_inSerial;
-        private static bool s_drainingEarly;
 
         public static bool IsReady => s_ready;
 
-        // 0 none, 1 could not create, 2 created but fragmented.
+        // 0 none, 1 could not open or create, 2 the first write failed.
         private static uint s_failure;
         public static uint FailReason => s_failure;
 
-        /// <summary>Binds to the staged file. Safe to call more than once;
-        /// after a failure the log stays disabled and the kernel runs on.</summary>
+        /// <summary>
+        /// Makes the file anew — a boot's log, not the end of the last one's —
+        /// writes what was printed before the disk was ours, and starts the
+        /// writer. Safe to call more than once; after a failure the log stays
+        /// off and the kernel runs on.
+        /// </summary>
         public static bool TryInit()
         {
             if (s_ready) return true;
 
             s_failure = 0;
-            if (!Fat32.TryOpenLinear(Path, out ulong lba, out uint sectors))
-            {
-                // Absent on a medium nobody staged — which is every machine
-                // the log matters most on, since they boot from a stick
-                // written once and never touched by the build again. Make it.
-                if (!Fat32.TryCreateFile(Path, CreateBytes)) { s_failure = 1; return false; }
+            int handle = Fat32.Open(Path, Fat32.OpenWrite);
+            if (handle == -1 && Fat32.CreateDirectory(Directory) >= 0)
+                handle = Fat32.Open(Path, Fat32.OpenWrite);
+            if (handle <= 0) { s_failure = 1; return false; }
+            s_handle = handle;
+            s_batch = new byte[PendingSize];
 
-                // A file that exists but cannot be opened flat is the
-                // fragmented case: the writer refuses it rather than scribble
-                // across clusters it does not own.
-                if (!Fat32.TryOpenLinear(Path, out lba, out sectors)) { s_failure = 2; return false; }
-            }
-
-            s_line = new byte[SectorSize];
-            s_startLba = lba;
-            s_sectorCount = sectors;
-            s_sector = 0;
-            s_used = 0;
-            s_ready = true;
-
-            // Nothing deletes this file and nothing shortens it: it is
-            // rewritten in place from the start, so a boot that says less than
-            // the previous one leaves the older text right after its own —
-            // reading as if it belonged to this run. Clear a window ahead of
-            // the writer so that cannot happen, and mark where this boot began.
-            uint blank = sectors < BlankSectors ? sectors : BlankSectors;
-            Fat32.BlankSectors(lba, blank);
-
-            DrainEarly();
-            return true;
-        }
-
-        // 512 KiB of clearing: comfortably more than a boot produces, while
-        // cheap enough over USB (multi-sector writes, a handful of commands).
-        private const uint BlankSectors = 1024;
-
-        // Size to create when the file is missing. 1 MiB is far more than a
-        // boot writes, and small enough that zeroing its clusters over USB is
-        // not felt — the staged file is 16 MiB, but that one costs nothing
-        // because the build writes it into the image offline.
-        private const uint CreateBytes = 1024 * 1024;
-
-        // Replay what was captured before the disk existed, so the file opens
-        // with the start of the boot rather than the middle of it.
-        private static void DrainEarly()
-        {
-            if (s_earlyDrained) return;
+            // What was captured before the disk existed, so the file opens with
+            // the start of the boot rather than the middle of it — straight
+            // from the early buffer, which is larger than the queue.
             s_earlyDrained = true;
-
-            // The serial sink replays the same buffer itself when it attaches;
-            // without this it would receive the early boot twice.
-            s_drainingEarly = true;
-
             const string banner = "===== SharpOS boot log start =====\n";
-            for (int i = 0; i < banner.Length; i++) Putc(banner[i]);
-
-            for (int i = 0; i < s_earlyUsed; i++)
-            {
-                char c;
-                fixed (byte* p = s_early.Data) c = (char)p[i];
-                Putc(c);
-            }
-
+            byte* line = stackalloc byte[banner.Length];
+            for (int i = 0; i < banner.Length; i++) line[i] = (byte)banner[i];
+            bool ok = Append(line, banner.Length);
+            fixed (byte* p = s_early.Data) ok &= Append(p, s_earlyUsed);
             if (s_earlyOverflowed)
             {
                 const string note = "[bootlog] early buffer overflowed - lines lost here\n";
-                for (int i = 0; i < note.Length; i++) Putc(note[i]);
+                byte* text = stackalloc byte[note.Length];
+                for (int i = 0; i < note.Length; i++) text[i] = (byte)note[i];
+                ok &= Append(text, note.Length);
             }
+            if (!ok || !Fat32.Sync(s_handle)) { s_failure = 2; return false; }
 
-            s_drainingEarly = false;
+            s_ready = true;
+            OS.Kernel.Threading.Scheduler.Spawn(&WriterEntry, 32 * 1024);
+            return true;
+        }
+
+        private static bool Append(byte* bytes, int length)
+        {
+            if (length <= 0) return true;
+            if (!Fat32.Write(s_handle, bytes, length)) return false;
+            s_written += (uint)length;
+            return true;
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static void WriterEntry()
+        {
+            while (s_ready)
+            {
+                OS.Kernel.Threading.Scheduler.Sleep(WriteIntervalMs);
+                Flush();
+            }
         }
 
         /// <summary>
@@ -191,7 +198,7 @@ namespace OS.Hal
 
         private static void SerialPutc(char ch)
         {
-            if (!s_serialReady || s_inSerial || s_drainingEarly) return;
+            if (!s_serialReady || s_inSerial) return;
 
             if (s_serialUsed < SerialSize)
             {
@@ -242,82 +249,87 @@ namespace OS.Hal
                 return;
             }
 
-            if (s_inFlush) return;
-
-            if (s_used < SectorSize)
-                s_line[s_used++] = (byte)ch;
-
-            if (ch == '\n' || s_used == SectorSize)
-                Flush();
+            // Queued only: printing happens with switching suppressed, where a
+            // disk write is not allowed (Flush says why).
+            OS.Kernel.Threading.Preemption.Suppress();
+            if (s_pendingUsed < PendingSize)
+            {
+                fixed (byte* p = s_pending.Data) p[s_pendingUsed++] = (byte)ch;
+            }
+            else s_lost++;
+            OS.Kernel.Threading.Preemption.Allow();
         }
 
-        /// <summary>Pushes the current sector to disk. The sector is rewritten
-        /// as it fills rather than being closed off per line — otherwise every
-        /// line would cost 512 bytes and the file would read as one message per
-        /// screenful of padding.</summary>
-        private static ulong s_deferredFlushes;
-
-        /// <summary>Flushes put off because the volume was busy inside a critical section.</summary>
-        public static ulong DeferredFlushes => s_deferredFlushes;
-
+        /// <summary>
+        /// Writes what is queued and syncs the file. The writer thread calls it
+        /// every interval; Shutdown once more before the power goes.
+        /// </summary>
         public static void Flush()
         {
-            if (!s_ready || s_inFlush || s_used == 0) return;
-            if (s_sector >= s_sectorCount) return;   // full: stop, never wrap
+            if (!s_ready || s_full) return;
 
             // Not from an interrupt handler (step210): a line printed there (the
             // sampler's report on a tick) would write the disk with the tick
             // still unacknowledged. With the drivers asleep on interrupts that
-            // wait never ends — no tick comes to wake anything. The line stays
-            // in the sector buffer for the next flush outside the handler.
+            // wait never ends — no tick comes to wake anything.
             //
-            // Nor inside a critical section: a disk command may now wait for its
+            // Nor inside a critical section: a disk command may wait for its
             // device and give up the CPU, and a section that suppresses
             // preemption is relying on nobody else running — an app's collection
             // is one (stop-the-world on one core). A line the walker printed in
             // the middle of a collection flushed to the boot log on a USB stick,
             // the write slept, another thread of the app allocated a buffer the
             // mark had already passed, the sweep freed it under a file read
-            // (step210). Before step210 the volume was only tried here
-            // (TryWriteSectorAt); a try can still sleep in the driver.
-            if (InInterrupt() || OS.Kernel.Threading.Preemption.Depth != 0)
+            // (step210). The queue keeps such lines for the writer.
+            if (InInterrupt() || OS.Kernel.Threading.Preemption.Depth != 0) return;
+
+            // Take what is queued, in one go, and let printing go on into an
+            // empty queue while it is written.
+            int taken;
+            uint lost;
+            OS.Kernel.Threading.Preemption.Suppress();
+            if (s_writing)
             {
-                s_deferredFlushes++;
+                OS.Kernel.Threading.Preemption.Allow();
                 return;
             }
+            s_writing = true;
+            taken = s_pendingUsed;
+            lost = s_lost;
+            fixed (byte* p = s_pending.Data)
+                for (int i = 0; i < taken; i++) s_batch[i] = p[i];
+            s_pendingUsed = 0;
+            s_lost = 0;
+            OS.Kernel.Threading.Preemption.Allow();
 
-            s_inFlush = true;
-            // Pad only the unwritten tail of this sector; the next line will
-            // overwrite the padding.
-            for (int i = s_used; i < SectorSize; i++) s_line[i] = (byte)' ';
-
-            bool ok;
-            bool busy = false;
+            bool ok = true;
             ulong started = OS.Kernel.Diagnostics.PerfCounters.Now();
-            fixed (byte* p = s_line)
-                ok = Fat32.WriteSectorAt(s_startLba + s_sector, p);
+            if (taken > 0 || lost > 0)
+            {
+                if (s_written + (uint)taken > MaxBytes)
+                {
+                    s_full = true;
+                    taken = 0;
+                    lost = 0;
+                    ok &= AppendText("[bootlog] the log reached " + (MaxBytes >> 20).ToString() + " MiB: nothing more is written\n");
+                }
+                fixed (byte* b = s_batch) ok &= Append(b, taken);
+                if (lost > 0)
+                    ok &= AppendText("[bootlog] " + lost.ToString() + " bytes lost here: printed faster than written\n");
+                ok &= Fat32.Sync(s_handle);
+            }
             OS.Kernel.Diagnostics.PerfCounters.CountDiskLog(started);
-            if (busy)
-            {
-                s_deferredFlushes++;
-                s_inFlush = false;
-                return;
-            }
 
-            if (!ok)
-            {
-                s_ready = false;          // disk gone: stop trying, keep booting
-                s_inFlush = false;
-                return;
-            }
+            // The disk gone: stop trying, keep booting.
+            if (!ok) s_ready = false;
+            s_writing = false;
+        }
 
-            if (s_used == SectorSize)     // sector closed — move on
-            {
-                s_sector++;
-                s_used = 0;
-            }
-
-            s_inFlush = false;
+        private static bool AppendText(string text)
+        {
+            byte* bytes = stackalloc byte[text.Length];
+            for (int i = 0; i < text.Length; i++) bytes[i] = (byte)text[i];
+            return Append(bytes, text.Length);
         }
     }
 }

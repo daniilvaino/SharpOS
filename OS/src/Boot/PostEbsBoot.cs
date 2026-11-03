@@ -254,7 +254,8 @@ namespace OS.Boot
             {
                 Console.Write("[bootlog] unavailable reason=");
                 Console.WriteUInt(OS.Hal.BootLog.FailReason);
-                Console.WriteLine(" (1=create failed, 2=fragmented)");
+                Console.Write(" (1=could not open, 2=first write failed) ");
+                Console.WriteLine(OS.Hal.Fat32.LastFailure ?? "");
             }
             if (OS.Kernel.Diagnostics.Probes.FatWrite)
                 OS.Kernel.Diagnostics.FatWriteProbe.Run();

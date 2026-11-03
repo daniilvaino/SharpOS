@@ -1,4 +1,4 @@
-﻿using OS.Boot;
+using OS.Boot;
 using OS.Kernel.Memory;
 
 namespace OS.Hal
@@ -10,8 +10,6 @@ namespace OS.Hal
         private static BootInfo s_bootInfo;
         private static bool s_initialized;
 
-        public static PlatformCapabilities Capabilities => s_bootInfo.Capabilities;
-
         public static void Init(BootInfo bootInfo)
         {
             s_bootInfo = bootInfo;
@@ -19,11 +17,6 @@ namespace OS.Hal
         }
 
         public static BootInfo GetBootInfo() => s_bootInfo;
-
-        public static bool HasCapability(PlatformCapabilities capability)
-        {
-            return (Capabilities & capability) == capability;
-        }
 
         private static ulong NowTicks()
             => Timer.Hpet.IsInitialized ? Timer.Hpet.ReadCounter() : 0;
@@ -139,7 +132,11 @@ namespace OS.Hal
 
             // Mirror to the on-disk log before anything else: whatever kills
             // the machine next, this line is already on its way to the platter.
-            if ((sinks & OutputSink.DiskLog) != 0)
+            // Not the frames of a full-screen program (step238): they say
+            // nothing a log is read for, and a launcher session put 180 KB of
+            // them into it — escapes that, read back onto the screen, switched
+            // it to the alternate screen.
+            if ((sinks & OutputSink.DiskLog) != 0 && !TerminalConsole.ProgramOwnsScreen)
             {
                 ulong started = OS.Kernel.Diagnostics.PerfCounters.SinkClock();
                 BootLog.Putc(value);
@@ -190,9 +187,6 @@ namespace OS.Hal
                 return;
 
             if (!s_initialized)
-                return;
-
-            if (!HasCapability(PlatformCapabilities.TextOutput))
                 return;
 
             if (s_bootInfo.WriteChar == null)
@@ -267,6 +261,10 @@ namespace OS.Hal
             }
             Console.WriteLine(", then reset 0xCF9/0x64, then firmware");
 
+            // The boot log's last lines, this one among them (step238: the
+            // writer thread takes them every 50 ms, and the power is quicker).
+            BootLog.Flush();
+
             // What the volume holds, to the medium before the power goes
             // (step208): a stick acknowledges writes it still has in its cache.
             Fat32.FlushForShutdown();
@@ -274,7 +272,7 @@ namespace OS.Hal
             OS.Hal.Acpi.Power.PowerOff();
             OS.Hal.Acpi.Power.Reset();
 
-            if (HasCapability(PlatformCapabilities.Shutdown) && s_bootInfo.Shutdown != null)
+            if (s_bootInfo.Shutdown != null)
                 s_bootInfo.Shutdown();
             Halt();
         }
@@ -405,9 +403,6 @@ namespace OS.Hal
             if (!s_initialized)
                 return KeyboardReadStatus.Unsupported;
 
-            if (!HasCapability(PlatformCapabilities.KeyboardInput))
-                return KeyboardReadStatus.Unsupported;
-
             if (s_bootInfo.KeyboardTryReadKey == null)
                 return KeyboardReadStatus.Unsupported;
 
@@ -439,9 +434,6 @@ namespace OS.Hal
             if (!s_initialized)
                 return false;
 
-            if (!HasCapability(PlatformCapabilities.ExternalElf))
-                return false;
-
             if (s_bootInfo.FileExists == null)
                 return false;
 
@@ -471,7 +463,6 @@ namespace OS.Hal
             // Treat as zero-size normal file; PS rarely probes this
             // window (we mount FAT very early in boot).
             if (!s_initialized) return false;
-            if (!HasCapability(PlatformCapabilities.ExternalElf)) return false;
             if (s_bootInfo.FileExists == null) return false;
             fixed (char* p = path)
             {
@@ -553,9 +544,6 @@ namespace OS.Hal
             if (!s_initialized)
                 return false;
 
-            if (!HasCapability(PlatformCapabilities.ExternalElf))
-                return false;
-
             if (s_bootInfo.FileReadAll == null)
                 return false;
 
@@ -597,9 +585,6 @@ namespace OS.Hal
             }
 
             if (!s_initialized)
-                return false;
-
-            if (!HasCapability(PlatformCapabilities.ExternalElf))
                 return false;
 
             if (s_bootInfo.DirectoryReadEntry == null || nameBuffer == null || nameBufferChars == 0)

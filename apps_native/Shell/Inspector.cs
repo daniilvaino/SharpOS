@@ -55,7 +55,11 @@ namespace Shell
         public bool Summary => Setting("INSPECTOR_SUMMARY", "on") != "off";
 
         // Nodes kept per command, characters of text, bytes.
-        private const int NodeBudget = 100_000, TextChars = 512 * 1024, ByteCount = 256 * 1024;
+        // 8 Mi characters of text: 16 MB of the shell's heap at most, a boot
+        // log of 100 000 lines. Was 512 Ki, and 7568 lines of a 30 000-line
+        // log were all it kept.
+        private const int NodeBudget = 100_000, ByteCount = 256 * 1024;
+        private const long TextChars = 8 * 1024 * 1024;
         private const int CellWidth = 24, MaxColumns = 16;
 
         private sealed class Result
@@ -75,18 +79,26 @@ namespace Shell
             public int Count;                 // objects shown; Nodes holds the ones kept
             public bool Tree;                 // a run shown as trees rather than a table
             public bool Opened;               // a lone object was opened once, as it first shows
-            public StringBuilder Text;
+            // Strings: a line each, cut once as they come; the last one may
+            // still be open (terminal text comes in pieces).
+            public List<string> Lines;
+            public StringBuilder Open;
+            public long Chars;
+            public long TextLeft;
             public byte[] Bytes;
             public int ByteLength, BytesLeft;
-            public int TextLeft;
         }
 
-        // A line of the panel: what it shows, and what it stands for.
+        // A line of the panel: what it shows, and what it stands for. A
+        // string's row carries its index, and its text is made only when it
+        // is drawn: a command of 100 000 lines is not 100 000 strings made
+        // again on every key.
         private struct Row
         {
             public string Text;
             public InspectNode Node;
             public Item Item;
+            public int Line;                  // a string's index in Item.Lines; -1 none
             public int Parent;                // the row of the node above, -1 at a root
             public bool Selectable;
         }
@@ -210,21 +222,40 @@ namespace Shell
             }
         }
 
+        // A string message is a line (line); terminal text and a builtin's
+        // text come in pieces and are cut at their line feeds.
         private static void AddText(Result result, string text, bool line)
         {
             Item last = result.Items.Count > 0 ? result.Items[result.Items.Count - 1] : null;
-            if (last == null || last.Text == null)
+            if (last == null || last.Lines == null)
             {
-                last = new Item { Text = new StringBuilder() };
+                last = new Item { Lines = new List<string>(), Open = new StringBuilder() };
                 result.Items.Add(last);
             }
-            if (last.Text.Length + text.Length > TextChars)
+            if (last.Chars + text.Length > TextChars)
             {
                 last.TextLeft += text.Length;
                 return;
             }
-            last.Text.Append(text);
-            if (line) last.Text.Append('\n');
+            last.Chars += text.Length;
+            int start = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] != '\n') continue;
+                last.Open.Append(text, start, i - start);
+                CloseLine(last);
+                start = i + 1;
+            }
+            last.Open.Append(text, start, text.Length - start);
+            if (line) CloseLine(last);
+        }
+
+        private static void CloseLine(Item item)
+        {
+            int length = item.Open.Length;
+            if (length > 0 && item.Open[length - 1] == '\r') length--;
+            item.Lines.Add(item.Open.ToString(0, length));
+            item.Open.Clear();
         }
 
         private static unsafe void AddBytes(Result result, byte* bytes, int length)
@@ -518,9 +549,9 @@ namespace Shell
 
             int written = 0;
             for (int r = 0; r < head && written < height; r++, written++)
-                Line(frame, rows[r].Text, width, false, written == height - 1);
+                Line(frame, RowText(rows[r]), width, false, written == height - 1);
             for (int r = top; r < rows.Count && written < height; r++, written++)
-                Line(frame, rows[r].Text, width, focus && r == cursor, written == height - 1);
+                Line(frame, RowText(rows[r]), width, focus && r == cursor, written == height - 1);
             if (written < height) frame.Append("\u001b[J");
             AppHost.Terminal.WriteSide(frame.ToString());
         }
@@ -553,7 +584,7 @@ namespace Shell
             foreach (Item item in result.Items)
             {
                 if (item.Nodes != null) AddObjects(rows, item, fit);
-                else if (item.Text != null) AddLines(rows, item, item.Text.ToString(), item.TextLeft, "characters");
+                else if (item.Lines != null) AddStrings(rows, item);
                 else AddBytes(rows, item, perRow);
             }
             return rows;
@@ -570,12 +601,10 @@ namespace Shell
                     text.Append(item.Count.ToString()).Append(Dim).Append(" × ").Append(Plain);
                     AppendType(text, item.Type);
                 }
-                else if (item.Text != null)
+                else if (item.Lines != null)
                 {
                     // Strings are objects like the rest: a line each, named by their type.
-                    int strings = 0;
-                    for (int i = 0; i < item.Text.Length; i++) if (item.Text[i] == '\n') strings++;
-                    if (item.Text.Length > 0 && item.Text[item.Text.Length - 1] != '\n') strings++;
+                    int strings = item.Lines.Count + (item.Open.Length > 0 ? 1 : 0);
                     text.Append(strings.ToString()).Append(Dim).Append(" × ").Append(Plain);
                     AppendType(text, "System.String");
                 }
@@ -739,6 +768,24 @@ namespace Shell
 
         private const int MaxLines = 20000;
 
+        // A row per string, its text made when drawn (RowText).
+        private static void AddStrings(List<Row> rows, Item item)
+        {
+            int count = item.Lines.Count + (item.Open.Length > 0 ? 1 : 0);
+            for (int i = 0; i < count; i++)
+                rows.Add(new Row { Item = item, Line = i, Parent = -1, Selectable = true });
+            if (item.TextLeft > 0)
+                rows.Add(new Row { Text = Dim + "… " + item.TextLeft.ToString() + " characters more, not kept" + Plain, Line = -1, Parent = -1 });
+        }
+
+        // What a row shows: its text, or a string's line made visible.
+        private static string RowText(Row row)
+        {
+            if (row.Text != null || row.Item == null || row.Item.Lines == null || row.Line < 0) return row.Text ?? "";
+            string line = row.Line < row.Item.Lines.Count ? row.Item.Lines[row.Line] : row.Item.Open.ToString();
+            return ScreenText.Visible(InspectNode.Plain(line).Replace("\t", "    "), keepColours: false);
+        }
+
         private static void AddLines(List<Row> rows, Item item, string text, int left, string unit)
         {
             int start = 0, count = 0;
@@ -746,7 +793,9 @@ namespace Shell
             {
                 int end = text.IndexOf('\n', start);
                 if (end < 0) end = text.Length;
-                string line = InspectNode.Plain(text.Substring(start, end - start).TrimEnd('\r')).Replace("\t", "    ");
+                string line = ScreenText.Visible(
+                    InspectNode.Plain(text.Substring(start, end - start).TrimEnd('\r')).Replace("\t", "    "),
+                    keepColours: false);
                 rows.Add(new Row { Text = line, Item = item, Parent = -1, Selectable = true });
                 count++;
                 start = end + 1;

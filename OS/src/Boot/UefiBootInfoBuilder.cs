@@ -17,7 +17,6 @@ namespace OS.Boot
             info.BootMode = BootMode.Uefi;
             info.FirmwareRevision = systemTable->FirmwareRevision;
             info.FirmwareVendor = systemTable->FirmwareVendor;
-            info.Capabilities = PlatformCapabilities.None;
             info.MemoryMapAvailable = 0;
             info.GraphicsAvailable = 0;
             info.MemoryMap = default;
@@ -31,14 +30,11 @@ namespace OS.Boot
             info.FileReadIntoBuffer = &UefiPlatformBridge.FileReadIntoBuffer;
             info.DirectoryReadEntry = &UefiPlatformBridge.DirectoryReadEntry;
 
-            if (systemTable->ConOut != null)
-                info.Capabilities |= PlatformCapabilities.TextOutput;
-
-            if (systemTable->RuntimeServices != null)
-                info.Capabilities |= PlatformCapabilities.Shutdown;
-
-            if (UefiPlatformBridge.HasKeyboardInput())
-                info.Capabilities |= PlatformCapabilities.KeyboardInput;
+            // What the firmware offers is not recorded as a mask (step238: the
+            // old PlatformCapabilities, named in the first steps — ExternalElf
+            // for file access, two flags never set, all of it stale after
+            // ExitBootServices). Each bridge above answers for itself: no
+            // ConOut, no RuntimeServices, no SimpleFileSystem is a status.
 
             // Allocate EfiLoaderCode buffers before the memory map is captured.
             // EfiLoaderCode is mapped executable by firmware even with W^X/NX policies.
@@ -140,13 +136,7 @@ namespace OS.Boot
             UefiGop.TryCapture(systemTable, ref info);
 
             if (UefiMemoryMapBuilder.TryBuild(systemTable, out info.MemoryMap))
-            {
                 info.MemoryMapAvailable = 1;
-                info.Capabilities |= PlatformCapabilities.MemoryMap;
-            }
-
-            if (UefiPlatformBridge.HasFileAccess())
-                info.Capabilities |= PlatformCapabilities.ExternalElf;
 
             return info;
         }
@@ -180,14 +170,6 @@ namespace OS.Boot
                 return;
 
             s_systemTable->RuntimeServices->ResetSystem(EFI_RESET_TYPE.EfiResetShutdown, 0, 0, null);
-        }
-
-        public static bool HasKeyboardInput()
-        {
-            if (!s_initialized)
-                return false;
-
-            return UefiKeyboard.IsAvailable(s_systemTable);
         }
 
         public static uint KeyboardTryReadKey(ushort* unicodeChar, ushort* scanCode)

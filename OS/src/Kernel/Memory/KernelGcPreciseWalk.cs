@@ -456,9 +456,32 @@ namespace OS.Kernel.Memory
         /// A thread that has never been dispatched resolves to its entry thunk
         /// and unwinds no further, which is correct: it holds nothing yet.
         /// </remarks>
+        /// <summary>Whether the last RunFromParkedThread ended at an interrupt entry stub.</summary>
+        public static bool LastWalkEndedAtInterrupt;
+
+        /// <summary>
+        /// A parked thread whose walk ended at an interrupt entry with nothing
+        /// to go on from on the far side: the roots below are lost. Said, as
+        /// any loss is.
+        /// </summary>
+        public static void SayInterruptUncovered(OS.Kernel.Threading.Thread thread, delegate* unmanaged<nuint, void> markRoot)
+        {
+            InterruptEndsUncovered++;
+            if (s_lostSaid >= 40) return;
+            s_lostSaid++;
+            OS.Hal.Console.Write(markRoot == null ? "[gc] kernel" : "[gc] app");
+            OS.Hal.Console.Write(" walk of thread ");
+            OS.Hal.Console.WriteUInt((uint)thread.Id);
+            OS.Hal.Console.WriteLine(" ended at an interrupt entry with no frame to go on from: the roots below are lost");
+        }
+
+        /// <summary>Walks that ended at an interrupt entry with nothing to continue from, ever.</summary>
+        public static int InterruptEndsUncovered;
+
         public static void RunFromParkedThread(byte* contextBlock,
                                                delegate* unmanaged<nuint, void> markRoot)
         {
+            LastWalkEndedAtInterrupt = false;
             if (!IsAvailable || contextBlock == null) return;
 
             ulong savedRsp = *(ulong*)contextBlock;
@@ -632,6 +655,20 @@ namespace OS.Kernel.Memory
                 {
                     LastBottomsReached++;
                     if (trace) Trace("end: jump stub", ctx, 0);
+                    return;
+                }
+
+                // The interrupt entry stub, under Idt.Dispatch: a thread parked
+                // inside a handler. No unwind data, so the walk ends; the code
+                // the interrupt stopped is walked from the frame the stub saved
+                // (PreemptedFrame, a fault's ExInfo) or scanned (a deferred
+                // tick) by the caller, which is told where this walk ended. Was
+                // reported as "unresolved", three times per launcher run (step238).
+                if (OS.Hal.Idt.Idt.ContainsStub(ctx->Rip))
+                {
+                    LastBottomsReached++;
+                    LastWalkEndedAtInterrupt = true;
+                    if (trace) Trace("end: interrupt entry", ctx, 0);
                     return;
                 }
 

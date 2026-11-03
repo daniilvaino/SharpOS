@@ -26,7 +26,6 @@ namespace OS.Boot
         public BootMode BootMode;
         public uint FirmwareRevision;
         public char* FirmwareVendor;
-        public PlatformCapabilities Capabilities;
 
         // Executable stub buffer allocated via AllocatePool(EfiLoaderCode) in the bootloader.
         // EfiLoaderCode pages are guaranteed executable even when firmware enforces W^X.
