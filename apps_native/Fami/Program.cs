@@ -22,12 +22,12 @@ namespace Fami
     // The emulator core is upstream and untouched. Everything here is the
     // console it plugs into.
     //
+    // Usage: [path to a .nes]; without one, the first .NES in \games.
     // Exit codes: 42 = clean quit (Esc), 1 = managed exception, 2 = no ROM.
     internal static unsafe class Entry
     {
-        // Where the cartridge lives on the ESP, staged by the build like
-        // DOOM1.WAD is.
-        private const string RomPath = "/games/GAME.NES";
+        // Where the build stages each cartridge, under its own name (step245).
+        private const string GamesDirectory = "/games";
 
         // One frame of NTSC master cycles, from upstream's own frame loop
         // (Fami.Core\Interface\Main.cs). Duplicated rather than referenced
@@ -67,13 +67,17 @@ namespace Fami
 
             try
             {
-                if (!AppHost.FileExists(RomPath))
+                string romPath = FindRom();
+                if (romPath == null || !AppHost.FileExists(romPath))
                 {
-                    Console.Write("fami: no ");
-                    Console.Write(RomPath);
+                    Console.Write("fami: no cartridge ");
+                    Console.Write(romPath ?? "in " + GamesDirectory);
                     Console.Write('\n');
                     return AppRuntime.Finish(2);
                 }
+                Console.Write("fami: cartridge ");
+                Console.Write(romPath);
+                Console.Write('\n');
 
                 // Start-up is stepped out loud on purpose. Each of these calls
                 // reaches a different part of the core (opcode tables, the
@@ -90,7 +94,7 @@ namespace Fami
                 // as its last act and then builds the mapper object, so a
                 // `using` would leave that construction and the stream's
                 // disposal inside the same unlit gap.
-                FileStream rom = File.OpenRead(RomPath);
+                FileStream rom = File.OpenRead(romPath);
                 Console.Write("fami: rom open\n");
 
                 Cartridge cart = Cartridge.Load(rom, nes);
@@ -141,6 +145,19 @@ namespace Fami
                 Console.Write('\n');
                 return AppRuntime.Finish(1);
             }
+        }
+
+        // The path given, else the first .NES in \games by name.
+        private static string FindRom()
+        {
+            string[] args = AppHost.Arguments;
+            if (args.Length > 0) return args[0];
+            if (!Directory.Exists(GamesDirectory)) return null;
+            string[] files = Directory.GetFiles(GamesDirectory);
+            Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+            foreach (string file in files)
+                if (file.EndsWith(".NES", StringComparison.OrdinalIgnoreCase)) return file;
+            return null;
         }
 
         // 60 Hz if there is a clock to pace against, otherwise as fast as the

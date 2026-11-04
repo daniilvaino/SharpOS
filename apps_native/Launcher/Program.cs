@@ -192,7 +192,7 @@ namespace Launcher
                 return;
             }
             if (entry.Managed) s_powerShellRan = true;
-            RunProgram(entry.Path, entry.Title, entry.Managed);
+            RunProgram(entry.Path, entry.Title, entry.Managed, entry.Arguments);
             if (entry.Managed) tile.Subtitle = "ran - reboot to run again";
             tile.SetNeedsDisplay();
         }
@@ -483,7 +483,7 @@ namespace Launcher
         }
 
         // A program run and waited for, the screen handed over and taken back.
-        private static void RunProgram(string path, string name, bool managed)
+        private static void RunProgram(string path, string name, bool managed, string[] arguments = null)
         {
             SetStatus("Running " + name + " ...");
             Application.Refresh();
@@ -500,7 +500,7 @@ namespace Launcher
             // differs, so only the call does.
             AppServiceStatus status = managed
                 ? AppHost.TryRunManagedApp(path, out int exitCode)
-                : AppHost.TryRunApp(path, out exitCode);
+                : AppHost.TryRunApp(path, arguments, out exitCode);
 
             // Take the screen back: wipe what the child left, then declare
             // every cell stale. Nothing on OUR side changed while it ran, so

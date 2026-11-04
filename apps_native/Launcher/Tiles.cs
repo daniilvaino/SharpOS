@@ -91,11 +91,16 @@ namespace Launcher
             new[] { "TRICNES.EXE", "TriCNES", "NES emulator, exact" },
         };
 
+        // A cartridge's tile runs the playable emulator on it; TriCNES, the
+        // exact one, has its own tile and opens the first cartridge by name.
+        internal const string CartridgePlayer = "/games/FAMI.EXE";
+
         internal sealed class Entry
         {
             public string Title = "";
             public string Subtitle = "";
             public string Path = "";
+            public string[] Arguments;
             public bool Managed;
         }
 
@@ -110,6 +115,17 @@ namespace Launcher
                 entries.Add(new Entry { Title = "PowerShell", Subtitle = "PowerShell 7, CoreCLR", Path = PowerShellPath, Managed = true });
             foreach (FileNode node in FileTree.Read(GamesDirectory))
             {
+                if (node.Kind == NodeKind.File && node.Name.EndsWith(".NES", StringComparison.OrdinalIgnoreCase))
+                {
+                    entries.Add(new Entry
+                    {
+                        Title = node.Name.Substring(0, node.Name.Length - 4),
+                        Subtitle = "NES cartridge, Fami",
+                        Path = CartridgePlayer,
+                        Arguments = new[] { node.Path },
+                    });
+                    continue;
+                }
                 if (node.Kind != NodeKind.Application) continue;
                 var game = new Entry { Title = node.Name, Subtitle = "", Path = node.Path };
                 if (game.Title.EndsWith(".EXE")) game.Title = game.Title.Substring(0, game.Title.Length - 4);

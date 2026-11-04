@@ -16,12 +16,12 @@ namespace TriCNES
     // replaying a recording. So live input needs no changes to the core: we
     // just write that byte ourselves.
     //
+    // Usage: [path to a .nes]; without one, the first .NES in \games.
     // Exit codes: 42 = clean quit (Esc), 1 = managed exception, 2 = no ROM.
     internal static unsafe class Entry
     {
-        // Where the cartridge lives on the ESP, staged by the build like
-        // DOOM1.WAD is.
-        private const string RomPath = "/games/GAME.NES";
+        // Where the build stages each cartridge, under its own name (step245).
+        private const string GamesDirectory = "/games";
 
         // Controller bit order, as the NES shift register reads them:
         // A, B, Select, Start, Up, Down, Left, Right.
@@ -51,16 +51,20 @@ namespace TriCNES
 
             try
             {
-                if (!AppHost.FileExists(RomPath))
+                string romPath = FindRom();
+                if (romPath == null || !AppHost.FileExists(romPath))
                 {
-                    Console.Write("tricnes: no ");
-                    Console.Write(RomPath);
+                    Console.Write("tricnes: no cartridge ");
+                    Console.Write(romPath ?? "in " + GamesDirectory);
                     Console.Write('\n');
                     return AppRuntime.Finish(2);
                 }
+                Console.Write("tricnes: cartridge ");
+                Console.Write(romPath);
+                Console.Write('\n');
 
                 Emulator emu = new Emulator();
-                Cartridge cart = new Cartridge(RomPath);
+                Cartridge cart = new Cartridge(romPath);
                 emu.Cart = cart;
 
                 // Both back-references, exactly as the upstream GUI wires them:
@@ -106,6 +110,19 @@ namespace TriCNES
                 Console.Write('\n');
                 return AppRuntime.Finish(1);
             }
+        }
+
+        // The path given, else the first .NES in \games by name.
+        private static string FindRom()
+        {
+            string[] args = AppHost.Arguments;
+            if (args.Length > 0) return args[0];
+            if (!System.IO.Directory.Exists(GamesDirectory)) return null;
+            string[] files = System.IO.Directory.GetFiles(GamesDirectory);
+            Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+            foreach (string file in files)
+                if (file.EndsWith(".NES", StringComparison.OrdinalIgnoreCase)) return file;
+            return null;
         }
 
         // 60 Hz if there is a clock to pace against, otherwise as fast as the
