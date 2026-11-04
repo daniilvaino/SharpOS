@@ -14,7 +14,8 @@ namespace PipeApps
     // class, Expando, object — goes in as an externalpipe: the pipe's
     // description, then its blocks as they came, and READ gives the same
     // messages back. Text of them is an explicit conversion: CONVERT --to
-    // lines, --to json.
+    // lines, --to json. Strings a program wrote for the terminal
+    // (Pipe.InputIsConsoleText) go in without escapes and controls.
     //
     // The file is created or cut; with --append, added to. An externalpipe
     // is appended to only by the same types — another stream into it is an
@@ -98,6 +99,9 @@ namespace PipeApps
                     return 0;
                 }
 
+                // Text a program wrote for the terminal goes in without the
+                // terminal's controls (step242): `FETCH 3> f` is its words.
+                bool plain = Pipe.InputIsConsoleText;
                 byte[] line = new byte[256];
                 foreach (View v in input)
                 {
@@ -106,9 +110,9 @@ namespace PipeApps
                         file.Write(new ReadOnlySpan<byte>(bytes, count));
                         continue;
                     }
-                    string text = v.TryGetChars(out char* chars, out int length)
-                        ? new string(new ReadOnlySpan<char>(chars, length))
-                        : v.IsNull ? "null" : v.ToString();
+                    string text = !v.TryGetChars(out char* chars, out int length) ? (v.IsNull ? "null" : v.ToString())
+                        : plain ? Pipe.PlainText(new ReadOnlySpan<char>(chars, length))
+                        : new string(new ReadOnlySpan<char>(chars, length));
                     int max = Encoding.UTF8.GetMaxByteCount(text.Length) + 1;
                     if (line.Length < max) line = new byte[max];
                     int n = Encoding.UTF8.GetBytes(text.AsSpan(), new Span<byte>(line));

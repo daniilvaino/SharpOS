@@ -26,6 +26,14 @@ namespace SharpOS.Std.Pipes
 
         /// <summary>Strings are terminal text as written — escapes, pieces of lines — not a line each.</summary>
         TerminalText = 4,
+
+        /// <summary>
+        /// Strings are text a program wrote for the terminal (System.Console,
+        /// stdtext) into a pipe that is not the screen: its controls mean
+        /// nothing here, and a reader making plain text leaves them out
+        /// (<see cref="Pipe.InputIsConsoleText"/>, <see cref="Pipe.PlainText"/>).
+        /// </summary>
+        ConsoleText = 8,
     }
 
     /// <summary>Which stream of a stage a shown pipe carries (step239).</summary>
@@ -88,6 +96,29 @@ namespace SharpOS.Std.Pipes
 
         /// <summary>Whether the standard input is the keyboard (isatty(0), step239): none was handed over.</summary>
         public static bool InputIsTerminal => PipeTransport.StandardEnd(0) == 0;
+
+        /// <summary>
+        /// Whether the standard input is text a program wrote for the terminal
+        /// (step242) — `PROG > file`, `FETCH 3> file`: colours and cursor moves
+        /// that a file or a line of data has no use for. Known once the writer
+        /// opened its end; asked after the first message, or after WaitSchema.
+        /// </summary>
+        public static bool InputIsConsoleText
+        {
+            get
+            {
+                int handle = PipeTransport.StandardEnd(0);
+                return handle != 0 && PipeTransport.Attributes(handle, 0, 0, out uint attributes) == PipeStatus.Ok
+                       && (attributes & (uint)PipeAttributes.ConsoleText) != 0;
+            }
+        }
+
+        /// <summary>
+        /// Terminal text as plain text (step242): escape sequences — colours,
+        /// cursor moves, titles — and other control characters left out, tab
+        /// kept.
+        /// </summary>
+        public static string PlainText(ReadOnlySpan<char> text) => ScreenText.Plain(text);
 
         /// <summary>Whether the standard output was opened already, as text or as a type.</summary>
         public static bool OutputIsOpen => s_outputOpened;

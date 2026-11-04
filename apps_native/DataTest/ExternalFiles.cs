@@ -80,6 +80,18 @@ namespace DataApps
             Check("16: < file: IsInputRedirected (" + fromFile.ToString() + ")", (fromFile & 4) != 0);
             Check("16: > file leaves the error stream the terminal (" + toFile.ToString() + ")", (toFile & 2) == 0);
 
+            // Terminal text that does not reach the screen loses the
+            // terminal's controls where it becomes plain text (step242);
+            // a string of data keeps them.
+            Sh("DATATEST --child coloured > t16c.txt");
+            Check("16: Console > file: plain text (" + Text("t16c.txt").Replace("\u001b", "^[") + ")", Text("t16c.txt") == "red plain\n");
+            Sh("DATATEST --child coloured 3> t16c3.txt");
+            Check("16: stdtext 3> file: plain text", Text("t16c3.txt") == "bold\n");
+            string lines = string.Join("|", Lines("DATATEST --child coloured | CONVERT --to lines"));
+            Check("16: Console | CONVERT --to lines: plain (" + lines.Replace("\u001b", "^[") + ")", lines == "red plain");
+            Sh("DATATEST --child coloured data > t16d.txt");
+            Check("16: a string of data keeps its escapes", Text("t16d.txt") == "\u001b[31mred\u001b[0m\n");
+
             // A cut file: the whole messages, then a failure naming READ.
             byte[] whole = File.ReadAllBytes("t16.pipe");
             byte[] cut = new byte[whole.Length - 10];

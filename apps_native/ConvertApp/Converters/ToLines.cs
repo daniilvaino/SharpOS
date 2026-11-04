@@ -15,10 +15,16 @@ namespace PipeApps
         public int Run(string[] options)
         {
             using PipeWriter<string> output = Pipe.Write<string>();
+            int plain = 0;                      // 0 not asked, 1 terminal text, 2 not
             foreach (View v in Pipe.Read())
             {
                 if (v.TryGetChars(out char* chars, out int length))
-                    output.Copy(new string(new ReadOnlySpan<char>(chars, length)));
+                {
+                    // Terminal text loses the terminal's controls (step242).
+                    if (plain == 0) plain = Pipe.InputIsConsoleText ? 1 : 2;
+                    output.Copy(plain == 1 ? Pipe.PlainText(new ReadOnlySpan<char>(chars, length))
+                                           : new string(new ReadOnlySpan<char>(chars, length)));
+                }
                 else
                     output.Copy(v.IsNull ? "null" : v.ToString());
             }

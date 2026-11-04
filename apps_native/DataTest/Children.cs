@@ -24,6 +24,19 @@ namespace DataApps
                     return (Console.IsOutputRedirected ? 1 : 0) | (Console.IsErrorRedirected ? 2 : 0)
                          | (Console.IsInputRedirected ? 4 : 0);
 
+                // Terminal text with a colour, a title and a carriage return
+                // on the output and on stdtext; with "data", the same as a
+                // string of data (step242).
+                case "coloured":
+                    if (a2 == "data")
+                    {
+                        using (PipeWriter<string> w = Pipe.Write<string>()) w.Copy("\u001b[31mred\u001b[0m");
+                        return 0;
+                    }
+                    Console.WriteLine("\u001b[31mred\u001b[0m \u001b]0;title\u0007plain\r");
+                    Pipe.Text.WriteLine("\u001b[1mbold\u001b[0m");
+                    return 0;
+
                 // Reads n messages of any type, then leaves: the stage before
                 // it finds its output broken.
                 case "take":

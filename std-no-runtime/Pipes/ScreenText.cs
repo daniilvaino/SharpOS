@@ -191,6 +191,53 @@ namespace SharpOS.Std.Pipes
             return text.ToString();
         }
 
+        // Pipe.PlainText: what the terminal would have taken as controls is
+        // left out — ECMA-48 escape sequences whole, other controls alone.
+        internal static string Plain(ReadOnlySpan<char> s)
+        {
+            int i = 0;
+            while (i < s.Length && !IsControl(s[i])) i++;
+            if (i == s.Length) return new string(s);
+
+            var text = new StringBuilder(s.Length);
+            text.Append(s.Slice(0, i));
+            for (; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c == '\u001b') i = SequenceEnd(s, i + 1, s.Length > i + 1 ? s[i + 1] : '\0');
+                else if (c == '\u009b') i = SequenceEnd(s, i, '[');
+                else if (!IsControl(c)) text.Append(c);
+            }
+            return text.ToString();
+        }
+
+        // The last index of an escape sequence; at is its introducer (the
+        // character after ESC, or the C1 CSI itself). A sequence cut at the
+        // end of the string takes the rest.
+        private static int SequenceEnd(ReadOnlySpan<char> s, int at, char kind)
+        {
+            if (at >= s.Length) return s.Length - 1;
+            int j = at + 1;
+            switch (kind)
+            {
+                case '[':                                   // CSI: parameters, intermediates, final
+                    while (j < s.Length && s[j] >= '0' && s[j] <= '?') j++;
+                    while (j < s.Length && s[j] >= ' ' && s[j] <= '/') j++;
+                    return j < s.Length && s[j] >= '@' && s[j] <= '~' ? j : j - 1;
+                case ']': case 'P': case 'X': case '^': case '_':   // strings: to BEL or ST
+                    for (; j < s.Length; j++)
+                    {
+                        if (s[j] == '\u0007') return j;
+                        if (s[j] == '\u001b' && j + 1 < s.Length && s[j + 1] == '\\') return j + 1;
+                    }
+                    return s.Length - 1;
+                default:                                    // ESC, intermediates, final
+                    j = at;
+                    while (j < s.Length && s[j] >= ' ' && s[j] <= '/') j++;
+                    return j < s.Length && s[j] >= '0' && s[j] <= '~' ? j : j - 1;
+            }
+        }
+
         // Tab is the one control a line keeps.
         private static bool IsControl(char c)
             => (c < ' ' && c != '\t') || c == '\u007f' || (c >= '\u0080' && c <= '\u009f');

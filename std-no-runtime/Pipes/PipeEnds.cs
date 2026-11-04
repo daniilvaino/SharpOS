@@ -277,7 +277,7 @@ namespace SharpOS.Std.Pipes
             if (handle == 0) return new TerminalTextWriter();
             return IsScreenEnd(handle)
                 ? ScreenTextWriter(handle, "the standard output")
-                : new PipeTextWriter(OpenWriter<string>(handle, "the standard output"));
+                : ConsoleTextWriter(handle, "the standard output");
         }
 
         /// <summary>The end number stdtext is handed under (step212), as `3>` names it.</summary>
@@ -338,7 +338,15 @@ namespace SharpOS.Std.Pipes
         {
             int handle = PipeTransport.StandardEnd((uint)number);
             if (handle == 0) return null;
-            return IsScreenEnd(handle) ? ScreenTextWriter(handle, what) : new PipeTextWriter(OpenWriter<string>(handle, what));
+            return IsScreenEnd(handle) ? ScreenTextWriter(handle, what) : ConsoleTextWriter(handle, what);
+        }
+
+        // Terminal text into a pipe that is not the screen: a line a message,
+        // the pipe marked so a reader making plain text drops the controls.
+        private static TextWriter ConsoleTextWriter(int handle, string what)
+        {
+            PipeTransport.Attributes(handle, (uint)PipeAttributes.ConsoleText, (uint)PipeAttributes.ConsoleText, out _);
+            return new PipeTextWriter(OpenWriter<string>(handle, what));
         }
 
         // What the standard output is a pipe of, for the refusal to open it twice.
