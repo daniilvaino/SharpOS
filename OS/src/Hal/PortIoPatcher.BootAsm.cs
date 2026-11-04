@@ -77,6 +77,32 @@ namespace OS.Hal
             a.ret();
         }
 
+        [CompileTimeAsm]
+        public static partial int EmitInl(byte* dst);
+
+        // uint Inl(ushort port) — port CX, result in EAX (step246: AC'97's
+        // buffer-list base is a dword register).
+        [CompileTimeAsmBody(nameof(EmitInl))]
+        private static void EmitInl_Body(Iced.Intel.Assembler a)
+        {
+            a.mov(dx, cx);
+            a.@in(eax, dx);
+            a.ret();
+        }
+
+        [CompileTimeAsm]
+        public static partial int EmitOutl(byte* dst);
+
+        // void Outl(ushort port, uint value) — port CX, value EDX.
+        [CompileTimeAsmBody(nameof(EmitOutl))]
+        private static void EmitOutl_Body(Iced.Intel.Assembler a)
+        {
+            a.mov(eax, edx);
+            a.mov(dx, cx);
+            a.@out(dx, eax);
+            a.ret();
+        }
+
         // Same shape as M4/M5.1 compare helpers.
         private static void CompareOrPanic(string name, byte* compile, byte* legacy, int compileLen, int legacyLen)
         {

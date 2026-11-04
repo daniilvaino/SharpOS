@@ -372,6 +372,8 @@ namespace OS.Kernel.Process
             table.TerminalSideAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&TerminalSide;
             table.TerminalSideWriteAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&TerminalSideWrite;
             table.TerminalSideControlAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, int, int>)&TerminalSideControl;
+            table.AudioWriteAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&AudioWrite;
+            table.AudioControlAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&AudioControl;
                 table.ExceptionHeadAddress = (ulong)OS.Boot.EH.ExInfoHead.GetHeadAddress();
                 table.ProcessAddress = (ulong)(nint)(delegate* unmanaged<int, ulong*, int>)&ProcessService;
                 if (OS.Kernel.Diagnostics.Probes.PipeProbe)
@@ -1359,6 +1361,29 @@ namespace OS.Kernel.Process
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static int AppRegionFromKernel(ulong* answer)
             => OS.Kernel.Diagnostics.RegionIntakeProbe.Give(answer);
+
+        // Sound (step246); see AudioOut.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int AudioWrite(byte* pcm, int length)
+        {
+            if (!OS.Kernel.Audio.AudioOut.Present) return -(int)AppServiceStatus.Unsupported;
+            if (pcm == null || length < 0) return -(int)AppServiceStatus.InvalidParameter;
+            return OS.Kernel.Audio.AudioOut.Write(pcm, length);
+        }
+
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int AudioControl(int op)
+        {
+            if (!OS.Kernel.Audio.AudioOut.Present) return -(int)AppServiceStatus.Unsupported;
+            switch (op)
+            {
+                case 0: return OS.Kernel.Audio.AudioOut.SampleRate;
+                case 1: return OS.Kernel.Audio.AudioOut.Queued;
+                case 2: return OS.Kernel.Audio.AudioOut.Free;
+                case 3: OS.Kernel.Audio.AudioOut.Clear(); return 0;
+                default: return -(int)AppServiceStatus.InvalidParameter;
+            }
+        }
 
         // The terminal's input as bytes (step217); see TerminalInput.
         [System.Runtime.InteropServices.UnmanagedCallersOnly]

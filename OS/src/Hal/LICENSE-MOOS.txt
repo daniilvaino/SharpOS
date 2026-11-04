@@ -1,4 +1,4 @@
-OS/src/Hal/{Ahci,Disk,Pci,FontCp437.Glyphs}.cs are adapted from MOOS by nifanfa
+OS/src/Hal/{Ahci,Disk,Pci,FontCp437.Glyphs,Audio/Ac97}.cs are adapted from MOOS by nifanfa
 (https://github.com/nifanfa/MOOS), released under the Unlicense:
 
 This is free and unencumbered software released into the public domain.

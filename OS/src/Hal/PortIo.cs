@@ -33,5 +33,19 @@ namespace OS.Hal
                 (delegate* unmanaged<ushort, ushort, void>)PortIoStub.GetOutwAddress();
             fn(port, value);
         }
+
+        public static uint In32(ushort port)
+        {
+            delegate* unmanaged<ushort, uint> fn =
+                (delegate* unmanaged<ushort, uint>)PortIoStub.GetInlAddress();
+            return fn(port);
+        }
+
+        public static void Out32(ushort port, uint value)
+        {
+            delegate* unmanaged<ushort, uint, void> fn =
+                (delegate* unmanaged<ushort, uint, void>)PortIoStub.GetOutlAddress();
+            fn(port, value);
+        }
     }
 }

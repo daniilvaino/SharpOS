@@ -50,6 +50,7 @@ namespace UtilsApp
                     case "kill": return SystemCommands.Kill(rest);
                     case "sleep": return SystemCommands.Sleep(rest);
                     case "date": return SystemCommands.Date(rest);
+                    case "tone": return Tone.Run(rest);
                     default: return Unknown(command);
                 }
             }
@@ -72,7 +73,7 @@ namespace UtilsApp
 
         private static int Unknown(string command)
         {
-            Console.Error.WriteLine("UTILS: unknown command '" + command + "': head tail grep wc sort uniq tee find xxd ps kill sleep date");
+            Console.Error.WriteLine("UTILS: unknown command '" + command + "': head tail grep wc sort uniq tee find xxd ps kill sleep date tone");
             return 2;
         }
     }

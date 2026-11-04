@@ -48,6 +48,32 @@ namespace OS.Hal
             OS.Kernel.Panic.Fail("PortIo.Outw (stub not patched)");
         }
 
+        // Dword pair (step246): AC'97's buffer-descriptor list base.
+        [RuntimeExport("PortIo_Inl")]
+        private static uint Inl(ushort port)
+        {
+            OS.Kernel.Panic.Fail("PortIo.Inl (stub not patched)");
+            return 0;
+        }
+
+        [RuntimeExport("PortIo_Outl")]
+        private static void Outl(ushort port, uint value)
+        {
+            OS.Kernel.Panic.Fail("PortIo.Outl (stub not patched)");
+        }
+
+        public static unsafe void* GetInlAddress()
+        {
+            delegate*<ushort, uint> fn = &Inl;
+            return (void*)fn;
+        }
+
+        public static unsafe void* GetOutlAddress()
+        {
+            delegate*<ushort, uint, void> fn = &Outl;
+            return (void*)fn;
+        }
+
         public static unsafe void* GetInwAddress()
         {
             delegate*<ushort, ushort> fn = &Inw;

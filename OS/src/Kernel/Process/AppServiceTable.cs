@@ -456,6 +456,17 @@ namespace OS.Kernel.Process
         // the one whose first message was sent earliest across all pipes, or
         // one that has ended. Zero: an older kernel; no order across pipes.
         public ulong PipeNextOfAddress;
+
+        // int AudioWrite(byte* pcm, int length) (step246): PCM for the sound
+        // card — 16-bit signed, stereo, interleaved, at AudioControl(0)'s
+        // rate — without waiting; returns the bytes taken (whole frames, as
+        // many as fit), negative without a card. Zero: an older kernel.
+        public ulong AudioWriteAddress;
+
+        // int AudioControl(int op) (step246): 0 the rate in Hz, 1 bytes
+        // queued, 2 bytes free, 3 drops what is queued; negative without a
+        // card. Zero: an older kernel.
+        public ulong AudioControlAddress;
     }
 
     /// <summary>

@@ -683,6 +683,7 @@ namespace Shell
             new[] { "kill", "UTILS", "kill" },
             new[] { "sleep", "UTILS", "sleep" },
             new[] { "date", "UTILS", "date" },
+            new[] { "tone", "UTILS", "tone" },
         };
 
         private static string[] AliasOf(string verb)

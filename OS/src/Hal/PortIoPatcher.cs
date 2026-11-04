@@ -38,6 +38,14 @@ namespace OS.Hal
                 s_wordInstalled = true;
             }
 
+            byte* inl = (byte*)PortIoStub.GetInlAddress();
+            byte* outl = (byte*)PortIoStub.GetOutlAddress();
+            if (inl != null && outl != null)
+            {
+                EmitInl(inl);
+                EmitOutl(outl);
+            }
+
             s_installed = true;
             return true;
         }

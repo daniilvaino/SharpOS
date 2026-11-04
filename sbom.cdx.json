@@ -1062,12 +1062,12 @@
         }
       ],
       "pedigree": {
-        "notes": "AHCI, Disk, PCI(Express), CP437 glyphs, adapted to the HAL."
+        "notes": "AHCI, Disk, PCI(Express), CP437 glyphs, AC'97 (step246, commit 6dc9964), adapted to the HAL."
       },
       "properties": [
         {
           "name": "sharpos:where",
-          "value": "OS/src/Hal/{Ahci,Disk,Pci,FontCp437.Glyphs}.cs"
+          "value": "OS/src/Hal/{Ahci,Disk,Pci,FontCp437.Glyphs,Audio/Ac97}.cs"
         }
       ],
       "externalReferences": [
@@ -1183,6 +1183,76 @@
         {
           "type": "vcs",
           "url": "https://github.com/RupertAvery/Fami"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "name": "AccuracyCoin",
+      "version": "b037b4180fdf1c4d35898bc511afc1046a9e6737",
+      "supplier": {
+        "name": "Chris Siebert"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "291e8572219a205aa96cc6c4376b1db26bdb1abc3ec63db38c0eefb067b729f8"
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/AccuracyCoin/AccuracyCoin.nes -> \\games\\ACCURACYCOIN.NES (NES test cartridge)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/100thCoin/AccuracyCoin"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "name": "Famidash",
+      "version": "Demo5",
+      "supplier": {
+        "name": "Team Famidash"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "128910cf18ed312d9623249e32751329cd2696f5f870bbd65cd7ca50cece859d"
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/FamiDash/famidash.nes -> \\games\\FAMIDASH.NES (NES homebrew game)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tfdsoft/famidash"
+        },
+        {
+          "type": "distribution",
+          "url": "https://github.com/tfdsoft/famidash/releases/tag/Demo5"
         }
       ]
     },

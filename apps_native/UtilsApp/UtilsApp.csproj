@@ -17,6 +17,7 @@
     <Compile Include="Find.cs" />
     <Compile Include="Xxd.cs" />
     <Compile Include="SystemCommands.cs" />
+    <Compile Include="Tone.cs" />
     <Compile Include="..\PipeGen\StressArgs.cs" />
   </ItemGroup>
 </Project>

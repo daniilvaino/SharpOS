@@ -9,8 +9,10 @@
 Сделано — `done/step220.md`; SBOM чужого кода (`sbom.cdx.json`) и тексты
 лицензий в образе (`\sharpos\licence\`) — `done/step229.md`. Осталось:
 
-- ROM: свободный homebrew вместо `GAME.NES` (Super Mario Bros.) — ищет
-  пользователь. WAD — из репозитория MOOS.
+- ROM: AccuracyCoin и Famidash (MIT) из `vendor/` вместо `GAME.NES`, каждый
+  картридж под своим именем, путь — аргументом эмулятора — `done/step245.md`.
+  Релизная сборка не должна брать `payloads\*.nes` (§13). WAD — из репозитория
+  MOOS.
 - Шина USB из `UsbProbe` — в `Hal/Usb` (`UsbBus`), построчный отчёт — под
   диагностику — `done/step244.md`.
 
@@ -66,6 +68,15 @@ AvaloniaEdit из tui-cs/Editor, `.xshd` читает `XmlReader` из BCL, step
 `done/step241.md`; текст терминала не на экране очищает получатель —
 `done/step242.md`; одна клавиша на оба пути ввода (байты и сырые события), Terminal.Gui
 на карте стокового `WindowsDriver` — `done/step243.md`. Раздел закрыт.
+
+## Звук
+
+Сделано: AC'97 (QEMU), служба `AudioWrite`, `SharpOS.AppSdk.Audio`, `tone` —
+`done/step246.md`. Осталось:
+
+- Звук DOOM и эмуляторов (Fami, TriCNES): пересчёт частоты на 48 кГц.
+- Микшер: несколько программ сразу.
+- Intel HD Audio — звук на железе.
 
 ## 9. Ошибки (не CoreCLR)
 

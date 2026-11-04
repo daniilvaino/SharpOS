@@ -248,6 +248,26 @@ namespace OS.Boot
                 OS.Kernel.Diagnostics.UsbProbe.AfterStart();
             }
 
+            // Sound: DMA from our pages, so post-EBS like the disks. One line
+            // either way — "no sound" is a question someone will ask.
+            if (OS.Kernel.Diagnostics.Probes.AudioInit)
+            {
+                if (OS.Hal.Audio.Ac97.Start())
+                {
+                    Console.Write("[audio] ac97 ");
+                    Console.WriteUInt((uint)OS.Hal.Audio.Ac97.SampleRate);
+                    Console.Write(" Hz stereo s16, dac=");
+                    Console.WriteUInt(OS.Hal.Audio.Ac97.FrontDacRate);
+                    Console.WriteLine("");
+                }
+                else
+                {
+                    Console.Write("[audio] none (");
+                    Console.Write(OS.Hal.Audio.Ac97.Missing);
+                    Console.WriteLine(")");
+                }
+            }
+
             OS.Kernel.File.BootVolume.Mount();
 
             // From here on every console line also lands on disk. Bound after

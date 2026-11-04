@@ -231,6 +231,24 @@ namespace OS.Hal
             *command = (ushort)(*command | 0x0006);   // bit1 memory space, bit2 bus master
         }
 
+        // I/O-space decoding and bus mastering (step246): AC'97 has its
+        // registers in port space, not memory.
+        public static void EnableIoAndBusMaster(ref PciDev dev)
+        {
+            if (dev.EcamAddress == 0) return;
+            ushort* command = (ushort*)(dev.EcamAddress + 4);
+            *command = (ushort)(*command | 0x0005);   // bit0 I/O space, bit2 bus master
+        }
+
+        public static bool TryFindDevice(ushort vendor, ushort device, out PciDev dev)
+        {
+            for (int i = 0; i < s_count; i++)
+                if (s_devs[i].VendorID == vendor && s_devs[i].DeviceID == device)
+                { dev = s_devs[i]; return true; }
+            dev = default;
+            return false;
+        }
+
         public static bool TryFindVendor(ushort vendor, out PciDev dev)
         {
             for (int i = 0; i < s_count; i++)

@@ -52,6 +52,11 @@
     # Boot with the ESP on a USB stick and no SATA disk at all — the shape of
     # the test machines, where there is no AHCI controller to fall back on.
     [switch]$UsbOnly,
+    # Sound (step246): an AC'97 card played through the host's speakers
+    # (DirectSound). -AudioWav <file> instead records what it plays into a WAV,
+    # for checking without anyone listening.
+    [switch]$Audio,
+    [string]$AudioWav,
     # Framebuffer mode to ask the firmware for, e.g. "3840x2160".
     [string]$Resolution,
     # QEMU CPU model. qemu64 is x86-64-v1: no SSE4/AVX, so CoreLib's
@@ -1006,29 +1011,35 @@ Write-Host "Prepared config: INIT=$init"
 # file is and asking anyone to remember a second rule is how folders get put in
 # the wrong place:
 #   *.wad -> \games\<NAME>.WAD     (ManagedDoom probes beside itself for known IWADs)
-#   *.nes -> \games\GAME.NES       (the fixed name both emulators open)
+#   *.nes -> \games\<NAME>.NES     (the emulators take the path; launcher tile each)
 #
-# One cartridge is staged, the first by name, because the apps have no way to
-# be told which to load yet. That is the argument-passing work; when it lands,
-# all of them get staged under their own names and this collapses to a copy.
+# Cartridges also come from the repository: free homebrew vendored with its
+# licence (vendor\AccuracyCoin, vendor\FamiDash, step245). A payload of the same
+# name wins.
 $payloadDir = Join-Path $repoRoot "payloads"
+$roms = @{}
+foreach ($vendoredRom in @("vendor\AccuracyCoin\AccuracyCoin.nes", "vendor\FamiDash\famidash.nes")) {
+    $romFile = Get-Item -LiteralPath (Join-Path $repoRoot $vendoredRom) -ErrorAction SilentlyContinue
+    if ($romFile) { $roms[$romFile.Name.ToUpperInvariant()] = $romFile }
+}
 if (Test-Path -LiteralPath $payloadDir) {
     foreach ($wad in Get-ChildItem -LiteralPath $payloadDir -Filter "*.wad") {
         $wadDst = Join-Path $espDirs['games'] $wad.Name.ToUpperInvariant()
         Copy-Item -LiteralPath $wad.FullName -Destination $wadDst -Force
         Write-Host "Prepared IWAD: $wadDst"
     }
-
-    $roms = @(Get-ChildItem -LiteralPath $payloadDir -Filter "*.nes" | Sort-Object Name)
-    if ($roms.Count -gt 0) {
-        Copy-Item -LiteralPath $roms[0].FullName -Destination (Join-Path $espDirs['games'] "GAME.NES") -Force
-        Write-Host "Prepared cartridge: GAME.NES ($($roms[0].Name))"
-        # Say what was left behind rather than staging it silently: "I dropped
-        # the ROM in and got the other game" is otherwise a mystery.
-        if ($roms.Count -gt 1) {
-            Write-Host "  ($($roms.Count - 1) more .nes in payloads\ not staged - one cartridge slot)"
-        }
+    foreach ($rom in Get-ChildItem -LiteralPath $payloadDir -Filter "*.nes") {
+        $roms[$rom.Name.ToUpperInvariant()] = $rom
     }
+}
+foreach ($romName in ($roms.Keys | Sort-Object)) {
+    Copy-Item -LiteralPath $roms[$romName].FullName -Destination (Join-Path $espDirs['games'] $romName) -Force
+    Write-Host "Prepared cartridge: $romName"
+}
+# The single slot of earlier builds: left there it would be a cartridge nobody named.
+$oldSlot = Join-Path $espDirs['games'] "GAME.NES"
+if (-not $roms.ContainsKey("GAME.NES") -and (Test-Path -LiteralPath $oldSlot)) {
+    Remove-Item -LiteralPath $oldSlot -Force
 }
 
 # Game data from earlier builds, back when applications were staged beside the
@@ -1181,6 +1192,12 @@ try {
         $displayArgs += @(
             "-drive", "if=none,id=usbstick,format=raw,cache=unsafe,file=$stickImage",
             "-device", "usb-storage,drive=usbstick")
+    }
+
+    if ($AudioWav) {
+        $displayArgs += @("-audiodev", "wav,id=snd0,path=$AudioWav", "-device", "AC97,audiodev=snd0")
+    } elseif ($Audio) {
+        $displayArgs += @("-audiodev", "dsound,id=snd0", "-device", "AC97,audiodev=snd0")
     }
 
     $qemuArgs = $machineArgs + $cpuArgs + @("-m", "$MemoryMb") + $displayArgs + @(
