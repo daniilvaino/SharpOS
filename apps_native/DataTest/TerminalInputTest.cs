@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using SharpOS.AppSdk;
+using SharpOS.Std;
 
 namespace DataApps
 {
@@ -28,6 +29,8 @@ namespace DataApps
             Check("29: UTF-8: Cyrillic and a box rune", Keys("ж─") == "ж:None ─:None");
             Check("29: answers swallowed: device attributes, OSC, an unknown report",
                   Keys("\u001b[?1;2cq\u001b]11;rgb:0/0/0\u0007w\u001b[8;24;80tz") == "q:Q w:W z:Z");
+
+            RoundTrip();
 
             var parser = Parser(Encoding.UTF8.GetBytes("a\u001b[12;40Rb"));
             parser.CursorQueryPending = true;
@@ -126,6 +129,72 @@ namespace DataApps
                 return parts[part][at++];
             });
             return Drain(parser);
+        }
+
+        // Step243: one key, two paths. A key as the raw key service gives it
+        // (ConsoleKeys.FromKeyboard), turned into the terminal's bytes the way
+        // the kernel does (ConsoleKeys.ToTerminal) and parsed back, is the same
+        // key — for every key a terminal can say. What it cannot is checked to
+        // come back as the key without what was lost.
+        private static void RoundTrip()
+        {
+            var modifierSets = new ConsoleModifiers[8];
+            for (int i = 0; i < 8; i++) modifierSets[i] = (ConsoleModifiers)i;
+            const ConsoleModifiers None = 0, Alt = ConsoleModifiers.Alt, Ctrl = ConsoleModifiers.Control, Shift = ConsoleModifiers.Shift;
+
+            int total = 0, bad = 0;
+            string first = "";
+            void One(char unicode, ushort scan, ConsoleModifiers modifiers, ConsoleKeyInfo expected)
+            {
+                total++;
+                ConsoleKeyInfo key = ConsoleKeys.FromKeyboard(unicode, scan, modifiers);
+                byte[] bytes = new byte[ConsoleKeys.MaxTerminalBytes];
+                int n = ConsoleKeys.ToTerminal(key, bytes);
+                Array.Resize(ref bytes, n);
+                string got = Drain(Parser(bytes));
+                string want = Describe(expected.Key == ConsoleKey.None && expected.KeyChar == '\0' ? key : expected);
+                if (got == want) return;
+                if (bad++ == 0) first = " first: " + ((int)unicode).ToString() + "/" + scan.ToString() + "/" + ((int)modifiers).ToString()
+                                        + " want " + want + " got " + got;
+            }
+
+            // Printable ASCII, plain and with Alt (ESC before it).
+            for (char c = ' '; c <= '~'; c++) { One(c, 0, None, default); One(c, 0, Alt, default); }
+            // Ctrl+letter (the kernel gives the letter), with and without Alt.
+            // H, I, J, M are BS, Tab, LF, CR in bytes: a terminal says the key.
+            for (char c = 'a'; c <= 'z'; c++)
+            {
+                char code = (char)(c - 'a' + 1);
+                ConsoleKeyInfo said = c == 'h' || c == 'i' || c == 'j' || c == 'm' ? ConsoleKeys.FromChar(code, None) : default;
+                One(c, 0, Ctrl, said);
+                One(c, 0, Ctrl | Alt, said.Key == ConsoleKey.None ? default : ConsoleKeys.FromChar(code, Alt));
+            }
+            // Keys with no character, under every set of modifiers.
+            for (ushort scan = 0x01; scan <= 0x16; scan++)
+                foreach (ConsoleModifiers m in modifierSets) One('\0', scan, m, default);
+            One('\0', 0x17, None, default);
+            One('\0', 0x17, Alt, default);
+            foreach (char c in "\r\b\t") { One(c, 0, None, default); One(c, 0, Alt, default); }
+            One('\t', 0, Shift, default);
+            One(' ', 0, Ctrl, default);
+            One('ж', 0, None, default);
+
+            // What a terminal cannot say: Shift on a control character, modifiers on Enter.
+            One('s', 0, Ctrl | Shift, ConsoleKeys.FromKeyboard('s', 0, Ctrl));
+            One('\r', 0, Ctrl, ConsoleKeys.FromKeyboard('\r', 0, None));
+
+            Check("29: one key, two paths: " + total.ToString() + " keys, raw = parsed terminal bytes (" + bad.ToString() + " differ" + first + ")",
+                  bad == 0);
+
+            // The raw path keeps what the bytes lose (Terminal.Gui reads it).
+            ConsoleKeyInfo ctrlShiftS = ConsoleKeys.FromKeyboard('s', 0, Ctrl | Shift);
+            Check("29: raw Ctrl+Shift+S keeps Shift", ctrlShiftS.Key == ConsoleKey.S && ctrlShiftS.KeyChar == '\u0013'
+                  && ctrlShiftS.Modifiers == (ConsoleModifiers.Control | ConsoleModifiers.Shift));
+            ConsoleKeyInfo ctrlH = ConsoleKeys.FromKeyboard('h', 0, Ctrl), ctrlBackspace = ConsoleKeys.FromKeyboard('\b', 0, Ctrl);
+            Check("29: raw Ctrl+H is H, Ctrl+Backspace is Backspace",
+                  ctrlH.Key == ConsoleKey.H && ctrlBackspace.Key == ConsoleKey.Backspace);
+            Check("29: '?' is Oem2 with Shift, '/' Oem2 without",
+                  Describe(ConsoleKeys.FromChar('?', None)) == "?:191+S" && Describe(ConsoleKeys.FromChar('/', None)) == "/:191");
         }
 
         private static TerminalKeyParser Parser(byte[] bytes)

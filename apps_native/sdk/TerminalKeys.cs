@@ -12,6 +12,7 @@
 // kept for CursorLeft/CursorTop.
 
 using System;
+using SharpOS.Std;
 
 namespace SharpOS.AppSdk
 {
@@ -50,7 +51,13 @@ namespace SharpOS.AppSdk
                     if (c < 0) { key = new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false); return true; }
                     if (c == '[') { if (Csi(out key)) return true; continue; }
                     if (c == 'O') { if (Ss3(out key)) return true; continue; }
-                    if (c == ']') { SkipString(); continue; }
+                    if (c == ']')
+                    {
+                        if (SkipString()) continue;
+                        // ESC ] and nothing: Alt+].
+                        key = new ConsoleKeyInfo(']', ConsoleKey.Oem6, false, true, false);
+                        return true;
+                    }
                     if (c == 0x1B) { key = new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, true, false); return true; }
                     // Alt and a key.
                     ConsoleKeyInfo plain = Plain(c);
@@ -64,23 +71,14 @@ namespace SharpOS.AppSdk
             }
         }
 
-        // A byte that starts no sequence: a character, maybe UTF-8 lead.
+        // A byte that starts no sequence: a character, maybe UTF-8 lead. The
+        // key is what the kernel's key would be (ConsoleKeys, step243).
         private ConsoleKeyInfo Plain(int b)
         {
-            if (b == 0x0D || b == 0x0A) return new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false);
-            if (b == 0x7F || b == 0x08) return new ConsoleKeyInfo('\b', ConsoleKey.Backspace, false, false, false);
-            if (b == 0x09) return new ConsoleKeyInfo('\t', ConsoleKey.Tab, false, false, false);
-            if (b == 0x00) return new ConsoleKeyInfo(' ', ConsoleKey.Spacebar, false, false, true);
-            if (b >= 0x01 && b <= 0x1A) return new ConsoleKeyInfo((char)b, (ConsoleKey)((int)ConsoleKey.A + b - 1), false, false, true);
-            if (b < 0x20) return new ConsoleKeyInfo((char)b, ConsoleKey.None, false, false, true);
-
+            if (b == 0x00) return ConsoleKeys.FromChar(' ', ConsoleModifiers.Control);
             char c = (char)b;
             if (b >= 0x80) c = Utf8(b);
-            if (c == ' ') return new ConsoleKeyInfo(c, ConsoleKey.Spacebar, false, false, false);
-            if (c >= 'a' && c <= 'z') return new ConsoleKeyInfo(c, (ConsoleKey)((int)ConsoleKey.A + c - 'a'), false, false, false);
-            if (c >= 'A' && c <= 'Z') return new ConsoleKeyInfo(c, (ConsoleKey)((int)ConsoleKey.A + c - 'A'), true, false, false);
-            if (c >= '0' && c <= '9') return new ConsoleKeyInfo(c, (ConsoleKey)((int)ConsoleKey.D0 + c - '0'), false, false, false);
-            return new ConsoleKeyInfo(c, ConsoleKey.None, false, false, false);
+            return ConsoleKeys.FromChar(c, 0);
         }
 
         // The rest of a UTF-8 character; U+FFFD for a broken one.
@@ -216,15 +214,17 @@ namespace SharpOS.AppSdk
             return true;
         }
 
-        // An OSC answer: up to BEL or ESC \.
-        private void SkipString()
+        // An OSC answer: up to BEL or ESC \. False when nothing followed.
+        private bool SkipString()
         {
             for (int i = 0; i < 4096; i++)
             {
                 int b = _next(EscapeDelayMs);
-                if (b < 0 || b == 0x07) return;
-                if (b == 0x1B) { _next(EscapeDelayMs); return; }
+                if (b < 0) return i > 0;
+                if (b == 0x07) return true;
+                if (b == 0x1B) { _next(EscapeDelayMs); return true; }
             }
+            return true;
         }
     }
 

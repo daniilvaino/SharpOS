@@ -92,17 +92,29 @@ namespace Terminal.Gui
 
             SharpOS.AppSdk.UiLatency.KeyDispatched();
 
-            // Releases arrive with no character and are reported as key-up only:
-            // passing one to the ordinary handler would type the character twice.
-            if (key.HasRaw && !key.RawDown)
+            // As the stock WindowsDriver's ProcessInput: a press is key-down and
+            // the keystroke, a release key-up; an event with no key of its own
+            // (a modifier alone) goes down or up as that modifier.
+            bool down = !key.HasRaw || key.RawDown;
+            KeyModifiers modifiers = SharpOSKeyMap.Modifiers(key);
+            Key map = SharpOSKeyMap.MapKey(key.ToConsoleKeyInfo());
+            if (map == SharpOSKeyMap.NoKey)
             {
-                _keyUpHandler?.Invoke(SharpOSKeyMap.ToKeyEvent(key));
+                var alone = new KeyEvent(SharpOSKeyMap.ModifierKey(key), modifiers);
+                if (down) _keyDownHandler?.Invoke(alone);
+                else _keyUpHandler?.Invoke(alone);
                 return;
             }
 
-            KeyEvent ev = SharpOSKeyMap.ToKeyEvent(key);
-            _keyDownHandler?.Invoke(ev);
-            _keyHandler?.Invoke(ev);
+            if (down)
+            {
+                _keyDownHandler?.Invoke(new KeyEvent(map, modifiers));
+                _keyHandler?.Invoke(new KeyEvent(map, modifiers));
+            }
+            else
+            {
+                _keyUpHandler?.Invoke(new KeyEvent(map, modifiers));
+            }
         }
 
         internal void SetKeyHandlers(Action<KeyEvent> keyHandler,
@@ -117,8 +129,7 @@ namespace Terminal.Gui
         {
             if (AppHost.TryReadKey(out KeyInfo key) != AppServiceStatus.Ok) return false;
 
-            // A release with nothing else in it still has to travel: the library
-            // tracks modifier state, and swallowing key-up leaves Shift stuck on.
+            // A release travels too: the menu bar opens on Alt's.
             _pending = key;
             _hasPending = true;
             return true;

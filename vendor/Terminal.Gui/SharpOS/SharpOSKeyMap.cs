@@ -1,144 +1,180 @@
 ﻿// Turning a keyboard event into the key the library expects.
 //
-// The kernel reports two things about a keystroke: the character it produced,
-// if any, and the raw set-1 scan code with an extended flag and a make/break
-// bit. Both matter, and neither is sufficient alone —
+// The kernel hands over key events as Windows does: a press and a release, the
+// key as a ConsoleKeyInfo (built by the same function the terminal's bytes are
+// built with, SharpOS.Std.ConsoleKeys, step243), and the modifiers held. So the
+// mapping is the stock WindowsDriver's — MapKey and MapKeyModifiers copied from
+// Terminal.Gui/ConsoleDrivers/WindowsDriver.cs, and the modifier-alone events
+// as its ProcessInput makes them (Alt alone opens the menu bar on release).
 //
-//   * a character has no arrow keys, no function keys, no Home;
-//   * a scan code has no idea whether Shift was down, so it cannot tell A
-//     from a.
-//
-// So the character wins where there is one, and the scan code answers for
-// everything else. That is the same split the stock drivers make.
+// SharpOS cut: the NumPad cases of MapKey (the kernel reports the keypad as the
+// keys it types) and the ConsoleKeyInfoEx wrapper they needed.
 
+using System;
 using SharpOS.AppSdk;
 
 namespace Terminal.Gui
 {
     internal static class SharpOSKeyMap
     {
-        // Set-1 make codes for the modifiers. Tracked here because the kernel
-        // reports them as ordinary keys, and the library wants them as flags on
-        // the key that follows.
+        // Set-1 make codes of the modifiers, for the events of a modifier alone:
+        // WindowsDriver tells them by their virtual key codes.
         private const byte ScanLeftShift = 0x2A;
         private const byte ScanRightShift = 0x36;
         private const byte ScanCtrl = 0x1D;
         private const byte ScanAlt = 0x38;
 
-        private static bool s_shift;
-        private static bool s_ctrl;
-        private static bool s_alt;
+        /// <summary>No key in the event: a release, or a modifier alone.</summary>
+        public const Key NoKey = (Key)0xffffffff;
 
-        public static KeyEvent ToKeyEvent(KeyInfo info)
+        public static KeyModifiers Modifiers(KeyInfo info)
         {
-            TrackModifiers(info);
-
-            Key key = Translate(info);
-
-            // Shift is already in a character (A, ?, "): the stock drivers mark
-            // only keys without one, so Shift+arrows select. Marking characters
-            // made TextView drop every shifted one (step232: "/*" in EDIT).
-            if (s_shift && (key & Key.SpecialMask) != 0) key |= Key.ShiftMask;
-            if (s_alt) key |= Key.AltMask;
-
-            return new KeyEvent(key, new KeyModifiers
+            ConsoleModifiers m = info.Modifiers;
+            return new KeyModifiers
             {
-                Shift = s_shift,
-                Ctrl = s_ctrl,
-                Alt = s_alt,
-            });
+                Shift = (m & ConsoleModifiers.Shift) != 0,
+                Ctrl = (m & ConsoleModifiers.Control) != 0,
+                Alt = (m & ConsoleModifiers.Alt) != 0,
+            };
         }
 
-        private static void TrackModifiers(KeyInfo info)
+        /// <summary>The key of an event MapKey has none for (WindowsDriver: by virtual key code).</summary>
+        public static Key ModifierKey(KeyInfo info)
         {
-            if (!info.HasRaw) return;
-
-            bool down = info.RawDown;
-
+            if (!info.HasRaw) return Key.Unknown;
             switch (info.RawMake)
             {
                 case ScanLeftShift:
-                case ScanRightShift: s_shift = down; break;
-                case ScanCtrl: s_ctrl = down; break;
-                case ScanAlt: s_alt = down; break;
+                case ScanRightShift: return Key.ShiftMask;
+                case ScanCtrl: return Key.CtrlMask;
+                case ScanAlt: return Key.AltMask;
+                default: return Key.Unknown;
             }
         }
 
-        private static Key Translate(KeyInfo info)
+        public static Key MapKey(ConsoleKeyInfo keyInfo)
         {
-            if (info.HasRaw)
-            {
-                Key special = FromScanCode(info.RawMake, info.RawExtended);
-                if (special != Key.Unknown) return special;
+            switch (keyInfo.Key) {
+            case ConsoleKey.Escape:
+                return MapKeyModifiers (keyInfo, Key.Esc);
+            case ConsoleKey.Tab:
+                return keyInfo.Modifiers == ConsoleModifiers.Shift ? Key.BackTab : Key.Tab;
+            case ConsoleKey.Clear:
+                return MapKeyModifiers (keyInfo, Key.Clear);
+            case ConsoleKey.Home:
+                return MapKeyModifiers (keyInfo, Key.Home);
+            case ConsoleKey.End:
+                return MapKeyModifiers (keyInfo, Key.End);
+            case ConsoleKey.LeftArrow:
+                return MapKeyModifiers (keyInfo, Key.CursorLeft);
+            case ConsoleKey.RightArrow:
+                return MapKeyModifiers (keyInfo, Key.CursorRight);
+            case ConsoleKey.UpArrow:
+                return MapKeyModifiers (keyInfo, Key.CursorUp);
+            case ConsoleKey.DownArrow:
+                return MapKeyModifiers (keyInfo, Key.CursorDown);
+            case ConsoleKey.PageUp:
+                return MapKeyModifiers (keyInfo, Key.PageUp);
+            case ConsoleKey.PageDown:
+                return MapKeyModifiers (keyInfo, Key.PageDown);
+            case ConsoleKey.Enter:
+                return MapKeyModifiers (keyInfo, Key.Enter);
+            case ConsoleKey.Spacebar:
+                return MapKeyModifiers (keyInfo, keyInfo.KeyChar == 0 ? Key.Space : (Key)keyInfo.KeyChar);
+            case ConsoleKey.Backspace:
+                return MapKeyModifiers (keyInfo, Key.Backspace);
+            case ConsoleKey.Delete:
+                return MapKeyModifiers (keyInfo, Key.DeleteChar);
+            case ConsoleKey.Insert:
+                return MapKeyModifiers (keyInfo, Key.InsertChar);
+            case ConsoleKey.PrintScreen:
+                return MapKeyModifiers (keyInfo, Key.PrintScreen);
+
+            // SharpOS cut: ConsoleKey.NumPad0..NumPad9.
+
+            case ConsoleKey.Oem1:
+            case ConsoleKey.Oem2:
+            case ConsoleKey.Oem3:
+            case ConsoleKey.Oem4:
+            case ConsoleKey.Oem5:
+            case ConsoleKey.Oem6:
+            case ConsoleKey.Oem7:
+            case ConsoleKey.Oem8:
+            case ConsoleKey.Oem102:
+            case ConsoleKey.OemPeriod:
+            case ConsoleKey.OemComma:
+            case ConsoleKey.OemPlus:
+            case ConsoleKey.OemMinus:
+                if (keyInfo.KeyChar == 0)
+                    return Key.Unknown;
+
+                return (Key)((uint)keyInfo.KeyChar);
             }
 
-            char ch = (char)info.UnicodeChar;
-            if (ch == 0) return Key.Unknown;
+            var key = keyInfo.Key;
 
-            // Ctrl+letter as the stock drivers give it — the capital with
-            // CtrlMask: QuitKey is Key.Q | CtrlMask, TextView binds Key.Y |
-            // CtrlMask and so on. The control code (Ctrl+Q as 17) matched none
-            // of them (step230: EDIT did not quit). Shift rides along as a flag:
-            // Ctrl+Shift+S is a binding of its own.
-            if (s_ctrl && ch >= 'a' && ch <= 'z') return WithShift((Key)(ch - 'a' + 'A') | Key.CtrlMask);
-            if (s_ctrl && ch >= 'A' && ch <= 'Z') return WithShift((Key)ch | Key.CtrlMask);
-            // The kernel may report Ctrl+letter as its control code already.
-            if (s_ctrl && ch >= 1 && ch <= 26) return WithShift((Key)(ch - 1 + 'A') | Key.CtrlMask);
+            if (key >= ConsoleKey.A && key <= ConsoleKey.Z) {
+                var delta = key - ConsoleKey.A;
+                if (keyInfo.Modifiers == ConsoleModifiers.Control) {
+                    return (Key)(((uint)Key.CtrlMask) | ((uint)Key.A + delta));
+                }
+                if (keyInfo.Modifiers == ConsoleModifiers.Alt) {
+                    return (Key)(((uint)Key.AltMask) | ((uint)Key.A + delta));
+                }
+                if (keyInfo.Modifiers == (ConsoleModifiers.Shift | ConsoleModifiers.Alt)) {
+                    return MapKeyModifiers (keyInfo, (Key)((uint)Key.A + delta));
+                }
+                if ((keyInfo.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) {
+                    if (keyInfo.KeyChar == 0 || (keyInfo.KeyChar != 0 && keyInfo.KeyChar >= 1 && keyInfo.KeyChar <= 26)) {
+                        return MapKeyModifiers (keyInfo, (Key)((uint)Key.A + delta));
+                    }
+                }
+                return (Key)((uint)keyInfo.KeyChar);
+            }
+            if (key >= ConsoleKey.D0 && key <= ConsoleKey.D9) {
+                var delta = key - ConsoleKey.D0;
+                if (keyInfo.Modifiers == ConsoleModifiers.Alt) {
+                    return (Key)(((uint)Key.AltMask) | ((uint)Key.D0 + delta));
+                }
+                if (keyInfo.Modifiers == ConsoleModifiers.Control) {
+                    return (Key)(((uint)Key.CtrlMask) | ((uint)Key.D0 + delta));
+                }
+                if (keyInfo.Modifiers == (ConsoleModifiers.Shift | ConsoleModifiers.Alt)) {
+                    return MapKeyModifiers (keyInfo, (Key)((uint)Key.D0 + delta));
+                }
+                if ((keyInfo.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) {
+                    if (keyInfo.KeyChar == 0 || keyInfo.KeyChar == 30 || keyInfo.KeyChar == ((uint)Key.D0 + delta)) {
+                        return MapKeyModifiers (keyInfo, (Key)((uint)Key.D0 + delta));
+                    }
+                }
+                return (Key)((uint)keyInfo.KeyChar);
+            }
+            if (key >= ConsoleKey.F1 && key <= ConsoleKey.F12) {
+                var delta = key - ConsoleKey.F1;
+                if ((keyInfo.Modifiers & (ConsoleModifiers.Shift | ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) {
+                    return MapKeyModifiers (keyInfo, (Key)((uint)Key.F1 + delta));
+                }
 
-            // Alt+letter as the stock drivers give it — the capital: the menu
-            // bar compares its hotkeys upper-cased, and Alt+F never matched.
-            if (s_alt && ch >= 'a' && ch <= 'z') return (Key)(ch - 'a' + 'A');
+                return (Key)((uint)Key.F1 + delta);
+            }
+            if (keyInfo.KeyChar != 0) {
+                return MapKeyModifiers (keyInfo, (Key)((uint)keyInfo.KeyChar));
+            }
 
-            return (Key)ch;
+            return (Key)(0xffffffff);
         }
 
-        private static Key WithShift(Key key) => s_shift ? key | Key.ShiftMask : key;
-
-        /// <summary>
-        /// The keys that produce no character. Returns Unknown when the scan
-        /// code is an ordinary key, so the character path can have it.
-        /// </summary>
-        private static Key FromScanCode(byte make, bool extended)
+        private static Key MapKeyModifiers (ConsoleKeyInfo keyInfo, Key key)
         {
-            // Set-1 make codes. The navigation block appears twice on a PC
-            // keyboard — once as the dedicated keys (E0-prefixed) and once on
-            // the keypad with Num Lock off — and both send these codes, so the
-            // extended flag is not consulted for them.
-            switch (make)
-            {
-                case 0x01: return Key.Esc;
-                case 0x0E: return Key.Backspace;
-                case 0x0F: return s_shift ? Key.BackTab : Key.Tab;
-                case 0x1C: return Key.Enter;
+            Key keyMod = new Key ();
+            if ((keyInfo.Modifiers & ConsoleModifiers.Shift) != 0)
+                keyMod = Key.ShiftMask;
+            if ((keyInfo.Modifiers & ConsoleModifiers.Control) != 0)
+                keyMod |= Key.CtrlMask;
+            if ((keyInfo.Modifiers & ConsoleModifiers.Alt) != 0)
+                keyMod |= Key.AltMask;
 
-                case 0x48: return Key.CursorUp;
-                case 0x50: return Key.CursorDown;
-                case 0x4B: return Key.CursorLeft;
-                case 0x4D: return Key.CursorRight;
-                case 0x47: return Key.Home;
-                case 0x4F: return Key.End;
-                case 0x49: return Key.PageUp;
-                case 0x51: return Key.PageDown;
-                case 0x52: return Key.InsertChar;
-                case 0x53: return Key.DeleteChar;
-
-                // F1..F10 are consecutive from 0x3B; F11 and F12 are not, which
-                // is why they are named rather than folded into the range.
-                case 0x3B: return Key.F1;
-                case 0x3C: return Key.F2;
-                case 0x3D: return Key.F3;
-                case 0x3E: return Key.F4;
-                case 0x3F: return Key.F5;
-                case 0x40: return Key.F6;
-                case 0x41: return Key.F7;
-                case 0x42: return Key.F8;
-                case 0x43: return Key.F9;
-                case 0x44: return Key.F10;
-                case 0x57: return Key.F11;
-                case 0x58: return Key.F12;
-            }
-
-            return Key.Unknown;
+            return keyMod != Key.Null ? keyMod | key : key;
         }
     }
 }

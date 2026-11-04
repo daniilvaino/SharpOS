@@ -1,4 +1,6 @@
+using System;
 using OS.Hal;
+using SharpOS.Std;
 
 namespace OS.Kernel.Input
 {
@@ -11,7 +13,8 @@ namespace OS.Kernel.Input
     /// Keys come from the same events as the raw key service
     /// (Keyboard.TryReadKeyRaw): one source, one modifier latch, so a game
     /// reading raw events and a shell reading bytes never take each other's
-    /// half of a key. A press becomes what xterm sends for it: a printable
+    /// half of a key. A press becomes what xterm sends for it
+    /// (SharpOS.Std.ConsoleKeys, shared with the readers): a printable
     /// key UTF-8, Enter CR, Backspace DEL, Ctrl+letter its control byte, Alt
     /// an ESC before the key, the arrows and the navigation cluster CSI
     /// sequences, F1–F4 SS3 and F5–F12 CSI n ~, modifiers on those as
@@ -78,7 +81,7 @@ namespace OS.Kernel.Input
                 if (status == KeyReadStatus.Unsupported) return n > 0 ? n : -1;
                 if (status != KeyReadStatus.KeyAvailable) break;
 
-                int length = Encode(info.UnicodeChar, info.ScanCode, key);
+                int length = Encode(info.UnicodeChar, info.ScanCode, raw, key);
                 if (length > 0) TerminalConsole.KeyForProgram();
                 int i = 0;
                 for (; i < length && n < capacity; i++) buffer[n++] = key[i];
@@ -92,102 +95,17 @@ namespace OS.Kernel.Input
         }
 
         // One key press as a terminal's bytes; 0 for a release or a modifier.
-        private static int Encode(ushort unicode, ushort scan, byte* o)
+        // The key is the one the raw key service hands out (step243), with the
+        // modifiers stamped on the event when it was decoded.
+        private static int Encode(ushort unicode, ushort scan, uint raw, byte* o)
         {
-            bool shift = Ps2Keyboard.ShiftHeld, alt = Ps2Keyboard.AltHeld, ctrl = Ps2Keyboard.CtrlHeld;
-            int modifier = 1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0);
-
-            if (unicode != 0)
-            {
-                int n = 0;
-                if (alt) o[n++] = 0x1B;
-                char c = (char)unicode;
-                if (c == '\t' && shift) return Csi(o, 0, 'Z', 1);       // back-tab, ESC [ Z
-                if (c == '\r' || c == '\n') { o[n++] = 0x0D; return n; }
-                if (c == '\b') { o[n++] = 0x7F; return n; }
-                return n + Utf8(c, o + n);
-            }
-
-            switch (scan)
-            {
-                case 0x01: return Csi(o, 1, 'A', modifier);
-                case 0x02: return Csi(o, 1, 'B', modifier);
-                case 0x03: return Csi(o, 1, 'C', modifier);
-                case 0x04: return Csi(o, 1, 'D', modifier);
-                case 0x05: return Csi(o, 1, 'H', modifier);
-                case 0x06: return Csi(o, 1, 'F', modifier);
-                case 0x07: return Tilde(o, 2, modifier);
-                case 0x08: return Tilde(o, 3, modifier);
-                case 0x09: return Tilde(o, 5, modifier);
-                case 0x0A: return Tilde(o, 6, modifier);
-                case 0x0B: return Ss3(o, 'P', modifier);
-                case 0x0C: return Ss3(o, 'Q', modifier);
-                case 0x0D: return Ss3(o, 'R', modifier);
-                case 0x0E: return Ss3(o, 'S', modifier);
-                case 0x0F: return Tilde(o, 15, modifier);
-                case 0x10: return Tilde(o, 17, modifier);
-                case 0x11: return Tilde(o, 18, modifier);
-                case 0x12: return Tilde(o, 19, modifier);
-                case 0x13: return Tilde(o, 20, modifier);
-                case 0x14: return Tilde(o, 21, modifier);
-                case 0x15: return Tilde(o, 23, modifier);
-                case 0x16: return Tilde(o, 24, modifier);
-                case 0x17: o[0] = 0x1B; return 1;
-                default: return 0;
-            }
-        }
-
-        // ESC [ final, or ESC [ 1 ; m final with modifiers (xterm).
-        private static int Csi(byte* o, int parameter, char final, int modifier)
-        {
-            int n = 0;
-            o[n++] = 0x1B; o[n++] = (byte)'[';
-            if (modifier > 1)
-            {
-                n += Digits(parameter, o + n);
-                o[n++] = (byte)';';
-                n += Digits(modifier, o + n);
-            }
-            o[n++] = (byte)final;
-            return n;
-        }
-
-        // ESC [ n ~, or ESC [ n ; m ~.
-        private static int Tilde(byte* o, int number, int modifier)
-        {
-            int n = 0;
-            o[n++] = 0x1B; o[n++] = (byte)'[';
-            n += Digits(number, o + n);
-            if (modifier > 1)
-            {
-                o[n++] = (byte)';';
-                n += Digits(modifier, o + n);
-            }
-            o[n++] = (byte)'~';
-            return n;
-        }
-
-        // F1–F4: ESC O P..S; with modifiers ESC [ 1 ; m P..S.
-        private static int Ss3(byte* o, char final, int modifier)
-        {
-            if (modifier > 1) return Csi(o, 1, final, modifier);
-            o[0] = 0x1B; o[1] = (byte)'O'; o[2] = (byte)final;
-            return 3;
-        }
-
-        private static int Digits(int value, byte* o)
-        {
-            if (value >= 10) { o[0] = (byte)('0' + value / 10); o[1] = (byte)('0' + value % 10); return 2; }
-            o[0] = (byte)('0' + value);
-            return 1;
-        }
-
-        private static int Utf8(char c, byte* o)
-        {
-            if (c < 0x80) { o[0] = (byte)c; return 1; }
-            if (c < 0x800) { o[0] = (byte)(0xC0 | (c >> 6)); o[1] = (byte)(0x80 | (c & 0x3F)); return 2; }
-            o[0] = (byte)(0xE0 | (c >> 12)); o[1] = (byte)(0x80 | ((c >> 6) & 0x3F)); o[2] = (byte)(0x80 | (c & 0x3F));
-            return 3;
+            if (raw != 0 && (raw & 0x200u) == 0) return 0;              // a release
+            ConsoleModifiers modifiers = 0;
+            if ((raw & 0x400u) != 0) modifiers |= ConsoleModifiers.Shift;
+            if ((raw & 0x800u) != 0) modifiers |= ConsoleModifiers.Control;
+            if ((raw & 0x1000u) != 0) modifiers |= ConsoleModifiers.Alt;
+            ConsoleKeyInfo key = ConsoleKeys.FromKeyboard((char)unicode, scan, modifiers);
+            return ConsoleKeys.ToTerminal(key, new Span<byte>(o, CarrySize));
         }
     }
 }

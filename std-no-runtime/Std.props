@@ -143,6 +143,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)CharHelpers.cs" Link="std\CharHelpers.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ComponentModel.cs" Link="std\ComponentModel.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ConsoleTypes.cs" Link="std\ConsoleTypes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ConsoleKeys.cs" Link="std\ConsoleKeys.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)DateTime.cs" Link="std\DateTime.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)DefaultMemberAttribute.cs" Link="std\DefaultMemberAttribute.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)EventHandling.cs" Link="std\EventHandling.cs" />

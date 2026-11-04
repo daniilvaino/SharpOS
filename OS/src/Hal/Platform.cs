@@ -283,6 +283,9 @@ namespace OS.Hal
         //   bits 0..7  set-1 make code
         //   bit  8     extended (0xE0-prefixed)
         //   bit  9     1 = key down (make), 0 = key up (break)
+        //   bits 10–12 Shift, Ctrl, Alt held after this event (step243): the
+        //              modifiers of the key, read when it is decoded — the
+        //              terminal's bytes are built from the same event
         //   bit  31    raw info present
         // unicodeChar/scanCode carry the legacy launcher mapping for presses
         // (zeros for releases/modifiers — the launcher ignores unmatched
@@ -307,13 +310,21 @@ namespace OS.Hal
                 raw = (uint)make
                     | (extended ? 0x100u : 0u)
                     | (isBreak ? 0u : 0x200u)
+                    | (Ps2Keyboard.ShiftHeld ? 0x400u : 0u)
+                    | (Ps2Keyboard.CtrlHeld ? 0x800u : 0u)
+                    | (Ps2Keyboard.AltHeld ? 0x1000u : 0u)
                     | 0x80000000u;
 
                 if (!isBreak)
                 {
                     switch (kind)
                     {
-                        case Ps2Keyboard.KeyKind.Char: unicodeChar = pch; break;
+                        // Ctrl+letter as the letter (step243): its control code
+                        // is Backspace's, Tab's or Enter's for H, I, M — the
+                        // raw event keeps which key it was, ConsoleKeys folds.
+                        case Ps2Keyboard.KeyKind.Char:
+                            unicodeChar = Ps2Keyboard.CtrlHeld && pch >= 1 && pch <= 26 ? (ushort)('a' + pch - 1) : pch;
+                            break;
                         case Ps2Keyboard.KeyKind.Enter: unicodeChar = 0x0D; break;
                         case Ps2Keyboard.KeyKind.Backspace: unicodeChar = 0x08; break;
                         case Ps2Keyboard.KeyKind.Escape: scanCode = 0x17; break;

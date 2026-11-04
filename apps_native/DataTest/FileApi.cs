@@ -74,14 +74,22 @@ namespace DataApps
             Check("24: DirectoryInfo: files, parent, name",
                   dir.GetFiles().Length == 2 && dir.Parent.FullName == Process.ResolvePath(Root) && dir.Name == "sub");
 
+            // The kernel's boot log grows on the same volume (step238): a cluster
+            // it takes between two readings is not the test's. Exact, retried.
             var drive = new DriveInfo("/");
-            long free = drive.TotalFreeSpace;
-            File.WriteAllBytes(Root + "/mega.bin", new byte[1024 * 1024]);
-            long after = drive.TotalFreeSpace;
-            File.Delete(Root + "/mega.bin");
-            long back = drive.TotalFreeSpace;
+            long free = 0, after = 0, back = 0;
+            bool exact = false;
+            for (int attempt = 0; attempt < 5 && !exact; attempt++)
+            {
+                free = drive.TotalFreeSpace;
+                File.WriteAllBytes(Root + "/mega.bin", new byte[1024 * 1024]);
+                after = drive.TotalFreeSpace;
+                File.Delete(Root + "/mega.bin");
+                back = drive.TotalFreeSpace;
+                exact = free - after == 1024 * 1024 && back == free;
+            }
             Check("24: DriveInfo: a MiB written takes a MiB, deleted gives it back (" + free.ToString() + " / " + after.ToString() + " / " + back.ToString() + ")",
-                  drive.TotalSize > 0 && free - after == 1024 * 1024 && back == free);
+                  drive.TotalSize > 0 && exact);
 
             List<string> ls = Lines("ls -l t24");
             bool sizeShown = false, dirShown = false;
