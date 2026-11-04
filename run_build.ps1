@@ -483,6 +483,11 @@ $licences = [ordered]@{
     'ManagedDoom-GPL-2.0.txt'           = 'apps_native\GPL_AHEAD_WARNING_DOOM_managed\licenses\LICENSE_ManagedDoom.txt'
     'TriCNES.txt'                       = 'apps_native\TriCNES\TriCNES\LICENSE'
     'Fami.txt'                          = 'apps_native\Fami\Fami\LICENSE'
+    'AccuracyCoin.txt'                  = 'vendor\AccuracyCoin\LICENSE'
+    'Famidash.txt'                      = 'vendor\FamiDash\LICENSE'
+    'SerenityOS-HDA.txt'                = 'OS\src\Hal\Audio\Hda\LICENSE-SerenityOS.txt'
+    'MeltySynth.txt'                    = 'vendor\MeltySynth\LICENSE.txt'
+    'TimGM6mb-GPL-2.0.txt'              = 'vendor\TimGM6mb\LICENSE'
 }
 $licenceCount = 0
 foreach ($entry in $licences.GetEnumerator()) {
@@ -1038,6 +1043,13 @@ if (Test-Path -LiteralPath $payloadDir) {
 foreach ($romName in ($roms.Keys | Sort-Object)) {
     Copy-Item -LiteralPath $roms[$romName].FullName -Destination (Join-Path $espDirs['games'] $romName) -Force
     Write-Host "Prepared cartridge: $romName"
+}
+# DOOM's music (step250): ManagedDoom's default SoundFont, from vendor\TimGM6mb
+# (GPL-2.0, as DOOM is), beside DOOM.EXE where SharpMusic looks for it.
+$soundFont = Join-Path $repoRoot "vendor\TimGM6mb\TimGM6mb.sf2"
+if (Test-Path -LiteralPath $soundFont) {
+    Copy-Item -LiteralPath $soundFont -Destination (Join-Path $espDirs['games'] "TimGM6mb.sf2") -Force
+    Write-Host "Prepared SoundFont: TimGM6mb.sf2"
 }
 # The single slot of earlier builds: left there it would be a cartridge nobody named.
 $oldSlot = Join-Path $espDirs['games'] "GAME.NES"

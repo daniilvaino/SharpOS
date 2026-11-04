@@ -15,6 +15,9 @@ namespace DoomApp
     // Exit codes: 42 = clean quit, 1 = managed exception (printed).
     internal static unsafe class Entry
     {
+        // ManagedDoom's default SoundFont (config audio_soundfont), staged by
+        // the build beside DOOM from vendor/TimGM6mb.
+        private const string SoundFontPath = "/games/TimGM6mb.sf2";
 
         [RuntimeExport("SharpAppEntry")]
         private static int SharpAppEntry(ulong startupPointer)
@@ -54,19 +57,22 @@ namespace DoomApp
 
                 var input = new SharpUserInput(config);
 
-                // Sound effects on the sound card (step250); none without one.
-                // Music is not played: SilkMusic synthesises MIDI from a
-                // SoundFont the image does not carry.
+                // Sound effects on the sound card (step249) and music on a
+                // stream of its own (step250: MeltySynth with the SoundFont
+                // the build stages beside DOOM); neither without a card.
                 SharpSound sound = null;
+                SharpMusic music = null;
                 if (SharpOS.AppSdk.Audio.Available)
                 {
                     sound = new SharpSound(config, content);
                     Console.Write("doom: sound ");
                     Console.Write(SharpOS.AppSdk.Audio.SampleRate);
                     Console.Write(" Hz\n");
+                    music = SharpMusic.TryCreate(config, content, SoundFontPath);
+                    Console.Write(music != null ? "doom: music " + SoundFontPath + "\n" : "doom: no music (" + SoundFontPath + ")\n");
                 }
 
-                var doom = new Doom(args, config, content, video, sound, null, input);
+                var doom = new Doom(args, config, content, video, sound, music, input);
                 Console.Write("doom: core up, running\n");
 
                 // 35 Hz pacing off the HPET (step143). Without a time source
@@ -90,6 +96,7 @@ namespace DoomApp
 
                     if (video != null)
                         video.Render(doom, Fixed.One);
+                    music?.Pump();
 
                     if (paced)
                     {

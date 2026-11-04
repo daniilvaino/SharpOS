@@ -455,7 +455,9 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 
 ## Сторонние приложения
 
-- **[ManagedDoom](https://github.com/sinshu/managed-doom)** (sinshu, GPL-2.0) - играбелен. GPL-код изолирован в отдельном приложении и в ядро не линкуется.
+- **[ManagedDoom](https://github.com/sinshu/managed-doom)** (sinshu, GPL-2.0) - играбелен, со звуком и музыкой. GPL-код изолирован в отдельном приложении и в ядро не линкуется.
+- **[MeltySynth](https://github.com/sinshu/meltysynth)** (Nobuaki Tanaka, MIT, `vendor/MeltySynth/`) - синтез MIDI по SoundFont для музыки DOOM.
+- **TimGM6mb** (Tim Brechbill, GPL-2.0, `vendor/TimGM6mb/`) - SoundFont General MIDI для музыки DOOM, `\games\TimGM6mb.sf2`.
 - **[TriCNES](https://github.com/100thCoin/TriCNES)** (Chris Siebert, MIT, подмодуль) - эмулятор NES, точный: 141/141 на [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin), но для игр бывает медленноват.
 - **[Fami](https://github.com/RupertAvery/Fami)** (David Khristepher Santos, MIT, подмодуль) - эмулятор NES, играбелен, не идеален.
 - **[AccuracyCoin](https://github.com/100thCoin/AccuracyCoin)** (Chris Siebert, MIT, `vendor/AccuracyCoin/`) - картридж с тестами точности NES, `\games\ACCURACYCOIN.NES`.

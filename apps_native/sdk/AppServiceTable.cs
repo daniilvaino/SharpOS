@@ -403,6 +403,11 @@ namespace SharpOS.AppSdk
         // int Speaker(int hz, int ms) (step248): the PC speaker for ms, without
         // waiting; 0 Hz stops it; negative without one. Zero: an older kernel.
         public ulong SpeakerAddress;
+
+        // int AudioStream(int op, int stream, byte* pcm, int length)
+        // (step250): more streams than the default one — 0 open, 1 write,
+        // 2 queued, 3 free, 4 drop, 5 close. Zero: an older kernel.
+        public ulong AudioStreamAddress;
     }
 
     /// <summary>

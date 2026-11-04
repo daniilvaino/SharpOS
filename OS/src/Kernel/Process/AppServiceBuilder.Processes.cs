@@ -852,6 +852,7 @@ namespace OS.Kernel.Process
             ulong e2 = Ticks();
             ReleaseHeap(proc);
             CloseFilesOf(proc.Id);
+            OS.Kernel.Audio.AudioOut.OnProcessEnded(proc.Id);
             ulong e3 = Ticks();
 
             if (!CleanupProcessMappings(ref proc.Built, ref proc.Image))

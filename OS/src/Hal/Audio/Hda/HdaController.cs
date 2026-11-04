@@ -37,17 +37,41 @@ namespace OS.Hal.Audio.Hda
         private readonly List<HdaCodec> _codecs = new List<HdaCodec>();
         private HdaOutputPath _path;
 
+        /// <summary>One line per controller tried, for the boot log: which, and what came of it.</summary>
+        public static readonly List<string> Report = new List<string>();
+
+        // Every HD Audio controller, the first with an output path wins. A
+        // Ryzen laptop has two: the GPU's, whose codec has only HDMI/DP pins
+        // (digital, not taken), and the analog one with the speakers — and the
+        // GPU's came first by PCI order (step250, rig: "no output path").
         public static bool Start()
         {
-            var controller = new HdaController();
-            if (!controller.Initialize(out string why))
+            Pci.Init();
+            HdaController chosen = null;
+            for (int i = 0; i < Pci.Count && chosen == null; i++)
             {
-                Missing = why;
+                Pci.PciDev dev = Pci.Get(i);
+                if (dev.ClassID != 0x04 || dev.SubClassID != 0x03) continue;
+                var controller = new HdaController();
+                bool ok = controller.Initialize(dev, out string why);
+                Report.Add(dev.Bus.ToString() + ":" + dev.Slot.ToString() + "." + dev.Func.ToString()
+                         + " " + Hex(dev.VendorID) + ":" + Hex(dev.DeviceID)
+                         + " " + controller.DescribeCodecs()
+                         + (ok ? " -> path " + controller._path.Describe() : " -> " + why));
+                if (ok) chosen = controller; else Missing = why;
+            }
+            if (chosen == null)
+            {
+                if (Report.Count == 0) Missing = "no device";
                 return false;
             }
-            s_instance = controller;
-            AudioOut.Attach((int)controller._path.Stream.CurrentFormat.SampleRate);
-            controller._path.Stream.Start();
+            s_instance = chosen;
+            HdaCodec playing = chosen._path.Output.Codec;
+            Codec = Hex(playing.Root.VendorId) + ":" + Hex(playing.Root.DeviceId);
+            Summary = "codec " + Codec + " path " + chosen._path.Describe()
+                    + " " + chosen._path.Stream.CurrentFormat.SampleRate.ToString() + " Hz";
+            AudioOut.Attach((int)chosen._path.Stream.CurrentFormat.SampleRate);
+            chosen._path.Stream.Start();
             OS.Kernel.Threading.Scheduler.Spawn(&FeedEntry, 16 * 1024);
             return true;
         }
@@ -62,11 +86,29 @@ namespace OS.Hal.Audio.Hda
             }
         }
 
-        private bool Initialize(out string why)
+        // Codecs as "vendor:device(pins)", the pins being the output-capable
+        // pin complexes as default device / connectivity — what decides
+        // whether a path is found.
+        private string DescribeCodecs()
         {
-            Pci.Init();
-            // Class 04 (multimedia), subclass 03 (HD Audio).
-            if (!Pci.TryFind(0x04, 0x03, out Pci.PciDev dev)) { why = "no device"; return false; }
+            if (_codecs.Count == 0) return "no codecs";
+            string s = "";
+            foreach (HdaCodec codec in _codecs)
+            {
+                string pins = "";
+                foreach (HdaWidget w in codec.Widgets())
+                {
+                    if (w.WidgetType != WidgetType.PinComplex || !w.PinOutputSupported) continue;
+                    pins += (pins.Length == 0 ? "" : ",") + w.NodeId.ToString() + "=" + ((int)w.DefaultDevice).ToString("x")
+                          + "/" + ((int)w.PortConnectivity).ToString();
+                }
+                s += (s.Length == 0 ? "" : " ") + "codec " + Hex(codec.Root.VendorId) + ":" + Hex(codec.Root.DeviceId) + "(" + pins + ")";
+            }
+            return s;
+        }
+
+        private bool Initialize(Pci.PciDev dev, out string why)
+        {
             if ((dev.Bar0 & 1) != 0) { why = "BAR0 not memory"; return false; }
             ulong mmio = dev.Bar0 & ~0xFul;
             if ((dev.Bar0 & 0x6) == 0x4) mmio |= (ulong)dev.Bar1 << 32;    // 64-bit BAR
@@ -107,15 +149,7 @@ namespace OS.Hal.Audio.Hda
             }
             if (_codecs.Count == 0) { why = "no codec answered"; return false; }
 
-            if (!ConfigureOutputRoute(out why)) return false;
-
-            HdaCodec playing = _path.Output.Codec;
-            Codec = Hex(playing.Root.VendorId) + ":" + Hex(playing.Root.DeviceId);
-            Summary = "codec " + Codec
-                    + " path " + _path.Describe()
-                    + " " + _path.Stream.CurrentFormat.SampleRate.ToString() + " Hz";
-            why = "";
-            return true;
+            return ConfigureOutputRoute(out why);
         }
 
         private static string Hex(ushort value) => value.ToString("x4");

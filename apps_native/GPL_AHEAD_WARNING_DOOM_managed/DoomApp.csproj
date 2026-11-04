@@ -18,6 +18,10 @@
     <Compile Include="GopVideo.cs" />
     <Compile Include="SharpUserInput.cs" />
     <Compile Include="SharpSound.cs" />
+    <Compile Include="SharpMusic.cs" />
+    <!-- MeltySynth (MIT, vendor/MeltySynth): MIDI synthesis for the music, as
+         the original Silk build took it from NuGet. -->
+    <Compile Include="..\..\vendor\MeltySynth\src\*.cs" Link="MeltySynth\%(Filename)%(Extension)" />
 
     <!-- Top-level glue the core orchestrator (Doom.cs ctor) requires. -->
     <Compile Include="ManagedDoom\src\ApplicationInfo.cs" />

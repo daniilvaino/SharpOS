@@ -375,6 +375,7 @@ namespace OS.Kernel.Process
             table.AudioWriteAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&AudioWrite;
             table.AudioControlAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&AudioControl;
             table.SpeakerAddress = (ulong)(nint)(delegate* unmanaged<int, int, int>)&Speaker;
+            table.AudioStreamAddress = (ulong)(nint)(delegate* unmanaged<int, int, byte*, int, int>)&AudioStream;
                 table.ExceptionHeadAddress = (ulong)OS.Boot.EH.ExInfoHead.GetHeadAddress();
                 table.ProcessAddress = (ulong)(nint)(delegate* unmanaged<int, ulong*, int>)&ProcessService;
                 if (OS.Kernel.Diagnostics.Probes.PipeProbe)
@@ -1363,27 +1364,64 @@ namespace OS.Kernel.Process
         private static int AppRegionFromKernel(ulong* answer)
             => OS.Kernel.Diagnostics.RegionIntakeProbe.Give(answer);
 
-        // Sound (step246); see AudioOut.
+        // Sound (step246); see AudioOut. AudioWrite and AudioControl speak to
+        // the calling process's default stream (step250: one of the mixer's).
+        private static uint AudioOwner => AppProcesses.Current?.Id ?? 0;
+
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static int AudioWrite(byte* pcm, int length)
         {
             if (!OS.Kernel.Audio.AudioOut.Present) return -(int)AppServiceStatus.Unsupported;
             if (pcm == null || length < 0) return -(int)AppServiceStatus.InvalidParameter;
-            return OS.Kernel.Audio.AudioOut.Write(pcm, length);
+            uint owner = AudioOwner;
+            int stream = OS.Kernel.Audio.AudioOut.DefaultOf(owner);
+            if (stream < 0) return 0;          // every stream taken: nothing fits
+            return OS.Kernel.Audio.AudioOut.Write(stream, owner, pcm, length);
         }
 
         [System.Runtime.InteropServices.UnmanagedCallersOnly]
         private static int AudioControl(int op)
         {
             if (!OS.Kernel.Audio.AudioOut.Present) return -(int)AppServiceStatus.Unsupported;
+            if (op == 0) return OS.Kernel.Audio.AudioOut.SampleRate;
+            uint owner = AudioOwner;
+            int stream = OS.Kernel.Audio.AudioOut.DefaultOf(owner);
+            if (stream < 0) return op == 1 ? 0 : op == 2 ? 0 : -(int)AppServiceStatus.Unsupported;
             switch (op)
             {
-                case 0: return OS.Kernel.Audio.AudioOut.SampleRate;
-                case 1: return OS.Kernel.Audio.AudioOut.Queued;
-                case 2: return OS.Kernel.Audio.AudioOut.Free;
-                case 3: OS.Kernel.Audio.AudioOut.Clear(); return 0;
+                case 1: return OS.Kernel.Audio.AudioOut.Queued(stream, owner);
+                case 2: return OS.Kernel.Audio.AudioOut.Free(stream, owner);
+                case 3: OS.Kernel.Audio.AudioOut.Clear(stream, owner); return 0;
                 default: return -(int)AppServiceStatus.InvalidParameter;
             }
+        }
+
+        // int AudioStream(int op, int stream, byte* pcm, int length) (step250):
+        // 0 opens a stream (its id), 1 writes (bytes taken), 2 queued bytes,
+        // 3 free bytes, 4 drops what is queued, 5 closes. Negative: no card,
+        // no such stream of the caller's, or none free to open.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int AudioStream(int op, int stream, byte* pcm, int length)
+        {
+            if (!OS.Kernel.Audio.AudioOut.Present) return -(int)AppServiceStatus.Unsupported;
+            uint owner = AudioOwner;
+            int result;
+            switch (op)
+            {
+                case 0:
+                    result = OS.Kernel.Audio.AudioOut.Open(owner);
+                    return result < 0 ? -(int)AppServiceStatus.LimitReached : result;
+                case 1:
+                    if (pcm == null || length < 0) return -(int)AppServiceStatus.InvalidParameter;
+                    result = OS.Kernel.Audio.AudioOut.Write(stream, owner, pcm, length);
+                    break;
+                case 2: result = OS.Kernel.Audio.AudioOut.Queued(stream, owner); break;
+                case 3: result = OS.Kernel.Audio.AudioOut.Free(stream, owner); break;
+                case 4: result = OS.Kernel.Audio.AudioOut.Clear(stream, owner) ? 0 : -1; break;
+                case 5: result = OS.Kernel.Audio.AudioOut.Close(stream, owner) ? 0 : -1; break;
+                default: return -(int)AppServiceStatus.InvalidParameter;
+            }
+            return result < 0 ? -(int)AppServiceStatus.NotFound : result;
         }
 
         // The PC speaker (step248); see PcSpeaker.

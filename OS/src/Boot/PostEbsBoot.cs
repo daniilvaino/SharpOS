@@ -254,7 +254,13 @@ namespace OS.Boot
             {
                 // HD Audio first — every machine since the mid-2000s; AC'97 for
                 // the older ones and QEMU's -device AC97.
-                if (OS.Hal.Audio.Hda.HdaController.Start())
+                bool hda = OS.Hal.Audio.Hda.HdaController.Start();
+                foreach (string line in OS.Hal.Audio.Hda.HdaController.Report)
+                {
+                    Console.Write("[audio] hda ");
+                    Console.WriteLine(line);
+                }
+                if (hda)
                 {
                     Console.Write("[audio] hda ");
                     Console.WriteLine(OS.Hal.Audio.Hda.HdaController.Summary);

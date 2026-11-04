@@ -472,6 +472,13 @@ namespace OS.Kernel.Process
         // for ms, without waiting; 0 Hz stops it. 0, or negative without the
         // speaker (channel 2 of the PIT does not count). Zero: an older kernel.
         public ulong SpeakerAddress;
+
+        // int AudioStream(int op, int stream, byte* pcm, int length)
+        // (step250): the mixer's streams beyond a process's default one —
+        // 0 open (id), 1 write (bytes taken), 2 queued, 3 free, 4 drop what is
+        // queued, 5 close. Streams close with their process. Negative: no
+        // card, no such stream, none free. Zero: an older kernel.
+        public ulong AudioStreamAddress;
     }
 
     /// <summary>

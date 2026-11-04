@@ -1288,6 +1288,69 @@
     },
     {
       "type": "library",
+      "name": "MeltySynth",
+      "version": "4ba079c9ee1453b03be7e164d254f48426f0aac3",
+      "supplier": {
+        "name": "Nobuaki Tanaka"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "pedigree": {
+        "notes": "2.4.1; two lines marked SharpOS cut (AsSpan for C# 14 overload resolution); vendor/MeltySynth/PROVENANCE.md."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/MeltySynth/src -> DOOM.EXE (music synthesis)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sinshu/meltysynth"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "name": "TimGM6mb",
+      "version": "managed-doom v2.1a release",
+      "supplier": {
+        "name": "Tim Brechbill"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-2.0-only"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c5378b62028c920cb11e4803327983fee2f2cdff5dc89c708e39da417e51c854"
+        }
+      ],
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "vendor/TimGM6mb/TimGM6mb.sf2 -> \\games\\TimGM6mb.sf2 (DOOM music SoundFont)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/sinshu/managed-doom/releases/tag/v2.1a"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "Microsoft C runtime (libcmt) and Windows SDK libraries",
       "version": "MSVC 14.44.35220, Windows SDK 10.0.26100",
       "scope": "optional",

@@ -74,11 +74,9 @@ AvaloniaEdit из tui-cs/Editor, `.xshd` читает `XmlReader` из BCL, step
 Сделано: AC'97 (QEMU), служба `AudioWrite`, `SharpOS.AppSdk.Audio`, `tone` —
 `done/step246.md`; Intel HD Audio (порт SerenityOS) — `done/step247.md`; PC speaker,
 `Console.Beep`, `beep` — `done/step248.md`; звук DOOM (эффекты) и Fami —
-`done/step249.md`. Осталось:
-
-- Музыка DOOM: синтез MIDI по SoundFont (какой и под какой лицензией).
-- Микшер: несколько программ сразу.
-- HD Audio на стенде (железо): выбор пина, переключение по гнезду.
+`done/step249.md`; микшер в ядре и музыка DOOM (MeltySynth, TimGM6mb) —
+`done/step250.md` (там же — HD Audio на стенде: Realtek ALC236, динамик). Раздел
+закрыт; переключение на наушники по гнезду — в donext.
 
 ## 9. Ошибки (не CoreCLR)
 
