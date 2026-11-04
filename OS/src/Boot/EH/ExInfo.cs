@@ -77,6 +77,9 @@ namespace OS.Boot.EH
 
         public static ExInfo* Current => (ExInfo*)s_head;
 
+        /// <summary>An exception is being dispatched on this thread (CoreLib's KernelServices.ExceptionInFlight).</summary>
+        public static bool InFlight() => s_head != IntPtr.Zero;
+
         /// <summary>
         /// Unlinks every entry below <paramref name="resumeSp"/>: their frames
         /// are being unwound. Stock NativeAOT does the same when a catch

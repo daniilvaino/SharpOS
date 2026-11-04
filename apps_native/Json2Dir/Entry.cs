@@ -21,13 +21,6 @@ internal static unsafe class AppEntry
         return AppRuntime.Finish(Program.Main(AppHost.Arguments));
     }
 
-    [RuntimeExport("SharpAppBootstrap")]
-    private static int SharpAppBootstrap(ulong startupPointer)
-    {
-        RuntimeImports.ManagedStartup();
-        return SharpAppEntry(startupPointer);
-    }
-
     // The C# entry point (StartupObject): without arguments, as every app
     // here has it — ILC cannot start a freestanding image at Main(string[]).
     private static int Main() => Program.Main(AppHost.Arguments);

@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <IlcSystemModule>Json2Dir</IlcSystemModule>
     <!-- Two Mains: json2dir's takes string[], which ILC cannot start a
          freestanding image with — the C# entry point is AppEntry's. The
          kernel enters through SharpAppEntry (Entry.cs). -->

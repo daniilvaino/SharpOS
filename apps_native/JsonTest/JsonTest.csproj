@@ -2,7 +2,6 @@
   <PropertyGroup>
     <!-- Where the image puts it (tools/Apps.ps1, step207). -->
     <SharpOsCategory>tests</SharpOsCategory>
-    <IlcSystemModule>JsonTest</IlcSystemModule>
   </PropertyGroup>
 
   <!-- The freestanding win-x64 PE recipe every AOT app uses. -->

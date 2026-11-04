@@ -126,6 +126,15 @@ namespace OS.Boot
             // that led to the panic. Costs a manual `run_build.ps1 -Stop`.
             Panic.Mode = PanicMode.Halt;
 
+            // What CoreLib's kernel tier needs from the kernel: CoreLib is its
+            // own assembly and cannot name the kernel (KernelServices). The
+            // kernel heap follows once it exists (InitializeHeap).
+            SharpOS.Std.NoRuntime.KernelServices.Fail = &Panic.Fail;
+            SharpOS.Std.NoRuntime.KernelServices.Write = &OS.Hal.Console.Write;
+            SharpOS.Std.NoRuntime.KernelServices.WriteLine = &OS.Hal.Console.WriteLine;
+            SharpOS.Std.NoRuntime.KernelServices.WriteChar = &OS.Hal.Console.WriteChar;
+            SharpOS.Std.NoRuntime.KernelServices.ExceptionInFlight = &OS.Boot.EH.ExInfoHead.InFlight;
+
             // An allocation failure std cannot turn into an exception ends
             // here, with its reason printed, rather than in a silent loop.
             SharpOS.Std.NoRuntime.GcHeap.s_fatal = &Panic.Fail;
@@ -313,6 +322,10 @@ namespace OS.Boot
             // No allocation from an interrupt handler: counted by the heap,
             // reported at the end of the app batch.
             SharpOS.Std.NoRuntime.GcHeap.s_allocationAllowed = &global::OS.Kernel.Threading.Preemption.CanWait;
+
+            // The kernel's pipes for CoreLib's pipe transport (an object: after
+            // the statics).
+            SharpOS.Std.Pipes.PipeTransport.Backend = new OS.Kernel.Pipes.KernelPipeBackendImpl();
 
             // [ModuleInitializer] — where stock startup runs them: statics and
             // the heap are ready, nothing else of the kernel has started.
@@ -657,6 +670,10 @@ namespace OS.Boot
         {
             if (!KernelHeap.Init())
                 Panic.Fail("kernel heap init failed");
+
+            // From here CoreLib's managed heap and its early strings have a
+            // place to come from.
+            SharpOS.Std.NoRuntime.KernelServices.HeapAlloc = &KernelHeap.Alloc;
 
             if (Probes.Diagnostics) Log.Write(LogLevel.Info, "heap init ok");
             if (Probes.Diagnostics) HeapDiagnostics.DumpSummary();

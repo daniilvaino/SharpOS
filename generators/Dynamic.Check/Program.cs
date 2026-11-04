@@ -6,8 +6,9 @@
 //
 //   Dynamic.Check <assembly.dll>
 //
-// The thunks are listed by DynamicGenerator in CallSiteThunks.Generated (a
-// constant), as metadata names; an anonymous type is "*" on both sides.
+// The thunks are listed by DynamicGenerator in SharpOS.Generated.DynamicThunks
+// .Generated (a constant), as metadata names; an anonymous type is "*" on both
+// sides.
 
 using System;
 using System.Collections.Generic;
@@ -65,7 +66,8 @@ internal static class DynamicCheck
         foreach (TypeDefinitionHandle th in md.TypeDefinitions)
         {
             TypeDefinition t = md.GetTypeDefinition(th);
-            if (md.GetString(t.Name) != "CallSiteThunks" || md.GetString(t.Namespace) != "SharpOS.Std.Dynamic") continue;
+            // The class DynamicGenerator writes into each assembly (ThunksClass).
+            if (md.GetString(t.Name) != "DynamicThunks" || md.GetString(t.Namespace) != "SharpOS.Generated") continue;
             foreach (FieldDefinitionHandle fh in t.GetFields())
             {
                 FieldDefinition f = md.GetFieldDefinition(fh);

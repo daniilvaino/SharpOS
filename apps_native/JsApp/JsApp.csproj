@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Okojo (MIT, akeit0/okojo), vendored in vendor/Okojo. -->
   <PropertyGroup>
-    <IlcSystemModule>JsApp</IlcSystemModule>
     <StartupObject>AppEntry</StartupObject>
     <Nullable>annotations</Nullable>
     <NoWarn>$(NoWarn);CS0436;CS8632;CS0649</NoWarn>

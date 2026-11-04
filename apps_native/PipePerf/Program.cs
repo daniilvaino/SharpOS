@@ -50,13 +50,6 @@ namespace PipeApps
             return AppRuntime.Finish(Run(AppHost.Arguments));
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         private static int Main() => Run(AppHost.Arguments);
 
         private static ulong Us(ulong ticks) => ticks * 1_000_000 / (ulong)System.Diagnostics.Stopwatch.Frequency;
@@ -83,8 +76,8 @@ namespace PipeApps
                 };
                 SharpOS.Micro.MicroBench.Counters = () => new ulong[]
                 {
-                    AppGC.Collections, SharpOS.Std.NoRuntime.GcHeap.AllocCount, SharpOS.Std.NoRuntime.GcHeap.ContextRefills,
-                    SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount, SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount,
+                    AppGC.Collections, SharpOS.AppSdk.AppGC.AllocCount, SharpOS.AppSdk.AppGC.ContextRefills,
+                    SharpOS.AppSdk.AppGC.FreelistReuseCount, SharpOS.AppSdk.AppGC.FreelistProbeCount,
                     Us(AppGC.MarkTicks), Us(AppGC.SweepTicks),
                     SharpOS.Std.NoRuntime.GcMemorySource.Commits, Us(SharpOS.Std.NoRuntime.GcMemorySource.CommitTicks),
                     SharpOS.Std.NoRuntime.GcMemorySource.Releases, Us(SharpOS.Std.NoRuntime.GcMemorySource.ReleaseTicks),
@@ -257,12 +250,12 @@ namespace PipeApps
             Pipe.Create<T>(16, PipeOverflow.DropOldest, out PipeWriter<T> writer, out PipeReader<T> reader);
             var steps = reader.GetEnumerator();
             for (int i = 0; i < 50; i++) { writer.Copy(root); steps.MoveNext(); }
-            ulong appBefore = SharpOS.Std.NoRuntime.GcHeap.AllocCount;
+            ulong appBefore = SharpOS.AppSdk.AppGC.AllocCount;
             ulong kernelBefore = Process.KernelAllocations();
             var clock0 = System.Diagnostics.Stopwatch.StartNew();
             for (int i = 0; i < n; i++) { writer.Copy(root); steps.MoveNext(); }
             long full = clock0.ElapsedTicks;
-            ulong appAllocs = SharpOS.Std.NoRuntime.GcHeap.AllocCount - appBefore;
+            ulong appAllocs = SharpOS.AppSdk.AppGC.AllocCount - appBefore;
             ulong kernelAllocs = Process.KernelAllocations() - kernelBefore;
             writer.Dispose();
             steps.Dispose();

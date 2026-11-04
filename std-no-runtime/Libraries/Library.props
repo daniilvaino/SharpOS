@@ -1,0 +1,44 @@
+<!--
+  A library over System.Private.CoreLib for apps: the BCL ports that are their
+  own assemblies in stock .NET too (System.Text.Json, System.Text.Regular-
+  Expressions, System.Private.Xml, System.Text.Encoding.CodePages) and vendored
+  libraries built the same way (SharpCompress). Compiled once for every app; an
+  app takes one by importing its props beside the sources (Regex.props,
+  Json.props…), which reference the project here and add what the app's own
+  code needs (a source generator). CoreLib lets them see its internals
+  (Runtime/CoreLibFriends.App.cs): they are ports that share its helpers.
+-->
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <LangVersion>14.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>annotations</Nullable>
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <RuntimeMetadataVersion>v4.0.30319</RuntimeMetadataVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\CoreLib.App\CoreLib.App.csproj" />
+    <Compile Include="$(MSBuildThisFileDirectory)LibraryAssembly.cs" Link="LibraryAssembly.cs" />
+  </ItemGroup>
+
+  <!-- The SDK adds framework references; ours are the project references. -->
+  <Target Name="CustomizeReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
+    <ItemGroup>
+      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" Condition="'%(ReferencePathWithRefAssemblies.ReferenceSourceTarget)' != 'ProjectReference'" />
+      <ReferencePath Remove="@(ReferencePath)" Condition="'%(ReferencePath.ReferenceSourceTarget)' != 'ProjectReference'" />
+    </ItemGroup>
+  </Target>
+</Project>

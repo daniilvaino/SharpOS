@@ -21,13 +21,6 @@ namespace KqlApps
             return AppRuntime.Finish(Run() + EngineChecks.Run());
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         private static int Main() => Run() + EngineChecks.Run();
 
         private static int s_passed, s_failed;

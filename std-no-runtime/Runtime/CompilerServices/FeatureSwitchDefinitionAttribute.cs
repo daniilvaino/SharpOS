@@ -12,11 +12,8 @@ namespace System.Diagnostics.CodeAnalysis
     /// of the specified property with the value of the feature switch.
     /// </remarks>
     [AttributeUsage(AttributeTargets.Property, Inherited = false)]
-#if SYSTEM_PRIVATE_CORELIB
+    // SharpOS: public — std is CoreLib now (SYSTEM_PRIVATE_CORELIB is not defined).
     public
-#else
-    internal
-#endif
         sealed class FeatureSwitchDefinitionAttribute : Attribute
     {
         /// <summary>

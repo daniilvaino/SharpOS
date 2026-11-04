@@ -101,20 +101,10 @@
         },
         {
           "type": "application",
-          "name": "Json.Generator",
-          "description": "System.Text.Json source generator from dotnet-runtime-sharpos (commit 47abec00), generators/Json.Generator: its output is compiled into apps.",
-          "licenses": [
-            {
-              "license": {
-                "id": "MIT"
-              }
-            }
-          ]
-        },
-        {
-          "type": "application",
-          "name": "Regex.Generator",
-          "description": "System.Text.RegularExpressions source generator from dotnet-runtime-sharpos (commit 47abec00), generators/Regex.Generator: its output is compiled into apps.",
+          "name": "Microsoft.NETCore.App.Ref",
+          "version": "10.0.8",
+          "purl": "pkg:nuget/Microsoft.NETCore.App.Ref@10.0.8",
+          "description": "Targeting pack of the .NET the SDK bundles: only its source generators System.Text.RegularExpressions.Generator and System.Text.Json.SourceGeneration (std-no-runtime/Libraries/PackGenerators.props); their output is compiled into apps.",
           "licenses": [
             {
               "license": {
@@ -185,7 +175,7 @@
       "bom-ref": "dotnet-corelib-ports",
       "name": "dotnet/runtime System.Private.CoreLib (ports)",
       "version": "8.0.27",
-      "description": "BCL types ported into std-no-runtime (collections, strings, numbers, encodings, vectors and intrinsics, exceptions) and NativeAOT runtime helpers ported into the kernel; cuts are listed in each file's header.",
+      "description": "BCL types ported into std-no-runtime (collections, strings, numbers, encodings, vectors and intrinsics, exceptions) and NativeAOT runtime helpers ported into the kernel; the native-format metadata reader (std-no-runtime/Runtime/Metadata, verbatim, PROVENANCE.md there); cuts are listed in each file's header.",
       "licenses": [
         {
           "expression": "MIT AND CC-BY-SA-4.0"

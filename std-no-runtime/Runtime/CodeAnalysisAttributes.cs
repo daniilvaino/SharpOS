@@ -7,50 +7,50 @@ using System;
 namespace System.Diagnostics.CodeAnalysis
 {
     [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter | AttributeTargets.Field | AttributeTargets.ReturnValue, Inherited = false)]
-    internal sealed class AllowNullAttribute : Attribute { public AllowNullAttribute() { } }
+    public sealed class AllowNullAttribute : Attribute { public AllowNullAttribute() { } }
 
     [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter | AttributeTargets.Field | AttributeTargets.ReturnValue, Inherited = false)]
-    internal sealed class DisallowNullAttribute : Attribute { public DisallowNullAttribute() { } }
+    public sealed class DisallowNullAttribute : Attribute { public DisallowNullAttribute() { } }
 
     [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter | AttributeTargets.Field | AttributeTargets.ReturnValue, Inherited = false)]
-    internal sealed class MaybeNullAttribute : Attribute { public MaybeNullAttribute() { } }
+    public sealed class MaybeNullAttribute : Attribute { public MaybeNullAttribute() { } }
 
     [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter | AttributeTargets.Field | AttributeTargets.ReturnValue, Inherited = false)]
-    internal sealed class NotNullAttribute : Attribute { public NotNullAttribute() { } }
+    public sealed class NotNullAttribute : Attribute { public NotNullAttribute() { } }
 
     [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
-    internal sealed class MaybeNullWhenAttribute : Attribute
+    public sealed class MaybeNullWhenAttribute : Attribute
     {
         public MaybeNullWhenAttribute(bool returnValue) { ReturnValue = returnValue; }
         public bool ReturnValue { get; }
     }
 
     [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
-    internal sealed class NotNullWhenAttribute : Attribute
+    public sealed class NotNullWhenAttribute : Attribute
     {
         public NotNullWhenAttribute(bool returnValue) { ReturnValue = returnValue; }
         public bool ReturnValue { get; }
     }
 
     [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Property | AttributeTargets.ReturnValue, AllowMultiple = true, Inherited = false)]
-    internal sealed class NotNullIfNotNullAttribute : Attribute
+    public sealed class NotNullIfNotNullAttribute : Attribute
     {
         public NotNullIfNotNullAttribute(string parameterName) { ParameterName = parameterName; }
         public string ParameterName { get; }
     }
 
     [AttributeUsage(AttributeTargets.Method, Inherited = false)]
-    internal sealed class DoesNotReturnAttribute : Attribute { public DoesNotReturnAttribute() { } }
+    public sealed class DoesNotReturnAttribute : Attribute { public DoesNotReturnAttribute() { } }
 
     [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
-    internal sealed class DoesNotReturnIfAttribute : Attribute
+    public sealed class DoesNotReturnIfAttribute : Attribute
     {
         public DoesNotReturnIfAttribute(bool parameterValue) { ParameterValue = parameterValue; }
         public bool ParameterValue { get; }
     }
 
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Property, Inherited = false, AllowMultiple = true)]
-    internal sealed class MemberNotNullAttribute : Attribute
+    public sealed class MemberNotNullAttribute : Attribute
     {
         public MemberNotNullAttribute(string member) { Members = new[] { member }; }
         public MemberNotNullAttribute(params string[] members) { Members = members; }
@@ -58,7 +58,7 @@ namespace System.Diagnostics.CodeAnalysis
     }
 
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Property, Inherited = false, AllowMultiple = true)]
-    internal sealed class MemberNotNullWhenAttribute : Attribute
+    public sealed class MemberNotNullWhenAttribute : Attribute
     {
         public MemberNotNullWhenAttribute(bool returnValue, string member)
         {
@@ -81,14 +81,14 @@ namespace System.Diagnostics.CodeAnalysis
         AttributeTargets.Parameter | AttributeTargets.Property | AttributeTargets.Method |
         AttributeTargets.Class | AttributeTargets.Interface | AttributeTargets.Struct,
         Inherited = false)]
-    internal sealed class DynamicallyAccessedMembersAttribute : Attribute
+    public sealed class DynamicallyAccessedMembersAttribute : Attribute
     {
         public DynamicallyAccessedMembersAttribute(DynamicallyAccessedMemberTypes memberTypes) { MemberTypes = memberTypes; }
         public DynamicallyAccessedMemberTypes MemberTypes { get; }
     }
 
     [Flags]
-    internal enum DynamicallyAccessedMemberTypes
+    public enum DynamicallyAccessedMemberTypes
     {
         None = 0,
         PublicParameterlessConstructor = 0x0001,
@@ -112,7 +112,7 @@ namespace System.Diagnostics.CodeAnalysis
     // StringSyntaxAttribute.cs (MIT), verbatim minus doc comments. Ported code (StandardFormat,
     // the Utf8Formatter/Parser family) annotates format parameters with it.
     [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false, Inherited = false)]
-    internal sealed class StringSyntaxAttribute : Attribute
+    public sealed class StringSyntaxAttribute : Attribute
     {
         public StringSyntaxAttribute(string syntax)
         {
@@ -147,7 +147,7 @@ namespace System.Diagnostics.CodeAnalysis
     // minus doc comments. ILC here does not trim by them; ported code
     // (System.Text.Json.Nodes) carries them.
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Constructor | AttributeTargets.Class, Inherited = false)]
-    internal sealed class RequiresUnreferencedCodeAttribute : Attribute
+    public sealed class RequiresUnreferencedCodeAttribute : Attribute
     {
         public RequiresUnreferencedCodeAttribute(string message) { Message = message; }
         public string Message { get; }
@@ -155,7 +155,7 @@ namespace System.Diagnostics.CodeAnalysis
     }
 
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Constructor | AttributeTargets.Class, Inherited = false)]
-    internal sealed class RequiresDynamicCodeAttribute : Attribute
+    public sealed class RequiresDynamicCodeAttribute : Attribute
     {
         public RequiresDynamicCodeAttribute(string message) { Message = message; }
         public string Message { get; }
@@ -163,7 +163,7 @@ namespace System.Diagnostics.CodeAnalysis
     }
 
     [AttributeUsage(AttributeTargets.All, Inherited = false, AllowMultiple = true)]
-    internal sealed class SuppressMessageAttribute : Attribute
+    public sealed class SuppressMessageAttribute : Attribute
     {
         public SuppressMessageAttribute(string category, string checkId) { Category = category; CheckId = checkId; }
         public string Category { get; }
@@ -175,7 +175,7 @@ namespace System.Diagnostics.CodeAnalysis
     }
 
     [AttributeUsage(AttributeTargets.All, Inherited = false, AllowMultiple = true)]
-    internal sealed class UnconditionalSuppressMessageAttribute : Attribute
+    public sealed class UnconditionalSuppressMessageAttribute : Attribute
     {
         public UnconditionalSuppressMessageAttribute(string category, string checkId) { Category = category; CheckId = checkId; }
         public string Category { get; }
@@ -187,14 +187,14 @@ namespace System.Diagnostics.CodeAnalysis
     }
 
     [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Constructor | AttributeTargets.Method | AttributeTargets.Property | AttributeTargets.Event, Inherited = false, AllowMultiple = false)]
-    internal sealed class ExcludeFromCodeCoverageAttribute : Attribute
+    public sealed class ExcludeFromCodeCoverageAttribute : Attribute
     {
         public ExcludeFromCodeCoverageAttribute() { }
         public string? Justification { get; set; }
     }
 
     [AttributeUsage(AttributeTargets.Parameter, Inherited = false)]
-    internal sealed class ConstantExpectedAttribute : Attribute
+    public sealed class ConstantExpectedAttribute : Attribute
     {
         public object? Min { get; set; }
         public object? Max { get; set; }

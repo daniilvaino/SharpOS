@@ -2,7 +2,6 @@
   <PropertyGroup>
     <!-- A test stage: in the build with tests only (tools/Apps.ps1). -->
     <SharpOsCategory>tests</SharpOsCategory>
-    <IlcSystemModule>PipeFilt</IlcSystemModule>
   </PropertyGroup>
 
   <!-- The freestanding win-x64 PE recipe every AOT app uses. -->

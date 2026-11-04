@@ -73,11 +73,12 @@ namespace SharpOS.Std.Dynamic
 
     /// <summary>
     /// The members an image's dynamic call sites may reach, by name; filled by
-    /// the generator from the names its call sites use (RegisterGenerated).
-    /// Also the type names the binder's messages need — there is no
-    /// reflection to ask.
+    /// the registrations Dynamic.Generator writes into each assembly from the
+    /// names its call sites use, handed over from a module initializer
+    /// (AddGenerated). Also the type names the binder's messages need — there
+    /// is no reflection to ask.
     /// </summary>
-    public static partial class DynamicMembers
+    public static unsafe partial class DynamicMembers
     {
         private static Dictionary<string, List<DynamicMember>> s_members;
         private static Dictionary<string, List<DynamicMethod>> s_methods;
@@ -85,8 +86,28 @@ namespace SharpOS.Std.Dynamic
         private static Dictionary<Type, Type> s_nullables;
         private static bool s_ready;
         private static object s_lock;
+        private static nint[] s_generated;
+        private static int s_generatedCount;
 
-        static partial void RegisterGenerated();
+        /// <summary>A generated registration; after the tables are filled it runs at once.</summary>
+        public static void AddGenerated(delegate*<void> register)
+        {
+            if (s_ready)
+            {
+                register();
+                return;
+            }
+            s_generated ??= new nint[8];
+            if (s_generatedCount == s_generated.Length)
+                Array.Resize(ref s_generated, s_generatedCount * 2);
+            s_generated[s_generatedCount++] = (nint)register;
+        }
+
+        private static void RegisterGenerated()
+        {
+            for (int i = 0; i < s_generatedCount; i++)
+                ((delegate*<void>)s_generated[i])();
+        }
 
         // Filled once, under a lock: a thread preempted halfway must not leave the tables half-made for another.
         private static void Ensure()

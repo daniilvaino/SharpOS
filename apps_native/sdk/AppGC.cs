@@ -22,7 +22,7 @@ namespace SharpOS.AppSdk
     // Precise, never conservative: guessing that a stack word "looks like a
     // pointer" retains garbage by accident and is a poor foundation for the
     // preemptive, multi-core world this is heading towards.
-    internal static unsafe class AppGC
+    public static unsafe class AppGC
     {
         private static bool s_installed;
         private static uint s_collections;
@@ -31,6 +31,25 @@ namespace SharpOS.AppSdk
         private static uint s_afterStatics;
 
         public static uint Collections => s_collections;
+
+        // The allocator's counters, for programs that measure what they
+        // allocate (PipePerf, PipeSpy): the GC itself is CoreLib's.
+        public static ulong AllocCount => SharpOS.Std.NoRuntime.GcHeap.AllocCount;
+        public static ulong ContextRefills => SharpOS.Std.NoRuntime.GcHeap.ContextRefills;
+        public static ulong FreelistReuseCount => SharpOS.Std.NoRuntime.GcHeap.FreelistReuseCount;
+        public static ulong FreelistProbeCount => SharpOS.Std.NoRuntime.GcHeap.FreelistProbeCount;
+
+        /// <summary>
+        /// GC stress for a program's --gc-stress (PipeGen/StressArgs.cs): a
+        /// collection every <paramref name="every"/> allocations, the heap
+        /// verified around each, freed objects poisoned.
+        /// </summary>
+        public static void EnableStress(uint every)
+        {
+            SharpOS.Std.NoRuntime.GcSweep.PoisonFreed = true;
+            SharpOS.Std.NoRuntime.GcStress.VerifyHeap = true;
+            SharpOS.Std.NoRuntime.GcStress.Every = every;
+        }
 
         // Stopwatch ticks of all collections so far (step208): marking (roots,
         // statics, the stack walk) and sweeping, which includes giving empty
@@ -191,7 +210,7 @@ namespace SharpOS.AppSdk
     // preempts app code like any other: another thread of the same app could
     // otherwise run in the middle of an allocation or a sweep. Without the
     // address (an older kernel) nothing preempts apps, and these do nothing.
-    internal static unsafe class AppPreemption
+    public static unsafe class AppPreemption
     {
         private static uint* s_depth;
         private static byte* s_pending;

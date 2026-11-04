@@ -34,8 +34,9 @@ namespace SharpOS.Std.Pipes
     /// </summary>
     /// <remarks>
     /// Filled once, on first use, by the built-in registrations below and the
-    /// generated RegisterGenerated. Not by a module initializer: those do not run
-    /// in the kernel.
+    /// generated ones: Pipes.Generator writes a registration into every assembly
+    /// with [Message] types — CoreLib's own and the program's — and hands it over
+    /// from a module initializer (AddGenerated).
     /// </remarks>
     public static unsafe partial class MessageCatalog
     {
@@ -51,14 +52,35 @@ namespace SharpOS.Std.Pipes
             if (s_ready) return;
             s_ready = true;
             RegisterBuiltins();
-            RegisterGenerated();
+            for (int i = 0; i < s_generatedCount; i++)
+                ((delegate*<void>)s_generated[i])();
             RegisterExtra?.Invoke();
         }
 
         /// <summary>Registrations an image adds by hand, run after the generated ones.</summary>
         public static Action RegisterExtra;
 
-        static partial void RegisterGenerated();
+        // One per assembly with [Message] types: a handful.
+        private static nint[] s_generated;
+        private static int s_generatedCount;
+
+        /// <summary>
+        /// A generated registration, from the module initializer Pipes.Generator
+        /// writes into each assembly. After the catalog is filled it runs at once.
+        /// </summary>
+        public static void AddGenerated(delegate*<void> register)
+        {
+            if (s_ready)
+            {
+                register();
+                s_schema = null;
+                return;
+            }
+            s_generated ??= new nint[8];
+            if (s_generatedCount == s_generated.Length)
+                Array.Resize(ref s_generated, s_generatedCount * 2);
+            s_generated[s_generatedCount++] = (nint)register;
+        }
 
         /// <summary>The description of every type in the catalog: what a writer declares.</summary>
         public static byte[] Schema

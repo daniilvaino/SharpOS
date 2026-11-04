@@ -1,15 +1,12 @@
-// System.Enum — ToObject and Parse over an enum Type, shared by both tiers'
-// MinimalRuntime (where the rest of Enum lives).
+// System.Enum — ToObject over an enum Type, shared by both tiers'
+// MinimalRuntime (where HasFlag lives); names, formatting and Parse are in
+// Enum.Names.cs.
 //
 // ToObject is the BCL's: the value boxed as the enum type. The MethodTable of
 // an enum carries its underlying primitive as the element type, and RhBox
 // copies that many bytes from the start of the value — little-endian, so a
 // long holds every narrower underlying type in its low bytes. BCL truncates
 // the same way (Enum.ToObject(typeof(ByteEnum), 300) is 44).
-//
-// Parse: numeric strings only. Member names live in reflection metadata,
-// which images here do not carry (Type.Statics.cs); a name is refused with
-// the BCL's "not found" ArgumentException, as for a name the enum lacks.
 
 using System.Runtime.CompilerServices;
 
@@ -50,23 +47,6 @@ namespace System
                 bool v => ToObjectCore(enumType, v ? 1 : 0),
                 _ => throw new ArgumentException("The value passed in must be an enum base or an underlying type for an enum, such as an Int32.", nameof(value)),
             };
-        }
-
-        public static object Parse(Type enumType, string value) => Parse(enumType, value, ignoreCase: false);
-
-        public static object Parse(Type enumType, string value, bool ignoreCase)
-        {
-            if (value == null) throw new ArgumentNullException(nameof(value));
-            CheckEnumType(enumType);
-
-            string text = value.Trim();
-            if (text.Length != 0 && (char.IsAsciiDigit(text[0]) || text[0] == '-' || text[0] == '+'))
-            {
-                if (long.TryParse(text, out long signed)) return ToObjectCore(enumType, signed);
-                if (ulong.TryParse(text, out ulong unsigned)) return ToObjectCore(enumType, unchecked((long)unsigned));
-            }
-
-            throw new ArgumentException("Requested value '" + value + "' was not found.");
         }
 
         private static unsafe object ToObjectCore(Type enumType, long value)

@@ -17,7 +17,7 @@ using SharpOS.Std;
 namespace SharpOS.AppSdk
 {
     /// <summary>A parser of terminal input bytes into key presses.</summary>
-    internal sealed class TerminalKeyParser
+    public sealed class TerminalKeyParser
     {
         /// <summary>How long the byte after ESC may take to still belong to it.</summary>
         public const int EscapeDelayMs = 50;
@@ -229,7 +229,7 @@ namespace SharpOS.AppSdk
     }
 
     /// <summary>The terminal's input of this program (TerminalRead), parsed.</summary>
-    internal static unsafe class TerminalKeys
+    public static unsafe class TerminalKeys
     {
         private const int PollMs = 10;
 

@@ -2,7 +2,6 @@
   <PropertyGroup>
     <!-- Where the image puts it (tools/Apps.ps1, step207). -->
     <SharpOsCategory>games</SharpOsCategory>
-    <IlcSystemModule>TriCNESApp</IlcSystemModule>
     <!-- The shared props disable default COMPILE items; this project also has
          to disable the rest, because the submodule carries the WinForms .resx
          files and default globbing pulls them in as embedded resources even

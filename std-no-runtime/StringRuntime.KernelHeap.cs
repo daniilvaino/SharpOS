@@ -1,8 +1,7 @@
 // Kernel-side StringRuntime backed by KernelHeap.
 //
-// Linked into OS.csproj only. The reference to OS.Kernel.Memory.KernelHeap
-// makes this file kernel-specific (other consumers should pick a different
-// StringRuntime.*.cs variant, e.g. StringRuntime.RhNewString.cs for apps).
+// CoreLib's kernel tier (Std.Kernel.props); apps take StringRuntime.RhNewString.cs.
+// The kernel heap behind the early path is the kernel's (KernelServices.HeapAlloc).
 //
 // String layout (NativeAOT on x64):
 //   offset 0  : MethodTable* (8 bytes)
@@ -70,9 +69,10 @@ namespace SharpOS.Std.NoRuntime
                 return *(string*)&obj;
             }
 
-            if (!OS.Kernel.Memory.KernelHeap.IsInitialized)
+            delegate*<uint, void*> heapAlloc = KernelServices.HeapAlloc;
+            if (heapAlloc == null)
             {
-                OS.Kernel.Panic.Fail("string allocated before the kernel heap exists");
+                KernelServices.FailOrHalt("string allocated before the kernel heap exists");
                 return null;
             }
 
@@ -83,7 +83,7 @@ namespace SharpOS.Std.NoRuntime
             if (bytes > GcHeap.MaxAllocationSize)
                 throw GcHeap.OutOfMemory();
 
-            void* raw = OS.Kernel.Memory.KernelHeap.Alloc((uint)bytes);
+            void* raw = heapAlloc((uint)bytes);
             if (raw == null)
                 throw GcHeap.OutOfMemory();
 

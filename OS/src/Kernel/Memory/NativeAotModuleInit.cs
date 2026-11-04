@@ -153,6 +153,8 @@ namespace OS.Kernel.Memory
 
             s_typeManager = tm;
             s_rtr = rtr;
+            // The image's reflection metadata (Enum names) is found through it.
+            SharpOS.Std.NoRuntime.ImageMetadata.ReadyToRunHeader = rtr;
             s_majorVersion = *(ushort*)(rtr + 4);
             s_minorVersion = *(ushort*)(rtr + 6);
             s_initialized = true;

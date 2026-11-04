@@ -2,7 +2,7 @@
 
 namespace SharpOS.AppSdk
 {
-    internal unsafe struct AppStartupBlock
+    public unsafe struct AppStartupBlock
     {
         public const uint AbiVersionV1 = 1;
         public const uint AbiVersionV2 = 2;

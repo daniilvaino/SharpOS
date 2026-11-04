@@ -249,6 +249,14 @@ namespace OS.Hal.Timer
             // The bit above may already have been set by the firmware while
             // the counter sat halted — check rather than assume.
             EnsureRunning();
+
+            // Stopwatch reads the counter itself, as in an app: the address,
+            // the frequency, and for a narrow counter the epoch the timer tick
+            // keeps moving (Refresh).
+            System.Diagnostics.Stopwatch.s_frequencyHz = s_frequencyHz;
+            System.Diagnostics.Stopwatch.s_counterIsNarrow = !s_is64Bit;
+            System.Diagnostics.Stopwatch.s_latchAddress = LatchAddress;
+            System.Diagnostics.Stopwatch.s_counterAddress = CounterAddress;
             return true;
         }
 

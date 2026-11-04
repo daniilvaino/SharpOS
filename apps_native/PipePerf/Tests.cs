@@ -62,11 +62,11 @@ namespace PipeApps
         private static void Path(string name, Action<int> run)
         {
             run(200);
-            ulong a0 = SharpOS.Std.NoRuntime.GcHeap.AllocCount, k0 = Process.KernelAllocations();
+            ulong a0 = SharpOS.AppSdk.AppGC.AllocCount, k0 = Process.KernelAllocations();
             run(1000);
-            ulong a1 = SharpOS.Std.NoRuntime.GcHeap.AllocCount, k1 = Process.KernelAllocations();
+            ulong a1 = SharpOS.AppSdk.AppGC.AllocCount, k1 = Process.KernelAllocations();
             run(11000);
-            ulong a2 = SharpOS.Std.NoRuntime.GcHeap.AllocCount, k2 = Process.KernelAllocations();
+            ulong a2 = SharpOS.AppSdk.AppGC.AllocCount, k2 = Process.KernelAllocations();
             long app = (long)(a2 - a1) - (long)(a1 - a0);
             long kernel = (long)(k2 - k1) - (long)(k1 - k0);
             Console.WriteLine("[pipeperf] " + name + ": allocations for 10 000 more messages: app " + app.ToString()

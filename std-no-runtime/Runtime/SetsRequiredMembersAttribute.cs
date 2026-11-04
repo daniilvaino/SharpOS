@@ -14,11 +14,8 @@ namespace System.Diagnostics.CodeAnalysis
     /// do not need to set any required members themselves.
     /// </summary>
     [AttributeUsage(AttributeTargets.Constructor, AllowMultiple = false, Inherited = false)]
-#if SYSTEM_PRIVATE_CORELIB
+    // SharpOS: public — std is CoreLib now (SYSTEM_PRIVATE_CORELIB is not defined).
     public
-#else
-    internal
-#endif
         sealed class SetsRequiredMembersAttribute : Attribute
     { }
 }

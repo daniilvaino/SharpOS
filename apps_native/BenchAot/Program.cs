@@ -30,13 +30,6 @@ namespace BenchAot
             return AppRuntime.Finish(Run());
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         private static int Main() => Run();
 
         private static int Run()

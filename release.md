@@ -77,46 +77,17 @@ AvaloniaEdit из tui-cs/Editor, `.xshd` читает `XmlReader` из BCL, step
 
 Сделано — `done/step251.md`: `[ModuleInitializer]`, ширина второй ячейки
 широкого символа, `summarize` без копии лишних столбцов; xHCI ноутбука — пауза
-после сброса и повтор, ждёт прогона на стенде. Имена перечислений — следующим
-разделом. FAT16, обрыв COM3 и кириллица — не в 0.1 (donext). Раздел закрыт.
+после сброса и повтор, ждёт прогона на стенде. Имена перечислений — разделом
+«CoreLib как в стоке». FAT16, обрыв COM3 и кириллица — не в 0.1 (donext). Раздел закрыт.
 
 ## CoreLib как в стоке
 
-Почему: ILC пишет метаданные (типы, литеральные поля перечислений) только когда
-системная сборка называется `System.Private.CoreLib` (`ILCompiler/Program.cs:96`,
-`supportsReflection`; иначе `FullyBlockedMetadataBlockingPolicy`). У нас std
-компилируется в каждый образ, системная сборка — сам образ, метаданных нет: нет
-`Enum.ToString`, имён кадров в трассах. Правка одной строки в ILC это включает
-(проверено, step251), но это форк ILC; пустая сборка с переадресациями ломает
-тихо — у ILC больше десятка проверок «модуль типа == системный модуль».
-Сделать как в стоке: CoreLib — отдельная сборка, ярус — рантайм рядом с ней.
-
-```
-Ядро:        System.Private.CoreLib + OS (в нём [RuntimeExport] ядерного яруса)
-Приложение:  System.Private.CoreLib + SharpOS.AppSdk ([RuntimeExport] яруса приложений) + приложение
-```
-
-1. Сборка `System.Private.CoreLib`: `Std.props` и один `MinimalRuntime` (сейчас
-   две почти одинаковые копии, ~900 строк). `--systemmodule` — стоковое
-   значение, ILC стоковый.
-2. Ярусные пары (`Std.Kernel.props` / `Std.App.props`, 8 мест: источник памяти
-   GC, транспорт труб, окружение, вывод диагностики, выделение строк,
-   планировщик задач, `GcStaticsInit`) и прямые вызовы std в ядро и SDK
-   (`KernelHeap`, `Hpet`, `Panic`, `ExInfoHead`, `AppServiceTable`) — медленная
-   часть как `[RuntimeImport]` в CoreLib, реализация `[RuntimeExport]` в `OS` и в
-   SDK. Быстрые пути (сдвиг указателя, выделение строк) — общий код в CoreLib,
-   ILC встраивает через границу сборок.
-3. `Array.Empty` в ядре — не ярусная пара: материализовать статики раньше, тогда
-   `EmptyArray<T>.Value` стоковый.
-4. `InternalsVisibleTo` — только `OS` и SDK. SDK — сборка; приложения ссылаются на
-   CoreLib и SDK. `System.Formats.Tar` — из CoreLib в свою строку.
-5. Переходники делегатов (`DelegateFeature.All`: `DynamicInvoke`,
-   open-instance) — ILC включит их для настоящей CoreLib; недостающие члены
-   стокового `Delegate` (NativeAOT) — портом.
-6. Метаданные: порт `Internal.Metadata.NativeFormat`, `TypeMap` (301) →
-   `EmbeddedMetadata` (313); `Enum` через стоковый `EnumInfo`; имена кадров в
-   трассах.
-7. Генераторы, которые пишут в типы std, и курированные csproj (`EnableDefaultCompileItems=false`) — сверить по первой сборке.
+Сделано — `done/step252.md`: std — отдельная сборка `System.Private.CoreLib`, по
+одной на ярус из одного дерева (как сток собирает CoreLib под платформы); ядро и
+SDK приложений — сборки над ней, порты BCL (Json, Regex, Xml, CodePages,
+SharpCompress) — своими сборками; ILC стоковый и пишет метаданные — `Enum`
+по именам, как в стоке. Раздел закрыт; что осталось (низкоуровневый API труб
+вместо `InternalsVisibleTo`, имена кадров в трассах) — в donext.
 
 ## 10. Ctrl+C для всех
 

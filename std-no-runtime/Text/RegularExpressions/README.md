@@ -5,8 +5,10 @@
 items (the `Common`/`CoreLib` links are std's already).
 **License:** MIT, © .NET Foundation and Contributors.
 **Taken by:** `Regex.props` beside this file, app tier; `Json.props` and
-`SharpCompress.props` import it. `[GeneratedRegex]` goes through
-`generators/Regex.Generator`.
+`SharpCompress.props` import it. `[GeneratedRegex]` goes through the .NET 10
+targeting pack's generator, the library's version
+(`std-no-runtime/Libraries/PackGenerators.props`; until step252 a copy of the
+fork's, `generators/Regex.Generator`).
 
 Every edit is marked in place with `// SharpOS cut:` (removed) or `// SharpOS:`
 (changed).

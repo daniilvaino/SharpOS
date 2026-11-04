@@ -24,13 +24,6 @@ namespace RegexCheckApp
             return AppRuntime.Finish(Main());
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         private static void Check(string name, bool ok)
         {
             if (ok) s_passed++; else s_failed++;
@@ -173,7 +166,7 @@ namespace RegexCheckApp
             }
         }
 
-        // [GeneratedRegex] through generators/Regex.Generator: Okojo's patterns
+        // [GeneratedRegex] through the .NET 10 pack's generator: Okojo's patterns
         // (Date.parse, parseFloat) and a case-insensitive alternation.
         [GeneratedRegex(@"^(?<year>[+-]?\d{4,6})-(?<month>\d{2})-(?<day>\d{2})(?:T(?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.(?<millisecond>\d{1,3}))?)?(?<offset>Z|[+-]\d{2}:\d{2})?)?$", RegexOptions.CultureInvariant)]
         private static partial Regex IsoDateTime();

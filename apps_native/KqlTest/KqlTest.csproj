@@ -2,7 +2,6 @@
   <PropertyGroup>
     <!-- Where the image puts it (tools/Apps.ps1, step207). -->
     <SharpOsCategory>tests</SharpOsCategory>
-    <IlcSystemModule>KqlTest</IlcSystemModule>
     <LangVersion>latest</LangVersion>
     <Nullable>annotations</Nullable>
   </PropertyGroup>

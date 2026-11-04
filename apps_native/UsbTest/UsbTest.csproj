@@ -2,7 +2,6 @@
   <PropertyGroup>
     <!-- A bench for the rig's hardware, started by hand: not on the image (tools/Apps.ps1). -->
     <SharpOsCategory>none</SharpOsCategory>
-    <IlcSystemModule>UsbTest</IlcSystemModule>
     <!-- C# 14: the library's RuneCount / ConsoleWidth are extension properties.
          See vendor/Terminal.Gui/TerminalGui.props. -->
     <LangVersion>14.0</LangVersion>

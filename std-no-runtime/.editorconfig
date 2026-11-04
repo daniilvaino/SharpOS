@@ -1,0 +1,8 @@
+# The libraries over CoreLib (std-no-runtime/Libraries) are built from these
+# trees. Each has a System.SR (and System.Xml its HResults) of its own, as
+# stock libraries do; CoreLib's internal SR is visible to them as well
+# (InternalsVisibleTo), and the library's own one is meant to win. CS0436
+# says exactly that, at every use. CoreLib itself compiles none of these files.
+
+[{Text/Json,Text/Encodings.Web,IO/Pipelines,Text/CodePages,Text/RegularExpressions,Xml,IO/Compression}/**.cs]
+dotnet_diagnostic.CS0436.severity = none

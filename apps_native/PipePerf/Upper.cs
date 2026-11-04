@@ -119,13 +119,13 @@ namespace PipeApps
             private System.Diagnostics.Stopwatch _clock;
 
             public static Timer Start()
-                => new Timer { _allocs = SharpOS.Std.NoRuntime.GcHeap.AllocCount, _clock = System.Diagnostics.Stopwatch.StartNew() };
+                => new Timer { _allocs = SharpOS.AppSdk.AppGC.AllocCount, _clock = System.Diagnostics.Stopwatch.StartNew() };
 
             // Nanoseconds per operation; the line is printed when asked.
             public long Stop(string name, int n, bool show, string tag = "perf196")
             {
                 long ticks = _clock.ElapsedTicks;
-                ulong allocs = SharpOS.Std.NoRuntime.GcHeap.AllocCount - _allocs - 1;   // less the clock
+                ulong allocs = SharpOS.AppSdk.AppGC.AllocCount - _allocs - 1;   // less the clock
                 long ns = ticks * 1000000000 / System.Diagnostics.Stopwatch.Frequency / n;
                 if (show) Console.WriteLine("[" + tag + "] " + name + "_ns=" + ns.ToString() + " allocs=" + Per(allocs, n));
                 return ns;

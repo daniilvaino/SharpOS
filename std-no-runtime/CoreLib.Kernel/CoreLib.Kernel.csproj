@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- System.Private.CoreLib for the kernel: std (Std.props) and its kernel
+       tier (Std.Kernel.props). The kernel (OS/OS.csproj) is built over it, as
+       a stock program is built over the stock CoreLib — and so ILC sees a real
+       system module named System.Private.CoreLib. Its sibling for apps is
+       ../CoreLib.App. The kernel tier reaches the kernel only through hooks the
+       kernel installs at boot (Runtime/KernelServices.cs, PipeTransport.Backend). -->
+
+  <PropertyGroup>
+    <AssemblyName>System.Private.CoreLib</AssemblyName>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <LangVersion>14.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>annotations</Nullable>
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <RuntimeMetadataVersion>v4.0.30319</RuntimeMetadataVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <!-- As the programs: no reflection to warn about, and the analyzers'
+         dataflow is quadratic in locals (step198). -->
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+  </PropertyGroup>
+
+  <Import Project="..\Std.props" />
+  <Import Project="..\Std.Kernel.props" />
+
+  <!-- The SDK adds framework references; this assembly is the framework. -->
+  <Target Name="CustomizeReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
+    <ItemGroup>
+      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" />
+      <ReferencePath Remove="@(ReferencePath)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

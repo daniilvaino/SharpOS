@@ -1,0 +1,41 @@
+<!--
+  The app tier of CoreLib that lives with the SDK: how a process talks to the
+  kernel (the service table, startup, the trampolines into the kernel's shared
+  runtime) and the BCL types implemented over it — File, Directory, Path,
+  Environment, Console, Process. Compiled into System.Private.CoreLib for apps
+  (std-no-runtime/CoreLib.App), as stock CoreLib carries its Interop and its
+  OS-specific halves. What CoreLib does not need is the SDK library
+  (SharpOS.AppSdk.csproj).
+-->
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)AppStartupBlock.cs"      Link="sdk\AppStartupBlock.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppServiceTable.cs"      Link="sdk\AppServiceTable.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppRuntime.cs"           Link="sdk\AppRuntime.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IntrinsicFlagsInstaller.cs" Link="sdk\IntrinsicFlagsInstaller.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppThreads.cs"           Link="sdk\AppThreads.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppConsole.cs"           Link="sdk\AppConsole.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppGC.cs"                Link="sdk\AppGC.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ByRefAssignRefStub.cs"   Link="sdk\ByRefAssignRefStub.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AtomicStub.cs"           Link="sdk\AtomicStub.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)InterfaceDispatchTrampoline.cs" Link="sdk\InterfaceDispatchTrampoline.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)StackProbeStub.cs"       Link="sdk\StackProbeStub.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ThrowExTrampoline.cs"    Link="sdk\ThrowExTrampoline.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)RethrowTrampoline.cs"    Link="sdk\RethrowTrampoline.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppHost.cs"              Link="sdk\AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)KeyInfo.cs"              Link="sdk\KeyInfo.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Audio.cs"                Link="sdk\Audio.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FileEntry.cs"            Link="sdk\FileEntry.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SystemConsole.cs"        Link="sdk\SystemConsole.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)TerminalKeys.cs"         Link="sdk\TerminalKeys.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Environment.AppHost.cs"  Link="sdk\Environment.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FileSystemInfo.AppHost.cs" Link="sdk\FileSystemInfo.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FileOptions.AppHost.cs"  Link="sdk\FileOptions.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Path.AppHost.cs"         Link="sdk\Path.AppHost.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ProcessStub.cs"          Link="sdk\ProcessStub.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Process.cs"              Link="sdk\Process.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)AppFile.cs"              Link="sdk\AppFile.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PipeLines.cs"            Link="sdk\PipeLines.cs" />
+  </ItemGroup>
+</Project>

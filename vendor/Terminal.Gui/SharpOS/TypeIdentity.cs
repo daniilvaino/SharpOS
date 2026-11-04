@@ -17,11 +17,11 @@ namespace Terminal.Gui
 {
     internal static class RuntimeTypeId
     {
-        /// <summary>Same runtime type, by method-table identity.</summary>
+        /// <summary>Same runtime type, by method-table identity (Type compares its method table).</summary>
         public static bool SameType(object a, object b)
         {
             if (a == null || b == null) return ReferenceEquals(a, b);
-            return a.GetEETypePtr() == b.GetEETypePtr();
+            return a.GetType() == b.GetType();
         }
 
         /// <summary>
@@ -29,7 +29,7 @@ namespace Terminal.Gui
         /// a different question, and the callers here mean this one.
         /// </summary>
         public static bool Is<T>(object o)
-            => o != null && o.GetEETypePtr() == System.EETypePtr.EETypePtrOf<T>();
+            => o != null && o.GetType() == typeof(T);
     }
 
     /// <summary>

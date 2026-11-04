@@ -55,13 +55,6 @@ namespace EditApp
             return AppRuntime.Finish(Run(AppHost.Arguments));
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         private static int Main() => Run(AppHost.Arguments);
 
         private static int Run(string[] args)

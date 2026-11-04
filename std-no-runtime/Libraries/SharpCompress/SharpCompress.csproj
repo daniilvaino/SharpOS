@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- SharpCompress (Adam Hathcock, MIT; vendor/SharpCompress, what is taken
+       and changed: PROVENANCE.md there) with System.IO.Compression over it:
+       BCL's own DeflateStream, GZipStream, ZLibStream, ZipArchive and ZipFile
+       (std-no-runtime/IO/Compression), whose zlib is SharpCompress's
+       (Interop.ZLib.SharpCompress.cs). An app takes it through
+       vendor/SharpCompress/SharpCompress.props. -->
+
+  <PropertyGroup>
+    <AssemblyName>SharpCompress</AssemblyName>
+  </PropertyGroup>
+
+  <Import Project="..\Library.props" />
+
+  <ItemGroup>
+    <Compile Include="..\..\..\vendor\SharpCompress\src\**\*.cs" Link="SharpCompress\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\IO\Compression\**\*.cs" Link="Compression\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- Volume names of multi-volume archives are matched by Regex. -->
+    <ProjectReference Include="..\System.Text.RegularExpressions\System.Text.RegularExpressions.csproj" />
+    <!-- Entry names in legacy code pages (zip CP437, ...): CodePagesEncodingProvider. -->
+    <ProjectReference Include="..\System.Text.Encoding.CodePages\System.Text.Encoding.CodePages.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -4,9 +4,8 @@
   Реализации, которые у приложений свои. Пары — в Std.Kernel.props;
   GcStaticsInit пары не имеет: у ядра своя материализация статик в OS/src.
 
-  Пути относительно этого файла, поэтому список одинаково читается и из
-  OS/OS.csproj, и из apps_native/sdk/FreestandingPe.props. Правило и таблица
-  ярусных пар — в README.md рядом.
+  Берёт CoreLib приложений (CoreLib.App/CoreLib.App.csproj). Пути относительно
+  этого файла. Правило и таблица ярусных пар — в README.md рядом.
 -->
 <Project>
   <ItemGroup>
@@ -18,6 +17,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)Runtime\Diagnostics.Output.AppHost.cs" Link="std\Runtime\Diagnostics.Output.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StringRuntime.RhNewString.cs" Link="std\StringRuntime.RhNewString.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading.Tasks.AppServices.cs" Link="std\Threading.Tasks.AppServices.cs" />
+    <!-- The core types and the helpers ILC looks up by name in the system module. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\MinimalRuntime.App.cs" Link="std\Runtime\MinimalRuntime.App.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CoreLibFriends.App.cs" Link="std\Runtime\CoreLibFriends.App.cs" />
     <!-- System.Formats.Tar (release 0.1): BCL .NET 8's; files need File/Directory, which apps have. -->
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\Archiving.Utils.Windows.cs" Link="std\Formats\Tar\Archiving.Utils.Windows.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\Archiving.Utils.cs" Link="std\Formats\Tar\Archiving.Utils.cs" />
@@ -46,6 +48,4 @@
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\V7TarEntry.cs" Link="std\Formats\Tar\V7TarEntry.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Formats\Tar\SR.Tar.cs" Link="std\Formats\Tar\SR.Tar.cs" />
   </ItemGroup>
-  <!-- Manifest resources as data in the image (ILC drops them without metadata). -->
-  <Import Project="$(MSBuildThisFileDirectory)ManifestResources.targets" />
 </Project>

@@ -139,13 +139,6 @@ namespace DoomApp
             }
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         // csc requires a Main for OutputType=Exe; never called — the real
         // entry is SharpAppBootstrap via /ENTRY (same as the other apps).
         private static int Main() => 0;

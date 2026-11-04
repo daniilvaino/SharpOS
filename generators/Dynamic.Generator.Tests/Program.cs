@@ -23,10 +23,16 @@ internal static class Program
 using System;
 namespace SharpOS.Std.Dynamic
 {
-    public static class DynamicRuntime { public static object Run(System.Runtime.CompilerServices.CallSite s, object[] a, Type[] t) => null; }
-    public static partial class DynamicMembers
+    public static class DynamicRuntime
     {
-        static partial void RegisterGenerated();
+        public static object Run(System.Runtime.CompilerServices.CallSite s, object[] a, Type[] t) => null;
+        public static object Run1(System.Runtime.CompilerServices.CallSite s, object a0, Type[] t) => null;
+        public static object Run2(System.Runtime.CompilerServices.CallSite s, object a0, object a1, Type[] t) => null;
+        public static object Run3(System.Runtime.CompilerServices.CallSite s, object a0, object a1, object a2, Type[] t) => null;
+    }
+    public static unsafe partial class DynamicMembers
+    {
+        public static void AddGenerated(delegate*<void> register) { }
         public static void Member(Type owner, string name, Type type, bool isStatic, Func<object, object> get, Action<object, object> set) { }
         public static void Method(Type owner, string name, bool isStatic, Type[] parameters, Type paramsElement, Type returns, int required, Func<object, object[], object> invoke) { }
         public static void Generic(Type owner, string name, bool isStatic, Type[] typeArguments, Type[] parameters, Type paramsElement, Type returns, int required, Func<object, object[], object> invoke) { }

@@ -857,13 +857,27 @@ heap init failed` (первый `HeapCommit`). С `EPYC-Rome,-pdpe1gb` — ра�
 При десятках запусков подряд это станет вопросом памяти; проверяется слабой
 ссылкой после сборки.
 
-## Имена перечислений — после CoreLib отдельной сборкой
+## После CoreLib отдельной сборкой (step252)
 
-Красная проба `enum.toString` остаётся до раздела «CoreLib как в стоке»
-(`release.md`). После него — вернуть к upstream вырезы, сделанные из-за
-отсутствия имён: `ReadLine` (`KeyHandler.BuildKeyInput`), Terminal.Gui
-(`ShortcutHelper`), `SR.Json.cs` (имена `JsonTokenType`/`JsonValueKind`), номер
-статуса в `Shell/Executor.cs`.
+- **Низкоуровневый API труб вместо `InternalsVisibleTo`.** Оболочка, утилиты,
+  KQL, CONVERT, Js, Lua и инструменты труб (PipePerf, PipeSpy, Synth, WriteApp)
+  видят `internal` CoreLib (`Runtime/CoreLibFriends.App.cs`): `View` (формы,
+  адреса, `TryGetBytes`), `RawPipeReader`, `RawRegion`, `ViewCopy`,
+  `ScreenText`, `PipeTransport`. Сделать публичный низкоуровневый слой в
+  `SharpOS.Std.Pipes` и убрать их из друзей. Тесты (AotTests, DataTest) и порты
+  BCL остаются друзьями.
+- **Имена кадров в трассах.** Метаданные с именами методов теперь в образе
+  (313, `StackTraceMethodRvaToTokenMapping` 327) — `ImageMetadata` их читает;
+  осталось сопоставить RVA кадра методу (строка в `limits.md`).
+- **Вырезы под отсутствие имён перечислений — к upstream:** `ReadLine`
+  (`KeyHandler.BuildKeyInput`), Terminal.Gui (`ShortcutHelper`), `SR.Json.cs`
+  (имена `JsonTokenType`/`JsonValueKind`), номер статуса в `Shell/Executor.cs`.
+- **`SYSTEM_PRIVATE_CORELIB` не определён** в сборках CoreLib: он включает
+  векторные ветки `HexConverter` и члены `Rune`, завязанные на внутренности
+  стоковой CoreLib. Определить, разобрав, что они требуют.
+- **Ядерный ярус к ядру — указателями** (`KernelServices`, `PipeTransport.Backend`):
+  медленные пути, но по форме это не стоковые `[RuntimeImport]`; переход — по
+  поводу.
 
 ## Кириллица в живом логе стенда
 

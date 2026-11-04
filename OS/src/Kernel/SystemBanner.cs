@@ -5,9 +5,9 @@ namespace OS.Kernel
 {
     internal static unsafe class SystemBanner
     {
-        // Generated per build by OS.csproj's GenerateBuildInfo target.
+        // Written per build by ImageInfo.Generator (BuildId from OS.csproj).
         // Format: <git-short-sha>[-<tag-from-build-tag.txt>]. See run_build.ps1.
-        internal static string BuildId => BuildInfo.Id;
+        internal static string BuildId => SharpOS.Generated.ImageInfo.BuildId;
 
         public static void Print(BootInfo bootInfo)
         {
@@ -22,7 +22,7 @@ namespace OS.Kernel
             // comparable; the log says which one this is.
             Log.Begin(LogLevel.Info);
             Console.Write("fork: ");
-            Console.Write(BuildInfo.ForkConfig);
+            Console.Write(SharpOS.Generated.ImageInfo.ForkConfig);
             Log.EndLine();
 
             // Same reason: tiering off changes every number the hosted tier

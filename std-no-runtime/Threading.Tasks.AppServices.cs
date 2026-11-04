@@ -11,7 +11,7 @@ using SharpOS.AppSdk;
 
 namespace SharpOS.AppSdk
 {
-    internal static unsafe class TaskBackendInstaller
+    public static unsafe class TaskBackendInstaller
     {
         // The same queue as the kernel side, for the same reason: the service
         // call takes a bare function pointer, so the delegate cannot travel

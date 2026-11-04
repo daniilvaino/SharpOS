@@ -2,7 +2,6 @@
   <PropertyGroup>
     <!-- Where the image puts it (tools/Apps.ps1, step207). -->
     <SharpOsCategory>tests</SharpOsCategory>
-    <IlcSystemModule>AotTests</IlcSystemModule>
   </PropertyGroup>
 
   <!-- Shared freestanding win-x64 PE recipe + base app SDK/std surface. The

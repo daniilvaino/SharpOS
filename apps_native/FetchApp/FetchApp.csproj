@@ -1,8 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <IlcSystemModule>FetchApp</IlcSystemModule>
-  </PropertyGroup>
-
   <!-- Shared freestanding win-x64 PE recipe + base app SDK/std surface (step138:
        migrated off ELF onto the same rails as HelloSharpFs). -->
   <Import Project="..\sdk\FreestandingPe.props" />

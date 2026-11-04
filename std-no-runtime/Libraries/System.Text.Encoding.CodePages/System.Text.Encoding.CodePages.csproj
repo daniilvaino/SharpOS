@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- System.Text.Encoding.CodePages (dotnet/runtime v8.0.27): every code page
+       .NET knows, through CodePagesEncodingProvider and
+       Encoding.RegisterProvider, over std's BCL Encoding. codepages.nlp
+       (612 KB) is embedded under its upstream name. Sources and what is
+       changed: std-no-runtime/Text/CodePages (README.md). An app takes it
+       through CodePages.props there. -->
+
+  <PropertyGroup>
+    <AssemblyName>System.Text.Encoding.CodePages</AssemblyName>
+  </PropertyGroup>
+
+  <Import Project="..\Library.props" />
+
+  <ItemGroup>
+    <Compile Include="..\..\Text\CodePages\**\*.cs" Link="%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\Text\CodePages\Data\codepages.nlp" LogicalName="codepages.nlp" />
+  </ItemGroup>
+
+</Project>

@@ -29,13 +29,6 @@ namespace AotTests
             return AppRuntime.Finish(Main());
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         private static int Main()
         {
             string[] arguments = AppHost.Arguments;
@@ -605,6 +598,12 @@ namespace AotTests
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static object Opaque(object o) => o;
 
+        // Private, on purpose: metadata names them all, as in stock NativeAOT.
+        private enum Hue { Red = 1, Green = 2 }
+
+        [Flags]
+        private enum HueSet { None = 0, R = 1, G = 2, B = 4 }
+
         private static bool s_moduleInitRan;
 
         [System.Runtime.CompilerServices.ModuleInitializer]
@@ -629,6 +628,20 @@ namespace AotTests
             Check("enum[] is int[]", tints is int[]);
             Check("Derived[] is Base[]", derived is CastBase[]);
             Check("[ModuleInitializer] ran before Main", s_moduleInitRan);
+
+            Check("enum ToString: a member by name, any other value by number",
+                Hue.Green.ToString() == "Green" && ((Hue)7).ToString() == "7" && $"{Hue.Red}" == "Red");
+            Check("[Flags] enum ToString", (HueSet.R | HueSet.B).ToString() == "R, B" && HueSet.None.ToString() == "None"
+                && ((HueSet)9).ToString() == "9");
+            Check("enum ToString(\"D\"/\"X\"/\"F\")", Hue.Green.ToString("D") == "2" && Hue.Green.ToString("X") == "00000002"
+                && ((Hue)3).ToString("F") == "Red, Green");
+            Check("Enum.Parse by names", Enum.Parse<HueSet>("R, G") == (HueSet.R | HueSet.G)
+                && Enum.TryParse("green", ignoreCase: true, out Hue parsed) && parsed == Hue.Green
+                && !Enum.TryParse("Blue", out Hue _));
+            Check("Enum.GetNames/GetValues/GetName/IsDefined", Enum.GetNames<Hue>().Length == 2 && Enum.GetValues<HueSet>()[3] == HueSet.B
+                && Enum.GetName(Hue.Red) == "Red" && Enum.IsDefined(Hue.Red) && !Enum.IsDefined((Hue)9));
+            Check("enum of the BCL by name (ConsoleKey, DayOfWeek)",
+                ConsoleKey.LeftArrow.ToString() == "LeftArrow" && DayOfWeek.Friday.ToString() == "Friday");
             Check("int[] is not object[]", !(ints is object[]));
 
             object[] covariant = (object[])Opaque(new string[1]);

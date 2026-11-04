@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <IlcSystemModule>KqlApp</IlcSystemModule>
     <LangVersion>latest</LangVersion>
     <Nullable>annotations</Nullable>
   </PropertyGroup>

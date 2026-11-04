@@ -4,8 +4,8 @@
   Всё, что одинаково для ядра и приложений. Новый файл в std-no-runtime
   попадает сюда, если у него нет ярусной пары.
 
-  Пути относительно этого файла, поэтому список одинаково читается и из
-  OS/OS.csproj, и из apps_native/sdk/FreestandingPe.props. Правило и таблица
+  Берут оба CoreLib (CoreLib.Kernel, CoreLib.App — сборки
+  System.Private.CoreLib). Пути относительно этого файла. Правило и таблица
   ярусных пар — в README.md рядом.
 -->
 <Project>
@@ -17,18 +17,25 @@
   <!-- TurboXml (vendor/TurboXml, BSD-2-Clause): SAX XML parsing on both tiers. -->
   <Import Project="$(MSBuildThisFileDirectory)..\vendor\TurboXml\TurboXml.props" />
 
-  <!-- Source generators every image runs (generators/): the kernel and each
-       app import this file, so this is the one place that reaches all of
-       them. ImageInfo — which image this is; Pipes — [Message] catalog and
-       Region<T> rules; Dynamic — call-site thunks and member tables of
-       `dynamic`, SOSD rules. -->
+  <!-- Source generators: Generators.props, imported by CoreLib and by every
+       program on its own (each assembly runs them over its own code). -->
+  <Import Project="$(MSBuildThisFileDirectory)Generators.props" />
+
   <ItemGroup>
-    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\ImageInfo.Generator\ImageInfo.Generator.csproj"
-                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\Pipes.Generator\Pipes.Generator.csproj"
-                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\Dynamic.Generator\Dynamic.Generator.csproj"
-                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <!-- What ILC's `ldtoken` lowering looks up by name in the system module. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\LdTokenHelpers.cs" Link="std\Runtime\LdTokenHelpers.cs" />
+    <!-- HPET-backed; the source is written at start by the kernel or AppRuntime. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Stopwatch.cs" Link="std\Runtime\Stopwatch.cs" />
+    <!-- Asked for by name by ILC's delegate thunks (a real CoreLib gets them). -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\DelegateHelpers.cs" Link="std\Runtime\DelegateHelpers.cs" />
+    <!-- The image's reflection metadata (ILC's EmbeddedMetadata, TypeMap):
+         the stock readers, verbatim (Runtime/Metadata/PROVENANCE.md), and the
+         lookup of a MethodTable's type definition over them. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Metadata\**\*.cs" Link="std\Runtime\Metadata\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- The attribute enums of System.Reflection the metadata speaks in (BCL 8, verbatim). -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\Reflection\*.cs" Link="std\Runtime\Reflection\%(Filename)%(Extension)" />
+    <!-- How another assembly knows a `fixed` buffer field for one. -->
+    <Compile Include="$(MSBuildThisFileDirectory)Runtime\CompilerServices\FixedBufferAttribute.cs" Link="std\Runtime\CompilerServices\FixedBufferAttribute.cs" />
   </ItemGroup>
 
   <ItemGroup>

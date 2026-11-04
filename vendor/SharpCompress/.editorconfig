@@ -2,3 +2,7 @@
 # are — the diff against upstream matters more than a quiet build.
 [*.cs]
 dotnet_diagnostic.CS0162.severity = none
+# Built as a library over CoreLib (std-no-runtime/Libraries/SharpCompress),
+# with an SR of the compression port's own beside CoreLib's visible one
+# (std-no-runtime/.editorconfig says why).
+dotnet_diagnostic.CS0436.severity = none

@@ -10,7 +10,7 @@
     // resize watch on background loops, and a loop that never returns cannot be
     // run inline. Without threads the library does not merely run slowly, it
     // does not run.
-    internal static unsafe class AppThreads
+    public static unsafe class AppThreads
     {
         /// <summary>
         /// True when the kernel published the V3 services. An app built against

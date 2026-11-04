@@ -23,7 +23,7 @@ namespace SharpOS.AppSdk
     // `cells` comes along because the two candidate shapes are otherwise
     // indistinguishable in a latency number alone: a redraw that costs more
     // per cell, and a redraw that touches more cells.
-    internal static unsafe class UiLatency
+    public static unsafe class UiLatency
     {
         // On by default — this is the measurement, not a probe. A line per 32
         // keys costs nothing and is assembled without allocating, so it does

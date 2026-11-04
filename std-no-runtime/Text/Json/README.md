@@ -5,8 +5,12 @@
 `System.IO.Pipelines/src` — every `.NETCoreApp` compile item of their csproj.
 **License:** MIT, © .NET Foundation and Contributors.
 **Taken by:** `Json.props` beside this file (one line in an app's csproj, app
-tier only); it brings `Regex.props` too, as upstream STJ depends on Regex. The
-source generator is `generators/Json.Generator`.
+tier only); it brings `Regex.props` too, as upstream STJ depends on Regex. Built
+as the library assembly System.Text.Json (`std-no-runtime/Libraries/
+System.Text.Json`, step252). The source generator is the SDK's, which comes
+with every app: it knows the attributes by the assembly name System.Text.Json,
+and the library is that assembly (until step252 it was compiled into the app,
+and a copy of the fork's generator, `generators/Json.Generator`, was needed).
 
 Until step224 a cut of the reader and writer lived in `vendor/SystemTextJson`;
 it is replaced by the libraries whole.
@@ -47,7 +51,9 @@ context is a `NotSupportedException` naming the way out.
 - `SR.Json.cs` — every key of the library's `Strings.resx`, generated, as a
   constants class in `System.Text.Json` (nearer than std's `System.SR`); its
   `Format` names `JsonTokenType`, `JsonValueKind` and `DataType` itself, because
-  `Enum.ToString` has no member names here.
+  `Enum.ToString` had no member names here before step252 (it has now; the
+  naming could go). Built as the library assembly System.Text.Json
+  (`std-no-runtime/Libraries/System.Text.Json`) since step252.
 - `JsonException._message` is `new`: std's `Exception` has an internal field of
   that name, which upstream's (in another assembly) never sees.
 - `JsonSerializer.IsReflectionEnabledByDefault` keeps upstream's default (true):
@@ -55,7 +61,7 @@ context is a `NotSupportedException` naming the way out.
 
 ## Limits
 
-- Enums serialize as numbers only: `Enum.GetNames` is empty (no names in the
-  image), so `JsonStringEnumConverter` has nothing to write.
+- Enums serialize as numbers by default, as upstream; member names exist since
+  step252 (image metadata), `JsonStringEnumConverter` is not run yet.
 - No polymorphism by reflection, no `[JsonConverter]` on a type outside a
   context's knowledge — everything a context does not know.

@@ -1,6 +1,6 @@
 namespace SharpOS.AppSdk
 {
-    internal struct FileEntry
+    public struct FileEntry
     {
         public uint NameLength;
         public uint IsDirectory;

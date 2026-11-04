@@ -2,7 +2,6 @@
   <PropertyGroup>
     <!-- Where the image puts it (tools/Apps.ps1, step207). -->
     <SharpOsCategory>games</SharpOsCategory>
-    <IlcSystemModule>DoomApp</IlcSystemModule>
   </PropertyGroup>
 
   <!-- SharpOS freestanding win-x64 PE build of ManagedDoom (GPL-2.0, isolated in

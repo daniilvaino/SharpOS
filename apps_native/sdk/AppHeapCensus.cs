@@ -20,7 +20,7 @@ namespace SharpOS.AppSdk
     // The walk is GcSweep's without the writes. Printing happens outside the
     // allocator — MaybeDump is polled from the idle loop, not called from a
     // hook — so it is free to allocate and take as long as it likes.
-    internal static unsafe class AppHeapCensus
+    public static unsafe class AppHeapCensus
     {
         // OFF by default, and the default is not timidity — this instrument
         // changes what it measures. MaybeDump is polled from Terminal.Gui's

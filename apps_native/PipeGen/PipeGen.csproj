@@ -2,7 +2,6 @@
   <PropertyGroup>
     <!-- The name on the image (tools/Apps.ps1): a sample, in every build. -->
     <SharpOsName>sample_pipegen</SharpOsName>
-    <IlcSystemModule>PipeGen</IlcSystemModule>
   </PropertyGroup>
 
   <!-- The freestanding win-x64 PE recipe every AOT app uses. -->

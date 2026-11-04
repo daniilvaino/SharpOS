@@ -6,7 +6,7 @@
 | Проблема | Tier | Статус | Источник / комментарий |
 |---|---|---|---|
 | `GC.WaitForPendingFinalizers` зависает | CoreCLR-hosted | 🔴 hang | SYM-003: finalizer-thread completion event не wired; `GC.Collect` сам работает |
-| Имена кадров в трассе | Kernel / PE-app | 🔴 | текст трассы есть с step177 (`eh L18` зелёный, адрес + база образа + смещение), имён нет: проба `rethrow preserves stack trace` даёт `val=116` и красная по `RethrowSource`. Блобы 313/327 в образе лежат и не читаются |
+| Имена кадров в трассе | Kernel / PE-app | 🔴 | текст трассы есть с step177 (`eh L18` зелёный, адрес + база образа + смещение), имён нет: проба `rethrow preserves stack trace` даёт `val=116` и красная по `RethrowSource`. Метаданные (313) с step252 полные и читаются (`ImageMetadata`, имена перечислений); сопоставить RVA кадра методу (327) — не сделано |
 | `Exception.StackTrace` пуст целиком | CoreCLR-hosted | 🔴 | замер `[trace-measure]` (step177): **null** для управляемого `throw`, для `throw;` и для брошенного самим EE. Ни один кадр не записан — `StackTraceInfo` рантайма не приводится в движение нашим первым проходом |
 | `DateTime.Now` (local timezone) | все | 🔴 | нет tz DB: в AOT `TimeZoneInfo` знает только UTC, `Local` = UTC (step212); `DateTime.UtcNow` через CMOS+HPET ✅ |
 | `Process.Start` | CoreCLR-hosted | 🔴 | отсутствует `CreateProcessW` (лог 2026-08-21). Ярус решает по Windows-пути; порождения процессов у нас нет вовсе |

@@ -31,13 +31,6 @@ namespace PipeApps
             return AppRuntime.Finish(Run(StressArgs.Apply(AppHost.Arguments)));
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         private static int Main() => Run(AppHost.Arguments);
 
         private static int Run(string[] args)
@@ -54,12 +47,12 @@ namespace PipeApps
                 if (seen <= Shown)
                     Say(label + "#" + seen.ToString() + " at " + Paint(Yellow, Hex(v.Address))
                         + ", read in place: " + v.ToScreenString() + "\n");
-                if (seen == Shown) before = SharpOS.Std.NoRuntime.GcHeap.AllocCount;
+                if (seen == Shown) before = SharpOS.AppSdk.AppGC.AllocCount;
                 return true;
             }).WriteTo();
 
             string after = seen > Shown
-                ? Paint(Green, (SharpOS.Std.NoRuntime.GcHeap.AllocCount - before).ToString() + " objects") + " allocated here for the "
+                ? Paint(Green, (SharpOS.AppSdk.AppGC.AllocCount - before).ToString() + " objects") + " allocated here for the "
                   + (seen - Shown).ToString() + " after them"
                 : "too few to count allocations";
             Say(label + seen.ToString() + " messages passed on; " + after + "\n");

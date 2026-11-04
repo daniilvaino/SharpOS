@@ -42,13 +42,6 @@ internal static unsafe class AppEntry
         catch (SharpOS.Std.Pipes.PipeException) { }
     }
 
-    [RuntimeExport("SharpAppBootstrap")]
-    private static int SharpAppBootstrap(ulong startupPointer)
-    {
-        RuntimeImports.ManagedStartup();
-        return SharpAppEntry(startupPointer);
-    }
-
     private static int Main() => Run();
 
     private const string Smoke = """

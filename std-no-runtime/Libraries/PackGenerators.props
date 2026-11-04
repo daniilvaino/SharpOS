@@ -1,0 +1,25 @@
+<!--
+  The source generators of the libraries here, taken from the targeting pack of
+  the .NET the SDK bundles (10), not of TargetFramework (net8.0, kept for ILC 8):
+  the libraries are the fork's .NET 10, and their generators must be the same
+  version. The net8.0 pack's ones still come with every app; each is replaced,
+  by file name, only where its library is taken.
+
+  Imported once, by Regex.props; Json.props sets SharpOsJsonGenerator first.
+-->
+<Project>
+  <PropertyGroup>
+    <SharpOsGeneratorDir>$([MSBuild]::EnsureTrailingSlash('$(NetCoreTargetingPackRoot)'))Microsoft.NETCore.App.Ref\$(BundledNETCoreAppPackageVersion)\analyzers\dotnet\cs\</SharpOsGeneratorDir>
+  </PropertyGroup>
+
+  <Target Name="_SharpOsPackGenerators" BeforeTargets="CoreCompile" AfterTargets="ResolvePackageFileConflicts">
+    <Error Condition="!Exists('$(SharpOsGeneratorDir)System.Text.RegularExpressions.Generator.dll')"
+           Text="No .NET $(BundledNETCoreAppPackageVersion) targeting pack generators in $(SharpOsGeneratorDir)" />
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" Condition="'$(SharpOsRegexGenerator)' == 'true' and '%(Filename)' == 'System.Text.RegularExpressions.Generator'" />
+      <Analyzer Include="$(SharpOsGeneratorDir)System.Text.RegularExpressions.Generator.dll" Condition="'$(SharpOsRegexGenerator)' == 'true'" />
+      <Analyzer Remove="@(Analyzer)" Condition="'$(SharpOsJsonGenerator)' == 'true' and '%(Filename)' == 'System.Text.Json.SourceGeneration'" />
+      <Analyzer Include="$(SharpOsGeneratorDir)System.Text.Json.SourceGeneration.dll" Condition="'$(SharpOsJsonGenerator)' == 'true'" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -55,7 +55,7 @@ namespace JsonCheckApp
     {
     }
 
-    // JsonSerializer through the source generator (step224): the SDK's
+    // JsonSerializer through the source generator (step224): the .NET 10 pack's
     // System.Text.Json.SourceGeneration writes SampleContext's metadata at
     // build time; there is no reflection at run time.
     internal static unsafe partial class AppEntry

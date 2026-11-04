@@ -1,32 +1,24 @@
 <Project>
 
-  <!-- System.Text.RegularExpressions from the fork (dotnet-runtime-sharpos,
-       .NET 10): the interpreter and NonBacktracking. RegexOptions.Compiled
-       runs on the interpreter, as upstream does where dynamic code is not
-       supported. What is cut and why: README.md beside this.
+  <!-- System.Text.RegularExpressions for an app: the library assembly
+       (std-no-runtime/Libraries/System.Text.RegularExpressions, built from the
+       sources here — the fork's .NET 10 interpreter and NonBacktracking; what
+       is cut and why: README.md beside this) and the [GeneratedRegex] source
+       generator for the app's own code: the .NET 10 targeting pack's, the
+       library's version (Libraries/PackGenerators.props); the net8.0 pack's
+       knows no [GeneratedRegex] on a partial property (.NET 9), which the
+       fork's sources and vendored code use.
 
-       Opt-in rather than in Std.App.props, like Json.props. App tier only. -->
+       Opt-in rather than in CoreLib, like Json.props. App tier only. -->
 
   <PropertyGroup>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);SHARPOS_REGEX;SYSTEM_TEXT_REGULAREXPRESSIONS</DefineConstants>
-    <!-- CS8500 (pointer to a managed type, ReadOnlySpan<int>* in RegexReplacement): dotnet/runtime builds every library with it off (Directory.Build.props). -->
-    <NoWarn>$(NoWarn);CS8500</NoWarn>
+    <SharpOsRegexGenerator>true</SharpOsRegexGenerator>
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="$(MSBuildThisFileDirectory)**\*.cs" Link="std\Text\RegularExpressions\%(RecursiveDir)%(Filename)%(Extension)" />
-    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\..\generators\Regex.Generator\Regex.Generator.csproj"
-                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\Libraries\System.Text.RegularExpressions\System.Text.RegularExpressions.csproj" />
   </ItemGroup>
 
-  <!-- [GeneratedRegex] through our generator (generators/Regex.Generator): the
-       targeting pack's comes with every app and writes `protected override`,
-       which does not compile against the library in the same assembly. -->
-  <Target Name="_SharpOsRegexGeneratorOnly" BeforeTargets="CoreCompile" AfterTargets="ResolvePackageFileConflicts">
-    <ItemGroup>
-      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'System.Text.RegularExpressions.Generator'" />
-    </ItemGroup>
-  </Target>
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Libraries\PackGenerators.props" />
 
 </Project>

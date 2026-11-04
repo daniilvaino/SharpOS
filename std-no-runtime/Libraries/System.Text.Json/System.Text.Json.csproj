@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- System.Text.Json with System.Text.Encodings.Web and System.IO.Pipelines,
+       whole, from the fork (.NET 10). Sources and what is cut:
+       std-no-runtime/Text/Json (README.md). An app takes it through Json.props
+       there, which also brings the JsonSerializerContext generator. -->
+
+  <PropertyGroup>
+    <AssemblyName>System.Text.Json</AssemblyName>
+  </PropertyGroup>
+
+  <Import Project="..\Library.props" />
+
+  <ItemGroup>
+    <Compile Include="..\..\Text\Json\**\*.cs" Link="Json\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Text\Encodings.Web\**\*.cs" Link="Encodings.Web\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\IO\Pipelines\**\*.cs" Link="Pipelines\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="JsonFriends.cs" />
+  </ItemGroup>
+
+  <!-- STJ uses Regex (JsonHelpers.IntegerRegex, [GeneratedRegex]), as upstream does. -->
+  <Import Project="..\..\Text\RegularExpressions\Regex.props" />
+
+</Project>

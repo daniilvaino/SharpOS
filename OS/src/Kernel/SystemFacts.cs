@@ -34,8 +34,8 @@ namespace OS.Kernel
             {
                 Build = new BuildFacts
                 {
-                    Id = BuildInfo.Id,
-                    Fork = BuildInfo.ForkConfig,
+                    Id = SharpOS.Generated.ImageInfo.BuildId,
+                    Fork = SharpOS.Generated.ImageInfo.ForkConfig,
                     Tests = OS.Kernel.Diagnostics.Probes.Tests,
                     HostedRuntime = OS.Kernel.Exec.CoreClrHost.IsRunning,
                 },

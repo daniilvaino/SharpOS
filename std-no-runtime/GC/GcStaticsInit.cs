@@ -61,6 +61,7 @@ namespace SharpOS.Std.NoRuntime
             byte* rtr = GcStaticsInit.FindReadyToRunHeader();
             if (rtr == null) return false;
             GenericVirtualMethods.Rtr = rtr;
+            ImageMetadata.ReadyToRunHeader = rtr;
 
             byte* dispatchMapTable = GcStaticsInit.FindSection(rtr, SectionId_InterfaceDispatchTable, out _);
             byte* typeManagerIndir = GcStaticsInit.FindSection(rtr, SectionId_TypeManagerIndirection, out int indirLen);

@@ -33,13 +33,6 @@ namespace PipeApps
             return AppRuntime.Finish(Run(StressArgs.Apply(AppHost.Arguments)));
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         private static int Main() => Run(AppHost.Arguments);
 
         private static AppFile s_file;

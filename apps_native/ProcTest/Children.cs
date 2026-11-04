@@ -30,7 +30,7 @@ namespace PipeApps
                     using var o = Pipe.Write<Where>();
                     o.Copy(new Where
                     {
-                        Image = SharpOS.Std.NoRuntime.GcStaticsInit.ImageBase,
+                        Image = SharpOS.AppSdk.AppRuntime.ImageBase,
                         Static = (ulong)System.Runtime.CompilerServices.Unsafe.AsPointer(ref s_marker),
                         Heap = System.Runtime.CompilerServices.Unsafe.As<object, ulong>(ref heap),
                         Id = Process.CurrentId,

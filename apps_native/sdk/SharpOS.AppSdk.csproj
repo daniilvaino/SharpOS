@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The SDK library: what apps use and CoreLib does not need (UI latency,
+       the heap census, string experiments). Built over System.Private.CoreLib
+       for apps (std-no-runtime/CoreLib.App), which also carries the SDK's
+       runtime half (SdkRuntime.props). -->
+
+  <PropertyGroup>
+    <AssemblyName>SharpOS.AppSdk</AssemblyName>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <LangVersion>14.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>annotations</Nullable>
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <RuntimeMetadataVersion>v4.0.30319</RuntimeMetadataVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+  <Import Project="..\..\std-no-runtime\Generators.props" />
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\std-no-runtime\CoreLib.App\CoreLib.App.csproj" />
+    <Compile Include="UiLatency.cs" />
+    <Compile Include="AppHeapCensus.cs" />
+    <Compile Include="StringAlgorithms.cs" />
+  </ItemGroup>
+
+  <Target Name="CustomizeReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
+    <ItemGroup>
+      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" Condition="'%(ReferencePathWithRefAssemblies.ReferenceSourceTarget)' != 'ProjectReference'" />
+      <ReferencePath Remove="@(ReferencePath)" Condition="'%(ReferencePath.ReferenceSourceTarget)' != 'ProjectReference'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

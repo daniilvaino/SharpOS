@@ -30,7 +30,7 @@ All of `src/SharpCompress/**/*.cs` (874 files). Not taken: `SharpCompress.csproj
 
 | Where | What | Why |
 |---|---|---|
-| `AssemblyInfo.cs` | `[assembly: CLSCompliant(false)]` | compiled into the app, whose std already declares it — a duplicate is an error |
+| `AssemblyInfo.cs` | `[assembly: CLSCompliant(false)]` | built as a library over CoreLib (`std-no-runtime/Libraries/SharpCompress`, step252), where every library declares it once (`LibraryAssembly.cs`) — a duplicate is an error |
 | `Common/Ace/Headers/AceFileHeader.cs`, `Compressors/Arj/LhaStream.cs`, `Factories/ArcFactory.cs` | `using System.Xml.Linq;`, `using System.Data;`, `using static System.Net.Mime.MediaTypeNames;` | unused |
 | `Utility.Async.cs` | `File.OpenHandle` for async file creation, under `#if SHARPOS_FILE_HANDLES` | no `SafeFileHandle` here; the `FileStream` branch upstream keeps for older targets is taken |
 | `Compressors/ZStandard/Unsafe/ZSTD_getAllMatchesFn.cs`, `ZSTD_BlockCompressor_f.cs` | `[UnmanagedFunctionPointer(CallingConvention.Cdecl)]` | the delegates are only called from managed code; the attribute makes ILC emit marshalling stubs, which need NativeAOT's `InteropHelpers` (not ported). std does not declare the attribute, so code that needs marshalling fails to compile instead of crashing ILC |

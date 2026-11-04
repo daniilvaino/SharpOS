@@ -3,7 +3,7 @@ using SharpOS.Std;
 
 namespace SharpOS.AppSdk
 {
-    internal struct KeyInfo
+    public struct KeyInfo
     {
         public ushort UnicodeChar;
         public ushort ScanCode;

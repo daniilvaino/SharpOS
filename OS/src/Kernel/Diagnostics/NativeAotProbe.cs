@@ -216,16 +216,16 @@ namespace OS.Kernel.Diagnostics
         // real coverage of each surface separately:
         //   • enum.cast     — IL-level int ↔ enum round-trip.
         //   • enum.bitwise  — `|` `&` arithmetic via cast.
-        //   • enum.toString — member-name via ToString (BCL contract).
+        //   • enum.toString — member-name via ToString (BCL contract): a
+        //     member, a value no member has (its number), [Flags] (members
+        //     joined with ", ").
         //
-        // `System.Enum` in MinimalRuntime.cs is a bare `abstract class
-        // Enum : ValueType {}` — no ToString override, no Parse/GetNames
-        // /HasFlag. Cast + bitwise are IL-level ops so they always work.
-        // ToString falls through to object.ToString → returns the type's
-        // full name, NOT "B". Expected today: enum.cast + enum.bitwise
-        // green, enum.toString RED. When std/no-runtime ports Enum, the
-        // last one turns green without any other change to probe_report.
+        // Names come from the image's reflection metadata (ImageMetadata), as
+        // in stock NativeAOT — private nested enums included.
         private enum Kind { A = 1, B = 2, C = 4 }
+
+        [System.Flags]
+        private enum KindFlags { None = 0, X = 1, Y = 2, Z = 4 }
 
         private static void Probe_Enum()
         {
@@ -241,7 +241,10 @@ namespace OS.Kernel.Diagnostics
             try
             {
                 string s = k.ToString();
-                toStrOk = (s == "B");
+                toStrOk = s == "B"
+                    && (Kind.A | Kind.C).ToString() == "5"
+                    && (KindFlags.X | KindFlags.Z).ToString() == "X, Z"
+                    && KindFlags.None.ToString() == "None";
                 toStrHash = (uint)(s?.Length ?? 0);
             }
             catch { toStrOk = false; }

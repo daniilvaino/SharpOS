@@ -25,13 +25,6 @@ namespace JsonCheckApp
             return AppRuntime.Finish(Main());
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         private static void Check(string name, bool ok)
         {
             if (ok) s_passed++; else s_failed++;

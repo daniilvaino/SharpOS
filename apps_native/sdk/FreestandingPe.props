@@ -9,8 +9,9 @@
        maps + jumps (see done/step137.md). ELF (linux-x64) builds are gone; this
        is win-x64 only, gated on the RID so a non-win-x64 evaluation is a no-op.
 
-       The app csproj keeps only what differs: IlcSystemModule (per-app corelib
-       name) and its own Program.cs / app-specific sources. -->
+       The app csproj keeps only what differs: its own Program.cs and
+       app-specific sources. The system module is System.Private.CoreLib for
+       every app (std-no-runtime/CoreLib.App), set below. -->
 
   <PropertyGroup>
     <!-- net8/ILC8 (matches the kernel / major-9 GC layout). -->
@@ -43,6 +44,13 @@
     <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
     <EnableAotAnalyzer>false</EnableAotAnalyzer>
     <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+    <!-- And ILC's own trim/AOT dataflow warnings (IL2026, IL3050, IL2104,
+         IL3053), which it reports since CoreLib is a real
+         System.Private.CoreLib and reflection metadata is on (step252): they
+         are about reflection invoke and runtime code generation, which this
+         runtime has neither of. -->
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <SuppressAotAnalysisWarnings>true</SuppressAotAnalysisWarnings>
     <EntryPointSymbol>SharpAppEntry</EntryPointSymbol>
 
     <!-- net8/ILC8: DebuggerSupport (default on) exports DotNetRuntimeDebugHeader
@@ -54,80 +62,24 @@
     <IlcDehydrate>false</IlcDehydrate>
   </PropertyGroup>
 
-  <!-- Base app SDK + std surface shared by every native app. sdk/* are next to
-       this .props ($(MSBuildThisFileDirectory)); std/* are two levels up. The
-       app csproj adds only its Program.cs and any app-specific extras (e.g. a
-       richer std slice for the test battery). -->
-  <!-- std-no-runtime: общая часть плюс ярусная часть приложений. Списка ровно
-       три, правило и таблица ярусных пар — в std-no-runtime/README.md. Здесь
-       остаётся только SDK приложений: то, что знает про таблицу служб и
-       контракты процесса. -->
-  <Import Project="$(MSBuildThisFileDirectory)..\..\std-no-runtime\Std.props" />
-  <Import Project="$(MSBuildThisFileDirectory)..\..\std-no-runtime\Std.App.props" />
-
+  <!-- An app is built over System.Private.CoreLib for apps — std, its app tier
+       and the SDK's runtime half (std-no-runtime/CoreLib.App) — and over the
+       SDK library (SharpOS.AppSdk.csproj), as a stock program over the stock
+       CoreLib and its libraries. Both are compiled once for every app. The
+       generators run over the app's own code. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\..\std-no-runtime\Generators.props" />
   <ItemGroup>
-    <Compile Include="$(MSBuildThisFileDirectory)MinimalRuntime.cs"       Link="sdk\MinimalRuntime.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)AppStartupBlock.cs"      Link="sdk\AppStartupBlock.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)AppServiceTable.cs"      Link="sdk\AppServiceTable.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)AppRuntime.cs"           Link="sdk\AppRuntime.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)IntrinsicFlagsInstaller.cs" Link="sdk\IntrinsicFlagsInstaller.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)AppThreads.cs"           Link="sdk\AppThreads.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)AppConsole.cs"           Link="sdk\AppConsole.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)AppGC.cs"                Link="sdk\AppGC.cs" />
-    <!-- What fills the app's heap, reported when it takes a new
-         segment. Polled from the idle loop, never from the allocator. -->
-    <Compile Include="$(MSBuildThisFileDirectory)AppHeapCensus.cs"        Link="sdk\AppHeapCensus.cs" />
-    <!-- Key-to-frame time, measured at the main loop's own boundaries. The
-         profiler cannot answer this one: a loop waiting for input is idle. -->
-    <Compile Include="$(MSBuildThisFileDirectory)UiLatency.cs"            Link="sdk\UiLatency.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)ByRefAssignRefStub.cs" Link="sdk\ByRefAssignRefStub.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)AtomicStub.cs" Link="sdk\AtomicStub.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)InterfaceDispatchTrampoline.cs" Link="sdk\InterfaceDispatchTrampoline.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)StackProbeStub.cs"       Link="sdk\StackProbeStub.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)ThrowExTrampoline.cs"          Link="sdk\ThrowExTrampoline.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)RethrowTrampoline.cs"          Link="sdk\RethrowTrampoline.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)AppHost.cs"              Link="sdk\AppHost.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)StringAlgorithms.cs"     Link="sdk\StringAlgorithms.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)KeyInfo.cs"              Link="sdk\KeyInfo.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)Audio.cs"                Link="sdk\Audio.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)FileEntry.cs"            Link="sdk\FileEntry.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)SystemConsole.cs"        Link="sdk\SystemConsole.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)TerminalKeys.cs"         Link="sdk\TerminalKeys.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)Environment.AppHost.cs"  Link="sdk\Environment.AppHost.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)FileSystemInfo.AppHost.cs" Link="sdk\FileSystemInfo.AppHost.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)FileOptions.AppHost.cs" Link="sdk\FileOptions.AppHost.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)Path.AppHost.cs" Link="sdk\Path.AppHost.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)ProcessStub.cs"          Link="sdk\ProcessStub.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)Process.cs"              Link="sdk\Process.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)AppFile.cs"              Link="sdk\AppFile.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)PipeLines.cs"            Link="sdk\PipeLines.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)Stopwatch.AppStub.cs"    Link="sdk\Stopwatch.AppStub.cs" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\std-no-runtime\CoreLib.App\CoreLib.App.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)SharpOS.AppSdk.csproj" />
+  </ItemGroup>
 
-    <!-- Internal.Runtime.CompilerHelpers.ThrowHelpers is the copy inside
-         sdk/MinimalRuntime.cs: ILC resolves the type by fixed name, so there is
-         exactly one per image. The kernel has its own in
-         OS/src/Boot/ThrowHelpers.cs.
-
-         Ярусные пары std переехали в std-no-runtime/README.md — здесь их
-         перечисление было второй копией, и она уже начала расходиться. -->
-    <!-- What ILC's `ldtoken` lowering looks up by name in the system module —
-         which for a freestanding app is the app. Needed since apps started
-         using `typeof`, by way of record types. System.Type itself lives in
-         MinimalRuntime.cs beside the other core types. -->
-    <Compile Include="$(MSBuildThisFileDirectory)LdTokenHelpers.cs"        Link="sdk\LdTokenHelpers.cs" />
-    <!-- Marker types the compiler looks up by name. Without IsExternalInit an
-         `init` accessor — and therefore every `record` — fails to compile;
-         apps did without it until one of them vendored a library built out of
-         records. -->
-    <!-- Keys are held strongly, not weakly: no weak handles in either
-         collector. See the file's header and limits §8. -->
-
-    <!-- Tasks: shared surface plus the app's thread backend (service table V3).
-         Terminal.Gui keeps input decoding and the resize watch on background
-         loops, so without threads it does not run slowly — it does not run. -->
-    <!-- Declared for BCL-shaped parse calls; the values are real, nothing
-         honours them. See the file header. -->
+  <PropertyGroup>
+    <!-- Set, not left empty: empty would add the stock AutoInitializedAssemblies
+         (TypeLoader, Reflection.Execution…) this runtime does not have. -->
+    <IlcSystemModule>System.Private.CoreLib</IlcSystemModule>
+  </PropertyGroup>
+  <ItemGroup>
+    <UnmanagedEntryPointsAssembly Include="System.Private.CoreLib" />
   </ItemGroup>
 
   <!-- Freestanding CRT stubs (__security_cookie via CoffStub.Generator,
@@ -198,37 +150,44 @@
     </ItemGroup>
   </Target>
 
-  <!-- Build id, same shape as the kernel's (OS.csproj GenerateBuildInfo) and
-       fed by the same helper: build.ps1 passes /p:BuildId=sha[+dirty][-tag].
-       Every app carries its own, because the kernel's WriteBuildId service
-       reports the KERNEL's id, and an app built three days earlier reported it
-       just as confidently. That is how the rig spent an evening running a
-       stale launcher against a fresh kernel. AppRuntime.Initialize prints this
-       one, so the first line an app writes says what it is.
-       NOTE: $(IntermediateOutputPath) is only set after SDK init, so compute
-       the path INSIDE the target. -->
+  <!-- Build id, fed by the same helper as the kernel's: build.ps1 passes
+       /p:BuildId=sha[+dirty][-tag]. Every app carries its own, because the
+       kernel's WriteBuildId service reports the KERNEL's id, and an app built
+       three days earlier reported it just as confidently. That is how the rig
+       spent an evening running a stale launcher against a fresh kernel.
+       ImageInfo.Generator writes it into SharpOS.Generated.ImageInfo and hands
+       it, with the name, to AppRuntime from a module initializer; the banner
+       prints it, so the first line an app writes says what it is. -->
   <PropertyGroup>
     <BuildId Condition="'$(BuildId)' == ''">local</BuildId>
+    <SharpOsImageKind>App</SharpOsImageKind>
   </PropertyGroup>
 
-  <Target Name="GenerateAppBuildInfo" BeforeTargets="BeforeCompile">
-    <PropertyGroup>
-      <AppBuildInfoGeneratedFile>$(IntermediateOutputPath)AppBuildInfo.g.cs</AppBuildInfoGeneratedFile>
-      <AppBuildInfoFileContents>namespace SharpOS.AppSdk%0A{%0A    internal static class AppBuildInfo%0A    {%0A        internal const string Id = "$(BuildId)"%3B%0A        internal const string Name = "$(AssemblyName)"%3B%0A    }%0A}%0A</AppBuildInfoFileContents>
-    </PropertyGroup>
-    <WriteLinesToFile File="$(AppBuildInfoGeneratedFile)" Lines="$(AppBuildInfoFileContents)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  <!-- The framework's assemblies, before references are resolved: the targeting
+       pack's System.Text.Json, RegularExpressions… would otherwise contend with
+       ours (MSB3243) — the SDK resolves the conflict before
+       CustomizeReferences below drops them. -->
+  <Target Name="DropFrameworkReferences" AfterTargets="ResolveTargetingPackAssets" BeforeTargets="ResolveAssemblyReferences">
     <ItemGroup>
-      <Compile Include="$(AppBuildInfoGeneratedFile)" />
-      <FileWrites Include="$(AppBuildInfoGeneratedFile)" />
+      <Reference Remove="@(Reference)" Condition="'%(Reference.FrameworkReferenceName)' != ''" />
     </ItemGroup>
   </Target>
 
   <!-- Strip ref-assembly + host-config plumbing the SDK adds (freestanding, no
-       host). Shared by all apps. -->
+       host); our CoreLib and SDK (project references) stay. Shared by all apps. -->
   <Target Name="CustomizeReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
     <ItemGroup>
-      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" />
-      <ReferencePath Remove="@(ReferencePath)" />
+      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" Condition="'%(ReferencePathWithRefAssemblies.ReferenceSourceTarget)' != 'ProjectReference'" />
+      <ReferencePath Remove="@(ReferencePath)" Condition="'%(ReferencePath.ReferenceSourceTarget)' != 'ProjectReference'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- ILC: our CoreLib and SDK instead of the stock CoreLib and framework the
+       targets hand it (-r:). -->
+  <Target Name="UseSharpOsCoreLib" AfterTargets="ComputeIlcCompileInputs" BeforeTargets="WriteIlcRspFileForCompilation">
+    <ItemGroup>
+      <IlcReference Remove="@(IlcReference)" />
+      <IlcReference Include="@(ReferencePath)" Condition="'%(ReferencePath.ReferenceSourceTarget)' == 'ProjectReference'" />
     </ItemGroup>
   </Target>
 

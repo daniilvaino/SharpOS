@@ -31,13 +31,6 @@ namespace PipeApps
             return AppRuntime.Finish(Run(AppHost.Arguments));
         }
 
-        [RuntimeExport("SharpAppBootstrap")]
-        private static int SharpAppBootstrap(ulong startupPointer)
-        {
-            RuntimeImports.ManagedStartup();
-            return SharpAppEntry(startupPointer);
-        }
-
         private static int Main() => Run(AppHost.Arguments);
 
         // The made-up type, as offsets from its key word (where a class's

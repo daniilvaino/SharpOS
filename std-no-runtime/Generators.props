@@ -1,0 +1,24 @@
+<!--
+  Source generators every assembly of an image runs (generators/): CoreLib
+  (Std.props imports this file) and the program built over it — the kernel,
+  each app. ImageInfo — which image this is (name, build id; an app hands them
+  to CoreLib); Pipes — [Message] catalog and
+  Region<T> rules; Dynamic — call-site thunks and member tables of `dynamic`,
+  SOSD rules. What a generator registers is handed to CoreLib's tables by a
+  module initializer of the assembly it was written into.
+-->
+<Project>
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\ImageInfo.Generator\ImageInfo.Generator.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\Pipes.Generator\Pipes.Generator.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\generators\Dynamic.Generator\Dynamic.Generator.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <!-- What ImageInfo writes: the build id, which image (Kernel/App) and the
+         CoreCLR fork build the kernel links. -->
+    <CompilerVisibleProperty Include="BuildId" />
+    <CompilerVisibleProperty Include="SharpOsImageKind" />
+    <CompilerVisibleProperty Include="SharpOsForkConfig" />
+  </ItemGroup>
+</Project>

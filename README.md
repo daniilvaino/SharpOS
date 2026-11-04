@@ -175,8 +175,7 @@ DOOM1.WAD, свои картриджи `.nes` и PowerShell для самой Sh
 | `SortedDictionary` | 🟡 | 🟡 | ✅ | внутри сортированный массив: вставка линейная |
 | LINQ | ✅ | ✅ | ✅ | своя мини-реализация `System.Linq.Enumerable` |
 | `string.Format`, интерполяция, `ToString(format)` чисел | 🟡 | 🟡 | ✅ | форматтер чисел и `DefaultInterpolatedStringHandler` из .NET 8 (UTF-16 и UTF-8); культура только инвариантная, без `decimal`/`Half`/`Int128` |
-| `System.Enum` | 🟡 | 🟡 | ✅ | нет `ToString`, `GetNames`/`GetValues` пусты, `Parse` — только числом: имён членов без метаданных нет; `ToObject` и `Type.GetTypeCode` (по нижележащему типу) есть |
-| `Enum.IsDefined` | 🔴 | 🟡 | ✅ | в приложениях всегда `true`: метаданных перечислений нет |
+| `System.Enum` | 🟡 | 🟡 | ✅ | `ToString` (`G`/`D`/`X`/`F`, `[Flags]`), `GetName(s)`, `GetValues`, `Parse` по именам, `IsDefined` — из метаданных образа, как в стоке (step252); `GetValues(Type)` — `object[]`, перечисление внутри обобщённого типа — числом |
 | `DateTime` / `TimeSpan` | 🟡 | 🟡 | ✅ | порт BCL (step212): `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, все стандартные и пользовательские форматы, инвариантная культура; `TimeZoneInfo` без базы поясов: `Local` — фиксированный сдвиг из `TZ` (step216), иначе UTC; летнего времени нет. Часы — нет. В ядре источник не подключён, `Now` = начало эпохи (`IsRealClock` = false). В приложениях с step182 идут монотонные часы от HPET: интервалы верны, дата нет (эпоха + аптайм). Настоящую дату отдаёт только hosted-ярус |
 | `Array.Copy` с перекрытием (семантика memmove) | ✅ | ✅ | ✅ | |
 | `Math.Abs`, `Math.Sqrt` | ✅ | ✅ | ✅ | |
@@ -424,11 +423,11 @@ Pipe.Read("myapp.log").WriteTo(Pipe.To("CONVERT --to json | WRITE errors.json"))
 - `OS/src/` - ядро и его слои: `Boot`, `Hal`, `Kernel`, `PAL`.
 - `apps_native/` - приложения (лаунчер, оболочка, батарея AotTests, DOOM) и общий SDK в `apps_native/sdk/`.
 - `apps_managed/` - стоковые .NET-программы для яруса CoreCLR-hosted.
-- `std/no-runtime/` - замена стандартной библиотеки: порты BCL и runtime-хелперы. Общая для ядра и приложений.
+- `std-no-runtime/` - замена стандартной библиотеки: порты BCL и runtime-хелперы. Собирается в отдельную сборку `System.Private.CoreLib`, как в стоке, — по одной на ярус (ядро, приложения) из одного дерева; порты вроде System.Text.Json и Regex — своими сборками в `std-no-runtime/Libraries/` (`std-no-runtime/README.md`).
 - `generators/` - генераторы исходников Roslyn и проверки на этапе сборки:
   - `Pipes.Generator` вносит типы `[Message]` в каталог труб и следит за правилами регионов;
   - `Dynamic.Generator` делает переходники и таблицы членов для `dynamic`, а `Dynamic.Check` после компиляции проверяет, что переходник есть у каждого `CallSite<T>`;
-  - `ImageInfo.Generator` подставляет в образ сведения о том, какой это образ;
+  - `ImageInfo.Generator` подставляет в образ сведения о нём: имя сборки, номер сборки, конфигурацию форка;
   - `BootAsm.Generator` собирает стабы через Iced во время компиляции;
   - `CoffStub.Generator` пишет COFF-объекты с символами данных для линкера.
   - Рядом лежат тесты `*.Tests`.

@@ -1,6 +1,6 @@
 ﻿namespace SharpOS.AppSdk
 {
-    internal static unsafe class AppHost
+    public static unsafe class AppHost
     {
         private const int MaxTempTextChars = 512;
         private const int MaxTempPathChars = 260;

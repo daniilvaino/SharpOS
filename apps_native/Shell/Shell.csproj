@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <IlcSystemModule>Shell</IlcSystemModule>
     <LangVersion>14.0</LangVersion>
     <!-- Annotations understood, nullable warnings off: the library is
          null-annotated, our std is not, and turning the warnings on would

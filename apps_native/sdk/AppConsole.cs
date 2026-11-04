@@ -5,7 +5,7 @@ namespace SharpOS.AppSdk
     // The size comes from the framebuffer and the font, both of which live on
     // the kernel side, so an app cannot work it out for itself — and guessing
     // 80x25 would be wrong on every machine we actually run on.
-    internal static unsafe class AppConsole
+    public static unsafe class AppConsole
     {
         /// <summary>
         /// The console size in cells. False when the kernel publishes no size,

@@ -3,12 +3,14 @@
   <!-- Сшивание PE через lld-link + xwin из тулчейна SharpOS, на любом хосте. -->
   <Import Project="$(MSBuildThisFileDirectory)..\SharpOsNativeLink.props" />
 
-  <!-- std-no-runtime: общая часть плюс ярусная часть ядра. Списка ровно три,
-       правило и таблица ярусных пар — в std-no-runtime/README.md. Раньше этот
-       список жил здесь же, вперемешку с файлами ядра, а его близнец — внутри
-       FreestandingPe.props; они разошлись на 49 файлов. -->
-  <Import Project="$(MSBuildThisFileDirectory)..\std-no-runtime\Std.props" />
-  <Import Project="$(MSBuildThisFileDirectory)..\std-no-runtime\Std.Kernel.props" />
+  <!-- CoreLib is its own assembly (System.Private.CoreLib, the kernel tier of
+       std-no-runtime: std-no-runtime/CoreLib.Kernel); the kernel is built over
+       it, as a stock program over the stock CoreLib. The generators run over
+       the kernel's own code as well. -->
+  <Import Project="$(MSBuildThisFileDirectory)..\std-no-runtime\Generators.props" />
+  <ItemGroup>
+    <ProjectReference Include="..\std-no-runtime\CoreLib.Kernel\CoreLib.Kernel.csproj" />
+  </ItemGroup>
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -26,7 +28,9 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
 
-    <IlcSystemModule>OS</IlcSystemModule>
+    <!-- Set, not left empty: empty would add the stock AutoInitializedAssemblies
+         (TypeLoader, Reflection.Execution…) this runtime does not have. -->
+    <IlcSystemModule>System.Private.CoreLib</IlcSystemModule>
     <EntryPointSymbol>EfiMain</EntryPointSymbol>
     <LinkerSubsystem>EFI_APPLICATION</LinkerSubsystem>
 
@@ -57,6 +61,10 @@
     <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
     <EnableAotAnalyzer>false</EnableAotAnalyzer>
     <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+    <!-- ILC's trim/AOT dataflow warnings, on with reflection metadata (step252,
+         apps_native/sdk/FreestandingPe.props says why they are off). -->
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <SuppressAotAnalysisWarnings>true</SuppressAotAnalysisWarnings>
     <!-- IlcGenerateMapFile=true was used during step 40 cctor research.
          Re-enable temporarily if investigating ILC node emission. -->
 
@@ -296,35 +304,39 @@ detach vdisk
   </Target>
 
   <!-- Build id: surfaced in SystemBanner / WriteBuildId service. Passed in by
-       run_build.ps1 as /p:BuildId=<git-short-sha>[-tag]. Falls back to "local"
-       if the property isn't set. Generated .cs is compiled into the kernel.
-       NOTE: $(IntermediateOutputPath) is only set after SDK init, so compute
-       the file path INSIDE the target, not in a top-level PropertyGroup. -->
+       run_build.ps1 as /p:BuildId=<git-short-sha>[-tag]; "local" if not set.
+       With it, which CoreCLR fork build is linked: a number measured on a Debug
+       fork is not comparable with one on Release, and the log has to say which.
+       ImageInfo.Generator writes both into SharpOS.Generated.ImageInfo, as for
+       every app. -->
   <PropertyGroup>
     <BuildId Condition="'$(BuildId)' == ''">local</BuildId>
+    <SharpOsImageKind>Kernel</SharpOsImageKind>
+    <SharpOsForkConfig>$(CoreClrForkConfig)</SharpOsForkConfig>
+    <SharpOsForkConfig Condition="'$(SkipCoreClr)' == 'true'">none</SharpOsForkConfig>
   </PropertyGroup>
 
-  <Target Name="GenerateBuildInfo" BeforeTargets="BeforeCompile">
-    <PropertyGroup>
-      <BuildInfoGeneratedFile>$(IntermediateOutputPath)BuildInfo.g.cs</BuildInfoGeneratedFile>
-      <!-- Which CoreCLR fork build is linked: a number measured on a Debug fork
-           is not comparable with one on Release, and the log has to say which. -->
-      <BuildInfoForkConfig>$(CoreClrForkConfig)</BuildInfoForkConfig>
-      <BuildInfoForkConfig Condition="'$(SkipCoreClr)' == 'true'">none</BuildInfoForkConfig>
-      <BuildInfoFileContents>namespace OS.Kernel%0A{%0A    internal static class BuildInfo%0A    {%0A        internal const string Id = "$(BuildId)"%3B%0A        internal const string ForkConfig = "$(BuildInfoForkConfig)"%3B%0A    }%0A}%0A</BuildInfoFileContents>
-    </PropertyGroup>
-    <WriteLinesToFile File="$(BuildInfoGeneratedFile)" Lines="$(BuildInfoFileContents)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  <!-- The project file pretends this is .NET, but it's not .NET. Remove the
+       assembly references the .NET SDK added; our CoreLib (a project
+       reference) stays. -->
+  <Target Name="CustomizeReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
     <ItemGroup>
-      <Compile Include="$(BuildInfoGeneratedFile)" />
-      <FileWrites Include="$(BuildInfoGeneratedFile)" />
+      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" Condition="'%(ReferencePathWithRefAssemblies.ReferenceSourceTarget)' != 'ProjectReference'" />
+      <ReferencePath Remove="@(ReferencePath)" Condition="'%(ReferencePath.ReferenceSourceTarget)' != 'ProjectReference'" />
     </ItemGroup>
   </Target>
 
-  <!-- The project file pretends this is .NET, but it's not .NET. Remove all assembly references the .NET SDK added. -->
-  <Target Name="CustomizeReferences" BeforeTargets="BeforeCompile" AfterTargets="FindReferenceAssembliesForReferences">
+  <!-- ILC: our CoreLib instead of the stock one the targets hand it (the
+       package's System.Private.CoreLib and the framework, -r:), and its
+       [RuntimeExport] methods rooted as the stock targets do when
+       IlcSystemModule is left empty. -->
+  <ItemGroup>
+    <UnmanagedEntryPointsAssembly Include="System.Private.CoreLib" />
+  </ItemGroup>
+  <Target Name="UseSharpOsCoreLib" AfterTargets="ComputeIlcCompileInputs" BeforeTargets="WriteIlcRspFileForCompilation">
     <ItemGroup>
-      <ReferencePathWithRefAssemblies Remove="@(ReferencePathWithRefAssemblies)" />
-      <ReferencePath Remove="@(ReferencePath)" />
+      <IlcReference Remove="@(IlcReference)" />
+      <IlcReference Include="@(ReferencePath)" Condition="'%(ReferencePath.ReferenceSourceTarget)' == 'ProjectReference'" />
     </ItemGroup>
   </Target>
 
@@ -397,19 +409,10 @@ detach vdisk
     </PropertyGroup>
   </Target>
 
-  <ItemGroup>
-    <!-- Internal.Runtime.CompilerHelpers.ThrowHelpers is NOT taken from std:
-         ILC looks the type up by fixed name, so exactly one copy may be
-         compiled per image. The kernel's lives in src/Boot/ThrowHelpers.cs and
-         is picked up automatically; apps carry their own in
-         sdk/MinimalRuntime.cs. A third copy used to sit in std and was
-         compiled by nobody — deleted 2026-09-20 after two edits landed in it
-         and changed nothing. -->
-
-
-    <!-- Tasks: the shared surface plus the kernel's thread backend. Terminal.Gui
-         needs Task.Run for background loops, and the kernel is where threads
-         already exist — so the shape gets exercised here before apps get them. -->
-  </ItemGroup>
+  <!-- Internal.Runtime.CompilerHelpers.ThrowHelpers and the other types ILC
+       looks up by name in the system module are CoreLib's (its kernel tier:
+       std-no-runtime/Runtime/ThrowHelpers.Kernel.cs, MinimalRuntime.Kernel.cs).
+       The kernel's thread backend for Tasks is the kernel's own
+       (src/Kernel/Threading/TaskBackendInstaller.cs). -->
 
 </Project>

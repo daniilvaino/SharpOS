@@ -2,7 +2,7 @@
 
 namespace SharpOS.AppSdk
 {
-    internal enum AppServiceStatus : uint
+    public enum AppServiceStatus : uint
     {
         Ok = 0,
         NoData = 1,
@@ -16,7 +16,7 @@ namespace SharpOS.AppSdk
         Busy = 9,
     }
 
-    internal unsafe struct AppServiceTable
+    public unsafe struct AppServiceTable
     {
         public const uint AbiVersionV1 = 1;
         public const uint AbiVersionV2 = 2;
@@ -431,7 +431,7 @@ namespace SharpOS.AppSdk
     ///                      Flags bit 0 = a driver claimed it
     ///   Kind 3 endpoint:   Number = address, EndpointType, MaxPacket, Interval
     /// </remarks>
-    internal unsafe struct AppUsbNode
+    public unsafe struct AppUsbNode
     {
         public uint Kind;
         public uint Parent;          // index in the same array, 0xFFFFFFFF at a root
@@ -468,7 +468,7 @@ namespace SharpOS.AppSdk
         public fixed byte SerialNumber[NameBytes];
     }
 
-    internal unsafe struct AppUsbEnumerateRequest
+    public unsafe struct AppUsbEnumerateRequest
     {
         public ulong BufferAddress;  // AppUsbNode[]
         public uint Capacity;        // in nodes
@@ -483,7 +483,7 @@ namespace SharpOS.AppSdk
     /// CTAPHID_INIT and hands back the channel the key allocated. Any other
     /// value sends Command on that channel.
     /// </remarks>
-    internal unsafe struct AppUsbCtapRequest
+    public unsafe struct AppUsbCtapRequest
     {
         public uint Channel;         // in: 0 = INIT; out: the channel to use
         public uint Command;         // CTAPHID command, ignored when Channel is 0
@@ -499,12 +499,12 @@ namespace SharpOS.AppSdk
         public uint Reserved;
     }
 
-    internal unsafe struct AppFileExistsRequest
+    public unsafe struct AppFileExistsRequest
     {
         public ulong PathAddress;
     }
 
-    internal unsafe struct AppReadFileRequest
+    public unsafe struct AppReadFileRequest
     {
         public ulong PathAddress;
         public ulong BufferAddress;
@@ -512,7 +512,7 @@ namespace SharpOS.AppSdk
         public uint BytesRead;
     }
 
-    internal unsafe struct AppReadDirectoryEntryRequest
+    public unsafe struct AppReadDirectoryEntryRequest
     {
         public ulong DirectoryPathAddress;
         public uint EntryIndex;
@@ -524,21 +524,21 @@ namespace SharpOS.AppSdk
         public uint Reserved1;
     }
 
-    internal unsafe struct AppReadKeyRequest
+    public unsafe struct AppReadKeyRequest
     {
         public ushort UnicodeChar;
         public ushort ScanCode;
         public uint Reserved;
     }
 
-    internal unsafe struct AppRunManagedRequest
+    public unsafe struct AppRunManagedRequest
     {
         public ulong PathAddress;
         public int ExitCode;
         public uint Reserved;
     }
 
-    internal unsafe struct AppRunAppRequest
+    public unsafe struct AppRunAppRequest
     {
         public const uint FlagHasArguments = 1;
 
@@ -554,7 +554,7 @@ namespace SharpOS.AppSdk
         public uint ArgumentsReserved;
     }
 
-    internal enum AppServiceAbi : uint
+    public enum AppServiceAbi : uint
     {
         WindowsX64 = 0,
         SystemV = 1,

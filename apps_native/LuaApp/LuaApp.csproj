@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Lua-CSharp (MIT, nuskey8/Lua-CSharp), vendored in vendor/LuaCSharp. -->
   <PropertyGroup>
-    <IlcSystemModule>LuaApp</IlcSystemModule>
     <StartupObject>AppEntry</StartupObject>
     <Nullable>annotations</Nullable>
     <NoWarn>$(NoWarn);CS0436;CS8632;CS0649</NoWarn>

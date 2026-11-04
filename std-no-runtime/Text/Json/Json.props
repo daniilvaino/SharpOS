@@ -1,41 +1,29 @@
 <Project>
 
-  <!-- System.Text.Json, System.Text.Encodings.Web and System.IO.Pipelines
-       whole, from the fork (dotnet-runtime-sharpos, .NET 10): reader, writer,
-       JsonDocument, JsonNode, JsonSerializer. What is cut and why: README.md
-       beside this.
+  <!-- System.Text.Json for an app: the library assembly
+       (std-no-runtime/Libraries/System.Text.Json, built from the sources here
+       with System.Text.Encodings.Web and System.IO.Pipelines — the fork's .NET
+       10, whole: reader, writer, JsonDocument, JsonNode, JsonSerializer; what
+       is cut and why: README.md beside this).
 
-       JsonSerializer works through the source generator: no reflection
-       metadata here, so a JsonSerializerContext ([JsonSerializable]) gives
-       every type its JsonTypeInfo. The generator is built from the fork's own
-       sources (generators/Json.Generator) — the SDK's would skip every member
-       attribute, since it knows them by the assembly name System.Text.Json and
-       here the library is compiled into the app.
+       JsonSerializer works through the source generator: JsonSerializerContext
+       ([JsonSerializable]) gives every type its JsonTypeInfo. The generator is
+       the .NET 10 targeting pack's, the library's version
+       (Libraries/PackGenerators.props): it knows the attributes by the
+       assembly name System.Text.Json, and the library is that assembly.
 
-       Opt-in rather than in Std.App.props: 400 files are not what every app
-       should compile. App tier only. -->
-
-  <!-- STJ uses Regex (JsonHelpers.IntegerRegex), as upstream does. -->
-  <Import Project="$(MSBuildThisFileDirectory)../RegularExpressions/Regex.props" />
+       Opt-in rather than in CoreLib: 400 files are not what every app needs.
+       App tier only. -->
 
   <PropertyGroup>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SharpOsJsonGenerator>true</SharpOsJsonGenerator>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Compile Include="$(MSBuildThisFileDirectory)**\*.cs" Link="std\Text\Json\%(RecursiveDir)%(Filename)%(Extension)" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\Encodings.Web\**\*.cs" Link="std\Text\Encodings.Web\%(RecursiveDir)%(Filename)%(Extension)" />
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\IO\Pipelines\**\*.cs" Link="std\IO\Pipelines\%(RecursiveDir)%(Filename)%(Extension)" />
-    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\..\generators\Json.Generator\Json.Generator.csproj"
-                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-  </ItemGroup>
+  <!-- STJ uses Regex, as upstream does. -->
+  <Import Project="$(MSBuildThisFileDirectory)../RegularExpressions/Regex.props" />
 
-  <!-- The targeting pack's System.Text.Json generator comes with every app;
-       with ours beside it both would write the same context. -->
-  <Target Name="_SharpOsJsonGeneratorOnly" BeforeTargets="CoreCompile" AfterTargets="ResolvePackageFileConflicts">
-    <ItemGroup>
-      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'System.Text.Json.SourceGeneration'" />
-    </ItemGroup>
-  </Target>
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\Libraries\System.Text.Json\System.Text.Json.csproj" />
+  </ItemGroup>
 
 </Project>

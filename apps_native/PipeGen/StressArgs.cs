@@ -12,9 +12,7 @@ namespace PipeApps
         {
             if (args.Length < 2 || args[0] != "--gc-stress") return args;
             uint every = (uint)int.Parse(args[1]);
-            SharpOS.Std.NoRuntime.GcSweep.PoisonFreed = true;
-            SharpOS.Std.NoRuntime.GcStress.VerifyHeap = true;
-            SharpOS.Std.NoRuntime.GcStress.Every = every;
+            SharpOS.AppSdk.AppGC.EnableStress(every);
             Every = every;
             string[] rest = new string[args.Length - 2];
             for (int i = 0; i < rest.Length; i++) rest[i] = args[i + 2];

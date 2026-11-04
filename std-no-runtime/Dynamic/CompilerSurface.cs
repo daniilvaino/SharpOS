@@ -244,15 +244,37 @@ namespace SharpOS.Std.Dynamic
     /// <summary>
     /// The call-site thunks of this image, by delegate type: one per
     /// Func/Action shape the compiler emitted for a dynamic operation. Filled
-    /// by the generator (RegisterGenerated).
+    /// by the registrations Dynamic.Generator writes into each assembly and
+    /// hands over from a module initializer (AddGenerated).
     /// </summary>
-    public static partial class CallSiteThunks
+    public static unsafe partial class CallSiteThunks
     {
         private static Dictionary<Type, object> s_thunks;
         private static Dictionary<Type, object> s_filling;
         private static object s_lock;
+        private static nint[] s_generated;
+        private static int s_generatedCount;
 
-        static partial void RegisterGenerated();
+        /// <summary>A generated registration; after the table is filled it runs at once.</summary>
+        public static void AddGenerated(delegate*<void> register)
+        {
+            if (s_thunks != null)
+            {
+                s_filling = s_thunks;
+                register();
+                return;
+            }
+            s_generated ??= new nint[8];
+            if (s_generatedCount == s_generated.Length)
+                Array.Resize(ref s_generated, s_generatedCount * 2);
+            s_generated[s_generatedCount++] = (nint)register;
+        }
+
+        private static void RegisterGenerated()
+        {
+            for (int i = 0; i < s_generatedCount; i++)
+                ((delegate*<void>)s_generated[i])();
+        }
 
         public static void Register(Type delegateType, object thunk) => s_filling[delegateType] = thunk;
 

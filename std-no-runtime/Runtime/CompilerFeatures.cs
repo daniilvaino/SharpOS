@@ -11,7 +11,7 @@ namespace System.Runtime.CompilerServices
     /// Presence of this type is how the compiler decides `init` accessors and
     /// `record` types are allowed. It is never instantiated.
     /// </summary>
-    internal static class IsExternalInit
+    public static class IsExternalInit
     {
     }
 
@@ -28,7 +28,7 @@ namespace System.Runtime.CompilerServices
     [AttributeUsage(AttributeTargets.Module | AttributeTargets.Class | AttributeTargets.Struct
         | AttributeTargets.Interface | AttributeTargets.Constructor | AttributeTargets.Method
         | AttributeTargets.Property | AttributeTargets.Event, Inherited = false)]
-    internal sealed class SkipLocalsInitAttribute : Attribute
+    public sealed class SkipLocalsInitAttribute : Attribute
     {
         public SkipLocalsInitAttribute()
         {

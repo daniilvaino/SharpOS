@@ -30,9 +30,9 @@ namespace SharpOS.Std.Pipes
     public sealed class MessageAttribute : Attribute { }
     [AttributeUsage(AttributeTargets.Parameter)]
     public sealed class RetainsAttribute : Attribute { }
-    public static partial class MessageCatalog
+    public static unsafe partial class MessageCatalog
     {
-        static partial void RegisterGenerated();
+        public static void AddGenerated(delegate*<void> register) { }
         public static object Witness(Type t) => null;
         public static SharpOS.Std.Exchange.TypeKeys.Field Field<T>(string n, string t, object o, ref T f) => default;
         public static SharpOS.Std.Exchange.TypeKeys.Field Field<T>(string n, string t, object o, ref T f, string e) => default;

@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <IlcSystemModule>EditApp</IlcSystemModule>
     <!-- C# 14: the library's RuneCount / ConsoleWidth are extension properties.
          See vendor/Terminal.Gui/TerminalGui.props. -->
     <LangVersion>14.0</LangVersion>

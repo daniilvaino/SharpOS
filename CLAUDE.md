@@ -32,6 +32,7 @@ SharpOS — **experimental unikernel целиком на C#**, собирает�
 - **`plan.md`** — цели проекта и текущее направление. **`donext.md`** — что делать дальше и как: фронты с ближайшим действием и долги с поводом.
 - **`done/stepNN.md`** — разбор завершённых шагов: архитектура, трассы ошибок, файлы. Последний — наибольший номер в `done/`. Базовая прошивка (EH/GC/threading/CoreCLR-host) — `done/step041..step090`, дальше — bring-up подсистем.
 - **`OS/src/Boot/BootSequence.cs`** — single source of truth для kernel boot ordering. Phase0…Phase5 с явными pre/post conditions. `OS/src/Kernel/Kernel.cs` — пустой shell, делегирует сюда. См. `docs/boot-order.md`.
+- **`std-no-runtime/README.md`** — std собирается в `System.Private.CoreLib` (по одной на ярус: `CoreLib.Kernel`, `CoreLib.App`), ядро и приложения — сборки над ней, порты BCL — в `Libraries/`; кто видит `internal` CoreLib — `Runtime/CoreLibFriends.*.cs`.
 - **`OS/src/Kernel/Diagnostics/Probes.cs`** — central registry compile-time `const bool` toggles для всех boot-time probes/smoke-тестов. Отключённые probes elim'ятся ILC'ом.
 - **`gc-experiment/dotnet-runtime/src/coreclr/nativeaot/`** — снимок NativeAOT runtime'а для reference при порте helpers.
 - **`gc-experiment/dotnet-runtime/src/libraries/System.Private.CoreLib/src/`** — snapshot BCL для копирования коллекций.

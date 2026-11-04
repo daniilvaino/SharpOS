@@ -1,9 +1,45 @@
 namespace SharpOS.AppSdk
 {
-    internal static unsafe class AppRuntime
+    public static unsafe class AppRuntime
     {
         private static AppStartupBlock* s_startup;
         private static AppServiceTable* s_services;
+
+        // Which program this is: CoreLib serves every app, so the program says
+        // it — from the module initializer ImageInfo.Generator writes into
+        // every app, run in Initialize before the banner.
+        private static string s_buildName;
+        private static string s_buildId;
+
+        internal static string BuildName => s_buildName ?? "app";
+
+        /// <summary>Where this image was loaded (a process range of its own, step194).</summary>
+        public static ulong ImageBase => SharpOS.Std.NoRuntime.GcStaticsInit.ImageBase;
+
+        /// <summary>
+        /// The image's entry (/ENTRY:SharpAppBootstrap): the runtime's own
+        /// start, then the program's SharpAppEntry — every app's entry, a
+        /// [RuntimeExport] in its own assembly. Here once, as stock startup
+        /// lives in CoreLib and calls the program's Main; every app used to
+        /// carry its own copy.
+        /// </summary>
+        [System.Runtime.RuntimeExport("SharpAppBootstrap")]
+        private static int SharpAppBootstrap(ulong startupPointer)
+        {
+            System.Runtime.RuntimeImports.ManagedStartup();
+            return ProgramEntry(startupPointer);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.InternalCall)]
+        [System.Runtime.RuntimeImport("*", "SharpAppEntry")]
+        private static extern int ProgramEntry(ulong startupPointer);
+
+        /// <summary>The program's name and build id, from its generated ImageInfo.</summary>
+        public static void SetBuildInfo(string name, string id)
+        {
+            s_buildName = name;
+            s_buildId = id;
+        }
 
         /// <summary>
         /// The program has returned <paramref name="exitCode"/>: what its text
@@ -280,7 +316,7 @@ namespace SharpOS.AppSdk
                 // each other's pieces. Through stdtext when the shell shows it
                 // (step239), in order with the program's output; written past
                 // the shell it came ahead of lines sent before it.
-                string banner = "\u001b[90m[app] " + AppBuildInfo.Name + " build " + AppBuildInfo.Id + "\u001b[0m\n";
+                string banner = "\u001b[90m[app] " + BuildName + " build " + (s_buildId ?? "?") + "\u001b[0m\n";
                 if (!SharpOS.Std.Pipes.Pipe.WriteShownText(banner))
                     AppHost.Terminal.Write(banner);
             }
@@ -359,7 +395,7 @@ namespace SharpOS.AppSdk
             if (ex is SharpOS.Std.Pipes.PipeException mismatch && mismatch.Status == SharpOS.Std.Pipes.PipeStatus.TypeMismatch)
             {
                 AppHost.WriteError("\u001b[31m");
-                AppHost.WriteError(AppBuildInfo.Name);
+                AppHost.WriteError(BuildName);
                 AppHost.WriteError(": types do not match: ");
                 AppHost.WriteError(mismatch.Message);
                 AppHost.WriteError("\u001b[0m\n");
@@ -368,7 +404,7 @@ namespace SharpOS.AppSdk
             if (ex is System.Exception e)
             {
                 AppHost.WriteError("\u001b[31m");
-                AppHost.WriteError(AppBuildInfo.Name);
+                AppHost.WriteError(BuildName);
                 AppHost.WriteError(": ");
                 AppHost.WriteError(SharpOS.Std.Runtime.ExceptionNames.NameOf(e));
                 AppHost.WriteError(": ");

@@ -2,7 +2,6 @@
   <PropertyGroup>
     <!-- Where the image puts it (tools/Apps.ps1, step207). -->
     <SharpOsCategory>games</SharpOsCategory>
-    <IlcSystemModule>FamiApp</IlcSystemModule>
     <!-- The submodule carries SDL2 native DLLs and font assets; default item
          globbing would drag them in as content and embedded resources. -->
     <EnableDefaultItems>false</EnableDefaultItems>

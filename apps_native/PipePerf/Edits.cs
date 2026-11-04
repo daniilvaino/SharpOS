@@ -126,7 +126,7 @@ namespace PipeApps
             const int N = 2000;
             long sum = 0;
             Timer t = Timer.Start();
-            ulong before = SharpOS.Std.NoRuntime.GcHeap.AllocCount;
+            ulong before = SharpOS.AppSdk.AppGC.AllocCount;
             for (int i = 0; i < N; i++)
             {
                 root["k0"] = i;                       // through the view
@@ -134,7 +134,7 @@ namespace PipeApps
                 region.Set(root, k2, (i & 1) == 0);   // a bool where a number was
                 sum += (int)root["k0"];
             }
-            ulong edits = SharpOS.Std.NoRuntime.GcHeap.AllocCount - before;
+            ulong edits = SharpOS.AppSdk.AppGC.AllocCount - before;
             t.Stop("edit_in_place", 3 * N, true, "perf201");
             bool right = sum == (long)N * (N - 1) / 2 && (int)root["k0"] == N - 1 && (long)root["k1"] == N - 1
                          && (bool)root["k2"] == false && (string)root["text"] == "some text";
@@ -146,10 +146,10 @@ namespace PipeApps
             ExpandoName k7 = "k7";
             int removed = 0;
             t = Timer.Start();
-            before = SharpOS.Std.NoRuntime.GcHeap.AllocCount;
+            before = SharpOS.AppSdk.AppGC.AllocCount;
             for (int i = 0; i < M; i++)
                 if (regions[i].Remove(regions[i].Root, k7)) removed++;
-            ulong removals = SharpOS.Std.NoRuntime.GcHeap.AllocCount - before;
+            ulong removals = SharpOS.AppSdk.AppGC.AllocCount - before;
             t.Stop("edit_remove", M, true, "perf201");
             for (int i = 0; i < M; i++)
             {

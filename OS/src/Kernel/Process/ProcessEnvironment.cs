@@ -13,13 +13,11 @@ namespace OS.Kernel.Process
     {
         internal const int MaxChars = EnvironmentBlock.MaxChars;
 
-        private static string[] s_boot;
-
-        /// <summary>The environment of what the kernel starts by itself.</summary>
+        /// <summary>The environment of what the kernel starts by itself; kept by CoreLib (EnvironmentStore).</summary>
         internal static string[] Boot
         {
-            get => s_boot ??= new string[0];
-            set => s_boot = value ?? new string[0];
+            get => EnvironmentStore.GetAll();
+            set => EnvironmentStore.SetAll(value);
         }
 
         /// <summary>The environment of <paramref name="process"/>; the boot one for kernel code.</summary>
