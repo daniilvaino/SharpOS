@@ -252,7 +252,14 @@ namespace OS.Boot
             // either way — "no sound" is a question someone will ask.
             if (OS.Kernel.Diagnostics.Probes.AudioInit)
             {
-                if (OS.Hal.Audio.Ac97.Start())
+                // HD Audio first — every machine since the mid-2000s; AC'97 for
+                // the older ones and QEMU's -device AC97.
+                if (OS.Hal.Audio.Hda.HdaController.Start())
+                {
+                    Console.Write("[audio] hda ");
+                    Console.WriteLine(OS.Hal.Audio.Hda.HdaController.Summary);
+                }
+                else if (OS.Hal.Audio.Ac97.Start())
                 {
                     Console.Write("[audio] ac97 ");
                     Console.WriteUInt((uint)OS.Hal.Audio.Ac97.SampleRate);
@@ -262,10 +269,17 @@ namespace OS.Boot
                 }
                 else
                 {
-                    Console.Write("[audio] none (");
+                    Console.Write("[audio] none (hda: ");
+                    Console.Write(OS.Hal.Audio.Hda.HdaController.Missing);
+                    Console.Write("; ac97: ");
                     Console.Write(OS.Hal.Audio.Ac97.Missing);
                     Console.WriteLine(")");
                 }
+                // Whether a speaker hangs on the ports no program can see; this
+                // says the timer behind it counts.
+                Console.WriteLine(OS.Hal.Audio.PcSpeaker.Present
+                    ? "[audio] pc speaker: PIT channel 2 counts"
+                    : "[audio] pc speaker: PIT channel 2 does not count");
             }
 
             OS.Kernel.File.BootVolume.Mount();

@@ -79,6 +79,13 @@ namespace OS.Kernel
                     MsiSources = DeviceIrq.Count,
                 },
                 Power = new PowerFacts { PowerOff = OS.Hal.Acpi.Power.CanPowerOff },
+                Audio = new AudioFacts
+                {
+                    Kind = OS.Hal.Audio.Hda.HdaController.Present ? "hda" : OS.Hal.Audio.Ac97.Present ? "ac97" : "none",
+                    Codec = OS.Hal.Audio.Hda.HdaController.Codec,
+                    SampleRate = OS.Kernel.Audio.AudioOut.SampleRate,
+                    Speaker = OS.Hal.Audio.PcSpeaker.Present,
+                },
             };
         }
 

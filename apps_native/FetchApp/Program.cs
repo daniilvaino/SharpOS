@@ -97,6 +97,13 @@ namespace FetchApp
             Line(facts, "display", s.Display.Present
                 ? s.Display.Width.ToString() + "x" + s.Display.Height.ToString() + (s.Display.WriteCombining ? ", write-combining" : "")
                 : "none");
+            AudioFacts a = s.Audio;
+            string card = a == null || a.Kind == "none" || a.Kind == null
+                ? ""
+                : a.Kind + (string.IsNullOrEmpty(a.Codec) ? "" : " " + a.Codec) + ", " + a.SampleRate.ToString() + " Hz";
+            string speaker = a != null && a.Speaker ? "pc speaker" : "";
+            Line(facts, "audio", card.Length == 0 && speaker.Length == 0 ? "none"
+                : card.Length == 0 ? speaker : speaker.Length == 0 ? card : card + ", " + speaker);
             Line(facts, "timers", (s.Timers.HpetHz == 0 ? "no hpet" : "hpet " + (s.Timers.HpetHz / 1000000).ToString() + " MHz")
                                   + (s.Timers.ApicTimer ? ", apic" : ""));
             Line(facts, "bus", "pci " + s.Bus.PciDevices.ToString() + ", xhci " + s.Bus.XhciControllers.ToString()

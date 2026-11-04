@@ -467,6 +467,11 @@ namespace OS.Kernel.Process
         // queued, 2 bytes free, 3 drops what is queued; negative without a
         // card. Zero: an older kernel.
         public ulong AudioControlAddress;
+
+        // int Speaker(int hz, int ms) (step248): the PC speaker's square wave
+        // for ms, without waiting; 0 Hz stops it. 0, or negative without the
+        // speaker (channel 2 of the PIT does not count). Zero: an older kernel.
+        public ulong SpeakerAddress;
     }
 
     /// <summary>

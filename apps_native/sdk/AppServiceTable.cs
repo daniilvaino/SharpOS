@@ -399,6 +399,10 @@ namespace SharpOS.AppSdk
         // queued, 2 bytes free, 3 drops what is queued; negative without a
         // card. Zero: an older kernel.
         public ulong AudioControlAddress;
+
+        // int Speaker(int hz, int ms) (step248): the PC speaker for ms, without
+        // waiting; 0 Hz stops it; negative without one. Zero: an older kernel.
+        public ulong SpeakerAddress;
     }
 
     /// <summary>

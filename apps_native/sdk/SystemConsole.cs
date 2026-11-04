@@ -230,6 +230,26 @@ namespace System
         /// <summary>Whether a key press is waiting to be read.</summary>
         public static bool KeyAvailable => TerminalKeys.Available && TerminalKeys.KeyAvailable;
 
+        /// <summary>800 Hz for 200 ms, as BCL.</summary>
+        public static void Beep() => Beep(800, 200);
+
+        /// <summary>
+        /// BCL's Console.Beep (step248): the PC speaker, waiting out the
+        /// duration as Windows does. Without a speaker, BEL to the terminal —
+        /// what BCL on Unix does for every beep.
+        /// </summary>
+        public static void Beep(int frequency, int duration)
+        {
+            if (frequency < 37 || frequency > 32767)
+                throw new ArgumentOutOfRangeException(nameof(frequency), "Frequency must be between 37 and 32767.");
+            if (duration <= 0)
+                throw new ArgumentOutOfRangeException(nameof(duration), "Duration must be positive.");
+            if (SharpOS.AppSdk.Audio.Speaker(frequency, duration))
+                System.Threading.Thread.Sleep(duration);
+            else
+                Control("\u0007");
+        }
+
         /// <summary>
         /// The cursor's column and row, from 0, as the terminal reports them
         /// (ESC [6n); (0, 0) when no answer comes — BCL on Unix gives the same

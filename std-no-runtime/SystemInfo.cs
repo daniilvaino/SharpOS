@@ -22,6 +22,7 @@ namespace SharpOS.Std.SystemInformation
         public TimerFacts Timers;
         public BusFacts Bus;
         public PowerFacts Power;
+        public AudioFacts Audio;
     }
 
     [Message]
@@ -118,5 +119,18 @@ namespace SharpOS.Std.SystemInformation
     {
         /// <summary>ACPI S5 found in the DSDT: the machine can switch itself off.</summary>
         public bool PowerOff;
+    }
+
+    [Message]
+    public sealed class AudioFacts
+    {
+        /// <summary>The card sound plays on: "hda", "ac97", "none" (step247).</summary>
+        public string Kind;
+        /// <summary>HD Audio: the codec as vendor:device ("1af4:0012"); "" otherwise.</summary>
+        public string Codec;
+        /// <summary>Samples per second per channel, 0 without a card.</summary>
+        public int SampleRate;
+        /// <summary>PIT channel 2 counts — a PC speaker can be driven (step248); whether one is wired, no program can see.</summary>
+        public bool Speaker;
     }
 }

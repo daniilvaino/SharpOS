@@ -374,6 +374,7 @@ namespace OS.Kernel.Process
             table.TerminalSideControlAddress = (ulong)(nint)(delegate* unmanaged<int, byte*, int, int>)&TerminalSideControl;
             table.AudioWriteAddress = (ulong)(nint)(delegate* unmanaged<byte*, int, int>)&AudioWrite;
             table.AudioControlAddress = (ulong)(nint)(delegate* unmanaged<int, int>)&AudioControl;
+            table.SpeakerAddress = (ulong)(nint)(delegate* unmanaged<int, int, int>)&Speaker;
                 table.ExceptionHeadAddress = (ulong)OS.Boot.EH.ExInfoHead.GetHeadAddress();
                 table.ProcessAddress = (ulong)(nint)(delegate* unmanaged<int, ulong*, int>)&ProcessService;
                 if (OS.Kernel.Diagnostics.Probes.PipeProbe)
@@ -1384,6 +1385,11 @@ namespace OS.Kernel.Process
                 default: return -(int)AppServiceStatus.InvalidParameter;
             }
         }
+
+        // The PC speaker (step248); see PcSpeaker.
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int Speaker(int hz, int ms)
+            => OS.Hal.Audio.PcSpeaker.Tone(hz, ms) ? 0 : -(int)AppServiceStatus.Unsupported;
 
         // The terminal's input as bytes (step217); see TerminalInput.
         [System.Runtime.InteropServices.UnmanagedCallersOnly]

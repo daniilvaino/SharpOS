@@ -41,6 +41,18 @@ namespace SharpOS.AppSdk
         /// <summary>Drops what is queued and not yet played.</summary>
         public static void Clear() => Control(3);
 
+        /// <summary>
+        /// The PC speaker (step248): a square wave of <paramref name="hz"/> for
+        /// <paramref name="ms"/>, without waiting (the kernel ends it); 0 Hz
+        /// stops one. False without the speaker.
+        /// </summary>
+        public static bool Speaker(int hz, int ms)
+        {
+            ulong address = AppRuntime.Services == null ? 0 : AppRuntime.Services->SpeakerAddress;
+            if (address == 0) return false;
+            return ((delegate* unmanaged<int, int, int>)address)(hz, ms) == 0;
+        }
+
         private static int Control(int op)
         {
             ulong address = AppRuntime.Services == null ? 0 : AppRuntime.Services->AudioControlAddress;

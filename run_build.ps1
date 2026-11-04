@@ -52,11 +52,14 @@
     # Boot with the ESP on a USB stick and no SATA disk at all — the shape of
     # the test machines, where there is no AHCI controller to fall back on.
     [switch]$UsbOnly,
-    # Sound (step246): an AC'97 card played through the host's speakers
+    # Sound (step246): a sound card played through the host's speakers
     # (DirectSound). -AudioWav <file> instead records what it plays into a WAV,
-    # for checking without anyone listening.
+    # for checking without anyone listening. -AudioCard: hda (Intel HD Audio,
+    # ICH9 with an output codec — what machines have, step247) or ac97.
     [switch]$Audio,
     [string]$AudioWav,
+    [ValidateSet("hda", "ac97")]
+    [string]$AudioCard = "hda",
     # Framebuffer mode to ask the firmware for, e.g. "3840x2160".
     [string]$Resolution,
     # QEMU CPU model. qemu64 is x86-64-v1: no SSE4/AVX, so CoreLib's
@@ -1097,10 +1100,12 @@ $savedInputEncoding = [Console]::InputEncoding
 
 Push-Location $qemuWorkDir
 try {
+    # The PC speaker into the same audio backend as the card (step248).
+    $pcspk = if ($Audio -or $AudioWav) { ",pcspk-audiodev=snd0" } else { "" }
     $machineArgs = if ($NoPs2) {
-        @("-machine", "q35,accel=$Accel,i8042=off")
+        @("-machine", "q35,accel=$Accel,i8042=off$pcspk")
     } else {
-        @("-machine", "q35,accel=$Accel")
+        @("-machine", "q35,accel=$Accel$pcspk")
     }
     # +nx: expose the NX/XD bit to firmware and OS (required for NX memory
     # protection policy). "max" has it already; anything else passed via -Cpu
@@ -1194,10 +1199,11 @@ try {
             "-device", "usb-storage,drive=usbstick")
     }
 
-    if ($AudioWav) {
-        $displayArgs += @("-audiodev", "wav,id=snd0,path=$AudioWav", "-device", "AC97,audiodev=snd0")
-    } elseif ($Audio) {
-        $displayArgs += @("-audiodev", "dsound,id=snd0", "-device", "AC97,audiodev=snd0")
+    if ($AudioWav -or $Audio) {
+        $backend = if ($AudioWav) { "wav,id=snd0,path=$AudioWav" } else { "dsound,id=snd0" }
+        $card = if ($AudioCard -eq "ac97") { @("-device", "AC97,audiodev=snd0") }
+                else { @("-device", "ich9-intel-hda", "-device", "hda-output,audiodev=snd0") }
+        $displayArgs += @("-audiodev", $backend) + $card
     }
 
     $qemuArgs = $machineArgs + $cpuArgs + @("-m", "$MemoryMb") + $displayArgs + @(
