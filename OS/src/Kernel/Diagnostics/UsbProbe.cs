@@ -131,64 +131,205 @@ namespace OS.Kernel.Diagnostics
             _ = protocol;
         }
 
-        // POST-EBS only, for the same reason as AHCI: the machines boot off a
-        // USB stick, and resetting the controller while the firmware is still
-        // reading our files from it would pull the disk out from under UEFI.
-        // The scan above is read-only and safe at any time; this is not.
-        public static void RunXhci()
-        {
-            if (!Probes.XhciInit) return;
+        /// <summary>The observer UsbBus.Start reports to; null when the report is off.</summary>
+        public static IUsbBusObserver Observer => Probes.UsbReport ? new Watcher() : null;
 
-            // Every controller, not just one: on a desktop the boot stick and
-            // the keyboards sit on different ones, and driving a single
-            // controller means losing whichever is not on it.
-            int brought = Xhci.StartAll();
-            if (brought == 0)
+        // After UsbBus.Start (PostEbsBoot): what came of the devices the
+        // system took, the diagnostics that talk to them, and the verdict.
+        public static void AfterStart()
+        {
+            if (UsbBus.ControllersUp == 0)
             {
-                Console.WriteLine("[xhci] no controller came up");
+                if (Probes.UsbReport) Console.WriteLine("[xhci] no controller came up");
                 Summarise();
                 return;
             }
 
-            for (int i = 0; i < brought; i++)
-                Enumerate(Xhci.Get(i));
-
-            // Hand the keyboard to the rest of the system, so a machine with
-            // no PS/2 still has a console and DOOM still has arrow keys.
-            if (OS.Hal.ScancodeSource.TryAttachUsb())
-                Console.WriteLine("[xhci] usb keyboard attached as system input");
-
-            // Before the log binds to a file: the port is the only sink that
-            // survives a machine whose filesystem never comes up.
-            if (Probes.UsbSerialLog && OS.Hal.Usb.UsbCdcAcm.TryAttach())
+            if (Probes.UsbReport)
             {
-                // One line down the port before handing it the log. The sink
-                // switches itself off on its first failure, so without this
-                // "attached" and "attached and mute" read the same.
-                byte* hello = stackalloc byte[32];
-                const string banner = "[cdc] port open\n";
-                for (int i = 0; i < banner.Length; i++) hello[i] = (byte)banner[i];
-
-                Console.Write("[xhci] usb serial ");
-                if (OS.Hal.Usb.UsbCdcAcm.Write(hello, banner.Length))
+                if (OS.Hal.ScancodeSource.UsbAttached)
+                    Console.WriteLine("[xhci] usb keyboard attached as system input");
+                if (UsbBus.SerialAttached)
+                    Console.WriteLine("[xhci] usb serial attached as log sink");
+                else if (UsbBus.SerialMute)
                 {
-                    Console.WriteLine("attached as log sink");
-                    OS.Hal.BootLog.AttachSerial();
-                    if (Probes.UsbSerialEcho) EchoSerial();
-                }
-                else
-                {
-                    Console.Write("write FAILED code=0x");
+                    Console.Write("[xhci] usb serial write FAILED code=0x");
                     if (Xhci.TryFindCdcAcm(out XhciController chc, out _))
                         Console.WriteHex(chc.LastCompletionCode);
                     Console.WriteLine(" (0 = no event before the timeout)");
                 }
             }
+            if (UsbBus.SerialAttached && Probes.UsbSerialEcho) EchoSerial();
 
             if (Probes.CtapHidInit) ProbeCtapHid();
 
-            ReportStorage();
+            if (Probes.UsbReport) ReportStorage();
             Summarise();
+        }
+
+        // UsbBus's enumeration, line by line — what UsbProbe printed when it
+        // was also the driver (before step244), and the dumps that ask the
+        // device questions at the points where it owes an answer.
+        private sealed class Watcher : IUsbBusObserver
+        {
+            public void ControllerUp(XhciController hc, bool noopAnswered, uint noopCode)
+            {
+                Console.Write("[xhci] ");
+                Console.WriteUInt(hc.Bus); Console.Write(":");
+                Console.WriteUInt(hc.Slot); Console.Write(".");
+                Console.WriteUInt(hc.Func);
+                Console.Write(" ver=0x");
+                Console.WriteHex(hc.Version);
+                Console.Write(" slots=");
+                Console.WriteUInt(hc.MaxSlots);
+                Console.Write(" ports=");
+                Console.WriteUInt(hc.MaxPorts);
+                Console.Write(" ctx=");
+                Console.Write(hc.ContextSize64 ? "64" : "32");
+                Console.Write(" pagesize=0x");
+                Console.WriteHex(hc.PageSize);
+                Console.Write(hc.TookOwnership ? " owned(from-bios)" : " owned(was-free)");
+                Console.Write(hc.PickedByFirmware ? " pick=bootpath" : " pick=first");
+                Console.WriteLine("");
+
+                Console.Write("[xhci] op=0x");
+                Console.WriteHex(hc.OperationalBase);
+                Console.Write(" rt=0x");
+                Console.WriteHex(hc.RuntimeBase);
+                Console.Write(" db=0x");
+                Console.WriteHex(hc.DoorbellBase);
+                Console.WriteLine(" reset OK");
+
+                Console.Write("[xhci] running scratchpad=");
+                Console.WriteUInt(hc.ScratchpadCount);
+                Console.Write(" noop=");
+                if (noopAnswered)
+                {
+                    Console.Write(noopCode == 1 ? "OK" : "code=0x");
+                    if (noopCode != 1) Console.WriteHex(noopCode);
+                }
+                else
+                {
+                    Console.Write("TIMEOUT");
+                }
+                Console.WriteLine("");
+            }
+
+            public void PortDone(XhciController hc, ref UsbPortOutcome o)
+            {
+                uint p = o.Port;
+                Console.Write("[xhci] port ");
+                Console.WriteUInt(p);
+                Console.Write(" connected portsc=0x");
+                Console.WriteHex(o.PortStatus);
+                bool enabled = o.Reached != UsbPortOutcome.Stage.Reset;
+                Console.Write(enabled ? " reset=enabled" : " reset=FAIL");
+
+                // After the reset, not before: the speed field is only
+                // meaningful once the port has come up.
+                Console.Write(" speed=");
+                Console.WriteUInt(hc.SpeedOfPort(p));
+                Console.Write("(raw=");
+                Console.WriteUInt((hc.PortStatus(p) >> 10) & 0xF);
+                Console.Write(" usb");
+                Console.WriteUInt(hc.PortMajor(p));
+                Console.Write(")");
+                if (!enabled)
+                {
+                    Console.WriteLine("");
+                    return;
+                }
+
+                Console.Write(" slot=");
+                if (o.Reached == UsbPortOutcome.Stage.Slot)
+                {
+                    Console.Write("FAIL code=0x");
+                    Console.WriteHex(o.Code);
+                    Console.WriteLine("");
+                    return;
+                }
+                Console.WriteUInt(o.Slot);
+
+                Console.Write(" addr=");
+                if (o.Reached == UsbPortOutcome.Stage.Address)
+                {
+                    Console.Write("FAIL code=0x");
+                    Console.WriteHex(o.Code);
+                    Console.WriteLine("");
+                    return;
+                }
+                Console.Write("OK");
+
+                Console.Write(" desc=");
+                if (o.DescriptorRead)
+                {
+                    Console.Write("vid=0x"); Console.WriteHex(o.VendorId);
+                    Console.Write(" pid=0x"); Console.WriteHex(o.ProductId);
+                    Console.Write(" class=0x"); Console.WriteHex(o.Class);
+                    Console.Write(" mps="); Console.WriteUInt(o.MaxPacket);
+                }
+                else
+                {
+                    Console.Write("FAIL stage=");
+                    Console.WriteUInt(hc.LastFailedStage);
+                    Console.Write(" code=0x");
+                    Console.WriteHex(hc.LastCompletionCode);
+                }
+                Console.WriteLine("");
+
+                if (Probes.UsbDescriptorDump) DumpDescriptor(hc, o.Slot);
+
+                // Taken twice, on purpose: once here and once after the
+                // endpoints are configured. A single reading says nothing —
+                // the question is what the Configure Endpoint command changes
+                // about the endpoint the census then cannot talk to.
+                if (Probes.UsbCensusDeep) DumpControlEndpoint(hc, o.Slot, "before configure");
+            }
+
+            public void Configured(XhciController hc, uint slot, bool configured, uint stage)
+            {
+                // One device can be several things at once, so this lists what
+                // it turned out to be rather than picking the first match.
+                Console.Write("[xhci] slot ");
+                Console.WriteUInt(slot);
+                Console.Write(" functions=");
+                if (!configured)
+                {
+                    Console.Write("none (stage=");
+                    Console.WriteUInt(stage);
+                    // Stage 7 is the Configure Endpoint command, and the
+                    // controller says why it refused. Without the code the
+                    // line only reported that the endpoints did not come up.
+                    if (stage == 7)
+                    {
+                        Console.Write(" cmdCode=");
+                        Console.WriteUInt(hc.LastConfigureCode);
+                    }
+                    Console.Write(" lastCode=0x");
+                    Console.WriteHex(hc.LastCompletionCode);
+                    Console.WriteLine(")");
+                    return;
+                }
+
+                byte proto = hc.HidProtocolOf(slot);
+                // A HID with protocol 0 is still a HID — it just has no boot
+                // protocol. Keying this line on the protocol alone printed
+                // such a device as having no HID function at all, which is how
+                // the rig phone looked for as long as anyone had been reading
+                // this line.
+                if (hc.IsHid(slot))
+                    Console.Write(proto == 1 ? "keyboard " : proto == 2 ? "mouse " : "hid(no-boot) ");
+                if (hc.IsMassStorage(slot)) Console.Write("storage ");
+                if (hc.IsCdcAcm(slot)) Console.Write("serial ");
+                Console.WriteLine("configured");
+
+                // Only now: see DeepCensus for why nothing that costs a
+                // transfer may run before the device is configured.
+                if (Probes.UsbCensusDeep) CensusAfterConfigure(hc, slot);
+
+                if (Probes.UsbHidPoll && proto != 0)
+                    PollReports(hc, slot, proto);
+            }
         }
 
         // Say hello to a security key, if one is plugged in.
@@ -343,215 +484,54 @@ namespace OS.Kernel.Diagnostics
             Console.WriteLine(total == 0 ? " (nothing was sent)" : "");
         }
 
-        private static void Enumerate(XhciController hc)
+        // The census half that runs once the device is configured.
+        private static void CensusAfterConfigure(XhciController hc, uint slot)
         {
-            Console.Write("[xhci] ");
-            Console.WriteUInt(hc.Bus); Console.Write(":");
-            Console.WriteUInt(hc.Slot); Console.Write(".");
-            Console.WriteUInt(hc.Func);
-            Console.Write(" ver=0x");
-            Console.WriteHex(hc.Version);
-            Console.Write(" slots=");
-            Console.WriteUInt(hc.MaxSlots);
-            Console.Write(" ports=");
-            Console.WriteUInt(hc.MaxPorts);
-            Console.Write(" ctx=");
-            Console.Write(hc.ContextSize64 ? "64" : "32");
-            Console.Write(" pagesize=0x");
-            Console.WriteHex(hc.PageSize);
-            Console.Write(hc.TookOwnership ? " owned(from-bios)" : " owned(was-free)");
-            Console.Write(hc.PickedByFirmware ? " pick=bootpath" : " pick=first");
+            // The two class requests whose answers used to be dropped.
+            // One of them halts the control endpoint on a device that
+            // does not implement it, which is allowed — and used to
+            // end every later transfer without saying so.
+            Console.Write("[xhci] class requests: setProtocol=");
+            Console.Write(hc.HidSetProtocolOk(slot) ? "ok" : (hc.IsHid(slot) ? "REFUSED" : "n/a"));
+            Console.Write(" lineState=");
+            Console.Write(hc.CdcLineStateOk(slot) ? "ok" : (hc.IsCdcAcm(slot) ? "REFUSED" : "n/a"));
+            Console.Write(" ep0 halts=");
+            Console.WriteUInt(hc.ControlHaltsSeen);
+            Console.Write(" recovered=");
+            Console.WriteUInt(hc.ControlHaltsRecovered);
             Console.WriteLine("");
 
-            Console.Write("[xhci] op=0x");
-            Console.WriteHex(hc.OperationalBase);
-            Console.Write(" rt=0x");
-            Console.WriteHex(hc.RuntimeBase);
-            Console.Write(" db=0x");
-            Console.WriteHex(hc.DoorbellBase);
-            Console.WriteLine(" reset OK");
+            DumpControlEndpoint(hc, slot, "after configure");
 
-            // Init and Start already ran in the registry; this only reports.
-            Console.Write("[xhci] running scratchpad=");
-            Console.WriteUInt(hc.ScratchpadCount);
-
-            // A No-Op that completes is the real proof: our TRB reached the
-            // controller and its event came back into our memory.
-            Console.Write(" noop=");
-            if (hc.TryNoOpCommand(out uint code))
+            // Every HID interface the slot declared, with what its
+            // report descriptor says it is for. The line the previous
+            // enumerator could not print: it kept one HID per slot and
+            // dropped the rest, so a device with two looked like a
+            // device with one.
+            int hidCount = hc.HidCountOf(slot);
+            for (int h = 0; h < hidCount; h++)
             {
-                Console.Write(code == 1 ? "OK" : "code=0x");
-                if (code != 1) Console.WriteHex(code);
+                int fn = hc.HidIndexOf(slot, h);
+                if (fn < 0) continue;
+
+                Console.Write("[xhci]   hid function ");
+                Console.WriteUInt((uint)h);
+                Console.Write(" interface=");
+                Console.WriteUInt(hc.HidInterfaceAt(fn));
+                Console.Write(" proto=");
+                Console.WriteUInt(hc.HidProtocolAt(fn));
+                Console.Write(" reportLen=");
+                Console.WriteUInt(hc.HidReportDescLengthAt(fn));
+                Console.Write(" usage-page=0x");
+                Console.WriteHex(hc.HidUsagePageAt(fn), 4);
+                Console.Write(" usage=0x");
+                Console.WriteHex(hc.HidUsageAt(fn), 4);
+                Console.Write(" (");
+                Console.Write(UsageName(hc.HidUsagePageAt(fn), hc.HidUsageAt(fn)));
+                Console.WriteLine(")");
             }
-            else
-            {
-                Console.Write("TIMEOUT");
-            }
-            Console.WriteLine("");
 
-            for (uint p = 0; p < hc.MaxPorts; p++)
-            {
-                uint sc = hc.PortStatus(p);
-                if ((sc & 1) == 0) continue;      // nothing connected
-                Console.Write("[xhci] port ");
-                Console.WriteUInt(p);
-                Console.Write(" connected portsc=0x");
-                Console.WriteHex(sc);
-                bool enabled = hc.TryResetPort(p);
-                Console.Write(enabled ? " reset=enabled" : " reset=FAIL");
-
-                // After the reset, not before: the speed field is only
-                // meaningful once the port has come up, and the pre-reset
-                // value printed here previously was whatever the firmware
-                // happened to leave behind — 0 on most machines.
-                Console.Write(" speed=");
-                Console.WriteUInt(hc.SpeedOfPort(p));
-                Console.Write("(raw=");
-                Console.WriteUInt((hc.PortStatus(p) >> 10) & 0xF);
-                Console.Write(" usb");
-                Console.WriteUInt(hc.PortMajor(p));
-                Console.Write(")");
-                if (!enabled)
-                {
-                    Console.WriteLine("");
-                    continue;
-                }
-
-                Console.Write(" slot=");
-                if (!hc.TryEnableSlot(out uint slot, out uint slotCode) || slotCode != 1)
-                {
-                    Console.Write("FAIL code=0x");
-                    Console.WriteHex(slotCode);
-                    Console.WriteLine("");
-                    continue;
-                }
-                Console.WriteUInt(slot);
-
-                Console.Write(" addr=");
-                if (!hc.TryAddressDevice(slot, p, out uint addrCode))
-                {
-                    Console.Write("FAIL code=0x");
-                    Console.WriteHex(addrCode);
-                    Console.WriteLine("");
-                    continue;
-                }
-                Console.Write("OK");
-
-                Console.Write(" desc=");
-                if (hc.TryGetDeviceDescriptor(slot, out ushort vid, out ushort pid,
-                                                out byte cls, out byte mps))
-                {
-                    Console.Write("vid=0x"); Console.WriteHex(vid);
-                    Console.Write(" pid=0x"); Console.WriteHex(pid);
-                    Console.Write(" class=0x"); Console.WriteHex(cls);
-                    Console.Write(" mps="); Console.WriteUInt(mps);
-                }
-                else
-                {
-                    Console.Write("FAIL stage=");
-                    Console.WriteUInt(hc.LastFailedStage);
-                    Console.Write(" code=0x");
-                    Console.WriteHex(hc.LastCompletionCode);
-                }
-                Console.WriteLine("");
-
-                if (Probes.UsbDescriptorDump) DumpDescriptor(hc, slot);
-
-                // Taken twice, on purpose: once here and once after the
-                // endpoints are configured. A single reading says nothing —
-                // the question is what the Configure Endpoint command changes
-                // about the endpoint the census then cannot talk to.
-                if (Probes.UsbCensusDeep) DumpControlEndpoint(hc, slot, "before configure");
-
-                // One device can be several things at once, so this lists what
-                // it turned out to be rather than picking the first match.
-                Console.Write("[xhci] slot ");
-                Console.WriteUInt(slot);
-                Console.Write(" functions=");
-                if (!hc.TryConfigureFunctions(slot, out uint stage))
-                {
-                    Console.Write("none (stage=");
-                    Console.WriteUInt(stage);
-                    // Stage 7 is the Configure Endpoint command, and the
-                    // controller says why it refused. Without the code the
-                    // line only reported that the endpoints did not come up.
-                    if (stage == 7)
-                    {
-                        Console.Write(" cmdCode=");
-                        Console.WriteUInt(hc.LastConfigureCode);
-                    }
-                    Console.Write(" lastCode=0x");
-                    Console.WriteHex(hc.LastCompletionCode);
-                    Console.WriteLine(")");
-                    continue;
-                }
-
-                byte proto = hc.HidProtocolOf(slot);
-                // A HID with protocol 0 is still a HID — it just has no boot
-                // protocol. Keying this line on the protocol alone printed
-                // such a device as having no HID function at all, which is how
-                // the rig phone looked for as long as anyone had been reading
-                // this line.
-                if (hc.IsHid(slot))
-                    Console.Write(proto == 1 ? "keyboard " : proto == 2 ? "mouse " : "hid(no-boot) ");
-                if (hc.IsMassStorage(slot)) Console.Write("storage ");
-                if (hc.IsCdcAcm(slot)) Console.Write("serial ");
-                Console.WriteLine("configured");
-
-                // Only now: see DeepCensus for why nothing that costs a
-                // transfer may run before the device is configured.
-                if (Probes.UsbCensusDeep)
-                {
-                    // The two class requests whose answers used to be dropped.
-                    // One of them halts the control endpoint on a device that
-                    // does not implement it, which is allowed — and used to
-                    // end every later transfer without saying so.
-                    Console.Write("[xhci] class requests: setProtocol=");
-                    Console.Write(hc.HidSetProtocolOk(slot) ? "ok" : (hc.IsHid(slot) ? "REFUSED" : "n/a"));
-                    Console.Write(" lineState=");
-                    Console.Write(hc.CdcLineStateOk(slot) ? "ok" : (hc.IsCdcAcm(slot) ? "REFUSED" : "n/a"));
-                    Console.Write(" ep0 halts=");
-                    Console.WriteUInt(hc.ControlHaltsSeen);
-                    Console.Write(" recovered=");
-                    Console.WriteUInt(hc.ControlHaltsRecovered);
-                    Console.WriteLine("");
-
-                    DumpControlEndpoint(hc, slot, "after configure");
-
-                    // Every HID interface the slot declared, with what its
-                    // report descriptor says it is for. The line the previous
-                    // enumerator could not print: it kept one HID per slot and
-                    // dropped the rest, so a device with two looked like a
-                    // device with one.
-                    int hidCount = hc.HidCountOf(slot);
-                    for (int h = 0; h < hidCount; h++)
-                    {
-                        int fn = hc.HidIndexOf(slot, h);
-                        if (fn < 0) continue;
-
-                        Console.Write("[xhci]   hid function ");
-                        Console.WriteUInt((uint)h);
-                        Console.Write(" interface=");
-                        Console.WriteUInt(hc.HidInterfaceAt(fn));
-                        Console.Write(" proto=");
-                        Console.WriteUInt(hc.HidProtocolAt(fn));
-                        Console.Write(" reportLen=");
-                        Console.WriteUInt(hc.HidReportDescLengthAt(fn));
-                        Console.Write(" usage-page=0x");
-                        Console.WriteHex(hc.HidUsagePageAt(fn), 4);
-                        Console.Write(" usage=0x");
-                        Console.WriteHex(hc.HidUsageAt(fn), 4);
-                        Console.Write(" (");
-                        Console.Write(UsageName(hc.HidUsagePageAt(fn), hc.HidUsageAt(fn)));
-                        Console.WriteLine(")");
-                    }
-
-                    DeepCensus(hc, slot);
-                }
-
-                if (Probes.UsbHidPoll && proto != 0)
-                    PollReports(hc, slot, proto);
-            }
+            DeepCensus(hc, slot);
         }
 
         // What the device actually said about itself. Printed as the record
@@ -981,9 +961,10 @@ namespace OS.Kernel.Diagnostics
                 Console.WriteLine(" PASS");
         }
 
+        // The stick UsbBus attached, and proof it moves real bytes.
         private static void ReportStorage()
         {
-            if (!UsbMassStorage.TryAttach())
+            if (!UsbMassStorage.IsPresent)
             {
                 // "None found" and "found but never became ready" are
                 // different problems and were reported identically before.

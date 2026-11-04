@@ -420,6 +420,12 @@
         // trusted on hardware before any ring exists.
         public const bool XhciInit = true;
 
+        // What USB enumeration did, line by line: each controller, each port's
+        // reset, slot, address, descriptor and functions, the attached
+        // keyboard, serial and storage (UsbProbe watching UsbBus). The one-line
+        // [usbsum] verdict is printed regardless.
+        public const bool UsbReport = Diagnostics;
+
         // After configuring a HID device, wait a few seconds for reports so a
         // keypress can be seen end to end. Costs boot time and needs someone
         // at the keyboard, so it is off for headless regression runs.

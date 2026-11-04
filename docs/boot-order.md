@@ -121,7 +121,8 @@ TerminalProbe                          ← движок XtermSharp; позже �
                                          потому что нужны материализованная
                                          статика и отображённый фреймбуфер
 SerialProbe, FbRenderProbe, Ps2, LineEditorProbe
-PciProbe, UsbProbe                     ← xHCI, HID, накопители
+PciProbe, UsbProbe                     ← список USB-контроллеров и портов;
+                                         сама шина (UsbBus) — после EBS
 GC: GcHeapSmoke, GcStaticsSummary, GcStress, CoffGcInfoDump,
     GcInfoResolverSmoke, GcContextSpillSmoke, KernelGcPreciseSmoke
 NativeAotProbe                         ← язык и BCL: дженерики, делегаты,

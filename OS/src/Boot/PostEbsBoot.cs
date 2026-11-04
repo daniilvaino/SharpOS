@@ -241,7 +241,12 @@ namespace OS.Boot
             // medium IS the USB stick, so it has to exist by the time anything
             // asks for a disk. Same POST-EBS rule as AHCI — taking the
             // controller from the firmware is only legitimate once it is gone.
-            OS.Kernel.Diagnostics.UsbProbe.RunXhci();
+            if (OS.Kernel.Diagnostics.Probes.XhciInit)
+            {
+                OS.Hal.Usb.UsbBus.Start(OS.Kernel.Diagnostics.UsbProbe.Observer,
+                                        OS.Kernel.Diagnostics.Probes.UsbSerialLog);
+                OS.Kernel.Diagnostics.UsbProbe.AfterStart();
+            }
 
             OS.Kernel.File.BootVolume.Mount();
 
