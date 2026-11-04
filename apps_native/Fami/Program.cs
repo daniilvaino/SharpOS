@@ -147,6 +147,44 @@ namespace Fami
             }
         }
 
+        // The APU's sound for one frame, onto the card (step249). The core
+        // hands out 44.1 kHz stereo (upstream's rate); the card plays at its
+        // own, usually 48 kHz. Resampled linearly, with the output count of
+        // each frame nudged by how far the kernel's queue is from 60 ms:
+        // frames paced at 60 Hz against an NES at 60.1, and a core rate that
+        // is not the card's, otherwise drain or fill it slowly — a click
+        // every few seconds or a growing delay.
+        private const int SoundSourceRate = 44100;
+        private const int SoundTargetMs = 60;
+        private static short[] s_soundOut = new short[2 * 2048];
+
+        private static void PlayFrameSound(MC6502State nes)
+        {
+            nes.GetSamplesSync(out short[] samples, out int count);
+            int rate = SharpOS.AppSdk.Audio.SampleRate;
+            if (rate == 0 || count < 2) return;
+
+            int target = rate * SoundTargetMs / 1000;
+            int nudge = (target - SharpOS.AppSdk.Audio.QueuedFrames) / 32;
+            nudge = nudge > 16 ? 16 : nudge < -16 ? -16 : nudge;
+            int outCount = (int)((long)count * rate / SoundSourceRate) + nudge;
+            if (outCount <= 0) return;
+            if (s_soundOut.Length < 2 * outCount) s_soundOut = new short[2 * outCount];
+
+            double step = (double)(count - 1) / outCount;
+            for (int j = 0; j < outCount; j++)
+            {
+                double pos = j * step;
+                int i = (int)pos;
+                double frac = pos - i;
+                int a = samples[2 * i], b = samples[2 * (i + 1)];
+                short s = (short)(a + (b - a) * frac);
+                s_soundOut[2 * j] = s;
+                s_soundOut[2 * j + 1] = s;
+            }
+            SharpOS.AppSdk.Audio.Write(new ReadOnlySpan<short>(s_soundOut, 0, 2 * outCount));
+        }
+
         // The path given, else the first .NES in \games by name.
         private static string FindRom()
         {
@@ -220,6 +258,7 @@ namespace Fami
 
                 ulong t1 = paced ? ReadCounter() : 0;
                 video?.Blit(nes.Ppu.buffer);
+                PlayFrameSound(nes);
                 ulong t2 = paced ? ReadCounter() : 0;
 
                 // Count frames even without a clock: the number alone answers

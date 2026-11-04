@@ -459,7 +459,7 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 - **[TriCNES](https://github.com/100thCoin/TriCNES)** (Chris Siebert, MIT, подмодуль) - эмулятор NES, точный: 141/141 на [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin), но для игр бывает медленноват.
 - **[Fami](https://github.com/RupertAvery/Fami)** (David Khristepher Santos, MIT, подмодуль) - эмулятор NES, играбелен, не идеален.
 - **[AccuracyCoin](https://github.com/100thCoin/AccuracyCoin)** (Chris Siebert, MIT, `vendor/AccuracyCoin/`) - картридж с тестами точности NES, `\games\ACCURACYCOIN.NES`.
-- **[Famidash](https://github.com/tfdsoft/famidash)** (Team Famidash, MIT, `vendor/FamiDash/`, релиз Demo5) - игра для NES, `\games\FAMIDASH.NES`.
+- **[Famidash](https://github.com/tfdsoft/famidash)** (Team Famidash, MIT, `vendor/FamiDash/`, сборка Huge Man 1.3.0 beta с itch.io) - игра для NES, `\games\FAMIDASH.NES`.
 - **[json2dir](https://github.com/json2dir-guru/json2dir-aot)** (json2dir-guru, MIT, `vendor/json2dir/`) - дерево файлов по JSON: `READ tree.json | JSON2DIR`. FAT-версия: ссылки отказывают, `script` — обычный файл.
 
 ## Вендоринг и библиотеки
@@ -482,6 +482,7 @@ PSReadLine работает полностью: цвета, Tab-дополнен
 - **[Lua-CSharp](https://github.com/nuskey8/Lua-CSharp)** (Yusuke Nakada, MIT, `vendor/LuaCSharp/`) - интерпретатор Lua 5.2 на C#. Приложение LUA: скрипты, приглашение, стадия конвейера.
 - **[Okojo](https://github.com/akeit0/okojo)** (Akito Inoue, MIT, `vendor/Okojo/`) - движок JavaScript на C#: разбор, компиляция в байткод, VM, `Intl`, `RegExp`. Приложение JS. Внутри — переработанные куски .NET runtime (MIT), устройство навеяно V8; уведомления в `THIRD_PARTY_NOTICES.md`.
 - **[SharpLibm](https://github.com/daniilvaino/SharpLibm)** (MIT, сабмодуль `SharpLibm/`) - libm на C# под `Math`/`MathF`, на основе [CORE-MATH](https://core-math.gitlabpages.inria.fr/) и других; чужой код внутри перечислен в `THIRD-PARTY-NOTICES.md`.
+- **[SerenityOS](https://github.com/SerenityOS/serenity)** (Jelle Raaijmakers, BSD-2-Clause) - драйвер Intel HD Audio, перенесён с C++ на C#, лежит в `OS/src/Hal/Audio/Hda/`.
 - **[MOOS](https://github.com/nifanfa/MOOS)** (nifanfa, Unlicense) - драйверы `AHCI`, `Disk`, `PCI(Express)`, `AC'97` и глифы CP437. Адаптированы под наш HAL, лежат в `OS/src/`.
 - **[Font 8x8](https://github.com/dhepper/font8x8)** (Daniel Hepper, Public Domain) - глифы framebuffer-консоли.
 

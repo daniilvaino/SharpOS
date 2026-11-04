@@ -54,7 +54,19 @@ namespace DoomApp
 
                 var input = new SharpUserInput(config);
 
-                var doom = new Doom(args, config, content, video, null, null, input);
+                // Sound effects on the sound card (step250); none without one.
+                // Music is not played: SilkMusic synthesises MIDI from a
+                // SoundFont the image does not carry.
+                SharpSound sound = null;
+                if (SharpOS.AppSdk.Audio.Available)
+                {
+                    sound = new SharpSound(config, content);
+                    Console.Write("doom: sound ");
+                    Console.Write(SharpOS.AppSdk.Audio.SampleRate);
+                    Console.Write(" Hz\n");
+                }
+
+                var doom = new Doom(args, config, content, video, sound, null, input);
                 Console.Write("doom: core up, running\n");
 
                 // 35 Hz pacing off the HPET (step143). Without a time source

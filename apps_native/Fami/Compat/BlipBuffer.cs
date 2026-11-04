@@ -22,8 +22,11 @@ namespace BizHawk.Emulation.Common
     // convolves each delta with a windowed sinc step, which is what removes the
     // aliasing that makes square-wave synthesis sound harsh. The difference is
     // audible and this would be the wrong class to keep once sound is real —
-    // at that point port the synthesis properly (it is public-domain C by Shay
-    // Green, and the algorithm is a few dozen lines) rather than extending this.
+    // at that point port the synthesis properly (C by Shay Green, a few dozen
+    // lines) rather than extending this. Sound is real since step249: the
+    // output level and blip_buf's high-pass are right, the aliasing is not;
+    // the port waits on blip_buf's licence being checked (LGPL, as remembered —
+    // not public domain as this comment once said).
     //
     // Faithful in the ways the emulator can observe: sample counts, clock
     // arithmetic and buffer capacity all behave as upstream's callers expect,
@@ -43,10 +46,13 @@ namespace BizHawk.Emulation.Common
 
         private double _clocksPerSample = 1.0;
 
-        // Amplitude carried across frames. Deltas are relative, so dropping
-        // this between frames would put a step at every frame boundary.
-        private int _amplitude;
         private int _readyCount;
+
+        // The output level, carried across frames (deltas are relative, so
+        // dropping it would put a step at every frame boundary), after
+        // blip_buf's high-pass (its bass_shift = 9).
+        private const int BassShift = 9;
+        private int _level;
 
         public BlipBuffer(int sampleCount)
         {
@@ -70,7 +76,7 @@ namespace BizHawk.Emulation.Common
         public void Clear()
         {
             Array.Clear(_bins, 0, _bins.Length);
-            _amplitude = 0;
+            _level = 0;
             _readyCount = 0;
         }
 
@@ -95,9 +101,15 @@ namespace BizHawk.Emulation.Common
 
             for (int i = 0; i < samples; i++)
             {
-                _amplitude += _bins[i];
-
-                int value = _amplitude >> 8;
+                // Deltas are in output units, as blip_buf takes them: the APU
+                // mix reaches ~20000. (A >> 8 here left it at ~80 — inaudible,
+                // step249.) Then blip_buf's bass_shift high-pass: the level
+                // leaks away with a ~512-sample time constant, which removes the
+                // APU's DC offset (its mix is 0..20000, never negative) and keeps
+                // everything audible.
+                _level += _bins[i];
+                int value = _level;
+                _level -= _level >> BassShift;
                 if (value > short.MaxValue) value = short.MaxValue;
                 else if (value < short.MinValue) value = short.MinValue;
                 _ready[i] = (short)value;
@@ -107,7 +119,7 @@ namespace BizHawk.Emulation.Common
             // otherwise be integrated twice.
             for (int i = samples; i < _bins.Length; i++)
             {
-                _amplitude += _bins[i];
+                _level += _bins[i];
             }
 
             Array.Clear(_bins, 0, _bins.Length);

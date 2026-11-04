@@ -17,6 +17,7 @@
     <Compile Include="Program.cs" />
     <Compile Include="GopVideo.cs" />
     <Compile Include="SharpUserInput.cs" />
+    <Compile Include="SharpSound.cs" />
 
     <!-- Top-level glue the core orchestrator (Doom.cs ctor) requires. -->
     <Compile Include="ManagedDoom\src\ApplicationInfo.cs" />

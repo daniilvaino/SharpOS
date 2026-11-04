@@ -1050,6 +1050,36 @@
     },
     {
       "type": "library",
+      "name": "SerenityOS Intel HDA driver",
+      "version": "e5966bd819c04c5677c0775fe57fc492a5820b37",
+      "supplier": {
+        "name": "Jelle Raaijmakers, the SerenityOS developers"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "pedigree": {
+        "notes": "Kernel/Devices/Audio/IntelHDA ported to C# (step247): no interrupt, fed by a kernel thread; cuts listed in each file's header."
+      },
+      "properties": [
+        {
+          "name": "sharpos:where",
+          "value": "OS/src/Hal/Audio/Hda/ (LICENSE-SerenityOS.txt)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/SerenityOS/serenity"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "MOOS drivers",
       "supplier": {
         "name": "nifanfa"
@@ -1222,7 +1252,7 @@
     {
       "type": "data",
       "name": "Famidash",
-      "version": "Demo5",
+      "version": "Huge Man 1.3.0 beta (2026-06-20)",
       "supplier": {
         "name": "Team Famidash"
       },
@@ -1236,7 +1266,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "128910cf18ed312d9623249e32751329cd2696f5f870bbd65cd7ca50cece859d"
+          "content": "8ebd9b7ee378a5ce41fc4d25fdddc0d3ed98dc4e4da8da9ed2570454cf94fff8"
         }
       ],
       "properties": [
@@ -1252,7 +1282,7 @@
         },
         {
           "type": "distribution",
-          "url": "https://github.com/tfdsoft/famidash/releases/tag/Demo5"
+          "url": "https://kandowontu.itch.io/famidash"
         }
       ]
     },
