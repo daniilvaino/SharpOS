@@ -426,8 +426,9 @@
         // [usbsum] verdict is printed regardless.
         public const bool UsbReport = Diagnostics;
 
-        // Sound (step246): the AC'97 card, if the machine has one (QEMU
-        // -device AC97), playing what programs write with AudioWrite.
+        // Sound (step246, HD Audio step247): the Intel HD Audio controller, or
+        // else the AC'97 card (QEMU -device AC97), playing what programs write
+        // with AudioWrite.
         public const bool AudioInit = true;
 
         // After configuring a HID device, wait a few seconds for reports so a
