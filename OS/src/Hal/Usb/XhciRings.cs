@@ -247,8 +247,18 @@ namespace OS.Hal.Usb
             value = Read32(sc);
             Write32(sc, (value & PORTSC_PRESERVE) | PORTSC_PRC | PORTSC_CSC);
 
-            return (Read32(sc) & PORTSC_PED) != 0;
+            if ((Read32(sc) & PORTSC_PED) == 0)
+                return false;
+
+            // Reset recovery: USB 2.0 §7.1.7.5 (TRSTRCY) gives the device 10 ms
+            // after the reset before it must answer; Linux waits 10 + 40. Without
+            // it built-in cameras and fingerprint readers miss SET_ADDRESS
+            // (Transaction Error on Address Device).
+            Pause(ResetRecoveryMs);
+            return true;
         }
+
+        private const uint ResetRecoveryMs = 50;
 
         private void AdvanceCommandRing()
         {

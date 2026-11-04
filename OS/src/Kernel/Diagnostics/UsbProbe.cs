@@ -255,10 +255,10 @@ namespace OS.Kernel.Diagnostics
                 {
                     Console.Write("FAIL code=0x");
                     Console.WriteHex(o.Code);
-                    Console.WriteLine("");
+                    Console.WriteLine(o.Retried ? " (retried)" : "");
                     return;
                 }
-                Console.Write("OK");
+                Console.Write(o.Retried ? "OK (retried)" : "OK");
 
                 Console.Write(" desc=");
                 if (o.DescriptorRead)

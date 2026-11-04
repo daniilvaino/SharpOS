@@ -32,6 +32,11 @@ aggregates use. `BabyKusto.props` compiles both and imports
   message.
 - `summarize` without `by` returns one row over an empty input (step201) —
   `count()` is 0, as KQL has it; upstream returned no row.
+- `summarize` keeps per bucket only the input columns its aggregations read
+  (step251; upstream TODO "Copies all data, even columns that aren't used"):
+  the row scope references in the aggregations name them, a bucket counts its
+  rows, and the other columns stand in as `UnreadColumn` — the type and row
+  count, no data. Memory is the aggregated columns, not the whole input.
 - Arithmetic with a `dynamic` operand (step201): `Operators/DynamicArithmetic.cs`
   (SharpOS's), typed as Kusto.Language types it — by the other operand, two
   dynamics as dynamic; `Operators/DynamicValues.cs` takes the value out of a

@@ -13,6 +13,7 @@ namespace OS.Hal.Usb
         public Stage Reached;
         public uint Slot;
         public uint Code;                // completion code of the failing command
+        public bool Retried;             // Address Device was tried a second time
         public bool DescriptorRead;
         public ushort VendorId, ProductId;
         public byte Class, MaxPacket;
@@ -123,7 +124,15 @@ namespace OS.Hal.Usb
                 outcome.Slot = slot;
 
                 outcome.Reached = UsbPortOutcome.Stage.Address;
-                if (!hc.TryAddressDevice(slot, p, out uint addrCode))
+                bool addressed = hc.TryAddressDevice(slot, p, out uint addrCode);
+                // One more try after a fresh reset, as Linux does: a device that
+                // missed SET_ADDRESS (Transaction Error) often answers the second.
+                if (!addressed && addrCode == XhciController.CodeTransactionError && hc.TryResetPort(p))
+                {
+                    outcome.Retried = true;
+                    addressed = hc.TryAddressDevice(slot, p, out addrCode);
+                }
+                if (!addressed)
                 {
                     outcome.Code = addrCode;
                     observer?.PortDone(hc, ref outcome);

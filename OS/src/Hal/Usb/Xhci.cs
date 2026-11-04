@@ -284,6 +284,15 @@ namespace OS.Hal.Usb
             System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private uint Read32(ulong address) => *(uint*)address;
 
+        // A plain wait on the HPET. Without one there is nothing to measure
+        // by, and no wait.
+        private void Pause(uint ms)
+        {
+            ulong deadline = Deadline(ms);
+            if (deadline == 0) return;
+            while (!Expired(deadline)) { }
+        }
+
         private ulong Deadline(uint ms)
         {
             if (!OS.Hal.Timer.Hpet.IsInitialized) return 0;

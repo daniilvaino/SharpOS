@@ -45,6 +45,7 @@ namespace OS.Kernel.Memory
         // ReadyToRunSectionType values from ModuleHeaders.h.
         private const int SectionId_InterfaceDispatchTable = 203;
         private const int SectionId_TypeManagerIndirection = 204;
+        private const int SectionId_ModuleInitializerList = 213;
 
         // TypeManager struct layout (Runtime/TypeManager.h, release/7.0):
         //   HANDLE                m_osModule;                  // +0
@@ -173,6 +174,34 @@ namespace OS.Kernel.Memory
             }
 
             return true;
+        }
+
+        // [ModuleInitializer]: Roslyn gathers them into the <Module> class
+        // constructor, and ILC lists those constructors in the
+        // ModuleInitializerList section. Stock startup calls them from
+        // StartupCodeHelpers.RunModuleInitializers before Main; the kernel
+        // enters through EfiMain past that, so BootSequence calls this once the
+        // statics exist. Entries: 4-byte self-relative under RTR major 9,
+        // absolute pointers under 8 (the same split as the GC static region).
+        public static int RunModuleInitializers()
+        {
+            if (s_rtr == null) return 0;
+
+            byte* list = GetSection(s_rtr, SectionId_ModuleInitializerList, out int length);
+            if (list == null) return 0;
+
+            bool relPtr = s_majorVersion >= 9;
+            int stride = relPtr ? sizeof(int) : sizeof(nint);
+            int count = 0;
+            for (byte* entry = list; entry < list + length; entry += stride)
+            {
+                var initializer = relPtr
+                    ? (delegate*<void>)(entry + *(int*)entry)
+                    : *(delegate*<void>*)entry;
+                initializer();
+                count++;
+            }
+            return count;
         }
 
         // Scans outward from `anchor` for the ReadyToRunHeader signature,

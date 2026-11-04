@@ -54,16 +54,40 @@ namespace BabyKusto.Core.Evaluation
 
             protected override SummarizeResultTableContext Init()
             {
+                // SharpOS cut: the input columns the aggregations read — only
+                // these are kept per bucket (upstream TODO: "Copies all data, even
+                // columns that aren't used"). A column is read only through a row
+                // scope name reference, so the references are the whole set.
+                int numInputColumns = Source.Type.Columns.Count;
+                var used = new bool[numInputColumns];
+                foreach (var aggregation in _aggregationExpressions)
+                {
+                    MarkReferencedColumns(aggregation, used);
+                }
+
                 return new SummarizeResultTableContext
                 {
-                    BucketizedTables = new Dictionary<string, (List<object?> ByValues, ColumnBuilder[] OriginalData)>()
+                    BucketizedTables = new Dictionary<string, Bucket>(),
+                    UsedColumns = used,
                 };
+            }
+
+            private static void MarkReferencedColumns(IRNode node, bool[] used)
+            {
+                if (node is IRRowScopeNameReferenceNode reference && reference.ReferencedColumnIndex < used.Length)
+                {
+                    used[reference.ReferencedColumnIndex] = true;
+                }
+
+                for (int i = 0; i < node.ChildCount; i++)
+                {
+                    MarkReferencedColumns(node.GetChild(i), used);
+                }
             }
 
             protected override (SummarizeResultTableContext NewContext, ITableChunk? NewChunk, bool ShouldBreak) ProcessChunk(SummarizeResultTableContext context, ITableChunk chunk)
             {
                 // TODO: This is horribly inefficient
-                //  * Copies all data, even columns that aren't used
                 //  * Composite key calculation involves lots of string allocations and escapings
 
                 int numInputColumns = Source.Type.Columns.Count;
@@ -92,17 +116,21 @@ namespace BabyKusto.Core.Evaluation
 
                     if (!context.BucketizedTables.TryGetValue(key, out var bucket))
                     {
-                        context.BucketizedTables[key] = bucket = (byValues, new ColumnBuilder[numInputColumns]);
+                        context.BucketizedTables[key] = bucket = new Bucket(byValues, new ColumnBuilder?[numInputColumns]);
                         for (int j = 0; j < numInputColumns; j++)
                         {
-                            bucket.OriginalData[j] = chunk.Columns[j].CreateBuilder();
+                            if (context.UsedColumns[j])
+                            {
+                                bucket.OriginalData[j] = chunk.Columns[j].CreateBuilder();
+                            }
                         }
                     }
 
                     for (int j = 0; j < numInputColumns; j++)
                     {
-                        bucket.OriginalData[j].Add(chunk.Columns[j].RawData.GetValue(i));
+                        bucket.OriginalData[j]?.Add(chunk.Columns[j].RawData.GetValue(i));
                     }
+                    bucket.RowCount++;
                 }
 
                 return (context, null, false);
@@ -119,7 +147,7 @@ namespace BabyKusto.Core.Evaluation
                     {
                         empty[j] = ColumnHelpers.CreateBuilder(Source.Type.Columns[j].Type);
                     }
-                    context.BucketizedTables[string.Empty] = (new List<object?>(), empty);
+                    context.BucketizedTables[string.Empty] = new Bucket(new List<object?>(), empty);
                 }
 
                 var resultsData = new ColumnBuilder[_byExpressions.Count + _aggregationExpressions.Count];
@@ -136,7 +164,13 @@ namespace BabyKusto.Core.Evaluation
                         resultsData[i].Add(tableData.ByValues[i]);
                     }
 
-                    var bucketChunk = new TableChunk(Source, tableData.OriginalData.Select(c => c.ToColumn()).ToArray());
+                    var bucketColumns = new Column[tableData.OriginalData.Length];
+                    for (int j = 0; j < bucketColumns.Length; j++)
+                    {
+                        bucketColumns[j] = tableData.OriginalData[j]?.ToColumn()
+                            ?? new UnreadColumn(Source.Type.Columns[j].Type, tableData.RowCount);
+                    }
+                    var bucketChunk = new TableChunk(Source, bucketColumns);
                     var chunkContext = _context with { Chunk = bucketChunk };
                     for (int i = 0; i < _aggregationExpressions.Count; i++)
                     {
@@ -157,7 +191,45 @@ namespace BabyKusto.Core.Evaluation
 
         private struct SummarizeResultTableContext
         {
-            public Dictionary<string, (List<object?> ByValues, ColumnBuilder[] OriginalData)> BucketizedTables;
+            public Dictionary<string, Bucket> BucketizedTables;
+            public bool[] UsedColumns;
+        }
+
+        // SharpOS cut: a class with its own row count, for the buckets that keep no
+        // column at all (`count()` alone); upstream kept a value tuple.
+        private sealed class Bucket
+        {
+            public Bucket(List<object?> byValues, ColumnBuilder?[] originalData)
+            {
+                ByValues = byValues;
+                OriginalData = originalData;
+            }
+
+            public List<object?> ByValues { get; }
+            public ColumnBuilder?[] OriginalData { get; }
+            public int RowCount;
+        }
+
+        // SharpOS cut: stands in for an input column no aggregation reads — the
+        // right type and row count, no data until something asks for it.
+        private sealed class UnreadColumn : Column
+        {
+            private readonly int _rowCount;
+            private Column? _materialized;
+
+            public UnreadColumn(TypeSymbol type, int rowCount)
+                : base(type)
+            {
+                _rowCount = rowCount;
+            }
+
+            private Column Materialized => _materialized ??= ColumnHelpers.CreateFromScalar(null, Type, _rowCount);
+
+            public override int RowCount => _rowCount;
+            public override Array RawData => Materialized.RawData;
+            public override Column Slice(int start, int end) => Materialized.Slice(start, end);
+            public override void ForEach(Action<object?> action) => Materialized.ForEach(action);
+            internal override ColumnBuilder CreateBuilder() => Materialized.CreateBuilder();
         }
     }
 }

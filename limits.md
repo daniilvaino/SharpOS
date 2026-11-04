@@ -6,7 +6,6 @@
 | Проблема | Tier | Статус | Источник / комментарий |
 |---|---|---|---|
 | `GC.WaitForPendingFinalizers` зависает | CoreCLR-hosted | 🔴 hang | SYM-003: finalizer-thread completion event не wired; `GC.Collect` сам работает |
-| `[ModuleInitializer]` не доходит до user code | Kernel | 🔴 | проба `Probe_ModuleInit` красная. Атрибут в std с step119, `docs/nativeaot-nostd-kernel-limits.md` §«работает» устарел. Сличено на Windows и macOS — одинаково |
 | Имена кадров в трассе | Kernel / PE-app | 🔴 | текст трассы есть с step177 (`eh L18` зелёный, адрес + база образа + смещение), имён нет: проба `rethrow preserves stack trace` даёт `val=116` и красная по `RethrowSource`. Блобы 313/327 в образе лежат и не читаются |
 | `Exception.StackTrace` пуст целиком | CoreCLR-hosted | 🔴 | замер `[trace-measure]` (step177): **null** для управляемого `throw`, для `throw;` и для брошенного самим EE. Ни один кадр не записан — `StackTraceInfo` рантайма не приводится в движение нашим первым проходом |
 | `DateTime.Now` (local timezone) | все | 🔴 | нет tz DB: в AOT `TimeZoneInfo` знает только UTC, `Local` = UTC (step212); `DateTime.UtcNow` через CMOS+HPET ✅ |

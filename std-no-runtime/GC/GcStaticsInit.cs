@@ -96,6 +96,7 @@ namespace SharpOS.Std.NoRuntime
         private const uint ReadyToRunSignature = 0x00525452; // 'RTR'
         private const int RtrEntrySize = 24;
         private const int SectionId_GCStaticRegion = 201;
+        private const int SectionId_ModuleInitializerList = 213;
 
         private const nint Uninitialized = 0x1;
         private const nint HasPreInitializedData = 0x2;
@@ -206,6 +207,33 @@ namespace SharpOS.Std.NoRuntime
             }
 
             return FailedCount == 0;
+        }
+
+        // [ModuleInitializer]: Roslyn gathers them into the <Module> class
+        // constructor, ILC lists those in the ModuleInitializerList section,
+        // and stock StartupCodeHelpers.RunModuleInitializers calls them before
+        // Main. Entries have the GC static region's format. The kernel's copy
+        // is NativeAotModuleInit.RunModuleInitializers.
+        public static int RunModuleInitializers()
+        {
+            byte* rtr = FindReadyToRunHeader();
+            if (rtr == null) return 0;
+
+            byte* list = FindSection(rtr, SectionId_ModuleInitializerList, out int length);
+            if (list == null) return 0;
+
+            bool relPtr = *(ushort*)(rtr + 4) >= 9;
+            int stride = relPtr ? sizeof(int) : sizeof(nint);
+            int count = 0;
+            for (byte* entry = list; entry < list + length; entry += stride)
+            {
+                var initializer = relPtr
+                    ? (delegate*<void>)(entry + *(int*)entry)
+                    : *(delegate*<void>*)entry;
+                initializer();
+                count++;
+            }
+            return count;
         }
 
         // Forward scan of the own image for the RTR header — bounded by

@@ -167,8 +167,13 @@ namespace XtermSharp {
 			}
 
 			var text = new System.Text.StringBuilder (endCol - startCol);
-			for (int i = startCol; i < endCol; i++)
+			for (int i = startCol; i < endCol; i++) {
+				// SharpOS cut: the stub after a wide char (width 0) has no text of its
+				// own, as in xterm.js translateToString.
+				if (data [i].Width == 0)
+					continue;
 				RuneExt.AppendRune (text, data [i].Rune);
+			}
 
 			return text.ToString ();
 		}

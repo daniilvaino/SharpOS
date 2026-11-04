@@ -260,6 +260,10 @@ namespace SharpOS.AppSdk
                 ((delegate* unmanaged<void*, void>)(nint)s_services->SetExceptionNamerAddress)(
                     (void*)(delegate* unmanaged<nint, nint>)&NameException);
 
+            // [ModuleInitializer], as stock startup runs them before Main: last
+            // of the runtime, so one may allocate, throw and use statics.
+            SharpOS.Std.NoRuntime.GcStaticsInit.RunModuleInitializers();
+
             // Who this actually is. Every app goes through here, so no app has
             // to remember to say it, and it is said before the app can take
             // over the screen. The kernel prints its own id in the banner; an

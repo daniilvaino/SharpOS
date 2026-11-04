@@ -351,6 +351,13 @@ $results += Get-ProbeStatus -Cat 'Phase4' -Name 'EnumToString' `
     -Status 'enum\.toString: (ok|FAIL)' `
     -ExpectRe '^ok$'
 
+# [ModuleInitializer]: BootSequence runs the ModuleInitializerList section
+# at the end of Phase 2 (NativeAotModuleInit.RunModuleInitializers).
+$results += Get-ProbeStatus -Cat 'Phase4' -Name 'ModuleInitializer' `
+    -Detect 'nativeaot probe begin' `
+    -Status '\[ModuleInitializer\]: (ok|FAIL)' `
+    -ExpectRe '^ok$'
+
 # Phase 4 -- EH level gates.
 $ehGates = @(
     @{ N='EhTryCatchWithThrow';      Re='eh L8 typed catch \(real dispatch\): val=(\d+)';  Expect='801'  },

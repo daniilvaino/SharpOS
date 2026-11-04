@@ -1465,12 +1465,20 @@ namespace XtermSharp {
 				// fullwidth char - also set next cell to placeholder stub and advance cursor
 				// for graphemes bigger than fullwidth we can simply loop to zero
 				// we already made sure above, that buffer.x + chWidth will not overflow right
+				// SharpOS cut: the stub has width 0 and no code, as in xterm.js — upstream
+				// stored CharData.Null (width 1), so a combining mark after a wide char
+				// went to the stub and the renderer drew the stub as a blank cell.
 				if (chWidth > 0) {
+					var stub = new CharData (curAttr, 0, 0, 0);
 					while (--chWidth != 0) {
-						bufferRow [buffer.X++] = empty;
+						bufferRow [buffer.X++] = stub;
 					}
 				}
 			}
+			// SharpOS cut: from xterm.js print — a stub left at the cursor lost its
+			// leading half to this write; give it width 1 so the cell is drawn again.
+			if (buffer.X < cols && bufferRow [buffer.X].Width == 0 && bufferRow [buffer.X].Code == 0)
+				bufferRow [buffer.X] = new CharData (curAttr);
 			terminal.UpdateRange (buffer.Y);
 			readingBuffer.Done ();
 		}

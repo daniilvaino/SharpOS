@@ -313,6 +313,10 @@ namespace OS.Boot
             // No allocation from an interrupt handler: counted by the heap,
             // reported at the end of the app batch.
             SharpOS.Std.NoRuntime.GcHeap.s_allocationAllowed = &global::OS.Kernel.Threading.Preemption.CanWait;
+
+            // [ModuleInitializer] — where stock startup runs them: statics and
+            // the heap are ready, nothing else of the kernel has started.
+            NativeAotModuleInit.RunModuleInitializers();
         }
 
         // ─────────────────────────────────────────────────────────────────

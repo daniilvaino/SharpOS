@@ -392,30 +392,16 @@ negative throwing-test намеренно пропущен (silent corruption у
 бы probe runner). CoreCLR-side `work/normal-hello` Sec 8 тестирует
 оба варианта (positive + ATME-throwing).
 
-### 🔴 `[ModuleInitializer]` не доходит до user code
+### ✅ `[ModuleInitializer]` (step251)
 
-```csharp
-public static class MyInit
-{
-    public static bool Ran;
-    [System.Runtime.CompilerServices.ModuleInitializer]
-    public static void Init() => Ran = true;
-}
-```
-
-C# 9 `[ModuleInitializer]` — атрибут добавлен в std step 119
-(`std-no-runtime/Runtime/RuntimeAttributes.cs`), Roslyn находит
-тип по имени и компилирует. Но **до пользовательского кода дело не
-доходит**: `NativeAotProbe.Probe_ModuleInit` красная, флаг к моменту
-прогона всё ещё false.
-
-Step 119 записал эту строку как зелёную; с тех пор либо регрессия, либо
-проба тогда читалась неверно. Сличено на образах, собранных на Windows и
-на macOS — провал одинаковый, то есть от хоста сборки и от сшивателя не
-зависит. Ядро читает из RTR только секции 203 (`InterfaceDispatchTable`)
-и 204 (`TypeManagerIndirection`) — `OS/src/Kernel/Memory/NativeAotModuleInit.cs`;
-ILC складывает модульные инициализаторы в соседнюю секцию, и разбор её
-не написан. Это первая версия для проверки, а не установленная причина.
+Roslyn собирает инициализаторы в конструктор класса `<Module>`, ILC кладёт
+его в секцию RTR `ModuleInitializerList` (213; на RTR 9 — 4-байтовые
+относительные указатели). Сток вызывает их из `__managed__Main`, мимо которой
+входят и ядро (`EfiMain`), и приложения. Вызываем сами: ядро — в конце Phase 2
+(`NativeAotModuleInit.RunModuleInitializers`), приложение — в конце
+`AppRuntime.Initialize`, до `Main` (`GcStaticsInit.RunModuleInitializers`).
+Статики и куча к этому моменту есть. Пробы: ядро — `[ModuleInitializer]`
+(`probe_report` — `ModuleInitializer`), приложение — AotTests.
 
 ---
 
@@ -677,7 +663,7 @@ step213 — переполнение стека, на втором круге `#
 | `Array.Empty<T>()` | ✅ **Починили** (step225): возвращал новый массив на каждый вызов; BCL отдаёт один на тип, и чужой код сравнивает по ссылке (Aho-Corasick `SearchValues<string>` падал `InvalidCastException`). В приложениях теперь `EmptyArray<T>.Value`, как в BCL (ILC предвычисляет); в ядре — по-прежнему новый массив: его GC-статики появляются с Phase 2, а std исполняется раньше (ярусная пара `Runtime/Array.Empty.*`). Флаг готовности не годится: изменяемая статика лишает предвычисления все `static readonly … = Array.Empty<…>()`, и их конструкторы идут до кучи |
 | `Environment.TickCount64` в приложениях | ✅ **Починили** (step225): был нулём, пока приложение не звало `TaskBackendInstaller.Install()` — таймаут Regex не наступал. Часы ставит `AppRuntime.Initialize` |
 | Формы `System.Reflection` | 🟡 **Без метаданных** (step224, `Runtime/Reflection.Members.cs`, `Type.Reflection.cs`). `MemberInfo`/`PropertyInfo`/`FieldInfo`/`MethodInfo`/`ConstructorInfo`/`ParameterInfo`, `BindingFlags`, `CustomAttributeExtensions` — чтобы BCL-код с отражением **собирался**. Отвечает правду только то, что есть в MethodTable: `IsClass`/`IsValueType`/`IsAbstract`/`IsSealed`, `IsConstructedGenericType`, `GetInterfaces` (карта интерфейсов). Поиск членов — `null`, множественные — пустые массивы, атрибуты — пусто, `Type.GetType(string)` — `null`, `MakeGenericType` — `NotSupportedException`. `Activator.CreateInstance(Type)` — значимый тип нулями; ссылочный — `NotSupportedException` |
-| `Enum.GetNames` / `GetValues`, `Type.GetTypeCode(enum)` | 🟡 step224: имена и значения — **пустые массивы**, `TryParse` — только числом (имён в образе нет). `GetTypeCode` перечисления — код нижележащего типа (из `ElementType` MethodTable), как в BCL; `Convert.ChangeType` в перечисление — `InvalidCastException` |
+| `Enum.GetNames` / `GetValues`, `Type.GetTypeCode(enum)` | 🟡 step224: имена и значения — **пустые массивы**, `TryParse` — только числом (имён в образе нет). `GetTypeCode` перечисления — код нижележащего типа (из `ElementType` MethodTable), как в BCL; `Convert.ChangeType` в перечисление — `InvalidCastException`. Почему имён нет и как их получить — step251: ILC пишет метаданные (с литеральными полями перечислений) только когда системная сборка называется `System.Private.CoreLib`; путь — std отдельной сборкой CoreLib (`release.md`) |
 | `ExecutionContext`, `ThreadPool.QueueUserWorkItem` | 🟡 step224: `ExecutionContext.Capture`/`Run`/`SuppressFlow` есть, но **ничего не течёт** — `AsyncLocal` нет, захватывать нечего. `QueueUserWorkItem` — поверх `Task.Run` |
 | `System.Math` / `MathF` | **Работает, правильно округлено** (step198). Переходы на SharpLibm (сабмодуль `SharpLibm/`, MIT): CORE-MATH через CoreMathSharp с ≈80 исправленными ошибками порта. Проверка — репозиторий SharpLibm-tests: double бит в бит с MPFR на ≈30 млн худших случаев CORE-MATH, float — со всеми 2³² входами C CORE-MATH; точные операции бит в бит с libc-test. `Math.Round` — roundeven, как BCL; `%` для double/float — `fmod`. Флагов исключений, режимов округления и errno нет (CLI фиксирует к ближайшему; для C-вызывающих через экспорты — дальнейшая задача). `LibmPatcher` при SSE4.1 переписывает floor/ceil/trunc/rint/nearbyint на `roundsd`, при FMA3 и AVX-состоянии в XCR0 (step199) — `fma`/`fmaf` на `vfmadd`. Сверх `Math`: функции Бесселя, `erfinv`/`erfcinv`, `compoundn` (step199; не правильно округлены, границы в ulp — README SharpLibm) |
 | Даты и время | 🟡 **Порт BCL** (step212): `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, `DateTimeFormat`/`DateTimeParse` (все стандартные и пользовательские форматы), `DateTimeFormatInfo` с данными инвариантной культуры, `GregorianCalendar`, `ISOWeek`. `TimeZoneInfo` — режим `Invariant` BCL: системный пояс один, UTC (`Local` = UTC, а с `TZ=+03:00` в окружении — фиксированный сдвиг без летнего времени, step216; «Etc/UTC», «UCT», «Zulu» — синонимы), остальные id — `TimeZoneNotFoundException`; `CreateCustomTimeZone` и правила перехода работают. Вид по умолчанию — как в .NET: `ToString()` → `10/26/2026 14:05:09`, `"o"` у `Kind=Local` с `+00:00`. `MinValue`/`MaxValue`/`UnixEpoch`/`TimeSpan.Zero` — свойства, не статические поля: ядро строит даты до Phase 2. Форматирование и разбор поднимают статики — до Phase 2 только `new DateTime(...)` и `UtcNow` |

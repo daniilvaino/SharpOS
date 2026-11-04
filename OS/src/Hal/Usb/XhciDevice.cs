@@ -11,6 +11,9 @@
     internal sealed unsafe partial class XhciController
     {
         private const uint TRB_ADDRESS_DEVICE = 11;
+
+        /// <summary>Completion code 4: the device did not answer on the bus.</summary>
+        public const uint CodeTransactionError = 4;
         private const uint TRB_EVALUATE_CONTEXT = 13;
         private const uint TRB_SETUP = 2;
         private const uint TRB_DATA = 3;

@@ -605,6 +605,11 @@ namespace AotTests
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static object Opaque(object o) => o;
 
+        private static bool s_moduleInitRan;
+
+        [System.Runtime.CompilerServices.ModuleInitializer]
+        internal static void ModuleInit() { s_moduleInitRan = true; }
+
         private static void CheckArrayCasts()
         {
             object strings = Opaque(new string[1]);
@@ -623,6 +628,7 @@ namespace AotTests
             Check("int[] is not long[]", !(ints is long[]));
             Check("enum[] is int[]", tints is int[]);
             Check("Derived[] is Base[]", derived is CastBase[]);
+            Check("[ModuleInitializer] ran before Main", s_moduleInitRan);
             Check("int[] is not object[]", !(ints is object[]));
 
             object[] covariant = (object[])Opaque(new string[1]);
