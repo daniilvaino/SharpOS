@@ -105,6 +105,26 @@ namespace SharpOS.AppSdk
             return ok;
         }
 
+        /// <summary>Sets whether this process listens for SIGWINCH; false without the service.</summary>
+        internal static bool ResizeListening(bool value)
+        {
+            ulong* request = stackalloc ulong[5];
+            request[0] = 5;
+            request[1] = value ? 1UL : 0UL;
+            return Call(OpInterrupt, request) == AppServiceStatus.Ok;
+        }
+
+        /// <summary>As <see cref="WaitInterrupt"/>, for SIGWINCH.</summary>
+        internal static bool WaitResize(uint handled, out uint count)
+        {
+            ulong* request = stackalloc ulong[5];
+            request[0] = 6;
+            request[1] = handled;
+            bool ok = Call(OpInterrupt, request) == AppServiceStatus.Ok;
+            count = ok ? (uint)request[2] : handled;
+            return ok;
+        }
+
         /// <summary>Ends this process as Ctrl+C does when nothing cancels it (130).</summary>
         internal static void EndInterrupted()
         {

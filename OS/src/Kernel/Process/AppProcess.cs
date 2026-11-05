@@ -79,6 +79,9 @@ namespace OS.Kernel.Process
         public bool InterruptListening;
         public uint InterruptCount;
         public uint InterruptsHandled;
+        // SIGWINCH, the same way with a thread of its own; ignored unless listened to.
+        public bool ResizeListening;
+        public uint ResizeCount;
         // Waiting for a program on the hosted runtime (RunManagedApp): Ctrl+C
         // goes to that runtime's handlers, not to this process.
         public bool InHostedRun;

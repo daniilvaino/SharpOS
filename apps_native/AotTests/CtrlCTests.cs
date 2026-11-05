@@ -15,6 +15,7 @@ namespace AotTests
     //   posix              PosixSignalRegistration cancels, then is disposed:
     //                      the second Ctrl+C ends it (130)
     //   input              TreatControlCAsInput: ReadKey gets Ctrl+C, exits 9
+    //   winch              SIGWINCH, without a key: exits 11 (RunWinch)
     internal static partial class AppEntry
     {
         private static volatile int s_ctrlCSeen;
@@ -74,10 +75,38 @@ namespace AotTests
                     ConsoleKeyInfo key = Console.ReadKey(true);
                     Console.Write("[ctrlc] read key " + ((int)key.KeyChar).ToString() + " " + key.Key.ToString() + " " + key.Modifiers.ToString() + "\n");
                     return key.KeyChar == '\u0003' && key.Key == ConsoleKey.C && key.Modifiers == ConsoleModifiers.Control ? 9 : 4;
+                case "winch":
+                    return RunWinch();
                 default:
                     Console.Write("[ctrlc] no case " + name + "\n");
                     return 5;
             }
+        }
+
+        // SIGWINCH, no key wanted: the program's own side panel narrows the
+        // main one and closing it widens it back — a signal each time, and
+        // the width read in the handler is the new one. Exits 11.
+        private static int RunWinch()
+        {
+            int before = Console.WindowWidth;
+            int seenWidth = 0;
+            using var registration = PosixSignalRegistration.Create(PosixSignal.SIGWINCH, _ =>
+            {
+                seenWidth = Console.WindowWidth;
+                s_ctrlCSeen++;
+            });
+            if (SharpOS.AppSdk.AppHost.Terminal.SidePanel(30) <= 0)
+            {
+                Console.Write("[winch] no side panel\n");
+                return 6;
+            }
+            bool narrowed = WaitSeen(1);
+            int narrow = seenWidth;
+            SharpOS.AppSdk.AppHost.Terminal.SidePanel(0);
+            bool widened = WaitSeen(2);
+            Console.Write("[winch] width " + before.ToString() + " -> " + narrow.ToString() + " -> " + seenWidth.ToString()
+                + " signals=" + s_ctrlCSeen.ToString() + "\n");
+            return narrowed && widened && narrow < before && seenWidth == before ? 11 : 6;
         }
 
         // Up to 30 s for the handler; the driver presses within one.

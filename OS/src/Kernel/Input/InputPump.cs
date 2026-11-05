@@ -137,6 +137,9 @@ namespace OS.Kernel.Input
                 if (TerminalConsole.HasPendingOutput)
                     TerminalConsole.Flush();
 
+                if (TerminalConsole.TakeMainResized())
+                    OS.Kernel.Process.TerminalInterrupt.RaiseResize();
+
                 Scheduler.Sleep(PollIntervalMs);
             }
         }
@@ -186,37 +189,19 @@ namespace OS.Kernel.Input
         // A detector for exactly one combination, deliberately separate from
         // the console's decoder. That decoder is stateful and owned by whoever
         // reads keys; feeding it a second time from here would corrupt its idea
-        // of which modifiers are down. Tracking one key is cheap enough that
-        // sharing was not worth the coupling.
+        // of which modifiers are down.
+        //
+        // The modifiers are the screen filter's (PushUnlessScreens), which has
+        // seen every byte before this one. A flag of its own, shared by both
+        // control keys, said "released" when one of two held was let go.
         private const byte CtrlMake  = 0x1D;
-        private const byte CtrlBreak = 0x9D;
         private const byte CMake     = 0x2E;
         private const byte Extended  = 0xE0;
 
-        private static bool s_ctrlDown;
-        private static bool s_sawExtended;
-
+        // Raised at the moment the key arrives (PumpEntry), rather than when
+        // someone next reads: being timely is the entire point. E0 2E is a
+        // media key, not C.
         private static bool DetectBreak(byte sc)
-        {
-            if (sc == Extended) { s_sawExtended = true; return false; }
-
-            bool extended = s_sawExtended;
-            s_sawExtended = false;
-
-            // Both control keys report 0x1D; the right one is prefixed. Either
-            // is a control key for this purpose.
-            if (sc == CtrlMake)  { s_ctrlDown = true;  return false; }
-            if (sc == CtrlBreak) { s_ctrlDown = false; return false; }
-
-            if (sc == CMake && s_ctrlDown && !extended)
-            {
-                // Raised at the moment the key arrives (PumpEntry), rather
-                // than when someone next reads: being timely is the entire
-                // point.
-                return true;
-            }
-
-            return false;
-        }
+            => sc == CMake && !s_prefixHeld && (s_leftCtrl || s_rightCtrl);
     }
 }

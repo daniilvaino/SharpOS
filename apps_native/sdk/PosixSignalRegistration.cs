@@ -5,7 +5,8 @@
 // Runtime/InteropServices/PosixSignal.cs, PosixSignalContext.cs and
 // PosixSignalRegistration.cs, unchanged; the platform half is
 // PosixSignalRegistration.AppHost.cs. Cut: the unused Token(signal, sigNo,
-// handler) constructor (Unix raw signal numbers).
+// handler) constructor (Unix raw signal numbers); [UnsupportedOSPlatform("windows")]
+// on SIGWINCH — apps build for win-x64, and here it is supported.
 
 using System.IO;
 using System.Runtime.Versioning;
@@ -36,7 +37,6 @@ namespace System.Runtime.InteropServices
         SIGCONT = -6,
 
         /// <summary>Window resized</summary>
-        [UnsupportedOSPlatform("windows")]
         SIGWINCH = -7,
 
         /// <summary>Terminal input for background process</summary>

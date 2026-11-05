@@ -100,8 +100,9 @@ namespace OS.Kernel.Process
         // Ctrl+C (TerminalInterrupt). [0]: 0 only asks, 1 sets Ctrl+C as input
         // to [1], 2 sets listening to [1], 3 waits — [1] the count handled so
         // far, out [2] the count now (DeviceError: being ended), 4 ends the
-        // caller as Ctrl+C would have (the handlers did not cancel). Out of
-        // 0, 1, 2: [3] Ctrl+C as input, [4] listening.
+        // caller as Ctrl+C would have (the handlers did not cancel); 5 and 6
+        // are 2 and 3 for SIGWINCH. Out of 0, 1, 2, 5: [3] Ctrl+C as input,
+        // [4] listening.
         public const int ProcessOpInterrupt = 26;
 
         // A path answered in UTF-8 (step208; before, a byte a char): written
@@ -249,6 +250,13 @@ namespace OS.Kernel.Process
                         return (int)AppServiceStatus.Ok;
                     case 4:
                         RequestEnd(self, TerminalInterrupt.InterruptedExitCode, failed: true);
+                        return (int)AppServiceStatus.Ok;
+                    // SIGWINCH: listening, and its wait (as 2 and 3).
+                    case 5: self.ResizeListening = request[1] != 0; break;
+                    case 6:
+                        if (!TerminalInterrupt.WaitResize(self, (uint)request[1], out uint resized))
+                            return (int)AppServiceStatus.DeviceError;
+                        request[2] = resized;
                         return (int)AppServiceStatus.Ok;
                     default: return (int)AppServiceStatus.InvalidParameter;
                 }

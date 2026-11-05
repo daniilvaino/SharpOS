@@ -641,6 +641,19 @@ namespace OS.Hal
         /// <summary>True when characters were fed but not yet painted.</summary>
         public static bool HasPendingOutput => s_dirty;
 
+        // The main panel changed size (the side panel shown or hidden, the
+        // alternate screen): SIGWINCH, sent by the input pump — not from here,
+        // under the engine lock with preemption held off.
+        private static volatile bool s_mainResized;
+
+        /// <summary>True once after each change of the main panel's size.</summary>
+        public static bool TakeMainResized()
+        {
+            if (!s_mainResized) return false;
+            s_mainResized = false;
+            return true;
+        }
+
         /// <summary>The paint state the idle report prints.</summary>
         public static void ReadPaintState(out int rangeStart, out int rangeEnd, out int skips,
                                           out int fed, out bool alternate,
@@ -791,7 +804,7 @@ namespace OS.Hal
 
             int side = SideWanted;
             int mainCols = side > 0 ? s_screenCols - side - 1 : s_screenCols;
-            s_main.Resize(mainCols, s_screenRows, Margin, Margin);
+            if (s_main.Resize(mainCols, s_screenRows, Margin, Margin)) s_mainResized = true;
             if (side > 0)
                 s_side.Resize(side, s_screenRows, Margin + (mainCols + 1) * CellW, Margin);
             s_sideShown = side;
@@ -985,12 +998,14 @@ namespace OS.Hal
             _cursorSlot = -1;
         }
 
-        /// <summary>Callers hold the engine lock.</summary>
-        public void Resize(int cols, int rows, int x, int y)
+        /// <summary>Callers hold the engine lock. True when the size changed.</summary>
+        public bool Resize(int cols, int rows, int x, int y)
         {
-            if (cols == _cols && rows == _rows && x == _x && y == _y) return;
-            if (cols != _cols || rows != _rows) Engine.Resize(cols, rows);
+            if (cols == _cols && rows == _rows && x == _x && y == _y) return false;
+            bool sized = cols != _cols || rows != _rows;
+            if (sized) Engine.Resize(cols, rows);
             Place(cols, rows, x, y);
+            return sized;
         }
 
         public void Enqueue(byte* bytes, int length)

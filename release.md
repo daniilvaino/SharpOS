@@ -92,12 +92,9 @@ SharpCompress) — своими сборками; ILC стоковый и пиш
 ## 10. Ctrl+C для всех
 
 Ctrl+C — сигнал владельцу терминала, `CancelKeyPress`, `PosixSignalRegistration`
-(`done/step253.md`). Осталось:
-
-- Смена размера панели — сигнал (SIGWINCH, `PosixSignalRegistration`); сам размер
-  программа уже получает свой.
-- Потерянное отпускание Ctrl: `c` → Ctrl+C (`InputPump.DetectBreak`); прогон с
-  журналом скан-кодов.
+(`done/step253.md`); SIGWINCH при смене размера панели, ложный Ctrl+C у тестера
+— гонка читателей клавиатуры, закрытая в step212 (`done/step254.md`). Раздел
+закрыт; встроенные команды оболочки Ctrl+C не прерывает — в donext.
 
 ## 11. CoreCLR
 

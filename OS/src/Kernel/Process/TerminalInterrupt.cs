@@ -36,11 +36,17 @@ namespace OS.Kernel.Process
             Key,
         }
 
+        // The group a signal from the terminal goes to.
+        private static uint OwningGroup()
+        {
+            uint group = TerminalOwner.Foreground;
+            return group != 0 ? group : SessionGroup();
+        }
+
         /// <summary>Ctrl+C was pressed.</summary>
         public static Outcome Raise()
         {
-            uint group = TerminalOwner.Foreground;
-            if (group == 0) group = SessionGroup();
+            uint group = OwningGroup();
             Outcome outcome = Raise(group, out int ended, out int signalled);
             // A line a Ctrl+C: what it did is otherwise only seen as its effect.
             OS.Hal.Console.WriteLine("[ctrlc] group=" + group.ToString() + " ended=" + ended.ToString()
@@ -107,6 +113,33 @@ namespace OS.Kernel.Process
         }
 
         /// <summary>
+        /// The main panel changed size: SIGWINCH to the owning group. Its
+        /// default action is none, so only those listening hear of it; nothing
+        /// is ended, and a listener still busy gets it as one pending.
+        /// </summary>
+        public static void RaiseResize()
+        {
+            uint group = OwningGroup();
+            if (group == 0) return;
+            int signalled = 0;
+            for (int i = 0; i < AppProcesses.MaxRunning; i++)
+            {
+                Preemption.Suppress();
+                AppProcess p = AppProcesses.InSlot(i);
+                bool deliver = p != null && p.Group == group && p.ResizeListening
+                    && !p.KillRequested && p.ExitedWord == 0;
+                if (deliver) p!.ResizeCount++;
+                Preemption.Allow();
+                if (!deliver) continue;
+                signalled++;
+                fixed (uint* word = &p!.ResizeCount)
+                    AddressWait.WakeByAddressAll(word);
+            }
+            if (signalled > 0)
+                OS.Hal.Console.WriteLine("[winch] group=" + group.ToString() + " signalled=" + signalled.ToString());
+        }
+
+        /// <summary>
         /// The listener's wait: back when Ctrl+C came after the
         /// <paramref name="handled"/>-th, with the count now; false when the
         /// waiting thread is being ended.
@@ -116,13 +149,22 @@ namespace OS.Kernel.Process
             Preemption.Suppress();
             self.InterruptsHandled = handled;
             Preemption.Allow();
+            return WaitOn(ref self.InterruptCount, handled, out now);
+        }
+
+        /// <summary>As <see cref="Wait"/>, for SIGWINCH.</summary>
+        public static bool WaitResize(AppProcess self, uint handled, out uint now)
+            => WaitOn(ref self.ResizeCount, handled, out now);
+
+        private static bool WaitOn(ref uint count, uint handled, out uint now)
+        {
             while (true)
             {
-                now = self.InterruptCount;
+                now = System.Threading.Volatile.Read(ref count);
                 if (now != handled) return true;
                 Thread current = Scheduler.Current;
                 if (current != null && current.KillRequested) return false;
-                fixed (uint* word = &self.InterruptCount)
+                fixed (uint* word = &count)
                     AddressWait.WaitOnAddress(word, &handled, 4, 0xFFFFFFFFu);
             }
         }
