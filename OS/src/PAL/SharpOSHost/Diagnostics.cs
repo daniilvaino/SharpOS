@@ -258,6 +258,8 @@ namespace OS.PAL.SharpOSHost
         {
             // Print the failing reason via existing diagnostic, then halt
             // через kernel Panic so QEMU exits cleanly via -no-reboot.
+            // Unmuted first, as Panic.Fail does: the reason is the line that matters.
+            Console.Quiet = false;
             if (utf8Message != null)
             {
                 byte* p = utf8Message;

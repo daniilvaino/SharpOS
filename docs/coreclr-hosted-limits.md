@@ -398,6 +398,24 @@ NB: `yield`/итераторы — **НЕ** threading (см. §0, ✅). Не п�
 
 Сетевого стека (winsock) и спавна процессов нет (ожидаемо).
 
+### Гибель программы — гибель системы (step255)
+
+CoreCLR слинкован в образ и инициализирован один раз: процесс рантайма — вся
+машина. Проба `apps_managed/HostedFault` (`HostedExit`, `HostedThrow`,
+`HostedFailFast`), прогоны 349/350:
+
+- 💥 `Environment.Exit` → `EEShutDown` → `ExitProcess` (CRT-заглушка форка) →
+  `SharpOSHost_Panic`.
+- 💥 необработанное исключение → `[unhandled] …` в журнале приложения,
+  `[PANIC] unhandled exception`.
+- 💥 `Environment.FailFast` → `EEPolicy::HandleFatalError` → `SafeExitProcess`;
+  `TerminateProcess` возвращает → `int3` → `#BP`, дамп регистров, halt.
+
+До step255 программа шла с `Console.Quiet` и все три останавливались без строки
+в журнале; теперь `Panic.Fail`, `SharpOSHost_Panic` и `PanicDump` включают
+консоль первыми. Переполнение стека — та же семантика, что в .NET: процесс
+умирает.
+
 ---
 
 ## 11. Единый некатчабл корень — ЗАКРЫТ (step 90) ✅

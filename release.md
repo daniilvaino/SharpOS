@@ -103,7 +103,9 @@ Ctrl+C — сигнал владельцу терминала, `CancelKeyPress`,
   (мёртвый) — удалить; `CoreClrProbe` — переименовать (`CoreClrSession`).
 - Ctrl+C в pwsh → FailFast (режим консоли, `MapVirtualKey`).
 - `BreakHandler` pwsh после выхода → `*** halting ***`.
-- FailFast hosted-процесса вешает ОС.
+- Гибель hosted-программы (Exit, необработанное, FailFast) останавливает
+  систему — свойство яруса (один CoreCLR), паника с причиной (`done/step255.md`).
+  Для 0.1 — так; изоляция — в donext.
 - `.DLL` с `>` или `|` не стартует.
 - PowerShell: `mkdir`/`New-Item`/удаление молча «успешны» (PAL).
 - Нет `CreateProcessW`, `BCryptHash`, `K32GetProcessMemoryInfo`, `msvcrt`;

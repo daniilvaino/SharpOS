@@ -10,6 +10,7 @@
 | `Exception.StackTrace` пуст целиком | CoreCLR-hosted | 🔴 | замер `[trace-measure]` (step177): **null** для управляемого `throw`, для `throw;` и для брошенного самим EE. Ни один кадр не записан — `StackTraceInfo` рантайма не приводится в движение нашим первым проходом |
 | `DateTime.Now` (local timezone) | все | 🔴 | нет tz DB: в AOT `TimeZoneInfo` знает только UTC, `Local` = UTC (step212); `DateTime.UtcNow` через CMOS+HPET ✅ |
 | `Process.Start` | CoreCLR-hosted | 🔴 | отсутствует `CreateProcessW` (лог 2026-08-21). Ярус решает по Windows-пути; порождения процессов у нас нет вовсе |
+| Гибель hosted-программы останавливает систему | CoreCLR-hosted | 🔴 | один CoreCLR на машину, процесс рантайма — вся система: `Environment.Exit`, необработанное исключение, `FailFast` → паника с причиной в журнале (step255). Направление — свой экземпляр данных CoreCLR на процесс, зигота (donext) |
 | `GZipStream` / `System.IO.Compression` | все | 🔴 | `libSystem.IO.Compression.Native` отсутствует |
 | Hosted GC suspend/resume cooperation | CoreCLR-hosted | ⏳ | cooperative safepoints + RetainVM/decommit policy не production-complete |
 | Strong-fallback аудит `SharpOSHost_*` | Fork/PAL | ⏳ | fallback'и в той же TU обязаны быть `weak`, иначе Release clang-fold подменяет до линковки |

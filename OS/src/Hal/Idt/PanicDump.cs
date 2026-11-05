@@ -14,6 +14,8 @@ namespace OS.Hal.Idt
     {
         public static void Print(InterruptFrame* frame)
         {
+            // Heard even when the console is muted (a hosted program's run), as Panic.Fail.
+            Console.Quiet = false;
             Console.Write("\r\n*** EXCEPTION ***\r\n");
 
             Console.Write("vector=0x");

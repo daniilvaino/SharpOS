@@ -742,6 +742,24 @@ else {
         }
     }
 
+    # How a hosted program dies (FailFast, unhandled, Exit): one project built
+    # under three names, the name picks the case. Tests only.
+    $hostedFaultNames = @()
+    $hostedFaultProj = Join-Path $repoRoot "apps_managed\HostedFault"
+    if (-not $NoTests -and (Test-Path -LiteralPath (Join-Path $hostedFaultProj "HostedFault.csproj"))) {
+        foreach ($n in @('HostedFailFast', 'HostedThrow', 'HostedExit')) {
+            Push-Location $hostedFaultProj; & dotnet build -c Release "-p:AssemblyName=$n" | Out-Null; Pop-Location
+            $src = Join-Path $hostedFaultProj "bin\$n\Release\net10.0\$n.dll"
+            if (Test-Path -LiteralPath $src) {
+                Copy-Item -LiteralPath $src -Destination (Join-Path $espSharpOSDir "$n.dll") -Force
+                $hostedFaultNames += $n
+            } else {
+                Write-Warning "$n.dll not found at $src"
+            }
+        }
+        Write-Host "Prepared hosted fault probes: $($hostedFaultNames -join ', ')"
+    }
+
     # StarlingProbe: низ движка Starling (HTML/DOM/CSS/раскладка/display-list)
     # на hosted-ярусе. Сборки Starling лежат в payloads/starling/ — их кладёт
     # tools/build_starling.ps1; в гит они не попадают, как WAD и pwsh. Верхние слои
@@ -806,6 +824,7 @@ else {
     [void]$tpa.Append(';C:\sharpos\NormalHello.dll')
     [void]$tpa.Append(';C:\sharpos\PowerShellBootstrap.dll')
     [void]$tpa.Append(';C:\sharpos\Bench.dll')
+    foreach ($n in $hostedFaultNames) { [void]$tpa.Append(";C:\sharpos\$n.dll") }
     # Сборки Starling — по той же схеме, что pwsh: всё в TPA по имени,
     # дубликаты fx пропускаем (побеждает вариант из fx).
     if (Test-Path -LiteralPath $starlingDest) {
