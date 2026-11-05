@@ -1552,7 +1552,11 @@ namespace OS.Kernel.Process
             s_managedRunScope = RunScope(path);
 
             OS.Kernel.Diagnostics.PerfCounters.Mark();
+            // Ctrl+C meanwhile is the hosted program's (TerminalInterrupt).
+            AppProcess caller = AppProcesses.Current;
+            if (caller != null) caller.InHostedRun = true;
             bool ok = global::OS.Kernel.Exec.CoreClrHost.TryExecute(path, out int exitCode);
+            if (caller != null) caller.InHostedRun = false;
             request->ExitCode = exitCode;
 
             DebugLog.Begin(LogLevel.Info);

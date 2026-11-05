@@ -27,6 +27,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)Audio.cs"                Link="sdk\Audio.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileEntry.cs"            Link="sdk\FileEntry.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)SystemConsole.cs"        Link="sdk\SystemConsole.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ConsoleCancelEventArgs.cs" Link="sdk\ConsoleCancelEventArgs.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PosixSignalRegistration.cs" Link="sdk\PosixSignalRegistration.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PosixSignalRegistration.AppHost.cs" Link="sdk\PosixSignalRegistration.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TerminalKeys.cs"         Link="sdk\TerminalKeys.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Environment.AppHost.cs"  Link="sdk\Environment.AppHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FileSystem.AppHost.cs"   Link="sdk\FileSystem.AppHost.cs" />

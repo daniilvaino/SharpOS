@@ -123,6 +123,10 @@ namespace AotTests
             if (arguments.Length > 0 && arguments[0] == "--dynamic")
                 return RunDynamicOnly();
 
+            // Ctrl+C, a case a run (CtrlCTests.cs); the driver presses the keys.
+            if (arguments.Length > 1 && arguments[0] == "--ctrl-c")
+                return RunCtrlC(arguments[1]);
+
             // The modes below are the kernel probes' own; an image built
             // without the tests has nothing for them to talk to.
             if (!KernelProbes && arguments.Length > 0

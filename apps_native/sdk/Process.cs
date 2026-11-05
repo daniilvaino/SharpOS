@@ -27,7 +27,7 @@ namespace SharpOS.AppSdk
 
     public sealed unsafe class Process : IDisposable
     {
-        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18, OpSystemInfo = 21, OpStartWithEnds = 22, OpTerminal = 23, OpList = 24, OpKillById = 25;
+        private const int OpStart = 1, OpWait = 2, OpHasExited = 3, OpKill = 4, OpRelease = 5, OpCurrentId = 6, OpStartWithEnvironment = 17, OpImagePath = 18, OpSystemInfo = 21, OpStartWithEnds = 22, OpTerminal = 23, OpList = 24, OpKillById = 25, OpInterrupt = 26;
 
         private bool _released;
         private bool _exited;
@@ -71,6 +71,46 @@ namespace SharpOS.AppSdk
             ulong* request = stackalloc ulong[5];
             request[0] = action;
             return Call(OpTerminal, request) == AppServiceStatus.Ok && request[1] != 0;
+        }
+
+        // Ctrl+C (the kernel's TerminalInterrupt): Console.TreatControlCAsInput
+        // and PosixSignalRegistration are over these.
+
+        /// <summary>
+        /// Sets (action 1: Ctrl+C as input, 2: listening) or only reads (0) this
+        /// process's Ctrl+C settings; false without the service.
+        /// </summary>
+        internal static bool InterruptSettings(ulong action, bool value, out bool controlCIsInput, out bool listening)
+        {
+            ulong* request = stackalloc ulong[5];
+            request[0] = action;
+            request[1] = value ? 1UL : 0UL;
+            bool ok = Call(OpInterrupt, request) == AppServiceStatus.Ok;
+            controlCIsInput = ok && request[3] != 0;
+            listening = ok && request[4] != 0;
+            return ok;
+        }
+
+        /// <summary>
+        /// Blocks until a Ctrl+C after the <paramref name="handled"/>-th; false
+        /// when this process is being ended (or there is no service).
+        /// </summary>
+        internal static bool WaitInterrupt(uint handled, out uint count)
+        {
+            ulong* request = stackalloc ulong[5];
+            request[0] = 3;
+            request[1] = handled;
+            bool ok = Call(OpInterrupt, request) == AppServiceStatus.Ok;
+            count = ok ? (uint)request[2] : handled;
+            return ok;
+        }
+
+        /// <summary>Ends this process as Ctrl+C does when nothing cancels it (130).</summary>
+        internal static void EndInterrupted()
+        {
+            ulong* request = stackalloc ulong[5];
+            request[0] = 4;
+            Call(OpInterrupt, request);
         }
 
         /// <summary>Whether a read of the terminal by this program gets keys.</summary>

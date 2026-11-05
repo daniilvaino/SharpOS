@@ -1580,9 +1580,21 @@ namespace Shell
                 return 2;
             }
 
-            AppServiceStatus status = managed
-                ? AppHost.TryRunManagedApp(path, out int exitCode)
-                : AppHost.TryRunApp(path, args.ToArray(), out exitCode);
+            // A job, as a pipeline's stages are: the terminal — and Ctrl+C —
+            // is the program's until it ends, not the shell's.
+            AppServiceStatus status;
+            int exitCode;
+            Process.BeginForegroundJob();
+            try
+            {
+                status = managed
+                    ? AppHost.TryRunManagedApp(path, out exitCode)
+                    : AppHost.TryRunApp(path, args.ToArray(), out exitCode);
+            }
+            finally
+            {
+                Process.EndForegroundJob();
+            }
 
             if (status != AppServiceStatus.Ok)
             {

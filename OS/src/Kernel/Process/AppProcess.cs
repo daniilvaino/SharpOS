@@ -71,6 +71,18 @@ namespace OS.Kernel.Process
         // ends then say "broken", not "end of stream".
         public bool Failed;
 
+        // Ctrl+C (TerminalInterrupt). ControlCIsInput: Console.TreatControlCAsInput,
+        // the key is a byte to read. InterruptListening: the program handles the
+        // signal (CancelKeyPress, PosixSignalRegistration) — a thread of its waits
+        // on InterruptCount; InterruptsHandled is the count it has dealt with.
+        public bool ControlCIsInput;
+        public bool InterruptListening;
+        public uint InterruptCount;
+        public uint InterruptsHandled;
+        // Waiting for a program on the hosted runtime (RunManagedApp): Ctrl+C
+        // goes to that runtime's handlers, not to this process.
+        public bool InHostedRun;
+
         // HPET moments of its life (step196, where a start-and-exit goes):
         // runnable, first instruction of its code, its runtime set up (before
         // and after the build banner), its code done, its ending done.

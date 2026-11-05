@@ -98,6 +98,10 @@ namespace Terminal.Gui
             Write(Esc + "[2J");
             Flush();
 
+            // Ctrl+C is a key of the application's (copy, a binding), not a
+            // signal that ends it — as the stock NetDriver.
+            Console.TreatControlCAsInput = true;
+
             CurrentAttribute = MakeColor(Color.White, Color.Black);
 
             // The colour themes, which every stock driver sets up in its own

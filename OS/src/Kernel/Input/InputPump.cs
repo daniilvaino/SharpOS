@@ -110,7 +110,24 @@ namespace OS.Kernel.Input
                 {
                     if (!ScancodeSource.TryReadHardware(out byte sc)) break;
                     s_scancodes++;
-                    if (DetectBreak(sc)) s_breaks++;
+                    if (DetectBreak(sc))
+                    {
+                        s_breaks++;
+                        var outcome = OS.Kernel.Process.TerminalInterrupt.Raise();
+                        // A signal to the terminal's owner: the key is spent,
+                        // its release too (as a key the screen took).
+                        if (outcome == OS.Kernel.Process.TerminalInterrupt.Outcome.Signal)
+                        {
+                            s_taken = true;
+                            s_takenMake = CMake;
+                            s_takenExtended = false;
+                            continue;
+                        }
+                        // No process owns the terminal: the hosted runtime's
+                        // handlers. Either way the key goes on.
+                        if (outcome == OS.Kernel.Process.TerminalInterrupt.Outcome.NoProcess)
+                            s_ctrlSignal.Set();
+                    }
                     PushUnlessScreens(sc);
                 }
 
@@ -193,12 +210,9 @@ namespace OS.Kernel.Input
 
             if (sc == CMake && s_ctrlDown && !extended)
             {
-                // Raise it here, at the moment the key arrives, rather than
-                // when someone next reads: being timely is the entire point.
-                // The key itself still goes into the ring — the line editor
-                // draws "^C" from it, and dropping it here would fix
-                // cancellation by breaking the echo.
-                s_ctrlSignal.Set();
+                // Raised at the moment the key arrives (PumpEntry), rather
+                // than when someone next reads: being timely is the entire
+                // point.
                 return true;
             }
 

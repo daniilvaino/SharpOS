@@ -171,6 +171,10 @@ namespace Shell
         {
             AppHost.Terminal.Write("\u001b[1;36mSharpOS shell\u001b[0m\u001b[90m — 'help' for what exists, Tab completes, Up/Down for history, 'exit' to leave\u001b[0m\n");
 
+            // At the prompt Ctrl+C is the line editor's key (it drops the
+            // line); a command gets it as a signal — its job owns the terminal.
+            System.Console.TreatControlCAsInput = true;
+
             var reader = new LineReader(new Completion(executor));
             executor.History = reader.History;
             // Objects at the prompt open a side panel with their trees.

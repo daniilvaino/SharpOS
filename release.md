@@ -91,7 +91,9 @@ SharpCompress) — своими сборками; ILC стоковый и пиш
 
 ## 10. Ctrl+C для всех
 
-- Ctrl+C — сигнал владельцу терминала, программа останавливается.
+Ctrl+C — сигнал владельцу терминала, `CancelKeyPress`, `PosixSignalRegistration`
+(`done/step253.md`). Осталось:
+
 - Смена размера панели — сигнал (SIGWINCH, `PosixSignalRegistration`); сам размер
   программа уже получает свой.
 - Потерянное отпускание Ctrl: `c` → Ctrl+C (`InputPump.DetectBreak`); прогон с

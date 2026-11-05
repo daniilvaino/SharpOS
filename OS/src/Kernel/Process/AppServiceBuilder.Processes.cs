@@ -97,6 +97,12 @@ namespace OS.Kernel.Process
         // `kill`: [0] any running process but the caller; it ends with 137.
         // There are no users here: the process is whoever's it is.
         public const int ProcessOpKillById = 25;
+        // Ctrl+C (TerminalInterrupt). [0]: 0 only asks, 1 sets Ctrl+C as input
+        // to [1], 2 sets listening to [1], 3 waits — [1] the count handled so
+        // far, out [2] the count now (DeviceError: being ended), 4 ends the
+        // caller as Ctrl+C would have (the handlers did not cancel). Out of
+        // 0, 1, 2: [3] Ctrl+C as input, [4] listening.
+        public const int ProcessOpInterrupt = 26;
 
         // A path answered in UTF-8 (step208; before, a byte a char): written
         // when it fits the caller's buffer; its length in bytes either way.
@@ -225,6 +231,29 @@ namespace OS.Kernel.Process
                 request[2] = self.Group;
                 request[3] = TerminalOwner.Foreground;
                 request[4] = self.JobGroup;
+                return (int)AppServiceStatus.Ok;
+            }
+
+            if (op == ProcessOpInterrupt)
+            {
+                if (self == null) return (int)AppServiceStatus.Unsupported;
+                switch (request[0])
+                {
+                    case 0: break;
+                    case 1: self.ControlCIsInput = request[1] != 0; break;
+                    case 2: self.InterruptListening = request[1] != 0; break;
+                    case 3:
+                        if (!TerminalInterrupt.Wait(self, (uint)request[1], out uint now))
+                            return (int)AppServiceStatus.DeviceError;
+                        request[2] = now;
+                        return (int)AppServiceStatus.Ok;
+                    case 4:
+                        RequestEnd(self, TerminalInterrupt.InterruptedExitCode, failed: true);
+                        return (int)AppServiceStatus.Ok;
+                    default: return (int)AppServiceStatus.InvalidParameter;
+                }
+                request[3] = self.ControlCIsInput ? 1UL : 0UL;
+                request[4] = self.InterruptListening ? 1UL : 0UL;
                 return (int)AppServiceStatus.Ok;
             }
 

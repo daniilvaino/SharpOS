@@ -230,6 +230,73 @@ namespace System
         /// <summary>Whether a key press is waiting to be read.</summary>
         public static bool KeyAvailable => TerminalKeys.Available && TerminalKeys.KeyAvailable;
 
+        // Ctrl+C (release 0.1 §10): the kernel's signal to the terminal's
+        // owner. CancelKeyPress as the BCL's on Unix — over
+        // PosixSignalRegistration (SIGINT and SIGQUIT), its handlers in a
+        // thread of their own; uncancelled, the process ends with 130.
+        private static readonly object s_syncObject = new object();
+        private static ConsoleCancelEventHandler? s_cancelCallbacks;
+        private static System.Runtime.InteropServices.PosixSignalRegistration? s_sigIntRegistration;
+        private static System.Runtime.InteropServices.PosixSignalRegistration? s_sigQuitRegistration;
+
+        public static event ConsoleCancelEventHandler? CancelKeyPress
+        {
+            add
+            {
+                // Threads before the lock (see EnsureThreads).
+                System.Runtime.InteropServices.PosixSignalRegistration.EnsureThreads();
+
+                lock (s_syncObject)
+                {
+                    s_cancelCallbacks += value;
+
+                    // If we haven't registered our control-C/Break handlers, do it.
+                    if (s_sigIntRegistration is null)
+                    {
+                        Action<System.Runtime.InteropServices.PosixSignalContext> handler = HandlePosixSignal;
+                        s_sigIntRegistration = System.Runtime.InteropServices.PosixSignalRegistration.Create(System.Runtime.InteropServices.PosixSignal.SIGINT, handler);
+                        s_sigQuitRegistration = System.Runtime.InteropServices.PosixSignalRegistration.Create(System.Runtime.InteropServices.PosixSignal.SIGQUIT, handler);
+                    }
+                }
+            }
+            remove
+            {
+                lock (s_syncObject)
+                {
+                    s_cancelCallbacks -= value;
+
+                    // If there are no more callbacks, unregister registered posix signal handlers.
+                    if (s_cancelCallbacks == null)
+                    {
+                        s_sigIntRegistration?.Dispose();
+                        s_sigQuitRegistration?.Dispose();
+                        s_sigIntRegistration = s_sigQuitRegistration = null;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Ctrl+C is a key to read (0x03), not a signal — while any process of
+        /// the terminal's owning group says so, as ISIG off on Unix.
+        /// </summary>
+        public static bool TreatControlCAsInput
+        {
+            get => Process.InterruptSettings(0, false, out bool input, out _) && input;
+            set => Process.InterruptSettings(1, value, out _, out _);
+        }
+
+        private static void HandlePosixSignal(System.Runtime.InteropServices.PosixSignalContext ctx)
+        {
+            if (s_cancelCallbacks is ConsoleCancelEventHandler handler)
+            {
+                var args = new ConsoleCancelEventArgs(ctx.Signal == System.Runtime.InteropServices.PosixSignal.SIGINT ? ConsoleSpecialKey.ControlC : ConsoleSpecialKey.ControlBreak);
+                args.Cancel = ctx.Cancel;
+                handler(null, args);
+                ctx.Cancel = args.Cancel;
+            }
+        }
+
         /// <summary>800 Hz for 200 ms, as BCL.</summary>
         public static void Beep() => Beep(800, 200);
 
